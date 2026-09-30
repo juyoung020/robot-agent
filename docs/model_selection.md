@@ -14,7 +14,7 @@
 | 물체 지도 저장·보기 | **Spark-DSG + 뷰어** | Hydra·Khronos 와 같은 형식, 웹 3D 뷰어 포함 | 결정 |
 | 계획 (LLM) | **Qwen3.5-9B**, 학교 4090 API | 요금·외부 인터넷 없이 사용 | 결정 |
 | 행동 (VLA) | **π0.5** | 2025 BEHAVIOR 대회 상위 팀이 모두 사용 | 잠정 |
-| π0.5 실행 위치 | **리모**, 안 되면 라즈베리파이 5 + NPU | 로봇이 서버 없이 스스로 움직이게 | 결정 |
+| π0.5 실행 위치 | **리모**, 안 되면 라즈베리파이 5 + DEEPX DX-M1 (보유) | 로봇이 서버 없이 스스로 움직이게 | 결정 |
 | 시뮬레이션 | **2025 BEHAVIOR Challenge 벤치마크** | 대회 상위 팀과 점수를 비교할 수 있음 | 결정 |
 | 앱 | **iOS (SwiftUI) · Android (Compose)** | 네이티브, 카카오톡식 채팅 | 결정 |
 
@@ -116,12 +116,12 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 
 잴 것: 시뮬레이션에서 집기·놓기 성공률.
 
-### π0.5 실행 위치 — 리모, 안 되면 라즈베리파이 5 + NPU
+### π0.5 실행 위치 — 리모, 안 되면 라즈베리파이 5 + DEEPX DX-M1
 
 | 순서 | 방법 | 확인할 것 |
 |---|---|---|
 | 1 | 리모(Jetson Nano) 에서 양자화한 π0.5 | 공식 기준 실행에 8GB 이상 → 4bit 로 줄여도 4GB 에 빠듯함. 먼저 재 본다 |
-| 2 | 안 되면 리모에 라즈베리파이 5 + AI HAT+ 2 (Hailo-10H, 8GB) | 약 6B 이하 모델을 올릴 수 있다고 발표됨. π0.5 의 행동 생성 부분이 Hailo 변환 도구에서 되는지 확인 |
+| 2 | 안 되면 리모에 라즈베리파이 5 + **DEEPX DX-M1** (보유, 25 TOPS INT8, 메모리 4GB, M.2) | DXNN SDK 로 ONNX 모델을 변환해 올린다. π0.5 는 3.3B 라 INT8 로도 약 3.3GB → **4GB 에 빠듯함**. transformer·행동 생성 부분이 변환되는지 확인 |
 
 양자화 단계: bf16 (원래) → int8 → int4 순으로 줄이며 성공률이 얼마나 떨어지는지 잰다.
 
@@ -154,5 +154,5 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 - 물체 인식: [SAM 계열 속도·정확도 비교 (2025)](https://scitepress.org/PublishedPapers/2025/137785), [MobileSAM](https://docs.ultralytics.com/ko/models/mobile-sam), [YOLOv8 TensorRT Jetson Nano](https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano)
 - LLM: [Qwen3.5-9B GPU 가이드](https://www.spheron.network/tools/gpu-recommender/Qwen/Qwen3.5-9B/)
 - VLA 크기·메모리: openpi README (`refs/code/openpi/README.md`), [VLA 비교 연구 (arXiv 2603.19233)](https://arxiv.org/pdf/2603.19233)
-- NPU: [Raspberry Pi AI HAT+ 2](https://www.theregister.com/2026/01/15/pi_5_ai_hat_2/)
+- NPU: [DEEPX DX-M1 사양 (DFRobot)](https://wiki.dfrobot.com/SKU_DFR1252_DX-M1%20AI%20Accelerator), [dx-all-suite (DEEPX SDK)](https://github.com/juyoung020/dx-all-suite)
 - 시뮬레이션: [2025 BEHAVIOR Challenge](https://behavior.stanford.edu/challenge/archive/2025/call_for_participation.html)
