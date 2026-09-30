@@ -7,7 +7,7 @@
 
 **기본 리모(AgileX LIMO)로 가정.**
 
-| 항목 | 기본 LIMO |
+| 항목 | 기본 LIMO (가정) |
 |---|---|
 | 컴퓨터 | NVIDIA Jetson Nano (4GB) |
 | 라이다 | EAI X2L |
