@@ -18,8 +18,8 @@ flowchart LR
     subgraph LIMO["리모 — 우리 코드 전부"]
         direction LR
         S["카메라 · 라이다"] --> M["① 물체 기억<br/>SLAM · YOLO-seg<br/>3D 위치 · 지도 갱신"]
-        M --> A["② 계획 (agent)<br/>단계 나누기 · 재시도"]
-        A --> V["③ 행동<br/>이동 · π0.5"]
+        M --> A["② 큰 계획·대화 (LLM agent)<br/>단계 나누기 · 재시도"]
+        A --> V["③ 작은 계획·행동 (VLA)<br/>이동 · π0.5"]
     end
     Q["학교 4090<br/>Qwen3.5-9B API"]
     APP <-->|"명령 / 진행 상황"| A
@@ -83,7 +83,7 @@ flowchart LR
 | 지도 갱신 | 옮겨짐·사라짐·생김을 찾아 바뀐 부분만 고친다 — **직접 만든다** | |
 | 저장·보기 | Spark-DSG 로 저장, `spark-dsg visualize` 로 3D 확인. agent 에게는 JSON 으로 | |
 
-### 3. 계획 (agent) — `src/agent/`
+### 3. 큰 계획·대화 (LLM agent) — `src/agent/`
 
 | 할 일 | 내용 | 담당 |
 |---|---|---|
@@ -93,7 +93,7 @@ flowchart LR
 | 질문에 답하기 | "컵 어디 있었지?" → 지도에서 찾아 답 | |
 | 평가 | 명령 10~20개로 성공률·응답 시간 | |
 
-### 4. 행동 (VLA, π0.5) — `src/vla/`
+### 4. 작은 계획·행동 (VLA, π0.5) — `src/vla/`
 
 | 할 일 | 내용 | 담당 |
 |---|---|---|
