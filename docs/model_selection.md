@@ -98,6 +98,8 @@
 | DovSG 방식 | 바뀐 부분만 국소 갱신 |
 | Khronos 방식 | 시간에 따른 변화를 따로 추적 |
 
+**결정: 자체 제작** (2026-09-30). 위 두 방식은 참고로 쓰고, 변화 탐지 P/R/F1 로 성능을 잰다. 결과는 Spark-DSG 뷰어로 확인한다.
+
 ## 6. Scene graph 자료구조
 
 | 후보 | 특징 |
@@ -106,6 +108,13 @@
 | 직접 만든 JSON | 가장 단순. agent(LLM)에게 그대로 넘기기 쉬움 |
 
 **고르는 기준**: agent 가 읽기 쉬운지, 참고 코드를 그대로 쓸 수 있는지.
+
+**결정: Spark-DSG + Spark-DSG 뷰어** (2026-09-30). 지도는 Spark-DSG 형식으로 저장하고, 뷰어로 웹 브라우저에서 3D 로 본다.
+
+```bash
+pip install spark-dsg          # 또는 refs/code/Spark-DSG 에서 pip install .
+spark-dsg visualize 지도.json   # http://localhost:8080 에서 보기 (viser 웹 뷰어)
+```
 
 ## 7. Agent (LLM)
 
@@ -173,8 +182,8 @@
 | 물체 분할 | **FastSAM** | 2026-09-30 | 팀 결정 (속도 우선) | |
 | 의미 특징 | | | | |
 | DA | **자체 제작** | 2026-09-30 | 팀 결정 | |
-| 맵 업데이트 | | | | |
-| Scene graph 자료구조 | | | | |
+| 맵 업데이트 | **자체 제작** | 2026-09-30 | 팀 결정 | |
+| Scene graph 자료구조 | **Spark-DSG** (+ 뷰어) | 2026-09-30 | 팀 결정. Hydra·Khronos 와 같은 형식 | |
 | Agent (LLM) | | | | |
 | VLA | π0.5 (잠정) | | 프로젝트 계획 | |
 | 양자화 | | | | |
