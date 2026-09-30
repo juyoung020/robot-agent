@@ -58,7 +58,7 @@ robot-programming-team/
 │   ├── agent/       # ② 계획·실패 복구
 │   └── vla/         # ③ 행동 (π0.5)
 ├── scripts/         # 설치·실행 스크립트
-├── tests/           # 테스트 (sandbox/ 는 AI·사람 임시 실험 공간, 깃 제외)
+├── tests/           # 테스트 (sandbox/ 는 AI·사람 실험 공간)
 └── refs/            # 참고 논문·코드 목록
 ```
 
