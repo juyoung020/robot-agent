@@ -30,6 +30,7 @@ for repo in \
   BJHYZJ/DovSG \
   MIT-SPARK/Hydra \
   MIT-SPARK/Khronos \
+  MIT-SPARK/Spark-DSG \
   concept-graphs/concept-graphs \
   hovsg/HOV-SG \
   robot-learning-freiburg/MoMa-LLM \
