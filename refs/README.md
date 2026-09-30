@@ -43,3 +43,17 @@ BEHAVIOR-1K 가정용 장기 작업 대회. 1·2·3위 모두 π0.5 기반.
 | 2 | Comet (NVIDIA Research) | 0.251 | [mli0603/openpi-comet](https://github.com/mli0603/openpi-comet) | [arXiv 2512.10071](https://arxiv.org/abs/2512.10071) | openpi 기반 |
 | 3 | SimpleAI Robot (베이징 스타트업 深朴智能) | 0.159 | 공개 안 됨 | 공개 안 됨 (대회 발표 제목 "SimBot-Agent") | 같은 팀 논문 [arXiv 2607.06256](https://arxiv.org/abs/2607.06256): agent가 π0.5 스킬을 호출·검증·재계획 → **우리 agent+VLA 구조와 가장 가까움** |
 | 4 | The North Star (Huawei) | 0.120 | 공개 안 됨 | 공개 안 됨 | |
+
+## 리모 ROS 2 (포팅된 것 찾기)
+
+기본 리모는 Ubuntu 18.04 (ROS 1) 이라 ROS 2 로 포팅된 것을 찾아 쓴다. 우리 리모(Jetson Nano)에서 되는지는 확인 필요.
+
+| 저장소 | 내용 | 메모 |
+|---|---|---|
+| [agilexrobotics/limo_ros2](https://github.com/agilexrobotics/limo_ros2) | **공식** ROS 2 패키지. 브랜치 `foxy`, `humble`, `humble-dev` | humble 은 Ubuntu 22.04 기준 |
+| [agilexrobotics/limo_ros2_doc](https://github.com/agilexrobotics/limo_ros2_doc) | 공식 ROS 2 사용 설명서 | |
+| [LCAS/limo_platform](https://github.com/LCAS/limo_platform) | Docker 로 감싼 ROS 2 작업 공간 | NVIDIA Docker 런타임 필요 |
+| [TechShare-inc/limo_ros2_docker](https://github.com/TechShare-inc/limo_ros2_docker) | Docker 로 리모를 ROS 2 (humble) 에서 움직이기 | NVIDIA Docker 사용 |
+| [WeGo-Robotics/limo_ros2_ws](https://github.com/WeGo-Robotics/limo_ros2_ws) | 한국 WeGo 로보틱스의 리모 ROS 2 작업 공간 (한국어 설명) | |
+| [Kazimbalti/limo_ros2](https://github.com/Kazimbalti/limo_ros2) | ROS 2 Humble: URDF, Gazebo 시뮬 등 | |
+| [MoraesWilliam/Limo-Ros2-Gazebo-Slam-Cartographer](https://github.com/MoraesWilliam/Limo-Ros2-Gazebo-Slam-Cartographer) | ROS 2 Humble + Gazebo + Cartographer SLAM | 우리 SLAM 결정과 같은 조합 |

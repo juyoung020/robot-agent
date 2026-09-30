@@ -65,7 +65,7 @@
 
 | 할 일 | 내용 | 담당 |
 |---|---|---|
-| ROS 1 ↔ ROS 2 연결 | 기본 리모는 Ubuntu 18.04 (ROS 1). ros1_bridge 또는 ROS 2 Docker 중 되는 방법 찾기 | |
+| 리모 ROS 2 포팅 찾기 | 기본 리모는 Ubuntu 18.04 (ROS 1). **이미 ROS 2 로 포팅된 것을 찾아 쓴다** — 후보는 [`refs/README.md`](../refs/README.md) 의 "리모 ROS 2" (공식 agilexrobotics/limo_ros2 의 foxy·humble 브랜치, Docker 판 등). 우리 리모(Jetson Nano)에서 되는지 확인 | |
 | 캘리브레이션 | 카메라 내부 값(intrinsic), 카메라가 로봇 몸체 어디에 달렸는지(extrinsic) → 3D 위치 계산에 필요. 팔이 정해지면 hand-eye 도 | |
 | 좌표 사슬 (tf) | `map → base_link → camera` 가 제대로 나오는지 확인. depth 를 컬러에 맞춰 정렬(align) | |
 | 서버로 보내기 | RGB-D 영상 + pose 를 Wi-Fi 로 4090 서버에 보내기. 느리면 해상도·프레임 줄이거나 압축 | |
@@ -143,6 +143,7 @@
 | 2026-09-30 | SLAM: **2D 라이다 SLAM (Cartographer)**, 3D SLAM 안 씀 | Jetson Nano 에 3D SLAM 은 무거움. 물체 3D 위치는 pose + depth 로 충분 |
 | 2026-09-30 | 시뮬레이션: **2025 BEHAVIOR Challenge 벤치마크** | 대회 상위 팀과 점수 비교 가능 |
 | 2026-09-30 | Agent LLM: **Qwen3.5-9B**, 학교 4090 에서 API 로 | 요금·외부 인터넷 불필요. π0.5 와 4090 을 나눠 쓰려면 FP8/4bit |
+| 2026-09-30 | 리모 ROS 1 → ROS 2: 직접 연결(ros1_bridge) 대신 **이미 포팅된 것 찾기** | |
 | 2026-09-30 | 코드 원칙: **모든 코드는 C++ · CUDA · Rust** (앱·학습·외부 도구는 예외) | |
 | 2026-09-30 | 앱 추가: iOS·Android 네이티브, 카카오톡식 채팅으로 명령, **로봇1 만** | 사람이 말로 로봇을 부리는 창구 |
 | 2026-09-30 | 계획 전체 갱신: 한눈에 보기, 3D 위치 계산, ROS 1↔2 연결·tf·영상 전송, 파인튜닝 시뮬/실제 분리, LLM 서버, 4090 나눠 쓰기 추가 | 위 결정들 반영 |

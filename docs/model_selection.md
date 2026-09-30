@@ -9,7 +9,7 @@
 |---|---|---|
 | 로봇 컴퓨터 | 기본 리모 Jetson Nano (4GB), Ubuntu 18.04 | 무거운 모델은 로봇에서 못 돌림 → **학교 4090 서버에서 돌리고 결과만 받음** |
 | 서버 | RTX 4090 (24GB) | 모든 모델이 동시에 올라가야 함 (분할 + 특징 + LLM + VLA) → 메모리 합계를 따진다 |
-| ROS | 기본 리모는 Ubuntu 18.04 라 ROS 2 가 기본으로 안 깔림 | ROS 2 는 Docker 로 돌리거나 서버 쪽에서 돌리는 방법을 먼저 확인 |
+| ROS | 기본 리모는 Ubuntu 18.04 라 ROS 2 가 기본으로 안 깔림 | **이미 ROS 2 로 포팅된 리모 패키지를 찾아 쓴다** (후보: `refs/README.md` "리모 ROS 2") |
 
 ## 고르는 방법 (모든 부품 공통)
 
@@ -39,7 +39,7 @@
 - 리모 위에서 Cartographer 로 2D 지도를 한 번 만들고, 평소에는 그 지도 위에서 **위치만 추정**한다 (위치 추정 모드).
 - 물체의 3D 위치는 SLAM 이 아니라 `로봇 pose + depth 카메라` 로 서버에서 계산한다 → 3D SLAM(RTAB-Map)은 쓰지 않는다 (Jetson Nano 에 무거움).
 - 시뮬레이션(BEHAVIOR)은 정답 pose 를 주므로 SLAM 은 실제 리모에서만 쓴다 → scene graph·agent 개발이 SLAM 을 기다리지 않아도 된다.
-- 리모는 ROS 1 (Ubuntu 18.04) → ros1_bridge 또는 ROS 2 Docker 로 서버와 잇는다 (확인 필요).
+- 리모는 ROS 1 (Ubuntu 18.04) → 이미 ROS 2 로 포팅된 리모 패키지를 찾아 쓴다 (`refs/README.md` "리모 ROS 2").
 
 ## 2. 물체 분할·인식 (YOLO-seg)
 
