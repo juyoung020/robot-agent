@@ -20,6 +20,7 @@ done <<'LIST'
 2512.06951 BEHAVIOR25-1st-RLC
 2512.10071 BEHAVIOR25-2nd-Comet
 2607.06256 BEHAVIOR25-3rd-SimpleAI
+2501.14147 HAMMER
 LIST
 echo "논문 완료: $(ls papers/*.pdf | wc -l)개"
 

@@ -23,6 +23,7 @@ bash refs/download.sh
 | Khronos: Spatio-Temporal Metric-Semantic SLAM in Dynamic Environments (RSS 2024) | [arXiv 2402.13817](https://arxiv.org/abs/2402.13817) | [MIT-SPARK/Khronos](https://github.com/MIT-SPARK/Khronos) | Hydra 후속. 시간에 따른 변화 감지 |
 | ConceptGraphs: Open-Vocabulary 3D Scene Graphs for Perception and Planning | [arXiv 2309.16650](https://arxiv.org/abs/2309.16650) | [concept-graphs/concept-graphs](https://github.com/concept-graphs/concept-graphs) | 2D 기반 모델을 3D로 융합, 열린 어휘(open-vocabulary) 물체 노드 |
 | HOV-SG: Hierarchical Open-Vocabulary 3D Scene Graphs for Language-Grounded Robot Navigation (RSS 2024) | [arXiv 2403.17846](https://arxiv.org/abs/2403.17846) | [hovsg/HOV-SG](https://github.com/hovsg/HOV-SG) | 층·방·물체 계층 + 열린 어휘 |
+| HAMMER: Heterogeneous, Multi-Robot Semantic Gaussian Splatting | [arXiv 2501.14147](https://arxiv.org/abs/2501.14147) | 공개 안 됨 ([프로젝트 페이지](https://hammer-project.github.io)) | 여러 로봇의 SLAM 좌표를 하나로 맞추고, CLIP 의미 특징을 넣은 3DGS 지도를 실시간 학습 (ROS 기반) |
 
 ## Agent (Scene graph + LLM 계획)
 
