@@ -225,3 +225,6 @@ log/
 refs/papers/
 # 참고 코드 (각 원본 레포 클론) — refs/download.sh 로 받기
 refs/code/
+
+# AI·사람 임시 실험 공간
+tests/sandbox/
