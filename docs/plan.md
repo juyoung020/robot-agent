@@ -3,6 +3,17 @@
 동적 3D scene graph + AI agent + VLA(π0.5) 결합.
 참고 논문·코드는 [`refs/README.md`](../refs/README.md) 참고.
 
+## 전제
+
+**기본 리모(AgileX LIMO)로 가정.**
+
+| 항목 | 기본 LIMO |
+|---|---|
+| 컴퓨터 | NVIDIA Jetson Nano (4GB) |
+| 라이다 | EAI X2L |
+| 카메라 | Orbbec DaBai (RGB-D) |
+| 로봇 팔 | 없음 |
+
 ## 1. Scene graph (로봇의 기억) — `src/scene_graph/`
 
 | 할 일 | 내용 | 담당 |
