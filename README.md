@@ -5,7 +5,7 @@
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/icon-bot-dark.svg">
     <img src="docs/assets/icon-bot-light.svg" width="28" height="28" alt="">
   </picture>
-  우리는 물체를 기억하는 로봇을 만든다
+  우리는 물체를 기억하는 로봇을 만든다 - 자유주제
 </h2>
 
 <a href="https://plausible-hallway-e4f.notion.site/3eb454b08de28190b2e8e321a33a9371">팀 노션</a> &nbsp;·&nbsp; <a href="docs/plan.md">계획</a> &nbsp;·&nbsp; <a href="docs/model_selection.md">모델 선택</a> &nbsp;·&nbsp; <a href="refs/README.md">참고 자료</a>
