@@ -190,6 +190,10 @@ spark-dsg visualize 지도.json   # http://localhost:8080 에서 보기 (viser �
 | BEHAVIOR-1K | 집 안 이동 + 조작. 2025 대회 상위 팀 모두 π0.5 사용 → 참고 코드 많음. 무거움 |
 | Gazebo | 리모 시뮬 모델 있음. 이동·SLAM 연습용, VLA 학습용으로는 약함 |
 
+**결정: 2025 BEHAVIOR Challenge 벤치마크 (BEHAVIOR-1K, OmniGibson)** (2026-09-30).
+- 대회가 준 과제·평가 방식 그대로 쓴다 → 점수를 대회 상위 팀과 비교할 수 있다.
+- 로봇은 Galaxea R1 Pro (바퀴 + 양팔). 우리 리모와 몸이 다르다는 점은 감안한다.
+
 ---
 
 ## 결정 기록
@@ -205,7 +209,7 @@ spark-dsg visualize 지도.json   # http://localhost:8080 에서 보기 (viser �
 | Agent (LLM) | **Qwen3.5-9B** (학교 4090 API) | 2026-09-30 | 팀 결정. π0.5 와 같이 올리려면 FP8/4bit | |
 | VLA | π0.5 (잠정) | | 프로젝트 계획 | |
 | 양자화 | 4090 원격 추론 기본, 라즈베리파이 5·NPU 는 필요할 때 | 2026-09-30 | 팀 결정 | |
-| 시뮬레이션 | | | | |
+| 시뮬레이션 | **2025 BEHAVIOR Challenge 벤치마크** | 2026-09-30 | 팀 결정. 상위 팀 점수와 비교 가능 | |
 
 ## 출처
 
