@@ -7,7 +7,7 @@
 
 | 항목 | 내용 | 영향 |
 |---|---|---|
-| 로봇 컴퓨터 | 기본 리모 Jetson Nano (4GB), Ubuntu 18.04 | 무거운 모델은 로봇에서 못 돌림 → **학교 4090 서버에서 돌리고 결과만 받음** |
+| 로봇 컴퓨터 | 기본 리모 Jetson Nano (4GB), Ubuntu 18.04 | **SLAM·YOLO-seg 는 리모에서** 돌린다 (가볍게). 나머지 무거운 모델은 학교 4090 서버 |
 | 서버 | RTX 4090 (24GB) | 모든 모델이 동시에 올라가야 함 (분할 + 특징 + LLM + VLA) → 메모리 합계를 따진다 |
 | ROS | 기본 리모는 Ubuntu 18.04 라 ROS 2 가 기본으로 안 깔림 | **이미 ROS 2 로 포팅된 리모 패키지를 찾아 쓴다** (후보: `refs/README.md` "리모 ROS 2") |
 
@@ -62,6 +62,12 @@
 - 영역과 이름을 한 번에 주므로 SAM·CLIP 을 따로 쓰지 않는다.
 - 컵·병·의자·식탁·소파·노트북·책 등 집 안 물건은 COCO 80종에 대부분 들어 있음.
 - 80종 밖의 물건이 필요해지면 YOLOE / YOLO-World 로 바꾼다.
+- **리모(Jetson Nano)에서 돌린다.**
+  - 모델: 가장 작은 nano 크기 (`yolov8n-seg` / `yolo11n-seg`).
+  - 실행: TensorRT FP16 엔진 + C++ (참고: [Qengineering/YoloV8-TensorRT-Jetson_Nano](https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano), Jetson Nano 는 `tensorrt8` 브랜치). INT8 은 빨라지지 않고 정확도만 떨어진다고 보고됨.
+  - 엔진 만들기: Ultralytics 의 JetPack 4 용 Docker 이미지로 내보내기 (엔진은 **리모와 같은 TensorRT 버전**으로 만들어야 함).
+  - 속도(보고치): 검출만 약 19 FPS (YOLOv8n, FP16). 분할은 더 느림 → 우리 리모에서 직접 잰다. 로봇이 천천히 움직이므로 초당 몇 장이면 충분한지도 같이 본다.
+  - 메모리: 4GB 를 SLAM·카메라 드라이버와 나눠 씀 → 입력 해상도를 줄일 수 있음.
 
 ## 3. 의미 특징 (CLIP 계열)
 
@@ -222,7 +228,7 @@ spark-dsg visualize 지도.json   # http://localhost:8080 에서 보기 (viser �
 | 부품 | 결정 | 날짜 | 근거 (실험 결과 위치) | 담당 |
 |---|---|---|---|---|
 | SLAM | **2D 라이다 SLAM (Cartographer)** | 2026-09-30 | 팀 결정. 3D 위치는 depth 로 계산 | |
-| 물체 분할·인식 | **YOLO-seg** | 2026-09-30 | FastSAM 에서 변경. 영역+이름 한 번에, SAM·CLIP 대신 | |
+| 물체 분할·인식 | **YOLO-seg (nano), 리모에서 TensorRT FP16 + C++** | 2026-09-30 | FastSAM 에서 변경. 영역+이름 한 번에, SAM·CLIP 대신 | |
 | 의미 특징 | **쓰지 않음** (필요하면 YOLOE → MobileCLIP2-S0) | 2026-09-30 | 이름은 YOLO-seg 가 줌 | |
 | DA | **자체 제작** | 2026-09-30 | 팀 결정 | |
 | 맵 업데이트 | **자체 제작** | 2026-09-30 | 팀 결정 | |

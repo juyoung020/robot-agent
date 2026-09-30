@@ -43,8 +43,8 @@
 
 | 어디서 | 무엇을 |
 |---|---|
-| 리모 (Jetson Nano) | 센서 드라이버, 2D SLAM (Cartographer, 위치 추정), 이동 → RGB-D 영상 + pose 를 서버로 보냄 |
-| 학교 4090 서버 | YOLO-seg, 3D 위치 계산, DA·맵 업데이트, Spark-DSG, Qwen3.5-9B (agent), π0.5 (VLA) |
+| 리모 (Jetson Nano) | 센서 드라이버, **2D SLAM (Cartographer)**, **YOLO-seg (TensorRT)**, 이동 → 인식 결과 + pose 를 서버로 보냄 |
+| 학교 4090 서버 | DA·맵 업데이트, Spark-DSG, Qwen3.5-9B (agent), π0.5 (VLA) |
 | 시뮬레이션 | 2025 BEHAVIOR Challenge 벤치마크 (정답 pose 제공 → SLAM 없이 개발 가능) |
 | 휴대폰 앱 (iOS·Android) | 카카오톡처럼 채팅으로 로봇에게 명령 → 서버의 agent 로 전달 |
 
@@ -55,8 +55,8 @@
 | 할 일 | 내용 | 담당 |
 |---|---|---|
 | SLAM | 리모에서 **2D 라이다 SLAM (Cartographer)** 으로 지도 한 번 만들고, 평소엔 위치만 추정 | |
-| 물체 인식 (YOLO-seg) | 카메라 영상에서 물체 영역(mask)과 이름을 한 번에 얻기. 80종 밖의 물건이 필요하면 YOLOE / YOLO-World | |
-| 3D 위치 계산 | 마스크 픽셀 + depth → 카메라 좌표 → 로봇 좌표 → 월드 좌표 (tf2). 마스크를 살짝 줄이고 **중앙값**으로 물체 위치 하나 뽑기 | |
+| 물체 인식 (YOLO-seg) | **리모(Jetson Nano)에서 실행.** 가장 작은 모델(nano)을 TensorRT FP16 엔진으로 바꿔 C++ 로 돌리기. 카메라 영상에서 물체 영역(mask)과 이름을 한 번에 얻기 | |
+| 3D 위치 계산 | (리모 또는 서버 — 미정) 마스크 픽셀 + depth → 카메라 좌표 → 로봇 좌표 → 월드 좌표 (tf2). 마스크를 살짝 줄이고 **중앙값**으로 물체 위치 하나 뽑기 | |
 | DA (data association) | 새로 본 물체가 그래프에 이미 있는 물체인지 판단. **자체 제작**, 같은 이름끼리 위치로 비교 | |
 | 맵 업데이트 | 옮겨짐·사라짐·생김을 찾아 바뀐 부분만 고치기. **자체 제작**, 변화 탐지 P/R/F1 로 평가 | |
 | 저장·보기 | **Spark-DSG** 로 저장, `spark-dsg visualize` 뷰어로 확인. agent 에는 JSON 으로 넘기기 | |
@@ -68,7 +68,7 @@
 | 리모 ROS 2 포팅 찾기 | 기본 리모는 Ubuntu 18.04 (ROS 1). **이미 ROS 2 로 포팅된 것을 찾아 쓴다** — 후보는 [`refs/README.md`](../refs/README.md) 의 "리모 ROS 2" (공식 agilexrobotics/limo_ros2 의 foxy·humble 브랜치, Docker 판 등). 우리 리모(Jetson Nano)에서 되는지 확인 | |
 | 캘리브레이션 | 카메라 내부 값(intrinsic), 카메라가 로봇 몸체 어디에 달렸는지(extrinsic) → 3D 위치 계산에 필요. 팔이 정해지면 hand-eye 도 | |
 | 좌표 사슬 (tf) | `map → base_link → camera` 가 제대로 나오는지 확인. depth 를 컬러에 맞춰 정렬(align) | |
-| 서버로 보내기 | RGB-D 영상 + pose 를 Wi-Fi 로 4090 서버에 보내기. 느리면 해상도·프레임 줄이거나 압축 | |
+| 서버로 보내기 | YOLO-seg 결과(이름·마스크 또는 3D 위치) + pose 를 서버로. π0.5 가 쓸 카메라 영상은 조작할 때만 보내기 | |
 | 이동 | 저장한 2D 지도 위에서 목표 위치로 이동 (내비게이션) | |
 | 조작 | 매니퓰레이터 모델이 정해지면 ROS 2 로 움직이기, 집기·놓기 확인 | |
 | pose 토픽 따두기 | 로봇·팔 끝(end-effector)·카메라 pose 토픽 이름, 메시지 타입, 주기 정리 | |
@@ -143,6 +143,7 @@
 | 2026-09-30 | SLAM: **2D 라이다 SLAM (Cartographer)**, 3D SLAM 안 씀 | Jetson Nano 에 3D SLAM 은 무거움. 물체 3D 위치는 pose + depth 로 충분 |
 | 2026-09-30 | 시뮬레이션: **2025 BEHAVIOR Challenge 벤치마크** | 대회 상위 팀과 점수 비교 가능 |
 | 2026-09-30 | Agent LLM: **Qwen3.5-9B**, 학교 4090 에서 API 로 | 요금·외부 인터넷 불필요. π0.5 와 4090 을 나눠 쓰려면 FP8/4bit |
+| 2026-09-30 | **SLAM·YOLO-seg 는 리모에서 실행** (YOLO-seg 는 TensorRT FP16, C++) | 서버로 영상을 계속 안 보내도 됨. 리모 Jetson Nano 에서 돌아가는 가벼운 모델 |
 | 2026-09-30 | 리모 ROS 1 → ROS 2: 직접 연결(ros1_bridge) 대신 **이미 포팅된 것 찾기** | |
 | 2026-09-30 | 코드 원칙: **모든 코드는 C++ · CUDA · Rust** (앱·학습·외부 도구는 예외) | |
 | 2026-09-30 | 앱 추가: iOS·Android 네이티브, 카카오톡식 채팅으로 명령, **로봇1 만** | 사람이 말로 로봇을 부리는 창구 |
