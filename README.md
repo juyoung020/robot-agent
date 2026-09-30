@@ -56,7 +56,8 @@ robot-programming-team/
 ├── src/             # 코드 (ROS 2 패키지)
 │   ├── scene_graph/ # ① 물체 기억
 │   ├── agent/       # ② 계획·실패 복구
-│   └── vla/         # ③ 행동 (π0.5)
+│   ├── vla/         # ③ 행동 (π0.5)
+│   └── app/         # 휴대폰 앱 (iOS·Android, 채팅으로 명령)
 ├── scripts/         # 설치·실행 스크립트
 ├── tests/           # 테스트 (sandbox/ 는 AI·사람 실험 공간)
 └── refs/            # 참고 논문·코드 목록
