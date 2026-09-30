@@ -13,6 +13,7 @@
 | 라이다 | EAI X2L |
 | 카메라 | Orbbec DaBai (RGB-D) |
 | 로봇 팔 | 없음 |
+| 매니퓰레이터 | 추가로 달 예정 — **아직 모델 모름** |
 
 ## 1. Scene graph (로봇의 기억) — `src/scene_graph/`
 
