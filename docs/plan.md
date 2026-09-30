@@ -3,6 +3,22 @@
 동적 3D scene graph + AI agent + VLA(π0.5) 결합.
 참고 논문·코드는 [`refs/README.md`](../refs/README.md) 참고.
 
+## 코드 원칙
+
+> **우리가 작성하는 모든 코드는 C++ · CUDA · Rust 로 한다.**
+
+| 언어 | 어디에 |
+|---|---|
+| **C++** | ROS 2 노드(rclcpp), 3D 위치 계산, DA·맵 업데이트, Spark-DSG 연동, 추론 실행 (TensorRT 등) |
+| **CUDA** | GPU 로 빠르게 해야 하는 부분 — 깊이→점구름 변환, 마스크 처리, π0.5 추론 커널 |
+| **Rust** | 서버·통신 — 앱 ↔ 서버 WebSocket, agent 실행 흐름, 로봇 관리 |
+
+| 예외 | 이유 |
+|---|---|
+| 휴대폰 앱: Swift (iOS) · Kotlin (Android) | 네이티브 앱은 각 플랫폼 언어로만 만들 수 있음 |
+| 학습 (π0.5 파인튜닝, YOLO 학습) | 학습 도구(openpi, Ultralytics)가 Python. 학습 결과(모델 파일)만 가져와 C++/CUDA 로 실행 |
+| 가져다 쓰는 외부 도구 | 남이 만든 도구는 원래 언어 그대로 쓴다. 가능하면 C++ 쪽을 고른다 (예: Qwen 은 llama.cpp, SLAM 은 Cartographer) |
+
 ## 전제
 
 **기본 리모(AgileX LIMO)로 가정.**
@@ -127,6 +143,7 @@
 | 2026-09-30 | SLAM: **2D 라이다 SLAM (Cartographer)**, 3D SLAM 안 씀 | Jetson Nano 에 3D SLAM 은 무거움. 물체 3D 위치는 pose + depth 로 충분 |
 | 2026-09-30 | 시뮬레이션: **2025 BEHAVIOR Challenge 벤치마크** | 대회 상위 팀과 점수 비교 가능 |
 | 2026-09-30 | Agent LLM: **Qwen3.5-9B**, 학교 4090 에서 API 로 | 요금·외부 인터넷 불필요. π0.5 와 4090 을 나눠 쓰려면 FP8/4bit |
+| 2026-09-30 | 코드 원칙: **모든 코드는 C++ · CUDA · Rust** (앱·학습·외부 도구는 예외) | |
 | 2026-09-30 | 앱 추가: iOS·Android 네이티브, 카카오톡식 채팅으로 명령, **로봇1 만** | 사람이 말로 로봇을 부리는 창구 |
 | 2026-09-30 | 계획 전체 갱신: 한눈에 보기, 3D 위치 계산, ROS 1↔2 연결·tf·영상 전송, 파인튜닝 시뮬/실제 분리, LLM 서버, 4090 나눠 쓰기 추가 | 위 결정들 반영 |
 
