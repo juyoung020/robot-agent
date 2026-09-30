@@ -1,6 +1,12 @@
-# robot-programming-team
+<div align="center">
 
-**우리는 물체를 기억하는 로봇을 만든다.**
+<h2>우리는 물체를 기억하는 로봇을 만든다</h2>
+
+<a href="https://plausible-hallway-e4f.notion.site/3eb454b08de28190b2e8e321a33a9371">팀 노션</a> &nbsp;·&nbsp; <a href="docs/plan.md">계획</a> &nbsp;·&nbsp; <a href="refs/README.md">참고 자료</a>
+
+</div>
+
+<br>
 
 로봇이 집 안을 돌아다니며 본 물체를 기억해 둔다. 그래서 사람이 물체를 찾거나 옮겨 달라고 하면, 어디 있는지 다시 뒤지지 않고 기억을 떠올려 바로 움직인다.
 
