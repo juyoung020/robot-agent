@@ -1,6 +1,11 @@
 # refs
 
-참고 논문·코드·자료 모음. 레포가 **공개(public)** 이므로 논문 PDF는 올리지 말고 링크만 적는다 (저작권).
+참고 논문·코드·자료 모음. 레포가 **공개(public)** 이므로 논문 PDF는 깃에 올리지 않는다 (저작권).
+`refs/papers/` 에 PDF를 받아 두되 `.gitignore` 로 제외되어 있으니, 각자 아래 명령으로 받는다:
+
+```bash
+bash refs/download.sh
+```
 
 ## VLA (행동 모델)
 
@@ -25,3 +30,14 @@
 |---|---|---|---|
 | SayPlan: Grounding LLMs using 3D Scene Graphs for Scalable Robot Task Planning (CoRL 2023) | [arXiv 2307.06135](https://arxiv.org/abs/2307.06135) | | 그래프에서 필요한 부분만 LLM이 탐색 + 반복 재계획 |
 | MoMa-LLM: Language-Grounded Dynamic Scene Graphs for Interactive Object Search with Mobile Manipulation | [arXiv 2403.08605](https://arxiv.org/abs/2403.08605) | | 탐색하며 갱신되는 scene graph 위에서 LLM이 행동 선택 |
+
+## 2025 BEHAVIOR Challenge 상위 팀
+
+BEHAVIOR-1K 가정용 장기 작업 대회. 1·2·3위 모두 π0.5 기반.
+
+| 순위 | 팀 | 점수 | 코드 | 보고서 | 메모 |
+|---|---|---|---|---|---|
+| 1 | Robot Learning Collective (개인 팀) | 0.260 | [IliaLarchenko/behavior-1k-solution](https://github.com/IliaLarchenko/behavior-1k-solution) | [arXiv 2512.06951](https://arxiv.org/abs/2512.06951) | Task adaptation of VLA |
+| 2 | Comet (NVIDIA Research) | 0.251 | [mli0603/openpi-comet](https://github.com/mli0603/openpi-comet) | [arXiv 2512.10071](https://arxiv.org/abs/2512.10071) | openpi 기반 |
+| 3 | SimpleAI Robot (베이징 스타트업 深朴智能) | 0.159 | 공개 안 됨 | 공개 안 됨 (대회 발표 제목 "SimBot-Agent") | 같은 팀 논문 [arXiv 2607.06256](https://arxiv.org/abs/2607.06256): agent가 π0.5 스킬을 호출·검증·재계획 → **우리 agent+VLA 구조와 가장 가까움** |
+| 4 | The North Star (Huawei) | 0.120 | 공개 안 됨 | 공개 안 됨 | |
