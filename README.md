@@ -12,5 +12,6 @@ robot-programming-team/
 │   ├── scene_graph/ # 3D scene graph: 로봇이 본 물체 기억
 │   ├── agent/       # 장기 계획, 단계 추적, 실패 복구
 │   └── vla/         # π0.5: 지시 + 카메라 영상 → 행동
-└── scripts/         # 설치·실행 스크립트
+├── scripts/         # 설치·실행 스크립트
+└── refs/            # 참고 논문·코드 링크
 ```
