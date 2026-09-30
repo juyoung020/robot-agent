@@ -35,7 +35,11 @@
 | RTAB-Map | RGB-D(+라이다) 3D SLAM. 리모 공식 데모 있음. 무거움 |
 | slam_toolbox | ROS 2 기본 2D SLAM. Nav2 와 잘 붙음 |
 
-**기본안(잠정)**: 리모 공식 데모가 있는 것부터 (Cartographer → 부족하면 RTAB-Map).
+**결정: 2D 라이다 SLAM (Cartographer)** (2026-09-30).
+- 리모 위에서 Cartographer 로 2D 지도를 한 번 만들고, 평소에는 그 지도 위에서 **위치만 추정**한다 (위치 추정 모드).
+- 물체의 3D 위치는 SLAM 이 아니라 `로봇 pose + depth 카메라` 로 서버에서 계산한다 → 3D SLAM(RTAB-Map)은 쓰지 않는다 (Jetson Nano 에 무거움).
+- 시뮬레이션(BEHAVIOR)은 정답 pose 를 주므로 SLAM 은 실제 리모에서만 쓴다 → scene graph·agent 개발이 SLAM 을 기다리지 않아도 된다.
+- 리모는 ROS 1 (Ubuntu 18.04) → ros1_bridge 또는 ROS 2 Docker 로 서버와 잇는다 (확인 필요).
 
 ## 2. 물체 분할·인식 (YOLO-seg)
 
@@ -200,7 +204,7 @@ spark-dsg visualize 지도.json   # http://localhost:8080 에서 보기 (viser �
 
 | 부품 | 결정 | 날짜 | 근거 (실험 결과 위치) | 담당 |
 |---|---|---|---|---|
-| SLAM | | | | |
+| SLAM | **2D 라이다 SLAM (Cartographer)** | 2026-09-30 | 팀 결정. 3D 위치는 depth 로 계산 | |
 | 물체 분할·인식 | **YOLO-seg** | 2026-09-30 | FastSAM 에서 변경. 영역+이름 한 번에, SAM·CLIP 대신 | |
 | 의미 특징 | **쓰지 않음** (필요하면 YOLOE → MobileCLIP2-S0) | 2026-09-30 | 이름은 YOLO-seg 가 줌 | |
 | DA | **자체 제작** | 2026-09-30 | 팀 결정 | |
