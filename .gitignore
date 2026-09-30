@@ -223,3 +223,5 @@ log/
 
 # 참고 논문 PDF (저작권, 공개 레포) — refs/download.sh 로 받기
 refs/papers/
+# 참고 코드 (각 원본 레포 클론) — refs/download.sh 로 받기
+refs/code/
