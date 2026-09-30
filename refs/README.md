@@ -37,6 +37,8 @@ bash refs/download.sh
 
 BEHAVIOR-1K 가정용 장기 작업 대회. 1·2·3위 모두 π0.5 기반.
 
+참고 대회 공식 페이지: [behavior.stanford.edu/challenge](https://behavior.stanford.edu/challenge/index.html) — 규칙·과제·데이터·평가 방법·리더보드.
+
 | 순위 | 팀 | 점수 | 코드 | 보고서 | 메모 |
 |---|---|---|---|---|---|
 | 1 | Robot Learning Collective (개인 팀) | 0.260 | [IliaLarchenko/behavior-1k-solution](https://github.com/IliaLarchenko/behavior-1k-solution) | [arXiv 2512.06951](https://arxiv.org/abs/2512.06951) | Task adaptation of VLA |
