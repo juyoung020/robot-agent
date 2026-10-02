@@ -52,17 +52,42 @@ AgileX 리모(LIMO) 기본형(가정, **프로를 받을 수도 있음**) + 매�
 
 ```
 robot-agent/
-├── docs/            # 계획(plan.md), 회의 자료, 설계 문서, 발표 자료
+├── docs/            # 계획(plan.md), 모델 선택, 후보 조사, 회의 자료, 발표 자료 (목록은 docs/README.md)
 ├── src/             # 코드 (ROS 2 패키지)
 │   ├── scene_graph/ # ① 물체 기억
 │   ├── agent/       # ② 큰 계획·대화 (LLM)·실패 복구
+│   │   ├── skills/  #   스킬(한 가지 일을 끝까지 하는 단위, 지금은 explore)
+│   │   ├── tools/   #   LLM 에게 보이는 도구(move_robot, Rust)
+│   │   └── prompts/ #   공통 프롬프트
 │   ├── vla/         # ③ 작은 계획·행동 (VLA, π0.5)
 │   ├── app/         # 휴대폰 앱 (iOS·Android, 채팅으로 명령)
 │   └── behavior-2026/ # 서브모듈: BEHAVIOR Challenge 2026 (시뮬레이터에서 같은 구조를 시험)
+│       ├── src/scene_graph/ # scenemap·ovdet·clip(물체 영상 임베딩)·runtime(sgrt)·viewer
+│       ├── third_party/spark_dsg/ # Spark-DSG 우리 사본 (BSD-3)
+│       ├── tools/   #   실행·측정·검증 스크립트
+│       └── archive/ #   지금 안 쓰는 모듈 (지우지 않고 옮겨 둠)
+├── training/        # 로봇에 올릴 작은 모델 학습 (embed/: 영상–글 임베딩 증류)
 ├── scripts/         # 설치·실행 스크립트
 ├── tests/           # 테스트 (sandbox/ 는 AI·사람 실험 공간)
 └── refs/            # 참고 논문·코드 목록
 ```
+
+## 문서
+
+- [docs/README.md](docs/README.md) — 이 저장소 문서 목록
+- [docs/clip_candidates.md](docs/clip_candidates.md) — CLIP 류 임베딩 모델 후보·측정
+- [training/README.md](training/README.md) — 작은 모델 학습
+- [scenemap 설계](https://github.com/juyoung020/behavior-2026/blob/main/docs/scenemap_설계.md) — 물체 기억(2D SLAM·물체 지도·계획기 질의) 설계 (서브모듈)
+- [archive/README.md](https://github.com/juyoung020/behavior-2026/blob/main/archive/README.md) — 지금 안 쓰는 모듈: 무엇을, 왜, 어떻게 되살리나 (서브모듈)
+- [tools/README.md](https://github.com/juyoung020/behavior-2026/blob/main/tools/README.md) — 실행·측정·검증 스크립트 (서브모듈)
+
+## 정한 것
+
+- 이미지 임베딩: SigLIP 2 B/32.
+- 분할: FastSAM-s, 입력 416.
+- 물체 벡터는 원본 임베딩 그대로 두고, 이름은 기억 폴더의 `cache/` 에 둔다.
+- CUDA 12.8.
+- 지도 자세: `SGRT_POSE` 로 고른다(`slam`·`odom`·`gt`, 실제 로봇 기본 `slam`, 시뮬 시험은 `gt`).
 
 ## BEHAVIOR Challenge 2026 (서브모듈)
 
