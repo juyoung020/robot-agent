@@ -14,7 +14,7 @@ bash refs/download.sh
 | π0.5: a Vision-Language-Action Model with Open-World Generalization (CoRL 2025) | [arXiv 2504.16054](https://arxiv.org/abs/2504.16054) | [Physical-Intelligence/openpi](https://github.com/Physical-Intelligence/openpi) | 우리가 쓸 VLA. 단계(subtask) 지시 + 카메라 → 행동 |
 | π0: A Vision-Language-Action Flow Model for General Robot Control | [arXiv 2410.24164](https://arxiv.org/abs/2410.24164) | [Physical-Intelligence/openpi](https://github.com/Physical-Intelligence/openpi) | π0.5의 전신 |
 
-## 3D Scene Graph (로봇의 기억)
+## Scene Graph (로봇의 기억)
 
 | 제목 | 논문 | 코드 | 메모 |
 |---|---|---|---|

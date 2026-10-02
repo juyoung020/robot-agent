@@ -17,7 +17,7 @@ flowchart LR
     APP["📱 휴대폰 앱<br/>채팅"]
     subgraph LIMO["리모 — 우리 코드 전부"]
         direction LR
-        S["카메라 · 라이다"] --> M["① 물체 기억<br/>SLAM · YOLO-seg<br/>3D 위치 · 지도 갱신"]
+        S["카메라 · 라이다"] --> M["① 물체 기억<br/>SLAM · YOLO-seg<br/>2D 지도 위치 · 지도 갱신"]
         M --> A["② 큰 계획·대화 (LLM agent)<br/>기억 풀어 주기 · 다시 계획"]
         A --> V["③ 작은 계획·행동 (VLA)<br/>이동 · π0.5"]
     end
@@ -79,10 +79,10 @@ flowchart LR
 | 할 일 | 내용 | 담당 |
 |---|---|---|
 | 물체 인식 | YOLO-seg (가장 작은 nano 모델) 를 TensorRT FP16 으로 바꿔 리모에서 실행 → 물체의 영역과 이름 | |
-| 3D 위치 | 영역 안 픽셀 + depth → 월드 좌표. 가장자리를 살짝 빼고 **중앙값**으로 물체 위치 하나 | |
+| 지도 위치 | 영역 안 픽셀 + depth → 2D 지도 좌표(x, y). 가장자리를 살짝 빼고 **중앙값**으로 물체 위치 하나 | |
 | 같은 물체 판단 (DA) | 새로 본 물체가 이미 아는 물체인지 — **직접 만든다**. 같은 이름끼리 위치로 비교 | |
 | 지도 갱신 | 옮겨짐·사라짐·생김을 찾아 바뀐 부분만 고친다 — **직접 만든다** | |
-| 저장·보기 | Spark-DSG 로 저장, `spark-dsg visualize` 로 3D 확인. agent 에게는 JSON 으로 | |
+| 저장·보기 | Spark-DSG 로 저장, `spark-dsg visualize` 로 확인. agent 에게는 JSON 으로 | |
 
 ### 3. 큰 계획·대화 (LLM agent) — `src/agent/`
 
@@ -153,7 +153,8 @@ flowchart LR
 | 2026-09-30 | 맵 업데이트: **자체 제작** | |
 | 2026-09-30 | Scene graph 저장·보기: **Spark-DSG + 뷰어** | Hydra·Khronos 와 같은 형식 |
 | 2026-09-30 | π0.5 실행: 기본은 4090 원격 추론, **필요하면** 라즈베리파이 5 → NPU 포팅 | 로봇 위에서 직접 돌려야 할 때를 대비 |
-| 2026-09-30 | SLAM: **2D 라이다 SLAM (Cartographer)**, 3D SLAM 안 씀 | Jetson Nano 에 3D SLAM 은 무거움. 물체 3D 위치는 pose + depth 로 충분 |
+| 2026-09-30 | SLAM: **2D 라이다 SLAM (Cartographer)**, 3D SLAM 안 씀 | Jetson Nano 에 3D SLAM 은 무거움. 물체 위치는 pose + depth 로 충분 |
+| 2026-10-02 | 목표: 3D 씬그래프 → **2D 씬그래프** — 물체를 2D 지도 위(x, y)에 등록 | |
 | 2026-09-30 | 시뮬레이션: **2025 BEHAVIOR Challenge 벤치마크** | 대회 상위 팀과 점수 비교 가능 |
 | 2026-09-30 | Agent LLM: **Qwen3.5-9B**, 학교 4090 에서 API 로 | 요금·외부 인터넷 불필요 |
 | 2026-09-30 | **SLAM·YOLO-seg 는 리모에서 실행** (YOLO-seg 는 TensorRT FP16, C++) | 리모 Jetson Nano 에서 돌아가는 가벼운 모델 |
