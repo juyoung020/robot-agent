@@ -453,7 +453,12 @@ Nano 는 같은 ONNX 로 `--profiles 1,8`(메모리) + FP16.
 
 - bringing_water public_test 0, 3000 스텝, FastSAM-s 416 + SigLIP 2(`outputs/clip_fastsam_20261003_075313`, 서브모듈): 물체 255 개 모두 이름.
   "white chair"·"흰 의자" → chair, "sofa"·"소파" → couch / recliner, "kitchen sink" → sink, "오븐" → oven. 이 장면엔 라디오가 없다.
-- turning_on_radio(라디오 찾기 "radio"·"라디오"): 아래에 이어 적는다(돌리는 중).
+- turning_on_radio public_test 0, 3000 스텝(`outputs/clip_fastsam_radio_20261003_081437`): 물체 269 개 모두 이름, CLIP 773 번(버림 0),
+  keyframe 묶음 1–8, 엔진 GPU 0.6–0.8 ms(event), `sgc_submit` 2.6–3.9 ms(시뮬과 GPU 를 나눠 써서 자르기 커널 차례를 기다림).
+  - 라디오 물체(O39, 빨간·흰 장난감 라디오 crop)의 이름은 **"extinguisher / 소화기"** 로 틀린다(2.2 의 "라디오는 이름 0" 과 같음).
+  - 그래도 찾기로는 잡힌다: "red radio"·"빨간 라디오"·"portable radio" **1위**(코사인 0.12–0.13), "라디오" 3위, "radio" 5위(242 물체 중).
+    라디오가 놓인 커피 테이블 crop(O34)이 바로 2위. → 3.5 결정(벡터가 원본, 이름은 캐시)이 맞다.
+  - 그 밖: "white chair"·"흰 의자" → folding chair / chair, "sofa"·"소파" → sofa / couch, "television" → wall mounted tv, "coffee table" 1위.
 
 ### 8.6 남은 일 (Nano, TRT 8.2)
 
