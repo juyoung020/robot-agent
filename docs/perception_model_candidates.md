@@ -2,6 +2,7 @@
 
 작성 2026-10-03. **추천만 하는 문서**다. 결정은 팀이 [모델 선택](model_selection.md) 에서 한다.
 
+- CLIP 류 임베딩(FastSAM-s 마스크 → 이름·임베딩, Nano 단독) 후보·측정: [CLIP 후보](clip_candidates.md) (10-03).
 - 지금 쓰는 것: `src/behavior-2026/src/scene_graph/ovdet` = **YOLOE-11 text-prompt seg**, TensorRT FP16, C API, 어휘 272개.
   - 비교 기록: `src/behavior-2026/docs/ovdet_검출기.md`. 숫자는 10-02 에 "다시 잴 것" 표시가 붙어 있다. 그래서 방향 참고로만 쓴다.
 - 표기
