@@ -33,7 +33,7 @@ def l2(x, axis=-1):
 class Enc:
     """open_clip model: image (N,3,S,S in [0,1]) -> embedding, text list -> embedding."""
 
-    def __init__(self, key, device='cuda', half=True):
+    def __init__(self, key, device='cuda', half=True, visual_only=False):
         import open_clip
         name, pt, _ = MODELS[key]
         m, _, pre = open_clip.create_model_and_transforms(name, pretrained=pt)
@@ -42,7 +42,10 @@ class Enc:
             m = reparameterize_model(m)
         self.key, self.dev = key, device
         self.dtype = torch.float16 if (half and device == 'cuda') else torch.float32
-        self.m = m.eval().to(device, self.dtype)
+        if visual_only:                       # image tower on the GPU, the rest stays on the CPU (shared GPU)
+            self.m = m.eval(); self.m.visual.to(device, self.dtype)
+        else:
+            self.m = m.eval().to(device, self.dtype)
         self.tok = open_clip.get_tokenizer(name)
         t = [x for x in pre.transforms if type(x).__name__ == 'Normalize']
         self.mean = np.array(t[0].mean if t else (0.5,) * 3, np.float32)

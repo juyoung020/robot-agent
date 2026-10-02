@@ -93,12 +93,9 @@ def main():
             for l in open(s[:-4] + '.jsonl'): f.write(json.loads(l)['id'] + '\n')
     encs, specs = {}, []
     for k in [x for x in a.base.split(',') if x]:
-        encs[k] = Enc(k); specs.append((k, encs[k].size, encs[k].mean, BASE_VIEWS + (('pool', 'poolaug') if k in POOL else ())))
+        encs[k] = Enc(k, visual_only=True); specs.append((k, encs[k].size, encs[k].mean, BASE_VIEWS + (('pool', 'poolaug') if k in POOL else ())))
     for k in [x for x in a.teacher.split(',') if x]:
-        encs[k] = Enc(k); specs.append((k, encs[k].size, encs[k].mean, TEACH_VIEWS))
-    for e in encs.values():                       # image tower only on GPU
-        if hasattr(e.m, 'transformer'): e.m.transformer.cpu()
-        if hasattr(e.m, 'text'): e.m.text.cpu()
+        encs[k] = Enc(k, visual_only=True); specs.append((k, encs[k].size, encs[k].mean, TEACH_VIEWS))
     arrs = {}
     for name, S, mean, views in specs:
         with torch.no_grad():

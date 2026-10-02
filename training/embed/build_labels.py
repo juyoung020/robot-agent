@@ -70,10 +70,19 @@ def main():
         add(r['DisplayName'], '', 'openimages', oi_ko.get(r['LabelName'], []), 'wikidata')
     for r in csv.DictReader(open(B1K)):
         if r.get('category'): add(r['category'], r.get('synset', ''), 'behavior1k', syn_ko(r.get('synset', '')), 'wikidata')
+    # curated names without a synset: most frequent WordNet noun sense (+ its Wikidata Korean)
+    for r in rows.values():
+        if r['synset']: continue
+        ss = wn.synsets(r['name'].replace(' ', '_'), 'n')
+        if ss:
+            r['synset'] = ss[0].name()
+            for k in ko.get(wn_id(ss[0]), []):
+                if k not in r['ko']: r['ko'].append(k)
+            if r['ko'] and not r['ko_src']: r['ko_src'] = 'wikidata'
     # WordNet object nouns
     seen = set()
     for root in ROOTS:
-        for s in wn.synset(root).closure(lambda x: x.hyponyms()):
+        for s in sorted(wn.synset(root).closure(lambda x: x.hyponyms()), key=lambda x: x.name()):
             if s in seen or s.instance_hypernyms(): continue
             seen.add(s)
             k = ko.get(wn_id(s), [])
