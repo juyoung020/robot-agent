@@ -35,7 +35,8 @@ for repo in \
   hovsg/HOV-SG \
   robot-learning-freiburg/MoMa-LLM \
   IliaLarchenko/behavior-1k-solution \
-  mli0603/openpi-comet; do
+  mli0603/openpi-comet \
+  neoul-ro/dynamic-object-mapping-benchmark; do
   dir="code/${repo#*/}"
   [ -d "$dir" ] && continue
   echo "클론 중: $repo"

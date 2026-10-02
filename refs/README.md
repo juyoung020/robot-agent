@@ -24,6 +24,7 @@ bash refs/download.sh
 | ConceptGraphs: Open-Vocabulary 3D Scene Graphs for Perception and Planning | [arXiv 2309.16650](https://arxiv.org/abs/2309.16650) | [concept-graphs/concept-graphs](https://github.com/concept-graphs/concept-graphs) | 2D 기반 모델을 3D로 융합, 열린 어휘(open-vocabulary) 물체 노드 |
 | HOV-SG: Hierarchical Open-Vocabulary 3D Scene Graphs for Language-Grounded Robot Navigation (RSS 2024) | [arXiv 2403.17846](https://arxiv.org/abs/2403.17846) | [hovsg/HOV-SG](https://github.com/hovsg/HOV-SG) | 층·방·물체 계층 + 열린 어휘 |
 | HAMMER: Heterogeneous, Multi-Robot Semantic Gaussian Splatting | [arXiv 2501.14147](https://arxiv.org/abs/2501.14147) | 공개 안 됨 ([프로젝트 페이지](https://hammer-project.github.io)) | 여러 로봇의 SLAM 좌표를 하나로 맞추고, CLIP 의미 특징을 넣은 3DGS 지도를 실시간 학습 (ROS 기반) |
+| Dynamic Object Mapping Benchmark (Isaac Sim) — 우리 팀 제작 | 논문 없음 | [neoul-ro/dynamic-object-mapping-benchmark](https://github.com/neoul-ro/dynamic-object-mapping-benchmark) | 카메라가 사무실을 두 바퀴 돌고 그 사이 물체를 옮김·교체·제거·추가. 물체 지도의 변화 탐지·물체 동일성(obj_id)·위치를 채점. **물체 기억(같은 물체 판단·지도 갱신) 검증용** |
 | Spark-DSG: 3D scene graph 자료구조 라이브러리 (C++·Python) | 논문 없음 | [MIT-SPARK/Spark-DSG](https://github.com/MIT-SPARK/Spark-DSG) | Hydra·Khronos 가 쓰는 scene graph 저장·읽기 API. `pip install` 로 파이썬에서 바로 사용 가능 |
 
 ## Agent (Scene graph + LLM 계획)
