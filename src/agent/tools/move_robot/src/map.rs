@@ -145,7 +145,7 @@ pub struct NavParams {
 
 impl Default for NavParams {
     fn default() -> Self {
-        NavParams { robot_r: 0.33, safe_r: 0.7, stop_margin: 0.10, frontier_min_m: 0.5, gain_r: 2.5, max_frontiers: 5, start_free_r: 0.45, start_min_clear: 0.25 }
+        NavParams { robot_r: 0.40, safe_r: 0.7, stop_margin: 0.10, frontier_min_m: 0.5, gain_r: 2.5, max_frontiers: 5, start_free_r: 0.45, start_min_clear: 0.33 }
     }
 }
 
@@ -285,7 +285,7 @@ impl Analysis {
                 }
                 // 벽에서 멀수록 쌈. 외접 원(0.39 m + 여유) 안쪽은 돌 수 없는 곳이라 크게 벌점(좁은 곳은 지나가기만)
                 let q = (safe - a.dobs[j]).max(0.0) / safe;
-                let qr = ((0.45 - a.dobs[j]) / 0.45).max(0.0);
+                let qr = 0.0f32 * a.dobs[j];
                 let pen = 1.0 + 4.0 * q * q + 25.0 * qr * qr + soft.map_or(0.0, |s| 2.0 * s[j]);
                 let nc = ci + l * g.res as f32 * pen;
                 if nc + 1e-4 < a.cost[j] {
@@ -486,7 +486,7 @@ fn find_frontiers(m: &MapIn, a: &Analysis, p: &NavParams) -> Vec<Frontier> {
                         }
                         let d = (dx * dx + dy * dy) as f64 * g.res * g.res;
                         let room = a.dobs[i] as f64;
-                        let score = if room >= 0.45 { -d.sqrt() } else { -10.0 + room * 10.0 - d.sqrt() };
+                        let score = if room >= 0.5 { -d.sqrt() } else { -10.0 + room * 10.0 - d.sqrt() };
                         if best.map_or(true, |b| score > b.0) {
                             best = Some((score, i));
                         }

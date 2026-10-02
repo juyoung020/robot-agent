@@ -218,26 +218,29 @@ impl MockWorld {
     }
     pub fn new(floor: crate::map::Grid) -> MockWorld {
         let n = floor.w * floor.h;
-        MockWorld { floor, logodds: vec![0.0; n], seen: vec![false; n], body_r: 0.28, fov: 49.6f64.to_radians(), range: 6.0, min_range: 0.4, kf_every: 6, contacts: 0, events: vec![], last_scan_hits: 0, map_us: 0, contact_log: vec![], in_contact: false, contact_steps: 0 }
+        MockWorld { floor, logodds: vec![0.0; n], seen: vec![false; n], body_r: 0.36, fov: 49.6f64.to_radians(), range: 6.0, min_range: 0.4, kf_every: 6, contacts: 0, events: vec![], last_scan_hits: 0, map_us: 0, contact_log: vec![], in_contact: false, contact_steps: 0 }
     }
     pub fn is_floor(&self, x: f64, y: f64) -> bool {
         self.floor.at(x, y) == 1
     }
-    /// 몸통 사각형(0.55 × 0.52 m, R1Pro 베이스)이 바닥만 덮나. body_r 은 둘레 여유(0 = 딱 맞음)
-    pub fn body_ok(&self, x: f64, y: f64, yaw: f64) -> bool {
-        let (hl, hw) = (0.275 + self.body_r * 0.0, 0.26);
-        let (s, c) = yaw.sin_cos();
-        let step = self.floor.res * 0.5;
-        let nx = (2.0 * hl / step).ceil() as i64;
-        let ny = (2.0 * hw / step).ceil() as i64;
-        for i in 0..=nx {
-            for j in 0..=ny {
-                if i != 0 && i != nx && j != 0 && j != ny && (i % 4 != 0 || j % 4 != 0) {
-                    continue;
-                }
-                let (lx, ly) = (-hl + 2.0 * hl * i as f64 / nx as f64, -hw + 2.0 * hw * j as f64 / ny as f64);
-                if !self.is_floor(x + c * lx - s * ly, y + s * lx + c * ly) {
-                    return false;
+    /// 몸통 원(반지름 body_r, R1Pro 베이스 약 0.36 m)이 바닥만 덮나
+    pub fn body_ok(&self, x: f64, y: f64, _yaw: f64) -> bool {
+        let r = self.body_r;
+        let k = (r / self.floor.res).ceil() as i64;
+        let (cx, cy) = self.floor.cell_of(x, y);
+        for dy in -k..=k {
+            for dx in -k..=k {
+                match self.floor.idx(cx + dx, cy + dy) {
+                    Some(i) => {
+                        let (px, py) = self.floor.center(i);
+                        // 칸(정사각형)과 원이 겹치나: 칸 안에서 원 중심에 가장 가까운 점
+                        let h = self.floor.res * 0.5;
+                        let (qx, qy) = (x.clamp(px - h, px + h), y.clamp(py - h, py + h));
+                        if (qx - x).hypot(qy - y) < r && self.floor.cells[i] != 1 {
+                            return false;
+                        }
+                    }
+                    None => return false,
                 }
             }
         }

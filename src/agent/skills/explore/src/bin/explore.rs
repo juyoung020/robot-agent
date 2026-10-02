@@ -112,7 +112,7 @@ fn reachable_reference(floor: &move_robot::Grid, start: [f64; 3]) -> move_robot:
                 continue;
             }
             let j = (ny * w + nx) as usize;
-            if !reach[j] && floor.cells[j] == 1 && (d[j] >= 0.28 || (nx - sx).pow(2) + (ny - sy).pow(2) < 64) {
+            if !reach[j] && floor.cells[j] == 1 && (d[j] >= 0.37 || (nx - sx).pow(2) + (ny - sy).pow(2) < 64) {
                 reach[j] = true;
                 q.push_back(j);
             }
