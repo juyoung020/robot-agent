@@ -305,7 +305,19 @@ pub fn run(cfg: &Config, backend: &mut dyn Backend, mut llm: Option<&mut dyn Llm
                 }
                 let req = ChatRequest { messages: m, tools: Some(vec![tool.clone()]), sampling: Sampling { temperature: cfg.temperature, ..Sampling::default() }, max_tokens: Some(cfg.max_tokens), thinking: *thinking, purpose: "explore".into() };
                 let approx = req.approx_tokens();
-                let res = match l.chat(&req) {
+                // 429(요청 한도)·5xx·연결 오류는 기다렸다 다시(최대 6 번, 10·20·…초)
+                let mut tries = 0;
+                let res = loop {
+                    match l.chat(&req) {
+                        Err(e) if tries < 6 && (e.contains("429") || e.contains("HTTP 5") || e.contains("curl") || e.contains("timed out")) => {
+                            tries += 1;
+                            let _ = writeln!(w.trace, "{}", json!({"k": calls, "llm_retry": tries, "error": e.chars().take(120).collect::<String>()}));
+                            std::thread::sleep(std::time::Duration::from_secs(10 * tries));
+                        }
+                        r => break r,
+                    }
+                };
+                let res = match res {
                     Ok(r) => r,
                     Err(e) => {
                         let _ = writeln!(w.trace, "{}", json!({"k": calls, "llm_error": e}));
