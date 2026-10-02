@@ -49,6 +49,7 @@ BEHAVIOR-1K 가정용 장기 작업 대회. 1·2·3위 모두 π0.5 기반.
 ## 리모 ROS 2 (포팅된 것 찾기)
 
 기본 리모는 Ubuntu 18.04 (ROS 1) 이라 ROS 2 로 포팅된 것을 찾아 쓴다. 우리 리모(Jetson Nano)에서 되는지는 확인 필요.
+리모 **프로**(Jetson Orin Nano)를 받으면 ROS 2 Foxy 를 공식 지원하므로 이 절은 거의 필요 없다 ([LIMO Pro 공식 페이지](https://global.agilex.ai/products/limo-pro)).
 
 | 저장소 | 내용 | 메모 |
 |---|---|---|

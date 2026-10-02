@@ -40,7 +40,7 @@
 
 ## 로봇
 
-AgileX 리모(LIMO) 기본형(가정) + 매니퓰레이터(모델 미정). 자세한 전제와 할 일은 [`docs/plan.md`](docs/plan.md).
+AgileX 리모(LIMO) 기본형(가정, **프로를 받을 수도 있음**) + 매니퓰레이터(모델 미정). 자세한 전제와 할 일은 [`docs/plan.md`](docs/plan.md).
 
 ## 폴더 구조
 

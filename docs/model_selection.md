@@ -27,6 +27,7 @@
 | **우리 코드는 전부 리모에서 돈다** (Jetson Nano 4GB) | 모든 모델이 4GB 안에 같이 올라가야 한다 → 가벼운 것 우선 |
 | 학교 4090 (24GB) 은 Qwen API 와 학습만 | 로봇이 쓰는 모델은 4090 에 기대지 않는다 |
 | 리모 기본형은 Ubuntu 18.04 (ROS 1) | ROS 2 로 포팅된 리모 패키지를 찾아 쓴다 |
+| **리모 프로를 받을 수도 있다** (Jetson Orin Nano 8GB, ROS 2 Foxy 공식 지원) | 받으면 메모리 한도가 8GB 로, CUDA·TensorRT 도 새 버전을 쓸 수 있다 → 아래 선택 중 "리모에 무거워서" 뺀 것들을 다시 볼 수 있다 |
 
 새로 고르거나 바꿀 때는 이렇게 한다.
 
@@ -164,7 +165,7 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 
 ## 출처
 
-- 리모 사양·SLAM 데모: [AgileX LIMO 사양](https://www.wevolver.com/specs/agilex-limo), [LIMO ROS2 매핑·내비게이션](https://www.hackster.io/agilexrobotics/ros2-mapping-and-navigation-with-limo-ros2-1936a9), [Trossen LIMO 데모](https://docs.trossenrobotics.com/agilex_limo_docs/demos.html)
+- 리모 사양·SLAM 데모: [AgileX LIMO 사양](https://www.wevolver.com/specs/agilex-limo), [LIMO ROS2 매핑·내비게이션](https://www.hackster.io/agilexrobotics/ros2-mapping-and-navigation-with-limo-ros2-1936a9), [Trossen LIMO 데모](https://docs.trossenrobotics.com/agilex_limo_docs/demos.html), [LIMO Pro 공식](https://global.agilex.ai/products/limo-pro)
 - 물체 인식: [SAM 계열 속도·정확도 비교 (2025)](https://scitepress.org/PublishedPapers/2025/137785), [MobileSAM](https://docs.ultralytics.com/ko/models/mobile-sam), [YOLOv8 TensorRT Jetson Nano](https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano)
 - LLM: [Qwen3.5-9B GPU 가이드](https://www.spheron.network/tools/gpu-recommender/Qwen/Qwen3.5-9B/)
 - VLA 크기·메모리: openpi README (`refs/code/openpi/README.md`), [VLA 비교 연구 (arXiv 2603.19233)](https://arxiv.org/pdf/2603.19233)
