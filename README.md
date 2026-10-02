@@ -51,10 +51,19 @@ robot-programming-team/
 │   ├── scene_graph/ # ① 물체 기억
 │   ├── agent/       # ② 큰 계획·대화 (LLM)·실패 복구
 │   ├── vla/         # ③ 작은 계획·행동 (VLA, π0.5)
-│   └── app/         # 휴대폰 앱 (iOS·Android, 채팅으로 명령)
+│   ├── app/         # 휴대폰 앱 (iOS·Android, 채팅으로 명령)
+│   └── behavior-2026/ # 서브모듈: BEHAVIOR Challenge 2026 (시뮬레이터에서 같은 구조를 시험)
 ├── scripts/         # 설치·실행 스크립트
 ├── tests/           # 테스트 (sandbox/ 는 AI·사람 실험 공간)
 └── refs/            # 참고 논문·코드 목록
+```
+
+## BEHAVIOR Challenge 2026 (서브모듈)
+
+[`src/behavior-2026`](https://github.com/juyoung020/behavior-2026) 은 같은 구조(물체 기억 + LLM 계획 + π0.5)를 Stanford BEHAVIOR Challenge 2026 시뮬레이터(OmniGibson, Isaac Sim 5.1)에서 시험하는 저장소다. 물체 기억은 scenemap(2D SLAM + YOLOE 물체 지도), 행동은 π0.5 네이티브 CUDA 엔진. 실행 환경은 Ubuntu 22.04 + RTX 4090(자세히는 그 저장소의 `docs/Linux_설치.md`).
+
+```bash
+git submodule update --init src/behavior-2026   # 서브모듈 받기 (그 안의 BEHAVIOR-1K 등은 필요할 때 --recursive)
 ```
 
 ## 시작하기
