@@ -245,6 +245,31 @@
   - 작은 한국어 학생 23M(3.2 b): Nano 에서 10–100 ms(추정) → 로봇 안에서 된다. 그래서 (b) 가 중요하다.
 - agent 는 질의마다 "물체 id, 점수, 이름, 위치" 상위 5개를 받는다. 이름이 틀려도(라디오) 임베딩으로 찾는다.
 
+### 3.5 저장: 벡터가 원본, 이름은 캐시 (2026-10-03 결정)
+
+- CLIP 입력은 **원본 RGB** 에서 물체 상자를 10 % 여유로 정사각형으로 잘라 그대로 넣는다(픽셀은 바꾸지 않는다). 마스크는 마지막 풀링의 가중치로만 쓴다.
+- 물체 하나에 저장하는 원본은 **임베딩 벡터 1개**(768-d FP16)뿐이다.
+- 이름(의미 단어)은 그 벡터와 라벨 표의 코사인으로 언제든 다시 뽑을 수 있다. 그래서 이름은 **캐시**로 둔다. 라벨 찾기가 µs 라 다시 뽑는 비용은 작지만, 캐시해 두면 LLM 이 scene graph 를 읽을 때 도구 호출 없이 이름이 보이고, 뷰어·`scene.json` 을 사람이 바로 읽는다.
+- 두 가지 찾기 모두 코사인이다.
+  - 질의 → 물체: 질의 글 벡터 ↔ 물체 벡터.
+  - 물체 → 이름: 물체 벡터 ↔ 라벨 표 → 캐시.
+
+기억 폴더 안 배치:
+
+```
+memory/
+├── scene.json            # 노드 metadata.names = 캐시의 1위 이름(영·한) + 라벨 표 sha
+├── objects/              # 원본: 물체마다 관측에서 나온 것
+│   ├── O<id>_rgb.png · O<id>_depth.png · O<id>_mask.png · O<id>_points.ply
+│   └── O<id>_emb.f16     # 임베딩 벡터 768 × FP16 (원본)
+└── cache/                # 파생: 지워도 objects/ + 라벨 표로 다시 만든다
+    ├── names.json        # {"table": {name, version, sha}, "objects": {"O12": {"emb_sha": …, "en": [["chair", 0.31], …], "ko": [["의자", 0.31], …], "level": "chair", "structural": false}}}
+    └── index/            # 찾기 색인(2진 부호·IVF 등), 다시 만들 수 있음
+```
+
+- 다시 만드는 조건: 라벨 표 `sha` 가 바뀌었거나, 물체의 `emb_sha` 가 바뀌었을 때(best view 갱신)만 그 물체를 다시 뽑는다.
+- 쓰기는 다른 파일처럼 임시 이름 → rename(원자적), 저장 주기에 맞춰 비동기로.
+
 ## 4. Nano 속도 추정
 
 **가정 (모두 추정)**
@@ -283,7 +308,7 @@
 | 부분 | 선택 | 도는 곳 | 비고 |
 |---|---|---|---|
 | 분할 | **FastSAM-s 416**, FP16, opset 13 정적 ONNX → Nano 에서 엔진 빌드 | Nano GPU, keyframe 만(≤ 1 Hz) | ovdet 이 이미 돌린다(클래스 무관, CUDA NMS) |
-| 영상 인코더 | **SigLIP 2 B/32-256**, 두 출력(`emb`, `emb_mask`, 입력 `images` N×3×256×256 + `wpatch` N×64), LayerNorm FP32 고정 | Nano GPU, 같은 CUDA 문맥, 별도 스트림, 배치 ≤ 8 | 저장은 `emb_mask`(이름) + `emb`(찾기 보조) 둘 다, FP16 768-d |
+| 영상 인코더 | **SigLIP 2 B/32-256**, 두 출력(`emb`, `emb_mask`, 입력 `images` N×3×256×256 + `wpatch` N×64), LayerNorm FP32 고정 | Nano GPU, 같은 CUDA 문맥, 별도 스트림, 배치 ≤ 8 | 저장은 벡터 1개(FP16 768-d, `objects/O<id>_emb.f16`), 이름은 `cache/` (3.5절) |
 | 영상 대안 | OpenAI B/32 + `Bingsu/clip-vit-base-patch32-ko` | 같은 자리 | meridian 과 같은 공간. 한국어 찾기 측정 1위(0.75). 이름은 0.28 로 낮다 |
 | 한국어 글 | **처음**: SigLIP 2 자체 글(282M)을 agent 서버에서. **다음**: `lassl/bert-ko-small` 학생을 SigLIP 2 B/32 글 공간에 다시 증류(3.2 b) | 서버 → 나중에 Nano | 사전에 있는 말은 미리 계산한 표에서 바로 |
 | 라벨 표 | 주 표 1–3k(BEHAVIOR 집 물건 + COCO/LVIS/O365 + 구조물) + 긴 꼬리 28.8k(WordNet, 3–5만으로 늘림), 영어 글 임베딩은 PC 에서 한 번, 한국어 이름 열 | 파일로 Nano 에 | 확신도 낮으면 WordNet 상위어로 |
