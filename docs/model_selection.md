@@ -8,14 +8,14 @@
 | 부품 | 선택 | 한 줄 이유 | 상태 |
 |---|---|---|---|
 | 지도·위치 (SLAM) | **Cartographer (2D 라이다)** | 리모에서 가볍게 돌고, 물체 높이는 depth 로 알 수 있음 | 결정 |
-| 물체 인식 | **YOLO-seg (nano)**, 리모에서 TensorRT | 물체 영역과 이름을 한 번에 | 결정 |
+| 물체 인식 | **FastSAM-s (입력 416) + SigLIP 2 B/32** 로 바꾸는 중 (그 전: YOLO-seg nano, 시뮬은 YOLOE) | 마스크는 FastSAM-s, 이름·임베딩은 SigLIP 2. 후보·측정은 [CLIP 후보](clip_candidates.md) | 결정, 코드 작업 중 |
 | 같은 물체 판단 (DA) | **직접 만듦** | 같은 이름끼리 위치로 비교 | 결정 |
 | 지도 갱신 | **직접 만듦** | 바뀐 부분만 고침 | 결정 |
 | 물체 지도 저장·보기 | **Spark-DSG** 저장, 보기는 **2D 지도** | Hydra·Khronos 와 같은 형식. 웹 3D 뷰어는 안 씀(10-02) | 결정 |
-| 큰 계획·대화 (LLM) | **Qwen3.5-9B**, 학교 4090 API | 요금·외부 인터넷 없이 사용 | 결정 |
+| 큰 계획·대화 (LLM) | **Qwen3.5-9B**, AI agent 수업이 주는 KAU API | 요금 없이 사용 (인터넷 필요) | 결정 |
 | 작은 계획·행동 (VLA) | **π0.5** | 2025 BEHAVIOR 대회 상위 팀이 모두 사용 | 잠정 |
 | π0.5 실행 위치 | **리모**, 안 되면 라즈베리파이 5 + DEEPX DX-M1 (보유) | 로봇이 서버 없이 스스로 움직이게 | 결정 |
-| 시뮬레이션 | **2025 BEHAVIOR Challenge 벤치마크** | 대회 상위 팀과 점수를 비교할 수 있음 | 결정 |
+| 시뮬레이션 | **2026 BEHAVIOR Challenge 벤치마크** (참고 코드는 2025 상위 팀 것) | 대회 상위 팀과 점수를 비교할 수 있음 | 결정 |
 | 앱 | **iOS (SwiftUI) · Android (Compose)** | 네이티브, 카카오톡식 채팅 | 결정 |
 
 ## 고를 때 따지는 것
@@ -25,7 +25,7 @@
 | 조건 | 영향 |
 |---|---|
 | **우리 코드는 전부 리모에서 돈다** (Jetson Nano 4GB) | 모든 모델이 4GB 안에 같이 올라가야 한다 → 가벼운 것 우선 |
-| 학교 4090 (24GB) 은 Qwen API 와 학습만 | 로봇이 쓰는 모델은 4090 에 기대지 않는다 |
+| LLM 은 AI agent 수업(최영식 교수님)이 주는 Qwen API, 학교 4090 (24GB) 은 학습만 | 로봇이 쓰는 모델은 4090 에 기대지 않는다 |
 | 리모 기본형은 Ubuntu 18.04 (ROS 1) | ROS 2 로 포팅된 리모 패키지를 찾아 쓴다 |
 | **리모 프로를 받을 수도 있다** (Jetson Orin Nano 8GB, ROS 2 Foxy 공식 지원) | 받으면 메모리 한도가 8GB 로, CUDA·TensorRT 도 새 버전을 쓸 수 있다 → 아래 선택 중 "리모에 무거워서" 뺀 것들을 다시 볼 수 있다 |
 
@@ -43,7 +43,7 @@
 ### 지도·위치 (SLAM) — Cartographer (2D 라이다)
 
 - 리모로 방을 한 번 돌며 2D 지도를 만들고, 평소엔 그 지도 위에서 **위치만** 추정한다.
-- 물체 위치(xyz)는 SLAM 이 아니라 `로봇 위치 + 카메라 장착 위치 + YOLO-seg 마스크 무게중심의 depth` 로 계산해 기록한다. 그래서 무거운 3D SLAM 은 필요 없다.
+- 물체 위치(xyz)는 SLAM 이 아니라 `로봇 위치 + 카메라 장착 위치 + 물체 마스크(지금은 FastSAM-s) 무게중심의 depth` 로 계산해 기록한다. 그래서 무거운 3D SLAM 은 필요 없다.
 - 시뮬레이션은 정답 위치를 주므로, 물체 기억·계획 파트는 SLAM 이 끝나기를 기다리지 않아도 된다.
 
 | 다른 후보 | 안 고른 이유 |
@@ -53,7 +53,10 @@
 
 잴 것: 리모 CPU·메모리 사용량, 방을 한 바퀴 돌고 출발점에 왔을 때 어긋난 거리.
 
-### 물체 인식 — YOLO-seg (nano)
+### 물체 인식 — YOLO-seg (nano) → FastSAM-s + SigLIP 2 로 바꾸는 중
+
+> **지금 방향 (10-03~)**: FastSAM-s(입력 416)가 이름 없는 마스크를 내고, SigLIP 2 B/32 가 물체 조각마다 영상 임베딩을 내서 라벨 표에서 이름을 찾는다. 물체 벡터는 원본 임베딩 그대로 두고, 이름은 기억 폴더의 `cache/` 에 둔다. 코드는 서브모듈 `src/behavior-2026/src/scene_graph/clip`(작업 중), 지금 돌아가는 검출기는 아직 YOLOE(`src/behavior-2026/src/scene_graph/ovdet`). 후보·측정: [CLIP 후보](clip_candidates.md), [물체 인식 모델 후보](perception_model_candidates.md).
+> 아래는 처음(09-30) YOLO-seg 를 고를 때의 근거로 남긴다.
 
 - 카메라 영상에서 물체의 **영역과 이름을 한 번에** 준다.
 - 컵·병·의자·식탁·소파·노트북·책 등 집 안 물건은 기본 목록(COCO 80종)에 대부분 들어 있다. 목록 밖의 물건이 필요해지면 원하는 단어로 찾는 YOLOE / YOLO-World 로 바꾼다.
@@ -89,6 +92,13 @@
 
 잴 것: 같은 물체가 두 번 등록된 수, 다른 물체가 하나로 합쳐진 수.
 
+### 물체 찾기 — 임베딩 벡터 찾기 + 이름(의미) 찾기, 둘 다 쓴다
+
+- **임베딩 벡터 찾기**: 질의 글("빨간 컵", 한국어도)을 SigLIP 2 B/32 글 공간의 벡터로 바꾸고, 기억 속 물체 벡터(물체 조각의 원본 영상 임베딩)와 **코사인 유사도**(L2 정규화한 벡터의 내적)로 비교해 가까운 순으로 고른다. 이름표에 없는 말("물 마시는 거")로도 찾을 수 있다.
+- **이름(의미) 찾기**: 물체마다 라벨 표에서 고른 이름·상위어(기억 폴더 `cache/`)를 붙여 두고, 이름이나 상위어("컵" ⊂ "식기")로 찾는다. 빠르고 결과를 설명하기 쉽다.
+- 찾은 물체(이름·위치·상태)를 LLM 프롬프트에 넣어 답·계획을 만들게 하는 구조가 **RAG**(Retrieval-Augmented Generation, 검색 증강 생성)다. 우리 agent 는 물체 기억을 도구로 찾아 그 결과로 답하므로 이 방식에 해당한다.
+- 임베딩·라벨 표·한국어 질의 모델은 [`training/embed`](../training/embed/README.md), 실행 쪽은 서브모듈 `src/behavior-2026/src/scene_graph/clip`.
+
 ### 지도 갱신 — 직접 만듦
 
 - 물체가 옮겨지거나·사라지거나·새로 생기면 지도에서 **바뀐 부분만** 고친다.
@@ -99,23 +109,18 @@
 ### 물체 지도 저장·보기 — Spark-DSG + 뷰어
 
 - Hydra·Khronos 가 쓰는 형식이라 참고 코드의 도구를 그대로 쓸 수 있다. 층·방·물체 계층을 지원한다.
-- 뷰어가 들어 있어 웹 브라우저에서 3D 로 볼 수 있다.
-
-```bash
-pip install spark-dsg
-spark-dsg visualize 지도.json   # http://localhost:8080
-```
+- 보기는 **2D 지도** 뷰어 sgviz(서브모듈 `src/behavior-2026/src/scene_graph/viewer`, Spark-DSG + viser). spark-dsg 의 웹 3D 뷰어는 안 쓴다(10-02).
 
 agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 
-### 큰 계획·대화 (LLM) — Qwen3.5-9B, 학교 4090 API
+### 큰 계획·대화 (LLM) — Qwen3.5-9B, KAU API (AI agent 수업)
 
-- 리모의 agent 가 학교 4090 의 API 로 질문을 보낸다. 요금이 없고 외부 인터넷도 필요 없다.
-- 4090 에 원래 크기(FP16, 약 18GB)로 혼자 올라간다. π0.5 학습(22.5GB 이상) 중에는 끈다.
+- 리모의 agent 가 AI agent 수업(최영식 교수님)이 주는 Qwen API 로 질문을 보낸다: `https://agent.kau.ac.kr/v1`, 모델 `qwen3.5-9b` (vLLM). 요금이 없다. 학교 서버(`agent.kau.ac.kr`)에 HTTPS 로 붙으므로 인터넷이 필요하다.
+- 서버는 수업 쪽이 운영한다. 우리가 띄우거나 끄지 않는다.
 
 | 다른 후보 | 안 고른 이유 |
 |---|---|
-| Claude · GPT 등 유료 API | 요금과 외부 인터넷이 필요 |
+| Claude · GPT 등 유료 API | 요금이 든다 |
 
 잴 것: 명령 10~20개로 π0.5 에게 맞는 지시를 주는 비율, 물체를 놓쳤을 때 다시 찾아가는 비율, 응답 시간.
 
@@ -140,7 +145,9 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 
 양자화 단계: bf16 (원래) → int8 → int4 순으로 줄이며 성공률이 얼마나 떨어지는지 잰다.
 
-### 시뮬레이션 — 2025 BEHAVIOR Challenge 벤치마크
+### 시뮬레이션 — 2026 BEHAVIOR Challenge 벤치마크
+
+- 참고하는 코드·체크포인트는 2025 대회 상위 팀 것이다(서브모듈 `docs/2025상위팀_깃허브.md`).
 
 - 대회가 준 과제와 평가 방식을 그대로 쓴다 → 점수를 대회 상위 팀과 바로 비교할 수 있다.
 - 사람이 조종한 시연 데이터 약 10,000개와 상위 팀의 학습된 모델이 공개돼 있어 학습도 여기서 시작한다.
@@ -170,4 +177,4 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 - LLM: [Qwen3.5-9B GPU 가이드](https://www.spheron.network/tools/gpu-recommender/Qwen/Qwen3.5-9B/)
 - VLA 크기·메모리: openpi README (`refs/code/openpi/README.md`), [VLA 비교 연구 (arXiv 2603.19233)](https://arxiv.org/pdf/2603.19233)
 - NPU: [DEEPX DX-M1 사양 (DFRobot)](https://wiki.dfrobot.com/SKU_DFR1252_DX-M1%20AI%20Accelerator), [dx-all-suite (DEEPX SDK)](https://github.com/juyoung020/dx-all-suite)
-- 시뮬레이션: [2025 BEHAVIOR Challenge](https://behavior.stanford.edu/challenge/archive/2025/call_for_participation.html)
+- 시뮬레이션: [2026 BEHAVIOR Challenge](https://behavior.stanford.edu/challenge/index.html), 참고 [2025 BEHAVIOR Challenge](https://behavior.stanford.edu/challenge/archive/2025/call_for_participation.html)
