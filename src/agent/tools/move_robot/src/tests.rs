@@ -12,11 +12,11 @@ fn schema_is_small_and_strict() {
     let d = definition();
     let f = &d["function"];
     assert_eq!(f["name"], "move_robot");
-    assert_eq!(f["parameters"]["required"], json!(["part", "mode", "values"]));
+    assert_eq!(f["parameters"]["required"], json!(["part", "mode"]));
     assert_eq!(f["parameters"]["properties"]["part"]["enum"].as_array().unwrap().len(), 6);
-    assert_eq!(f["parameters"]["properties"]["mode"]["enum"], json!(["delta", "absolute"]));
-    // 9B 맥락 16k: 도구 정의 한 개는 작게(약 250 토큰 이하)
-    assert!(d.to_string().len() < 1000, "definition is {} bytes", d.to_string().len());
+    assert_eq!(f["parameters"]["properties"]["mode"]["enum"], json!(["go_to", "probe", "delta", "absolute"]));
+    // 9B 맥락 16k: 도구 정의 한 개는 작게(약 450 토큰 이하)
+    assert!(d.to_string().len() < 1800, "definition is {} bytes", d.to_string().len());
 }
 
 #[test]
@@ -37,7 +37,13 @@ fn parse_errors_are_fixable_sentences() {
     let e = parse(&args(r#"{"part":"left_arm","mode":"delta","values":[1,2]}"#)).unwrap_err();
     assert!(e.contains("exactly 7"), "{e}");
     let e = parse(&args(r#"{"part":"base","mode":"absolute","values":[1,0,0]}"#)).unwrap_err();
-    assert!(e.contains("only mode=delta"), "{e}");
+    assert!(e.contains("no absolute mode") && e.contains("go_to"), "{e}");
+    assert!(parse(&args(r#"{"part":"left_arm","mode":"go_to","target":"F1"}"#)).unwrap_err().contains("base modes"));
+    assert!(parse(&args(r#"{"part":"base","mode":"go_to","target":"kitchen"}"#)).unwrap_err().contains("F1 or R2"));
+    assert!(parse(&args(r#"{"part":"base","mode":"go_to"}"#)).unwrap_err().contains("target"));
+    assert!(parse(&args(r#"{"part":"base","mode":"probe","values":[30]}"#)).unwrap_err().contains("[turn_left_deg, forward_m]"));
+    let c = parse(&args(r#"{"part":"base","mode":"go-to","target":"f2"}"#)).unwrap();
+    assert_eq!((c.mode, c.target.as_deref()), (Mode::GoTo, Some("F2")));
     assert!(parse(&args(r#"{"part":"torso","values":[0,0,0,0]}"#)).unwrap_err().contains("mode is required"));
     assert!(parse(&args(r#"{"part":"torso","mode":"delta"}"#)).unwrap_err().contains("4 numbers"));
     assert!(parse(&args(r#"{"part":"torso","mode":"delta","values":[0,0,"x",0]}"#)).unwrap_err().contains("values[2]"));
@@ -301,5 +307,110 @@ fn ffi_roundtrip() {
         let def = std::ffi::CStr::from_ptr(ffi::mr_tool_definition()).to_str().unwrap();
         assert!(def.contains("move_robot"));
         ffi::mr_free(r);
+    }
+}
+
+// ---------------------------------------------------------------- 지도·주행(가짜 집)
+
+use crate::link::MockWorld;
+
+/// 10 × 6 m 두 방, x = 5 벽에 문(y 2.5..3.5), 바깥은 벽
+fn two_rooms() -> MockWorld {
+    let res = 0.05;
+    let (w, h) = (200usize, 120usize);
+    let mut g = crate::map::Grid::new(res, 0.0, 0.0, w, h, 0);
+    for y in 0..h {
+        for x in 0..w {
+            let (px, py) = ((x as f64 + 0.5) * res, (y as f64 + 0.5) * res);
+            let inside = px > 0.2 && px < 9.8 && py > 0.2 && py < 5.8;
+            let wall = (px - 5.0).abs() < 0.1 && !(2.5..3.5).contains(&py);
+            g.cells[y * w + x] = (inside && !wall) as i8;
+        }
+    }
+    MockWorld::new(g)
+}
+
+fn exec(m: &mut Mock, s: &str) -> Value {
+    run_tool(&args(s), m)
+}
+
+#[test]
+fn read_base_returns_map_summary() {
+    let mut m = Mock::with_world(two_rooms(), [1.5, 3.0, 0.0]);
+    let r = exec(&mut m, r#"{"part":"base","mode":"delta","values":[0,0,0]}"#);
+    let map = &r["map"];
+    assert!(map["free_m2"].as_f64().unwrap() > 3.0, "{r}");
+    assert!(map["around"]["F"].as_str().unwrap().contains("depth"), "{r}");
+    assert!(!map["frontiers"].as_array().unwrap().is_empty(), "{r}");
+    assert!(r["_m"]["obs_us"].as_u64().is_some());
+}
+
+#[test]
+fn go_to_frontier_without_contact() {
+    let mut m = Mock::with_world(two_rooms(), [1.5, 3.0, 0.0]);
+    exec(&mut m, r#"{"part":"base","mode":"probe","values":[180,0]}"#);
+    let r = exec(&mut m, r#"{"part":"base","mode":"go_to","target":"F1"}"#);
+    assert_eq!(r["status"], "reached", "{r}");
+    assert!(r["moved_m"].as_f64().unwrap() > 0.3, "{r}");
+    assert_eq!(m.world.as_ref().unwrap().contacts, 0);
+}
+
+#[test]
+fn probe_stops_before_wall() {
+    let mut m = Mock::with_world(two_rooms(), [3.5, 1.5, 0.0]);
+    // 앞 1.4 m 에 벽(x = 4.9): 1.5 m 가라 해도 벽 앞에서 멈춤
+    let r = exec(&mut m, r#"{"part":"base","mode":"probe","values":[0,1.5]}"#);
+    assert_eq!(r["status"], "blocked", "{r}");
+    let x = m.plant.pose[0];
+    assert!(x < 4.9 - 0.28 && x > 4.0, "x {x} {r}");
+    assert_eq!(m.world.as_ref().unwrap().contacts, 0);
+}
+
+#[test]
+fn go_to_unknown_point_is_rejected_with_hint() {
+    let mut m = Mock::with_world(two_rooms(), [1.5, 3.0, 0.0]);
+    let r = exec(&mut m, r#"{"part":"base","mode":"go_to","values":[-1.0,0]}"#);
+    assert_eq!(r["status"], "error", "{r}");
+    assert!(r["message"].as_str().unwrap().contains("UNKNOWN"), "{r}");
+    let r = exec(&mut m, r#"{"part":"base","mode":"go_to","target":"F9"}"#);
+    assert!(r["message"].as_str().unwrap().contains("unknown target"), "{r}");
+}
+
+#[test]
+fn delta_into_unseen_side_is_stopped() {
+    // 카메라는 앞만 본다: 옆(모르는 곳)으로 1 m 가라 하면 아는 빈칸 끝에서 멈춤
+    let mut m = Mock::with_world(two_rooms(), [2.5, 3.0, 0.0]);
+    let r = exec(&mut m, r#"{"part":"base","mode":"delta","values":[0,1.0,0]}"#);
+    assert_eq!(r["status"], "blocked", "{r}");
+    assert!(r["stopped_by"].as_str().unwrap().contains("unknown"), "{r}");
+}
+
+#[test]
+fn base_final_approach_no_undershoot() {
+    let mut m = Mock::default();
+    let r = m.exec(&args(r#"{"part":"base","mode":"delta","values":[0.2,0,0]}"#));
+    assert_eq!(r["status"], "reached", "{r}");
+    assert!((m.plant.pose[0] - 0.2).abs() < 0.012, "{:?}", m.plant.pose);
+    let r = m.exec(&args(r#"{"part":"base","mode":"delta","values":[0,0,30]}"#));
+    assert_eq!(r["status"], "reached", "{r}");
+    assert!((m.plant.pose[2].to_degrees() - 30.0).abs() < 1.2, "{:?}", m.plant.pose);
+}
+
+#[test]
+fn obstacle_appearing_on_path_is_avoided_or_reported() {
+    let mut m = Mock::with_world(two_rooms(), [1.0, 3.0, 0.0]);
+    // 문 쪽으로 보며 지도 쌓기
+    exec(&mut m, r#"{"part":"base","mode":"probe","values":[0,0.5]}"#);
+    // 가는 길 가운데(2.6, 3.0)에 0.3 m 장애물이 1 s 뒤 나타남
+    let now = m.sim_steps;
+    m.world.as_mut().unwrap().events.push((now + 30, 2.6, 3.0, 0.3, true));
+    let r = exec(&mut m, r#"{"part":"base","mode":"go_to","values":[2.5,0]}"#);
+    assert!(r["status"] == "reached" || r["status"] == "blocked", "{r}");
+    assert_eq!(m.world.as_ref().unwrap().contacts, 0, "{r}");
+    // 치우면 다시 열림
+    let now = m.sim_steps;
+    m.world.as_mut().unwrap().events.push((now + 1, 2.6, 3.0, 0.3, false));
+    for _ in 0..3 {
+        exec(&mut m, r#"{"part":"base","mode":"probe","values":[0,0]}"#);
     }
 }

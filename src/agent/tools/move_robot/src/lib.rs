@@ -15,6 +15,11 @@
 
 pub mod ffi;
 pub mod link;
+pub mod map;
+pub mod nav;
+pub mod robot_nav;
+
+pub use map::{Grid, MapIn, NavParams, RoomGrid, Scan};
 
 use serde_json::{json, Value};
 use std::f64::consts::PI;
@@ -109,6 +114,10 @@ impl Part {
 pub enum Mode {
     Delta,
     Absolute,
+    /// 베이스: 아는 빈칸만 지나는 경로(A*/Dijkstra)로 목표(프런티어·방 id 또는 로봇 기준 [앞 m, 왼쪽 m])까지
+    GoTo,
+    /// 베이스: [왼쪽으로 돌기 °, 앞 m] — 돌고 나서 천천히 앞으로, 살아 있는 깊이로 막히면 멈춤(모르는 곳 살피기)
+    Probe,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -118,6 +127,8 @@ pub struct Command {
     /// LLM 단위(m, deg, 0..1) 그대로
     pub values: Vec<f64>,
     pub duration_s: Option<f64>,
+    /// go_to 목표 id ("F1", "R2")
+    pub target: Option<String>,
 }
 
 // ---------------------------------------------------------------- 안전 한계
@@ -171,6 +182,15 @@ pub struct Safety {
     pub track_limit: f64,
     /// 보간 끝난 뒤 기다리는 최대 시간(s)
     pub settle_s: f64,
+    /// go_to(아는 빈칸 경로) 최고 속도 m/s · 회전 rad/s
+    pub nav_vmax: f64,
+    pub nav_wmax: f64,
+    /// probe(모르는 곳 살피기) 앞으로 속도 m/s, 한 번에 최대 거리 m
+    pub probe_vmax: f64,
+    pub probe_max_m: f64,
+    /// 베이스 마지막 접근: 남은 거리가 있으면 이 속도 아래로는 안 줄임(덜 가서 멈추는 것 막기)
+    pub base_creep: f64,
+    pub base_wcreep: f64,
 }
 
 impl Default for Safety {
@@ -189,10 +209,16 @@ impl Default for Safety {
             max_duration: 20.0,
             joint_tol: 1.5f64.to_radians(),
             gripper_tol: 0.05,
-            base_tol_xy: 0.02,
-            base_tol_yaw: 2f64.to_radians(),
+            base_tol_xy: 0.01,
+            base_tol_yaw: 1f64.to_radians(),
             track_limit: 20f64.to_radians(),
             settle_s: 1.5,
+            nav_vmax: 0.5,
+            nav_wmax: 50f64.to_radians(),
+            probe_vmax: 0.25,
+            probe_max_m: 1.5,
+            base_creep: 0.03,
+            base_wcreep: 3f64.to_radians(),
         }
     }
 }
@@ -230,23 +256,31 @@ pub fn to_user(part: Part, v: &[f64]) -> Vec<f64> {
 
 // ---------------------------------------------------------------- 스키마
 
-pub const DESCRIPTION: &str = "Directly move ONE robot part and wait until it stops. Units: meters, degrees. \
-values order: base [forward_m, left_m, turn_left_deg] (delta only, robot frame); torso [j1..j4]; left_arm/right_arm [j1..j7] shoulder to wrist; \
-gripper [opening] 0=closed..1=open (use absolute). mode delta = add to current, absolute = go to value. \
-delta with all zeros only reads the state. Joint limits and safe speeds are enforced.";
+pub const DESCRIPTION: &str = "Move ONE robot part and wait until it stops. Units: meters, degrees; left/counter-clockwise is positive. \
+base modes: go_to = drive along a planned path through KNOWN free space to target id (\"F1\" frontier, \"R2\" room) or values [forward_m, left_m] (must be known free); \
+probe = values [turn_left_deg, forward_m]: turn in place, then creep forward into UNKNOWN space, stopping before obstacles seen by the head camera (forward_m 0 = just turn/look); \
+delta = values [forward_m, left_m, turn_left_deg] small straight move (no planning). Base results include a map summary. \
+torso [j1..j4], left_arm/right_arm [j1..j7] shoulder to wrist (deg; delta or absolute); gripper [opening] 0=closed..1=open (absolute). \
+delta with all zeros only reads the state. Joint limits, safe speeds and obstacle stops are enforced.";
 
-/// OpenAI Chat Completions `tools` 항목 하나
+/// OpenAI Chat Completions `tools` 항목 하나 (설명은 기본 [`DESCRIPTION`])
 pub fn definition() -> Value {
-    json!({"type": "function", "function": {"name": TOOL_NAME, "description": DESCRIPTION, "parameters": {
+    definition_with(DESCRIPTION)
+}
+
+/// 설명만 바꾼 도구 정의(에이전트가 프롬프트 폴더의 도구 설명을 쓸 때)
+pub fn definition_with(desc: &str) -> Value {
+    json!({"type": "function", "function": {"name": TOOL_NAME, "description": desc, "parameters": {
         "type": "object",
         "properties": {
             "part": {"type": "string", "enum": PARTS},
-            "mode": {"type": "string", "enum": ["delta", "absolute"]},
+            "mode": {"type": "string", "enum": ["go_to", "probe", "delta", "absolute"]},
+            "target": {"type": "string", "description": "go_to only: id from the last map summary, e.g. F1 or R2"},
             "values": {"type": "array", "items": {"type": "number"}, "minItems": 1, "maxItems": 7,
-                       "description": "base 3, torso 4, arm 7, gripper 1"},
+                       "description": "probe 2, go_to 2 (if no target), base delta 3, torso 4, arm 7, gripper 1"},
             "duration_s": {"type": "number", "description": "optional; slower if too fast for safe speed"}
         },
-        "required": ["part", "mode", "values"]
+        "required": ["part", "mode"]
     }}})
 }
 
@@ -265,14 +299,28 @@ pub fn parse(args: &Value) -> Result<Command, String> {
     }
     let part_s = a.get("part").and_then(|v| v.as_str()).unwrap_or("");
     let part = Part::from_name(part_s).ok_or_else(|| format!("part must be one of {} (got '{part_s}')", PARTS.join(", ")))?;
-    let mode = match a.get("mode").and_then(|v| v.as_str()).map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+    let mode = match a.get("mode").and_then(|v| v.as_str()).map(|s| s.trim().to_ascii_lowercase().replace(['-', ' '], "_")).as_deref() {
         Some("delta") | Some("relative") => Mode::Delta,
         Some("absolute") => Mode::Absolute,
-        Some(m) => return Err(format!("mode must be delta or absolute (got '{m}')")),
-        None => return Err("mode is required: delta or absolute".into()),
+        Some("go_to") | Some("goto") => Mode::GoTo,
+        Some("probe") => Mode::Probe,
+        Some(m) => return Err(format!("mode must be go_to, probe, delta or absolute (got '{m}')")),
+        None => return Err("mode is required: go_to, probe, delta or absolute".into()),
     };
     if part == Part::Base && mode == Mode::Absolute {
-        return Err("base supports only mode=delta: [forward_m, left_m, turn_left_deg] from where it is now".into());
+        return Err("base has no absolute mode: use go_to with a target id (known space) or probe [turn_left_deg, forward_m] (unknown space)".into());
+    }
+    if part != Part::Base && matches!(mode, Mode::GoTo | Mode::Probe) {
+        return Err(format!("{} supports only delta or absolute; go_to and probe are base modes", part.name()));
+    }
+    let target = a.get("target").and_then(|v| v.as_str()).map(|t| t.trim().to_ascii_uppercase()).filter(|t| !t.is_empty());
+    if mode == Mode::GoTo && target.is_some() {
+        let t = target.clone().unwrap();
+        let ok = t.len() >= 2 && (t.starts_with('F') || t.starts_with('R')) && t[1..].chars().all(|c| c.is_ascii_digit());
+        if !ok {
+            return Err(format!("target must be an id from the last map summary like F1 or R2 (got '{t}')"));
+        }
+        return Ok(Command { part, mode, values: vec![], duration_s: None, target });
     }
     let num = |v: &Value| -> Option<f64> {
         match v {
@@ -291,10 +339,20 @@ pub fn parse(args: &Value) -> Result<Command, String> {
         }
         Some(x) if part.dof() == 1 && num(x).is_some() => vec![num(x).unwrap()],
         Some(_) => return Err("values must be an array of numbers".into()),
+        None if mode == Mode::GoTo => return Err("go_to needs target (an id like F1 or R2 from the last map summary) or values [forward_m, left_m]".into()),
+        None if mode == Mode::Probe => return Err("probe needs values [turn_left_deg, forward_m]".into()),
         None => return Err(format!("values is required: {} numbers, {}", part.dof(), part.units())),
     };
-    if values.len() != part.dof() {
-        return Err(format!("{} needs exactly {} values ({}), got {}", part.name(), part.dof(), part.units(), values.len()));
+    let need = match mode {
+        Mode::GoTo | Mode::Probe => 2,
+        _ => part.dof(),
+    };
+    if values.len() != need {
+        return Err(match mode {
+            Mode::GoTo => format!("go_to needs target (e.g. \"F1\") or values [forward_m, left_m], got {} values", values.len()),
+            Mode::Probe => format!("probe needs exactly 2 values [turn_left_deg, forward_m], got {}", values.len()),
+            _ => format!("{} needs exactly {} values ({}), got {}", part.name(), part.dof(), part.units(), values.len()),
+        });
     }
     if let Some(i) = values.iter().position(|x| !x.is_finite()) {
         return Err(format!("values[{i}] is not finite"));
@@ -303,7 +361,10 @@ pub fn parse(args: &Value) -> Result<Command, String> {
         None | Some(Value::Null) => None,
         Some(v) => Some(num(v).filter(|d| d.is_finite() && *d > 0.0).ok_or("duration_s must be a positive number")?),
     };
-    Ok(Command { part, mode, values, duration_s })
+    if mode == Mode::Probe && (values[1] < 0.0) {
+        return Err("probe forward_m must be >= 0 (turn first to face where you want to go)".into());
+    }
+    Ok(Command { part, mode, values, duration_s, target })
 }
 
 // ---------------------------------------------------------------- 관측
@@ -448,12 +509,20 @@ struct BaseMove {
     v_cmd: [f64; 3],
     t_max: f64,
     stall: u32,
+    /// 도착 판정 뒤 0 지령으로 멈출 때까지 기다린 스텝(관성으로 더 가거나 덜 간 것까지 재서 보고)
+    settle: u32,
+    retries: u32,
+    /// 안전 정지(지도·깊이): (이유, 남은 여유 m)
+    stop: Option<(&'static str, f64)>,
+    /// 명령 시작 map 위치(발밑 모름 칸 허용 기준)
+    anchor: [f64; 2],
 }
 
 #[derive(Clone, Debug)]
 enum Motion {
     Joints(JointMove),
     Base(BaseMove),
+    Nav(robot_nav::NavMove),
 }
 
 #[derive(Clone, Debug)]
@@ -475,6 +544,8 @@ pub struct Robot {
     active: Option<Active>,
     result: Option<Value>,
     pub ticks: u64,
+    /// 지도·주행 층(지도를 받은 적이 있을 때만 쓰임)
+    pub nav: robot_nav::NavState,
 }
 
 /// [`Robot::tick`] 결과
@@ -496,7 +567,7 @@ impl Default for Robot {
 
 impl Robot {
     pub fn new(hz: f64) -> Robot {
-        Robot { safety: Safety::default(), dt: 1.0 / hz, hold: [0.0; ACTION_DIM], state: None, active: None, result: None, ticks: 0 }
+        Robot { safety: Safety::default(), dt: 1.0 / hz, hold: [0.0; ACTION_DIM], state: None, active: None, result: None, ticks: 0, nav: Default::default() }
     }
 
     pub fn busy(&self) -> bool {
@@ -513,6 +584,15 @@ impl Robot {
     }
     pub fn hold(&self) -> &[f64; ACTION_DIM] {
         &self.hold
+    }
+
+    /// 지도 받기(평가기: keyframe 마다 sgrt_map → mr_set_map, 가짜 로봇: MockWorld). 할당은 격자 크기가 바뀔 때만.
+    pub fn set_map(&mut self, m: MapIn, d: &nav::MapDelta) {
+        self.nav.set_map(m, d);
+    }
+    /// 정답 기준(측정용, LLM 에 안 보임): map 좌표 격자, 값 1 = 닿을 수 있는 바닥
+    pub fn set_reference(&mut self, g: Grid) {
+        self.nav.set_reference(g);
     }
 
     /// 판이 새로 시작될 때: 다음 관측에서 유지값을 다시 잡는다
@@ -571,11 +651,20 @@ impl Robot {
         let Some(st) = self.state.clone() else { return Err("no robot observation yet; try again in a moment".into()) };
         let s = self.safety.clone();
         let part = cmd.part;
+        if matches!(cmd.mode, Mode::GoTo | Mode::Probe) {
+            let nm = self.start_nav(&cmd)?;
+            self.active = Some(Active { cmd, motion: Motion::Nav(nm), clamped: vec![], slowed: false, steps: 0 });
+            return Ok(false);
+        }
         let v = to_internal(part, &cmd.values);
 
         // 읽기만: delta 이고 전부 0
         if cmd.mode == Mode::Delta && cmd.values.iter().all(|x| *x == 0.0) {
-            self.result = Some(json!({"status": "reached", "part": part.name(), "state": self.user_state(part), "units": part.units(), "steps": 0}));
+            let mut r = json!({"status": "reached", "part": part.name(), "state": self.user_state(part), "units": part.units(), "steps": 0});
+            if part == Part::Base {
+                self.attach_map(&mut r);
+            }
+            self.result = Some(r);
             return Ok(true);
         }
 
@@ -590,12 +679,12 @@ impl Robot {
             }
             let need = t[0].hypot(t[1]) / s.base_vmax + t[2].abs() / s.base_wmax;
             let t_max = need * 1.5 + 3.0 + cmd.duration_s.unwrap_or(0.0);
-            (Motion::Base(BaseMove { target: t, pose: [0.0; 3], v_cmd: [0.0; 3], t_max, stall: 0 }), clamped, false)
+            (Motion::Base(BaseMove { target: t, pose: [0.0; 3], v_cmd: [0.0; 3], t_max, stall: 0, settle: 0, retries: 0, stop: None, anchor: [self.nav.pose[0], self.nav.pose[1]] }), clamped, false)
         } else {
             let (q, _) = st.joints(part);
             let mut target: Vec<f64> = match cmd.mode {
                 Mode::Delta => q.iter().zip(&v).map(|(a, b)| a + b).collect(),
-                Mode::Absolute => v.clone(),
+                _ => v.clone(),
             };
             let clamped = clamp_target(&mut target, &joint_limits(part));
             // 보간은 지금 지령(유지값)에서 시작한다 — 측정값에서 시작하면 처진 만큼 한 스텝에 튄다
@@ -630,6 +719,7 @@ impl Robot {
         if self.state.is_none() {
             self.init_hold(&st);
         }
+        self.nav.integrate(st.base_v, self.dt);
         self.state = Some(st.clone());
         let Some(mut a) = self.active.take() else {
             self.write_action(action, None);
@@ -643,6 +733,8 @@ impl Robot {
         let mut final_state: Vec<f64> = vec![];
         let mut target_user: Vec<f64> = vec![];
         let mut err_user: Option<Value> = None;
+        let mut nav_done: Option<Value> = None;
+        let mut base_stop: Option<(&'static str, f64)> = None;
         match &mut a.motion {
             Motion::Joints(m) => {
                 let (q, qd) = st.joints(m.part);
@@ -694,31 +786,61 @@ impl Robot {
                 let (ex, ey) = (cs * ex_w + sn * ey_w, -sn * ex_w + cs * ey_w);
                 let eyaw = m.target[2] - m.pose[2];
                 let exy = ex.hypot(ey);
+                let within = exy < s.base_tol_xy && eyaw.abs() < s.base_tol_yaw;
                 let mut des = [0.0; 3];
-                if exy > 1e-6 {
-                    let sp = s.base_vmax.min((2.0 * s.base_acc * exy).sqrt()).min(2.0 * exy);
-                    des[0] = ex / exy * sp;
-                    des[1] = ey / exy * sp;
-                }
-                let w = s.base_wmax.min((2.0 * s.base_wacc * eyaw.abs()).sqrt()).min(2.0 * eyaw.abs());
-                des[2] = eyaw.signum() * w;
-                let reached = exy < s.base_tol_xy && eyaw.abs() < s.base_tol_yaw;
-                if reached {
-                    des = [0.0; 3];
+                if m.settle == 0 && !within {
+                    if exy > s.base_tol_xy * 0.5 {
+                        // 감속 곡선 + 마지막 접근 최소 속도(덜 가서 멈추는 것 막기)
+                        let mut sp = s.base_vmax.min((2.0 * s.base_acc * exy).sqrt()).max(s.base_creep.min(exy * 4.0));
+                        // 안전 정지: 지도가 있으면 진행 방향 몸통 통로(지도 장애물·모르는 곳(카메라 밖)·깊이)
+                        if self.nav.have_map {
+                            let heading = self.nav.pose[2] + ey.atan2(ex);
+                            let (free, by) = self.free_ahead(self.nav.pose, heading, true, m.anchor);
+                            let room = free - self.nav.params.stop_margin;
+                            if room < exy {
+                                sp = sp.min((2.0 * s.base_acc * room.max(0.0)).sqrt());
+                                if room <= 0.01 {
+                                    m.stop = Some((by, (free.max(0.0) * 100.0).round() / 100.0));
+                                }
+                            }
+                        }
+                        des[0] = ex / exy * sp;
+                        des[1] = ey / exy * sp;
+                    }
+                    if eyaw.abs() > s.base_tol_yaw * 0.5 {
+                        let w = s.base_wmax.min((2.0 * s.base_wacc * eyaw.abs()).sqrt()).max(s.base_wcreep.min(eyaw.abs() * 4.0));
+                        des[2] = eyaw.signum() * w;
+                    }
                 }
                 let lim = [s.base_acc * self.dt, s.base_acc * self.dt, s.base_wacc * self.dt];
                 for i in 0..3 {
                     m.v_cmd[i] += (des[i] - m.v_cmd[i]).clamp(-lim[i], lim[i]);
+                }
+                if m.stop.is_some() || within || m.settle > 0 {
+                    m.v_cmd = [0.0; 3];
                 }
                 let cmd_sp = m.v_cmd[0].hypot(m.v_cmd[1]);
                 let meas_sp = vx.hypot(vy);
                 let moving_cmd = cmd_sp > 0.05 || m.v_cmd[2].abs() > 0.1;
                 let barely = meas_sp < 0.2 * cmd_sp.max(0.05) && wz.abs() < 0.2 * m.v_cmd[2].abs().max(0.1);
                 m.stall = if moving_cmd && barely { m.stall + 1 } else { 0 };
-                if reached {
-                    outcome = Some("reached");
+                if within || m.settle > 0 {
+                    // 멈출 때까지(관성) 기다려 실제 도착 자리를 잰다. 너무 벗어나면 한 번 더 접근
+                    m.settle += 1;
+                    let still = meas_sp < 0.005 && wz.abs() < 0.01;
+                    if (still && m.settle >= 3) || m.settle >= 15 {
+                        if exy < 2.0 * s.base_tol_xy && eyaw.abs() < 2.0 * s.base_tol_yaw || m.retries >= 2 {
+                            outcome = Some(if exy < 2.0 * s.base_tol_xy && eyaw.abs() < 2.0 * s.base_tol_yaw { "reached" } else { "timeout" });
+                        } else {
+                            m.retries += 1;
+                            m.settle = 0;
+                        }
+                    }
+                } else if m.stop.is_some() {
+                    outcome = Some("blocked");
                 } else if m.stall >= 30 {
                     outcome = Some("blocked");
+                    self.nav.n_stall += 1;
                 } else if t > m.t_max {
                     outcome = Some("timeout");
                 }
@@ -728,11 +850,29 @@ impl Robot {
                     target_user = to_user(Part::Base, &m.target);
                     // 남은 거리(m)와 남은 회전(deg)
                     err_user = Some(json!([(exy * 1000.0).round() / 1000.0, (eyaw.to_degrees() * 10.0).round() / 10.0]));
+                    if outcome == Some("blocked") {
+                        self.nav.n_blocked += 1;
+                    }
                 }
                 base_cmd = Some(m.v_cmd);
             }
+            Motion::Nav(m) => {
+                if let Some(r) = self.tick_nav(m, t, st.base_v) {
+                    nav_done = Some(r);
+                    base_cmd = Some([0.0; 3]);
+                } else {
+                    base_cmd = Some(m.v_cmd);
+                }
+            }
         }
         self.write_action(action, base_cmd);
+        if let Some(r) = nav_done {
+            self.result = Some(r);
+            return Tick::Done;
+        }
+        if let Motion::Base(m) = &a.motion {
+            base_stop = m.stop;
+        }
         match outcome {
             None => {
                 self.active = Some(a);
@@ -760,6 +900,14 @@ impl Robot {
                 }
                 if a.slowed {
                     r["slowed"] = json!(true);
+                }
+                if let Some((by, d)) = base_stop {
+                    r["stopped_by"] = json!(by);
+                    r["clear_m"] = json!(d);
+                    r["hint"] = json!("stopped before an obstacle or unseen space; turn to face where you go (probe) or go_to a frontier id");
+                }
+                if part == Part::Base {
+                    self.attach_map(&mut r);
                 }
                 self.result = Some(r);
                 Tick::Done
@@ -795,3 +943,8 @@ pub fn error_obs(msg: &str) -> Value {
 
 #[cfg(test)]
 mod tests;
+
+/// 관측 모양 변형(실험): 주변 여유 빼기
+pub fn robot_nav_style_compact() -> robot_nav::ObsStyle {
+    robot_nav::ObsStyle::Compact
+}

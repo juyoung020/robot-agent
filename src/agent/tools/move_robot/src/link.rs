@@ -166,6 +166,163 @@ impl MockPlant {
     }
 }
 
+/// 가짜 집: 정답 바닥 격자(world, 0.05 m) + 머리 카메라 흉내(시야 ±49.6°, 0.4–6 m 광선) → scenemap 처럼 로그 오즈 점유 격자와
+/// 가상 스캔을 만든다. 몸통 원(0.28 m)이 장애물 칸에 닿으면 움직이지 않고 접촉을 센다.
+pub struct MockWorld {
+    /// true = 다닐 수 있는 바닥
+    pub floor: crate::map::Grid,
+    pub logodds: Vec<f32>,
+    pub seen: Vec<bool>,
+    pub body_r: f64,
+    pub fov: f64,
+    pub range: f64,
+    pub min_range: f64,
+    pub kf_every: u64,
+    pub contacts: u64,
+    /// 장애물 칸 추가/제거(움직이는 장애물 시험): (스텝, x, y, 반지름, 넣기)
+    pub events: Vec<(u64, f64, f64, f64, bool)>,
+    pub last_scan_hits: usize,
+    pub map_us: u64,
+    /// 닿은 자리(world x, y, yaw)와 그때 시각 — 시험·진단
+    pub contact_log: Vec<[f64; 4]>,
+}
+
+impl MockWorld {
+    /// P5 PGM(255 = 바닥, 행 = y 증가 순) + 원점·해상도
+    pub fn from_pgm(path: &str, res: f64, ox: f64, oy: f64) -> Result<MockWorld, String> {
+        let b = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+        let mut it = 0usize;
+        let mut tok = || -> Result<String, String> {
+            while it < b.len() && (b[it] as char).is_whitespace() {
+                it += 1;
+            }
+            let st = it;
+            while it < b.len() && !(b[it] as char).is_whitespace() {
+                it += 1;
+            }
+            Ok(String::from_utf8_lossy(&b[st..it]).into_owned())
+        };
+        if tok()? != "P5" {
+            return Err("not a P5 pgm".into());
+        }
+        let w: usize = tok()?.parse().map_err(|_| "w")?;
+        let h: usize = tok()?.parse().map_err(|_| "h")?;
+        let _mx = tok()?;
+        let data = &b[it + 1..it + 1 + w * h];
+        let floor = crate::map::Grid { res, ox, oy, w, h, cells: data.iter().map(|&v| if v > 127 { 1 } else { 0 }).collect() };
+        Ok(MockWorld::new(floor))
+    }
+    pub fn new(floor: crate::map::Grid) -> MockWorld {
+        let n = floor.w * floor.h;
+        MockWorld { floor, logodds: vec![0.0; n], seen: vec![false; n], body_r: 0.28, fov: 49.6f64.to_radians(), range: 6.0, min_range: 0.4, kf_every: 6, contacts: 0, events: vec![], last_scan_hits: 0, map_us: 0, contact_log: vec![] }
+    }
+    pub fn is_floor(&self, x: f64, y: f64) -> bool {
+        self.floor.at(x, y) == 1
+    }
+    /// 몸통 원이 바닥만 덮나
+    pub fn body_ok(&self, x: f64, y: f64) -> bool {
+        let r = self.body_r;
+        let k = (r / self.floor.res).ceil() as i64;
+        let (cx, cy) = self.floor.cell_of(x, y);
+        for dy in -k..=k {
+            for dx in -k..=k {
+                if let Some(i) = self.floor.idx(cx + dx, cy + dy) {
+                    let (px, py) = self.floor.center(i);
+                    if (px - x).hypot(py - y) <= r && self.floor.cells[i] != 1 {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+    /// 광선을 쏴 지도에 넣고 MapIn 을 만든다
+    pub fn sense(&mut self, pose: [f64; 3], stamp: f64) -> crate::map::MapIn {
+        let t0 = std::time::Instant::now();
+        let g = &self.floor;
+        let mut hits_b = vec![];
+        let mut free_b = vec![];
+        let n_rays = (2.0 * self.fov / 0.5f64.to_radians()) as usize;
+        let mut touched = vec![];
+        for k in 0..=n_rays {
+            let a = -self.fov + 2.0 * self.fov * k as f64 / n_rays as f64;
+            let yaw = pose[2] + a;
+            let (s, c) = yaw.sin_cos();
+            let step = g.res * 0.5;
+            let mut t = 0.0;
+            let mut hit = None;
+            while t < self.range {
+                let (x, y) = (pose[0] + c * t, pose[1] + s * t);
+                if g.at(x, y) != 1 {
+                    hit = Some(t);
+                    break;
+                }
+                if t >= self.min_range {
+                    let (cx, cy) = g.cell_of(x, y);
+                    if let Some(i) = g.idx(cx, cy) {
+                        touched.push((i, false));
+                    }
+                }
+                t += step;
+            }
+            match hit {
+                Some(t) => {
+                    let (x, y) = (pose[0] + c * t, pose[1] + s * t);
+                    let (cx, cy) = g.cell_of(x, y);
+                    if let Some(i) = g.idx(cx, cy) {
+                        touched.push((i, true));
+                    }
+                    hits_b.push([t * a.cos(), t * a.sin()]);
+                }
+                None => free_b.push([self.range * a.cos(), self.range * a.sin()]),
+            }
+        }
+        // 한 스캔에서 칸마다 한 번, 맞음 우선
+        touched.sort_by_key(|(i, h)| (*i, !*h));
+        touched.dedup_by_key(|(i, _)| *i);
+        for (i, h) in touched {
+            self.seen[i] = true;
+            self.logodds[i] = (self.logodds[i] + if h { 0.85 } else { -0.4 }).clamp(-4.0, 4.0);
+        }
+        self.last_scan_hits = hits_b.len();
+        let cells = self
+            .logodds
+            .iter()
+            .zip(&self.seen)
+            .map(|(l, s)| if *s { (100.0 / (1.0 + (-l).exp())).round() as i8 } else { -1 })
+            .collect();
+        let grid = crate::map::Grid { res: g.res, ox: g.ox, oy: g.oy, w: g.w, h: g.h, cells };
+        let scan = crate::map::Scan::from_base(pose, [0.0, 0.0], &hits_b, &free_b, stamp);
+        self.map_us = t0.elapsed().as_micros() as u64;
+        crate::map::MapIn { stamp, pose, grid, rooms: None, n_rooms: 0, scan: Some(scan) }
+    }
+    fn apply_events(&mut self, step: u64) {
+        let mut rest = vec![];
+        for e in std::mem::take(&mut self.events) {
+            if e.0 > step {
+                rest.push(e);
+                continue;
+            }
+            let (_, x, y, r, put) = e;
+            let k = (r / self.floor.res).ceil() as i64;
+            let (cx, cy) = self.floor.cell_of(x, y);
+            for dy in -k..=k {
+                for dx in -k..=k {
+                    if let Some(i) = self.floor.idx(cx + dx, cy + dy) {
+                        let (px, py) = self.floor.center(i);
+                        if (px - x).hypot(py - y) <= r {
+                            self.floor.cells[i] = if put { 0 } else { 1 };
+                        }
+                    }
+                }
+            }
+        }
+        self.events = rest;
+    }
+}
+
 /// 실행기 + 가짜 로봇
 pub struct Mock {
     pub robot: Robot,
@@ -174,22 +331,68 @@ pub struct Mock {
     pub last_action: [f32; ACTION_DIM],
     /// 실행한 스텝 수(누적)
     pub sim_steps: u64,
+    /// 있으면 지도·충돌까지 흉내(plant.pose = world 자세)
+    pub world: Option<MockWorld>,
 }
 
 impl Default for Mock {
     fn default() -> Self {
-        let mut m = Mock { robot: Robot::default(), plant: MockPlant::default(), max_steps: 3000, last_action: [0.0; ACTION_DIM], sim_steps: 0 };
+        let mut m = Mock { robot: Robot::default(), plant: MockPlant::default(), max_steps: 3000, last_action: [0.0; ACTION_DIM], sim_steps: 0, world: None };
         m.step(); // 첫 관측(유지값 잡기)
         m
     }
 }
 
 impl Mock {
+    /// 가짜 집에서 start(world x, y, yaw) 로 시작
+    pub fn with_world(world: MockWorld, start: [f64; 3]) -> Mock {
+        let mut m = Mock::default();
+        m.plant.pose = start;
+        m.world = Some(world);
+        m.max_steps = 30 * 120;
+        m.feed_map();
+        m
+    }
+    fn feed_map(&mut self) {
+        let pose = self.plant.pose;
+        let stamp = self.sim_steps as f64 / crate::HZ;
+        if let Some(w) = self.world.as_mut() {
+            let mi = w.sense(pose, stamp);
+            self.robot.set_map(mi, &crate::nav::MapDelta { unknown_dirty: true, ..Default::default() });
+            self.robot.nav.contacts = w.contacts;
+        }
+    }
     pub fn step(&mut self) -> Tick {
         let p = self.plant.proprio();
         let t = self.robot.tick(&p, &mut self.last_action);
+        let before = self.plant.pose;
         self.plant.step(&self.last_action);
         self.sim_steps += 1;
+        if let Some(w) = self.world.as_mut() {
+            w.apply_events(self.sim_steps);
+            if !w.body_ok(self.plant.pose[0], self.plant.pose[1]) {
+                // 닿음: 위치는 그대로(회전만 허용), 속도 0 으로 보임
+                if w.body_ok(before[0], before[1]) {
+                    w.contacts += 1;
+                    w.contact_log.push([before[0], before[1], before[2], self.sim_steps as f64 / crate::HZ]);
+                    if let Ok(dir) = std::env::var("MR_DEBUG_DIR") {
+                        let _ = std::fs::create_dir_all(&dir);
+                        self.robot.debug_dump_now(&dir);
+                        let _ = std::fs::OpenOptions::new().create(true).append(true).open(format!("{dir}/contacts.txt")).and_then(|mut f| {
+                            use std::io::Write;
+                            writeln!(f, "{:.3} {:.3} {:.3} {:.2} cmd {:?}", before[0], before[1], before[2], self.sim_steps as f64 / crate::HZ, &self.last_action[0..3])
+                        });
+                    }
+                }
+                self.plant.pose[0] = before[0];
+                self.plant.pose[1] = before[1];
+                self.plant.base_v[0] = 0.0;
+                self.plant.base_v[1] = 0.0;
+            }
+            if self.sim_steps % w.kf_every == 0 {
+                self.feed_map();
+            }
+        }
         t
     }
 }
