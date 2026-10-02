@@ -8,3 +8,4 @@
 | `agent/` | LLM: 사람과 대화, 물체 기억을 읽어 π0.5 에게 상황 풀어 주기, 물체를 놓치면 다시 계획 |
 | `vla/` | VLA(π0.5): 지시 + 카메라 영상 → 작은 계획·행동, 눈앞의 실패 복구 |
 | `app/` | 휴대폰 앱 (iOS·Android 네이티브). 카카오톡식 채팅으로 로봇에게 명령, 지금은 로봇1 만 |
+| `behavior-2026/` | 서브모듈 [juyoung020/behavior-2026](https://github.com/juyoung020/behavior-2026): BEHAVIOR Challenge 2026 작업(시뮬레이터 평가·π0.5 네이티브 엔진·scenemap·ovdet). 받기: `git submodule update --init src/behavior-2026` |

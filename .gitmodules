@@ -1,0 +1,3 @@
+[submodule "src/behavior-2026"]
+	path = src/behavior-2026
+	url = https://github.com/juyoung020/behavior-2026.git
