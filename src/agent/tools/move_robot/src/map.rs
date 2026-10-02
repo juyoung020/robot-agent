@@ -145,7 +145,7 @@ pub struct NavParams {
 
 impl Default for NavParams {
     fn default() -> Self {
-        NavParams { robot_r: 0.33, safe_r: 0.7, stop_margin: 0.12, frontier_min_m: 0.5, gain_r: 2.5, max_frontiers: 5, start_free_r: 0.45, start_min_clear: 0.28 }
+        NavParams { robot_r: 0.33, safe_r: 0.7, stop_margin: 0.10, frontier_min_m: 0.5, gain_r: 2.5, max_frontiers: 5, start_free_r: 0.45, start_min_clear: 0.25 }
     }
 }
 
@@ -283,7 +283,10 @@ impl Analysis {
                 if !pass(j, &a.dobs) {
                     continue;
                 }
-                let pen = 1.0 + 3.0 * ((safe - a.dobs[j]).max(0.0) / safe) + soft.map_or(0.0, |s| 2.0 * s[j]);
+                // 벽에서 멀수록 쌈. 외접 원(0.39 m + 여유) 안쪽은 돌 수 없는 곳이라 크게 벌점(좁은 곳은 지나가기만)
+                let q = (safe - a.dobs[j]).max(0.0) / safe;
+                let qr = ((0.45 - a.dobs[j]) / 0.45).max(0.0);
+                let pen = 1.0 + 4.0 * q * q + 25.0 * qr * qr + soft.map_or(0.0, |s| 2.0 * s[j]);
                 let nc = ci + l * g.res as f32 * pen;
                 if nc + 1e-4 < a.cost[j] {
                     a.cost[j] = nc;
@@ -458,7 +461,7 @@ fn find_frontiers(m: &MapIn, a: &Analysis, p: &NavParams) -> Vec<Frontier> {
         }
         let k = members.len() as f64;
         let (mx, my) = (mx / k, my / k);
-        let goal_idx = *members
+        let near_c = *members
             .iter()
             .min_by(|&&i, &&j| {
                 let (xi, yi) = g.center(i);
@@ -466,6 +469,32 @@ fn find_frontiers(m: &MapIn, a: &Analysis, p: &NavParams) -> Vec<Frontier> {
                 ((xi - mx).powi(2) + (yi - my).powi(2)).total_cmp(&((xj - mx).powi(2) + (yj - my).powi(2)))
             })
             .unwrap();
+        // 목표: 덩어리 중심 가까운 칸 둘레 1 m 안 도달 칸 중 제자리에서 돌 수 있는(장애물 ≥ 0.45 m) 곳, 없으면 가장 넓은 곳
+        let goal_idx = {
+            let (cx0, cy0) = g.center(near_c);
+            let r = (1.0 / g.res) as i64;
+            let (gx0, gy0) = g.cell_of(cx0, cy0);
+            let mut best: Option<(f64, usize)> = None;
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    if dx * dx + dy * dy > r * r {
+                        continue;
+                    }
+                    if let Some(i) = g.idx(gx0 + dx, gy0 + dy) {
+                        if !a.reachable(i) || !is_free(g.cells[i]) {
+                            continue;
+                        }
+                        let d = (dx * dx + dy * dy) as f64 * g.res * g.res;
+                        let room = a.dobs[i] as f64;
+                        let score = if room >= 0.45 { -d.sqrt() } else { -10.0 + room * 10.0 - d.sqrt() };
+                        if best.map_or(true, |b| score > b.0) {
+                            best = Some((score, i));
+                        }
+                    }
+                }
+            }
+            best.map(|b| b.1).unwrap_or(near_c)
+        };
         let (gx, gy) = g.center(goal_idx);
         let look_yaw = if un > 0.0 { (uy / un - my).atan2(ux / un - mx) } else { (gy - m.pose[1]).atan2(gx - m.pose[0]) };
         // 정보 이득: 목표점 둘레 모르는 넓이(2 칸 간격 표본)

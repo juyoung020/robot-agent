@@ -73,7 +73,7 @@ fn main() {
         Box::new(m)
     } else {
         let mut t = TcpSim::new(&flag(&a, "--addr").unwrap_or_else(|| move_robot::link::DEFAULT_ADDR.into()));
-        t.timeout = std::time::Duration::from_secs(120);
+        t.timeout = std::time::Duration::from_secs(600);
         Box::new(t)
     };
     let mut llm_box: Option<Box<dyn bagent::llm::Llm>> = match cfg.policy {

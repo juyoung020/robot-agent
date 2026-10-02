@@ -354,6 +354,10 @@ pub fn run(cfg: &Config, backend: &mut dyn Backend, mut llm: Option<&mut dyn Llm
             run_tool(&args, backend)
         };
         let exec_ms = tw.elapsed().as_millis() as u64;
+        if res["hint"].as_str().map_or(false, |h| h.contains("simulator link is down")) {
+            end_reason = format!("sim_link_down: {}", res["message"].as_str().unwrap_or(""));
+            break;
+        }
         calls += 1;
         let mode = format!("{}:{}", args["part"].as_str().unwrap_or("?"), args["mode"].as_str().unwrap_or("?"));
         *mode_count.entry(mode.clone()).or_default() += 1;

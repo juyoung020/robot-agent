@@ -102,7 +102,8 @@ impl Costmap {
         let _ = &self.tmp;
     }
 
-    /// 점 (x, y) 에서 가장 가까운 장애물 칸 "면"까지(m): 칸 중심 거리장을 쌍선형 보간하고 반 칸을 뺀다(접촉 판정과 같은 뜻)
+    /// 점 (x, y) 에서 가장 가까운 장애물 칸 "면"까지(m) 의 아래 한계: 둘레 네 칸 중심의 거리장 최솟값 − 0.71 칸.
+    /// (거리장은 칸 중심 사이 거리라, 칸 면까지는 최대 반대각만큼 가깝다 — 접촉 판정을 낙관하지 않게)
     #[inline]
     pub fn clear_at(&self, x: f64, y: f64) -> f64 {
         let g = &self.grid;
@@ -112,17 +113,19 @@ impl Costmap {
         let fx = (x - g.ox) / g.res - 0.5;
         let fy = (y - g.oy) / g.res - 0.5;
         let (x0, y0) = (fx.floor() as i64, fy.floor() as i64);
-        let (tx, ty) = (fx - x0 as f64, fy - y0 as f64);
         let d = |cx: i64, cy: i64| -> f64 {
             match g.idx(cx, cy) {
                 Some(i) => self.dobs[i] as f64,
                 None => 2.5,
             }
         };
-        let v = (1.0 - ty) * ((1.0 - tx) * d(x0, y0) + tx * d(x0 + 1, y0)) + ty * ((1.0 - tx) * d(x0, y0 + 1) + tx * d(x0 + 1, y0 + 1));
-        // 보간은 장애물 칸 바로 옆에서 실제보다 크게 나올 수 있다: 네 칸 중 가장 작은 것 + 한 칸을 넘지 않게
         let mn = d(x0, y0).min(d(x0 + 1, y0)).min(d(x0, y0 + 1)).min(d(x0 + 1, y0 + 1));
-        v.min(mn + g.res) - 0.5 * g.res
+        // 네 칸 중심 중 가장 가까운 칸까지 이 점이 떨어진 만큼은 더 가까울 수 있다: 그 칸 거리 − (점–칸 중심 거리)도 본다
+        let (tx, ty) = (fx - x0 as f64, fy - y0 as f64);
+        let (ix, iy) = (if tx < 0.5 { x0 } else { x0 + 1 }, if ty < 0.5 { y0 } else { y0 + 1 });
+        let off = ((fx - ix as f64).hypot(fy - iy as f64)) * g.res;
+        let near = d(ix, iy) - off;
+        mn.max(near) - 0.71 * g.res
     }
     #[inline]
     pub fn unknown_at(&self, x: f64, y: f64) -> bool {
@@ -145,39 +148,128 @@ pub fn analyze(cm: &Costmap, pose: [f64; 3], rooms: Option<crate::map::RoomGrid>
     (m, a)
 }
 
-/// 얇은 안전 정지(지도 안 씀): 마지막 깊이 프레임의 장애물 점 중 진행 방향 몸통 통로(반폭 body_r) 안 가장 가까운 것까지
-/// 몸통 원이 갈 수 있는 거리. 점들은 그 프레임 뒤 움직인 만큼 지금 자세로 옮겨 본다(점은 map 좌표라 그대로).
-/// 진행 방향을 카메라가 못 보면(±50° 밖) None.
-pub fn depth_guard(sc: &Scan, pose: [f64; 3], heading: f64, body_r: f64, max_m: f64) -> Option<f64> {
-    depth_guard_f(sc, pose, heading, body_r, max_m, |_| true)
+/// 얇은 안전 정지(지도 안 씀): 마지막 깊이 프레임의 장애물 점 중, 몸통 사각형(+margin)을 map 방향 `heading` 으로 밀었을 때
+/// 처음 닿는 것까지의 거리. 진행 방향을 카메라가 못 보면(몸 앞 ±55° 밖) None.
+pub fn depth_guard(sc: &Scan, fp: &Footprint, pose: [f64; 3], heading: f64, margin: f64, max_m: f64) -> Option<f64> {
+    depth_guard_f(sc, fp, pose, heading, margin, max_m, |_| true)
 }
 
 /// 지도에 이미 있는 장애물 점은 빼고(지역 제어가 이미 피함) — 지도에 없는(새로 나타난·움직이는·발밑) 것만
-pub fn depth_guard_unmapped(cm: &Costmap, pose: [f64; 3], heading: f64, body_r: f64, max_m: f64) -> Option<f64> {
+pub fn depth_guard_unmapped(cm: &Costmap, fp: &Footprint, pose: [f64; 3], heading: f64, margin: f64, max_m: f64) -> Option<f64> {
     let sc = cm.scan.as_ref()?;
-    depth_guard_f(sc, pose, heading, body_r, max_m, |q| cm.clear_at(q[0], q[1]) > 0.08)
+    depth_guard_f(sc, fp, pose, heading, margin, max_m, |q| cm.clear_at(q[0], q[1]) > 0.08)
 }
 
-fn depth_guard_f(sc: &Scan, pose: [f64; 3], heading: f64, body_r: f64, max_m: f64, keep: impl Fn(&[f64; 2]) -> bool) -> Option<f64> {
+fn depth_guard_f(sc: &Scan, fp: &Footprint, pose: [f64; 3], heading: f64, margin: f64, max_m: f64, keep: impl Fn(&[f64; 2]) -> bool) -> Option<f64> {
     let rel = ang_diff(heading, pose[2]);
-    if rel.abs() > 50f64.to_radians() {
+    if rel.abs() > 55f64.to_radians() {
         return None;
     }
-    let (s, c) = heading.sin_cos();
+    let (s, c) = pose[2].sin_cos();
+    let dir = [rel.cos(), rel.sin()];
     let mut best = max_m;
     for q in &sc.hits {
         let (fx, fy) = (q[0] - pose[0], q[1] - pose[1]);
-        let lon = fx * c + fy * s;
-        let lat = -fx * s + fy * c;
-        if lon <= -0.05 || lat.abs() >= body_r || !keep(q) {
+        let p = [c * fx + s * fy, -s * fx + c * fy];
+        if p[0] < -fp.hl - 0.05 || !keep(q) {
             continue;
         }
-        let t = lon - (body_r * body_r - lat * lat).sqrt();
-        if t < best {
-            best = t;
+        if let Some(t) = fp.sweep_hit(p, dir, margin) {
+            if t < best {
+                best = t;
+            }
         }
     }
     Some(best.max(0.0))
+}
+
+// ---------------------------------------------------------------- 몸통 모양(사각형)
+
+/// R1Pro 베이스 사각형(평가기 base_link AABB 0.743 × 0.732 m @ yaw 148.5° 에서 풀면 약 0.55 × 0.52 m). 원(외접 0.38 m)으로 보면
+/// 0.8 m 문을 못 지나고, 내접 원(0.27 m)으로 보면 모서리가 닿는다 → 사각형 둘레 점으로 검사한다(Nav2 footprint 와 같은 뜻).
+#[derive(Clone, Copy, Debug)]
+pub struct Footprint {
+    pub hl: f64,
+    pub hw: f64,
+    /// 둘레 점(로봇 기준), 약 5 cm 간격
+    pts: [[f64; 2]; 44],
+}
+
+impl Footprint {
+    pub fn new(hl: f64, hw: f64) -> Footprint {
+        let mut pts = [[0.0; 2]; 44];
+        let mut k = 0;
+        // 긴 변 12 칸, 짧은 변 10 칸
+        for i in 0..12 {
+            let t = -hl + 2.0 * hl * i as f64 / 12.0;
+            pts[k] = [t, hw];
+            pts[k + 1] = [-t, -hw];
+            k += 2;
+        }
+        for i in 0..10 {
+            let t = -hw + 2.0 * hw * i as f64 / 10.0;
+            pts[k] = [hl, -t];
+            pts[k + 1] = [-hl, t];
+            k += 2;
+        }
+        Footprint { hl, hw, pts }
+    }
+    pub fn circum(&self) -> f64 {
+        self.hl.hypot(self.hw)
+    }
+    /// 자세 (x, y, yaw) 에서 몸통 둘레의 가장 작은 장애물 거리(m). 음수 = 겹침
+    pub fn clear(&self, cm: &Costmap, x: f64, y: f64, yaw: f64) -> f64 {
+        let (s, c) = yaw.sin_cos();
+        let mut m = f64::INFINITY;
+        for q in &self.pts {
+            let d = cm.clear_at(x + c * q[0] - s * q[1], y + s * q[0] + c * q[1]);
+            if d < m {
+                m = d;
+            }
+        }
+        m
+    }
+    /// 둘레 점 중 모르는 칸에 있는 것이 있나
+    pub fn touches_unknown(&self, cm: &Costmap, x: f64, y: f64, yaw: f64) -> bool {
+        let (s, c) = yaw.sin_cos();
+        self.pts.iter().step_by(3).any(|q| cm.unknown_at(x + c * q[0] - s * q[1], y + s * q[0] + c * q[1]))
+    }
+    /// 제자리에서 yaw0 → yaw1 로 돌 때 가장 작은 여유(5° 간격)
+    pub fn turn_clear(&self, cm: &Costmap, x: f64, y: f64, yaw0: f64, yaw1: f64) -> f64 {
+        let d = ang_diff(yaw1, yaw0);
+        let n = (d.abs() / 5f64.to_radians()).ceil().max(1.0) as usize;
+        (0..=n).map(|k| self.clear(cm, x, y, yaw0 + d * k as f64 / n as f64)).fold(f64::INFINITY, f64::min)
+    }
+    /// 로봇 기준 점 p 가 (로봇 기준) 방향 dir 으로 t 만큼 몸통이 밀려갈 때 몸통(+margin)에 들어오는 가장 작은 t ≥ 0. 안 들어오면 None
+    pub fn sweep_hit(&self, p: [f64; 2], dir: [f64; 2], margin: f64) -> Option<f64> {
+        let (hl, hw) = (self.hl + margin, self.hw + margin);
+        // 몸통이 t·dir 만큼 가면 점의 상대 위치 = p − t·dir. |px − t dx| ≤ hl, |py − t dy| ≤ hw 인 t 구간
+        let mut lo: f64 = 0.0;
+        let mut hi: f64 = f64::INFINITY;
+        for (pv, dv, h) in [(p[0], dir[0], hl), (p[1], dir[1], hw)] {
+            if dv.abs() < 1e-9 {
+                if pv.abs() > h {
+                    return None;
+                }
+            } else {
+                let (a, b) = ((pv - h) / dv, (pv + h) / dv);
+                let (a, b) = if a < b { (a, b) } else { (b, a) };
+                lo = lo.max(a);
+                hi = hi.min(b);
+            }
+        }
+        if lo <= hi {
+            Some(lo)
+        } else {
+            None
+        }
+    }
+}
+
+impl Default for Footprint {
+    fn default() -> Self {
+        Footprint::new(0.285, 0.27)
+    }
 }
 
 // ---------------------------------------------------------------- 지역 제어(DWA)
@@ -185,6 +277,7 @@ fn depth_guard_f(sc: &Scan, pose: [f64; 3], heading: f64, body_r: f64, max_m: f6
 #[derive(Clone, Debug)]
 pub struct DwaParams {
     pub body_r: f64,
+    pub fp: Footprint,
     pub horizon_s: f64,
     pub dt: f64,
     pub nv: usize,
@@ -194,65 +287,80 @@ pub struct DwaParams {
 
 impl Default for DwaParams {
     fn default() -> Self {
-        DwaParams { body_r: 0.30, horizon_s: 1.2, dt: 0.1, nv: 6, nw: 13, acc: 0.8 }
+        DwaParams { body_r: 0.30, fp: Footprint::default(), horizon_s: 1.2, dt: 0.1, nv: 6, nw: 13, acc: 0.8 }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DwaOut {
     pub v: f64,
+    /// 옆 속도(로봇 기준 왼쪽 +) — 좁은 곳 빠져나오기에서만 0 이 아님(베이스가 전방향)
+    pub vy: f64,
     pub w: f64,
     /// 고른 궤적의 가장 작은 여유(장애물까지 − 몸통)
     pub clear: f64,
     pub ok: bool,
 }
 
-/// 몸통 원이 (x, y) 에서 안전한가: 장애물 거리 ≥ body_r + margin, 그리고 모르는 칸 아님(출발 둘레 빼고)
-fn safe_at(cm: &Costmap, x: f64, y: f64, body: f64, start: [f64; 2], start_r: f64, allow_unknown: bool) -> Option<f64> {
-    let c = cm.clear_at(x, y) - body;
-    if c < 0.0 {
-        return None;
-    }
-    if !allow_unknown && cm.unknown_at(x, y) && (x - start[0]).hypot(y - start[1]) > start_r {
-        return None;
-    }
-    Some(c)
-}
-
-/// 속도 표본(v, w)마다 horizon 동안 굴려 보고 안전한 것 중 점수가 가장 좋은 것. 앞으로만(카메라가 앞을 봄).
+/// 속도 표본(v, w)마다 horizon 동안 굴려 보고, 몸통 사각형 둘레가 장애물에서 margin 이상(좁은 곳에 이미 들어와 있으면 지금 여유
+/// − 1 cm 이상) 떨어진 것 중 점수가 가장 좋은 것. 앞으로만(카메라가 앞을 봄). 모르는 칸은 전역 경로 0.35 m 안이면 허용.
 pub fn dwa(cm: &Costmap, path: &[[f64; 2]], pose: [f64; 3], anchor: [f64; 2], carrot: [f64; 2], goal_dist: f64, vmax: f64, wmax: f64, margin: f64, dp: &DwaParams, start_r: f64, allow_unknown: bool) -> DwaOut {
     let mut best: Option<(f64, DwaOut)> = None;
-    let start = anchor;
-    // 좁은 곳에 이미 들어와 있으면(여유 < 몸통) 여유를 더 줄이지 않는 궤적만(빠져나오기), 바닥은 몸통 − 1.5 cm
-    let cur = cm.clear_at(pose[0], pose[1]) - margin;
-    let need = (cur - 0.005).min(dp.body_r).max(dp.body_r - 0.015);
+    let fp = &dp.fp;
+    let cur = fp.clear(cm, pose[0], pose[1], pose[2]);
+    // 좁은 곳에 이미 들어와 있으면 여유를 더 줄이지 않는 궤적만(빠져나오기)
+    let tight = cur < margin;
+    let need = if tight { cur - 0.003 } else { margin };
     let steps = (dp.horizon_s / dp.dt).round() as usize;
-    for iv in 0..dp.nv {
-        let v = vmax * iv as f64 / (dp.nv - 1) as f64;
-        // 멈춤 거리(v²/2a)는 이 궤적 위에서 안전해야 한다
-        let brake = v * v / (2.0 * dp.acc);
-        for iw in 0..dp.nw {
+    let dbg = std::env::var("MR_DEBUG_DWA2").is_ok();
+    let mut rej = [0usize; 4];
+    // 앞 nv 개 + 뒤 2 개(좁은 곳에서 돌 수 없을 때 빠져나오기: 아는 빈칸으로만, 느리게, 점수 깎음)
+    for iv in 0..dp.nv + 2 {
+        let v = if iv < dp.nv { vmax * iv as f64 / (dp.nv - 1) as f64 } else { -0.08 * (iv - dp.nv + 1) as f64 };
+        for iw in 0..dp.nw * 3 {
+            // 옆 속도 표본(전방향 베이스): 0, +0.1, −0.1 m/s — 좁은 곳에서 비켜 가기
+            let vy = [0.0, 0.1, -0.1][iw / dp.nw];
+            let iw = iw % dp.nw;
+            if vy != 0.0 && v < 0.0 {
+                continue;
+            }
             let w = -wmax + 2.0 * wmax * iw as f64 / (dp.nw - 1) as f64;
             let (mut x, mut y, mut th) = (pose[0], pose[1], pose[2]);
             let mut minc = f64::INFINITY;
             let mut ok = true;
             let mut travelled = 0.0;
-            for _ in 0..steps {
-                th += w * dp.dt;
-                x += v * th.cos() * dp.dt;
-                y += v * th.sin() * dp.dt;
-                travelled += v * dp.dt;
-                // 모르는 칸: 전역 경로(아는 빈칸) 0.35 m 안이면 괜찮다(경로를 따라가는 작은 벗어남)
-                let near_path = path.len() >= 2 && (0..path.len() - 1).any(|k| seg_dist(path[k], path[k + 1], [x, y]) < 0.35);
-                match safe_at(cm, x, y, need + margin, start, start_r, allow_unknown || near_path) {
-                    Some(c) => minc = minc.min(c),
-                    None => {
-                        // 멈춤 거리 안에서 막히면 이 표본은 못 씀
-                        if travelled <= brake + 0.25 || v > 0.0 {
-                            ok = false;
-                        }
-                        break;
+            // 굴림 간격: 한 걸음 5 cm·5° 이하
+            let sub = ((v.hypot(vy) * dp.dt / 0.05).max(w.abs() * dp.dt / 5f64.to_radians())).ceil().max(1.0) as usize;
+            'roll: for _ in 0..steps {
+                for _ in 0..sub {
+                    let h = dp.dt / sub as f64;
+                    th += w * h;
+                    x += (v * th.cos() - vy * th.sin()) * h;
+                    y += (v * th.sin() + vy * th.cos()) * h;
+                    travelled += v.hypot(vy) * h;
+                    let c = fp.clear(cm, x, y, th);
+                    // 제자리 돌기·뒤로 빠지기는 느리고 clear_at 이 이미 반대각(3.5 cm)만큼 낙관하지 않으므로 여유 0 까지 허용
+                    // 빠를수록 넓게: 0.5 m/s 면 +10 cm (지도에 늦게 들어오는 옆 장애물·멈춤 거리)
+                    let need_here = need + 0.2 * v.max(0.0);
+                    if c < need_here {
+                        rej[0] += 1;
+                        ok = false;
+                        break 'roll;
                     }
+                    // 뒤: 카메라가 못 본 곳. 이번 움직임 출발점 0.8 m 안(지나온 곳)이 아니면 모르는 칸 금지
+                    if v < 0.0 && (x - anchor[0]).hypot(y - anchor[1]) > 0.8 && fp.touches_unknown(cm, x, y, th) {
+                        rej[1] += 1;
+                        ok = false;
+                        break 'roll;
+                    }
+                    if !allow_unknown && v > 0.0 && (x - anchor[0]).hypot(y - anchor[1]) > start_r && cm.unknown_at(x, y) {
+                        let near_path = path.len() >= 2 && (0..path.len() - 1).any(|k| seg_dist(path[k], path[k + 1], [x, y]) < 0.35);
+                        if !near_path {
+                            ok = false;
+                            break 'roll;
+                        }
+                    }
+                    minc = minc.min(c);
                 }
                 if travelled > goal_dist {
                     break;
@@ -261,20 +369,97 @@ pub fn dwa(cm: &Costmap, path: &[[f64; 2]], pose: [f64; 3], anchor: [f64; 2], ca
             if !ok {
                 continue;
             }
+            // 좁은 곳: 끝 자세가 지금보다 넓어지는 궤적만(조금씩 더 들어가는 것 막기)
+            if tight && (v != 0.0 || w != 0.0 || vy != 0.0) && fp.clear(cm, x, y, th) < cur + 0.005 {
+                rej[2] += 1;
+                continue;
+            }
             if minc.is_infinite() {
-                minc = cm.clear_at(pose[0], pose[1]) - dp.body_r;
+                minc = cur;
             }
             let d_end = (carrot[0] - x).hypot(carrot[1] - y);
             let h_err = ang_diff((carrot[1] - y).atan2(carrot[0] - x), th).abs();
-            let score = -2.0 * d_end - 0.6 * h_err + 0.8 * minc.min(0.4) + 0.3 * v / vmax.max(1e-6);
+            let score = -2.0 * d_end - 0.6 * h_err + 0.8 * minc.min(0.3) + 0.3 * v / vmax.max(1e-6) - if v < 0.0 { 0.3 } else { 0.0 } - 1.5 * vy.abs();
             if best.map_or(true, |b| score > b.0) {
-                best = Some((score, DwaOut { v, w, clear: minc, ok: true }));
+                best = Some((score, DwaOut { v, vy, w, clear: minc, ok: true }));
             }
         }
     }
+    // 전방향 따라가기: 몸을 돌리지 않고 carrot 쪽으로 미끄러지기(좁은 복도에서 돌 수 없을 때). 아는 곳·경로 둘레만
+    {
+        let (s0, c0) = pose[2].sin_cos();
+        let ac = ang_diff((carrot[1] - pose[1]).atan2(carrot[0] - pose[0]), pose[2]);
+        for da in [-1.57, -1.05, -0.52, 0.0, 0.52, 1.05, 1.57] {
+            let a = ac + da;
+            let sp = 0.15f64.min(vmax);
+            let (vx, vy) = (sp * a.cos(), sp * a.sin());
+            let mut okk = true;
+            let mut minc = f64::INFINITY;
+            let (mut x, mut y) = (pose[0], pose[1]);
+            let n = (dp.horizon_s * sp / 0.04).ceil().max(1.0) as usize;
+            let h = dp.horizon_s / n as f64;
+            let mut trav = 0.0;
+            for _ in 0..n {
+                x += (c0 * vx - s0 * vy) * h;
+                y += (s0 * vx + c0 * vy) * h;
+                trav += sp * h;
+                let c = fp.clear(cm, x, y, pose[2]);
+                let near_path = path.len() >= 2 && (0..path.len() - 1).any(|k| seg_dist(path[k], path[k + 1], [x, y]) < 0.35);
+                if c < need || (!near_path && fp.touches_unknown(cm, x, y, pose[2])) {
+                    okk = false;
+                    break;
+                }
+                minc = minc.min(c);
+                if trav > goal_dist {
+                    break;
+                }
+            }
+            if !okk {
+                continue;
+            }
+            if tight && fp.clear(cm, x, y, pose[2]) < cur + 0.005 {
+                continue;
+            }
+            let d_end = (carrot[0] - x).hypot(carrot[1] - y);
+            let score = -2.0 * d_end + 0.8 * minc.min(0.3) - 0.5 - 0.3 * a.abs().min(std::f64::consts::PI) / std::f64::consts::PI;
+            if best.map_or(true, |b| score > b.0) {
+                best = Some((score, DwaOut { v: vx, vy, w: 0.0, clear: minc, ok: true }));
+            }
+        }
+    }
+    // 좁은 곳(사각형 모서리가 거의 닿음): 전방향으로 0.5 s 미는 16 방향 중 여유가 가장 커지는 것(카메라 밖이면 지나온 곳만)
+    if best.map_or(true, |b| b.1.v == 0.0 && b.1.w == 0.0 && b.1.vy == 0.0) {
+        let (s0, c0) = pose[2].sin_cos();
+        let mut esc: Option<(f64, f64, f64)> = None;
+        for k in 0..16 {
+            let a = k as f64 * std::f64::consts::PI / 8.0;
+            let (vx, vy) = (0.1 * a.cos(), 0.1 * a.sin());
+            let mut okk = true;
+            let mut end = cur;
+            for j in 1..=10 {
+                let t = 0.05 * j as f64;
+                let (x, y) = (pose[0] + (c0 * vx - s0 * vy) * t, pose[1] + (s0 * vx + c0 * vy) * t);
+                let c = fp.clear(cm, x, y, pose[2]);
+                if c < cur.min(need) - 0.003 || ((x - anchor[0]).hypot(y - anchor[1]) > 0.8 && fp.touches_unknown(cm, x, y, pose[2])) {
+                    okk = false;
+                    break;
+                }
+                end = c;
+            }
+            if okk && end > cur + 0.01 && esc.map_or(true, |e| end > e.0) {
+                esc = Some((end, vx, vy));
+            }
+        }
+        if let Some((end, vx, vy)) = esc {
+            best = Some((0.0, DwaOut { v: vx, vy, w: 0.0, clear: end, ok: true }));
+        }
+    }
+    if dbg {
+        eprintln!("dwa2 cur={cur:.3} tight={tight} need={need:.3} rej(clear,unknown_back,tight_end)={:?} best={:?}", &rej[..3], best.map(|b| b.1));
+    }
     match best {
         Some((_, o)) => o,
-        None => DwaOut { v: 0.0, w: 0.0, clear: 0.0, ok: false },
+        None => DwaOut { v: 0.0, vy: 0.0, w: 0.0, clear: 0.0, ok: false },
     }
 }
 

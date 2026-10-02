@@ -3,6 +3,9 @@
 
 use crate::map::{self, ang_diff, dir_text, r1, r2, Analysis, Frontier, Grid, MapIn, NavParams, RoomGrid};
 use crate::nav::{self, carrot_on, change_hits_path, depth_guard, dwa, path_blocked, Costmap, DwaParams, MapDelta};
+const TURN_MIN_CLEAR: f64 = 0.01;
+/// DWA: 몸통 사각형 둘레가 장애물에서 이만큼 떨어져야(격자 0.05 m 근사 오차 포함)
+const DWA_MARGIN: f64 = 0.02;
 use crate::{Command, Robot, Safety};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -107,11 +110,11 @@ impl NavState {
         self.pose[2] += v[2] * dt;
         self.odo_m += v[0].hypot(v[1]) * dt;
         if self.have_map {
-            let c = self.cm.clear_at(self.pose[0], self.pose[1]);
+            let c = self.dwa.fp.clear(&self.cm, self.pose[0], self.pose[1], self.pose[2]);
             if v[0].hypot(v[1]) > 0.02 {
                 self.min_clear = self.min_clear.min(c);
             }
-            if self.path_log.last().map_or(true, |q| (q[0] - self.pose[0]).hypot(q[1] - self.pose[1]) > 0.1) {
+            if self.path_log.last().map_or(true, |q| (q[0] - self.pose[0]).hypot(q[1] - self.pose[1]) > 0.05) {
                 self.path_log.push([self.pose[0], self.pose[1]]);
             }
         }
@@ -191,6 +194,8 @@ pub struct NavMove {
     pub recover: u8,
     pub look_target: f64,
     pub back_start: [f64; 2],
+    /// 되짚기 회복: 거꾸로 따라갈 지나온 점들
+    pub retrace: Vec<[f64; 2]>,
     pub settle: u32,
     pub cm_ver: u64,
     pub last_replan: f64,
@@ -230,6 +235,7 @@ impl Robot {
             recover: 0,
             look_target: 0.0,
             back_start: [0.0; 2],
+            retrace: vec![],
             settle: 0,
             cm_ver: self.nav.cm.version,
             last_replan: self.nav.now,
@@ -314,7 +320,37 @@ impl Robot {
         match (m.kind, m.phase) {
             // ---------------- probe: 돌기 → 앞으로(깊이 안전 정지)
             (NavKind::Probe, 0) => {
+                if m.recover == 0 && self.nav.have_map {
+                    // 돌기 전에 한 번 모서리 검사(사각형 몸통): 막히면 반대쪽으로 돌기, 그것도 막히면 보고
+                    m.recover = 1;
+                    let cm = &self.nav.cm;
+                    if dp.fp.turn_clear(cm, xy[0], xy[1], pose[2], m.turn_yaw) < TURN_MIN_CLEAR && ang_diff(m.turn_yaw, pose[2]).abs() > 3f64.to_radians() {
+                        let e = ang_diff(m.turn_yaw, pose[2]);
+                        let other = pose[2] + e - 2.0 * std::f64::consts::PI * e.signum();
+                        let mut ok_other = true;
+                        let n = 36;
+                        for k in 0..=n {
+                            let yy = pose[2] + (other - pose[2]) * k as f64 / n as f64;
+                            if dp.fp.clear(cm, xy[0], xy[1], yy) < TURN_MIN_CLEAR {
+                                ok_other = false;
+                                break;
+                            }
+                        }
+                        if ok_other {
+                            m.turn_yaw = other;
+                        } else {
+                            m.stop = Some(("cannot turn here: body corners would hit".into(), r2(dp.fp.clear(cm, xy[0], xy[1], pose[2]).max(0.0))));
+                            m.outcome = Some("blocked");
+                            m.phase = 2;
+                        }
+                    }
+                    if m.phase == 2 {
+                        return None;
+                    }
+                }
+                let e_full = m.turn_yaw - pose[2];
                 let (e, w) = turn_to(m.turn_yaw, s.nav_wmax);
+                let (e, w) = if e_full.abs() > std::f64::consts::PI { (e_full, e_full.signum() * w.abs()) } else { (e, w) };
                 des[2] = w;
                 if e.abs() < 1.5f64.to_radians() {
                     m.phase = if m.fwd_m > 0.005 { 1 } else { 2 };
@@ -356,14 +392,15 @@ impl Robot {
                     m.phase = 1;
                 } else {
                     let herr = ang_diff((carrot[1] - xy[1]).atan2(carrot[0] - xy[0]), pose[2]);
-                    if herr.abs() > 30f64.to_radians() {
+                    let can_turn = |d: f64| dp.fp.turn_clear(&self.nav.cm, xy[0], xy[1], pose[2], pose[2] + d) >= TURN_MIN_CLEAR;
+                    if herr.abs() > 30f64.to_radians() && can_turn(herr.signum() * 10f64.to_radians()) {
                         des[2] = sat(2.0 * herr, s.nav_wmax).abs().max(0.3) * herr.signum();
                         m.stuck = 0;
                     } else {
                         let vmax = s.nav_vmax.min((2.0 * s.base_acc * remain).sqrt() + s.base_creep);
-                        let o = dwa(&self.nav.cm, &m.path, pose, m.start_xy, carrot, remain, vmax, s.nav_wmax, 0.0, &dp, p.start_free_r, false);
+                        let o = dwa(&self.nav.cm, &m.path, pose, m.start_xy, carrot, remain, vmax, s.nav_wmax, DWA_MARGIN, &dp, p.start_free_r, false);
                         // 얇은 깊이 정지
-                        let g = nav::depth_guard_unmapped(&self.nav.cm, pose, pose[2], dp.body_r, 3.0);
+                        let g = nav::depth_guard_unmapped(&self.nav.cm, &dp.fp, pose, pose[2], 0.02, 3.0);
                         let v_ok = match g {
                             Some(d) => o.v.min((2.0 * s.base_acc * (d - margin).max(0.0)).sqrt()),
                             None => o.v,
@@ -376,15 +413,34 @@ impl Robot {
                             eprintln!("dwa t={:.2} pose=({:.2},{:.2},{:.0}) carrot=({:.2},{:.2}) herr={:.0} ok={} v={:.2} w={:.2} clear={:.2} guard={:?} cur_clear={:.2} stuck={}",
                                 t, pose[0], pose[1], pose[2].to_degrees(), carrot[0], carrot[1], herr.to_degrees(), o.ok, o.v, o.w, o.clear, g, self.nav.cm.clear_at(xy[0], xy[1]), m.stuck);
                         }
-                        if guard_blocked && herr.abs() > 8f64.to_radians() {
-                            // 앞이 막혔지만 가야 할 쪽은 옆: 제자리에서 그쪽으로 돈다(몸통 원이라 돌기는 안전)
+                        // 지도에 아직 없는 장애물 점이 몸 둘레(외접 원 + 5 cm) 안: 돌면 모서리가 닿을 수 있다 → 돌지 말고 조금 물러남
+                        let unmapped_near = self.nav.cm.scan.as_ref().map_or(false, |sc| {
+                            let r = dp.fp.circum() + 0.05;
+                            sc.hits.iter().any(|q| (q[0] - xy[0]).hypot(q[1] - xy[1]) < r && self.nav.cm.clear_at(q[0], q[1]) > 0.08)
+                        });
+                        if guard_blocked && unmapped_near {
+                            let back = [xy[0] - 0.1 * pose[2].cos(), xy[1] - 0.1 * pose[2].sin()];
+                            if dp.fp.clear(&self.nav.cm, back[0], back[1], pose[2]) > 0.0 && !self.nav.cm.unknown_at(back[0], back[1]) {
+                                des[0] = -0.1;
+                            }
+                            m.guard_stops += 1;
+                            m.stuck += 1;
+                        } else if guard_blocked && herr.abs() > 8f64.to_radians() && can_turn(herr.signum() * 10f64.to_radians()) {
+                            // 앞이 막혔지만 가야 할 쪽은 옆: 제자리에서 그쪽으로 돈다(둘레에 지도 밖 장애물 없음)
                             des[2] = sat(2.0 * herr, s.nav_wmax).abs().max(0.3) * herr.signum();
                             m.stuck = 0;
                         } else if o.ok && v_ok > 0.02 {
                             des[0] = v_ok;
+                            des[1] = o.vy;
                             des[2] = o.w;
                             m.stuck = 0;
-                        } else if herr.abs() > 8f64.to_radians() {
+                        } else if o.ok && (o.v < -0.01 || o.w.abs() > 0.05 || o.vy.abs() > 0.01) {
+                            // 뒤로 빠지기 / 옆으로 빠지기 / 제자리 돌기(DWA 가 굴려 보고 안전하다고 한 것)
+                            des[0] = o.v;
+                            des[1] = o.vy;
+                            des[2] = o.w;
+                            m.stuck += (o.v >= -0.01) as u32;
+                        } else if herr.abs() > 8f64.to_radians() && can_turn(herr.signum() * 10f64.to_radians()) {
                             // 앞으로 갈 안전한 궤적이 없으면 먼저 가야 할 쪽으로 제자리 돌기
                             des[2] = sat(2.0 * herr, s.nav_wmax).abs().max(0.3) * herr.signum();
                             m.stuck += 1;
@@ -406,14 +462,30 @@ impl Robot {
                             m.look_target = pose[2] + 35f64.to_radians();
                         }
                         3 => {
-                            let back = pose[2] + std::f64::consts::PI;
-                            let (bs, bc) = back.sin_cos();
-                            let bp = [xy[0] + 0.25 * bc, xy[1] + 0.25 * bs];
-                            if self.nav.cm.clear_at(bp[0], bp[1]) > (dp.body_r - 0.015).min(self.nav.cm.clear_at(xy[0], xy[1])) && !self.nav.cm.unknown_at(bp[0], bp[1]) {
+                            // 되짚기(Nav2 backup 과 같은 뜻): 지나온 자리(trail)를 거꾸로 0.7 m, 몸은 돌리지 않고 전방향으로
+                            let trail = &self.nav.path_log;
+                            let mut pts = vec![];
+                            let mut acc = 0.0;
+                            let mut last = xy;
+                            for q in trail.iter().rev() {
+                                let d = (q[0] - last[0]).hypot(q[1] - last[1]);
+                                if d < 0.05 {
+                                    continue;
+                                }
+                                acc += d;
+                                pts.push(*q);
+                                last = *q;
+                                if acc > 0.7 {
+                                    break;
+                                }
+                            }
+                            if pts.is_empty() {
+                                m.recover = 4;
+                            } else {
+                                m.retrace = pts;
                                 m.phase = 4;
                                 m.back_start = xy;
-                            } else {
-                                m.recover = 4;
+                                m.settle = 0;
                             }
                         }
                         _ => {}
@@ -427,16 +499,20 @@ impl Robot {
                 }
             }
             (NavKind::GoTo, 1) => match m.look_yaw {
-                Some(ly) => {
+                Some(ly) if dp.fp.turn_clear(&self.nav.cm, xy[0], xy[1], pose[2], ly) >= TURN_MIN_CLEAR || ang_diff(ly, pose[2]).abs() < 3f64.to_radians() => {
                     let (e, w) = turn_to(ly, s.nav_wmax);
                     des[2] = w;
                     if e.abs() < 3f64.to_radians() {
                         m.phase = 2;
                     }
                 }
-                None => m.phase = 2,
+                _ => m.phase = 2,
             },
             (NavKind::GoTo, 3) => {
+                if !can_turn_now(&dp, &self.nav.cm, xy, pose[2], m.look_target) {
+                    m.phase = 0;
+                    m.stuck = 10;
+                }
                 let (e, w) = turn_to(m.look_target, s.nav_wmax);
                 des[2] = w;
                 if e.abs() < 3f64.to_radians() {
@@ -453,10 +529,37 @@ impl Robot {
                 m.settle += 1;
             }
             (NavKind::GoTo, 4) => {
-                des[0] = -0.15;
-                if (xy[0] - m.back_start[0]).hypot(xy[1] - m.back_start[1]) > 0.25 {
-                    m.phase = 0;
-                    self.replan(m);
+                // 되짚기: 다음 trail 점으로 0.12 m/s, 몸 방향 그대로(로봇 기준 속도로 바꿈)
+                m.settle += 1;
+                while let Some(q) = m.retrace.first() {
+                    if (q[0] - xy[0]).hypot(q[1] - xy[1]) < 0.06 {
+                        m.retrace.remove(0);
+                    } else {
+                        break;
+                    }
+                }
+                match m.retrace.first() {
+                    Some(q) if m.settle < 240 => {
+                        let (dx, dy) = (q[0] - xy[0], q[1] - xy[1]);
+                        let d = dx.hypot(dy).max(1e-6);
+                        let (sn, cs) = pose[2].sin_cos();
+                        let (wx, wy) = (dx / d * 0.12, dy / d * 0.12);
+                        // 몸 방향이 그때와 다를 수 있다: 0.1 m 앞 자세가 지금보다 좁아지며 닿을 듯하면 멈춤
+                        let ahead = dp.fp.clear(&self.nav.cm, xy[0] + dx / d * 0.1, xy[1] + dy / d * 0.1, pose[2]);
+                        let now_c = dp.fp.clear(&self.nav.cm, xy[0], xy[1], pose[2]);
+                        if ahead < 0.0 && ahead < now_c {
+                            m.retrace.clear();
+                        } else {
+                            des[0] = cs * wx + sn * wy;
+                            des[1] = -sn * wx + cs * wy;
+                        }
+                    }
+                    _ => {
+                        m.phase = 0;
+                        m.settle = 0;
+                        m.stuck = 0;
+                        self.replan(m);
+                    }
                 }
             }
             (_, _) => {
@@ -523,7 +626,7 @@ impl Robot {
     /// 앞(heading)으로 몸통 원이 갈 수 있는 거리와 무엇이 막나: 비용 지도(장애물; probe 가 아니면 모르는 칸도)와 얇은 깊이 정지 중 작은 것
     pub(crate) fn free_ahead(&self, pose: [f64; 3], heading: f64, allow_unknown: bool, anchor: [f64; 2]) -> (f64, &'static str) {
         let cm = &self.nav.cm;
-        let body = self.nav.dwa.body_r;
+        let fp = self.nav.dwa.fp;
         let (sn, cs) = heading.sin_cos();
         let mut d_map = 3.0;
         let mut by = "none";
@@ -532,7 +635,7 @@ impl Robot {
             let mut t = 0.0;
             while t < 3.0 {
                 let (x, y) = (pose[0] + cs * t, pose[1] + sn * t);
-                if cm.clear_at(x, y) < body {
+                if fp.clear(cm, x, y, pose[2]) < 0.0 {
                     d_map = (t - step).max(0.0);
                     by = "map obstacle";
                     break;
@@ -545,7 +648,7 @@ impl Robot {
                 t += step;
             }
         }
-        let g = cm.scan.as_ref().and_then(|sc| depth_guard(sc, pose, heading, body, 3.0));
+        let g = cm.scan.as_ref().and_then(|sc| depth_guard(sc, &fp, pose, heading, 0.0, 3.0));
         match g {
             Some(d) if d < d_map => (d, "obstacle seen by camera"),
             None if allow_unknown && self.nav.have_map && !cm.scan.as_ref().map_or(false, |_| true) => (d_map, by),
@@ -773,4 +876,8 @@ impl Robot {
             "targets": n.targets.iter().map(|t| json!({"id": t.id, "xy": [r2(t.goal[0]), r2(t.goal[1])], "path_m": r1(t.path_m)})).collect::<Vec<_>>(),
             "odo_m": r2(n.odo_m), "gt_cov": n.gt_coverage().map(|c| (c * 1000.0).round() / 1000.0), "contacts": n.contacts})
     }
+}
+
+fn can_turn_now(dp: &DwaParams, cm: &Costmap, xy: [f64; 2], yaw: f64, target: f64) -> bool {
+    dp.fp.turn_clear(cm, xy[0], xy[1], yaw, target) >= TURN_MIN_CLEAR
 }

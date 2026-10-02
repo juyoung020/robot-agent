@@ -185,6 +185,10 @@ pub struct MockWorld {
     pub map_us: u64,
     /// 닿은 자리(world x, y, yaw)와 그때 시각 — 시험·진단
     pub contact_log: Vec<[f64; 4]>,
+    /// 지난 스텝에 닿아 있었나(접촉 사건은 닿기 시작할 때 한 번 센다)
+    pub in_contact: bool,
+    /// 닿아 있던 스텝 수
+    pub contact_steps: u64,
 }
 
 impl MockWorld {
@@ -214,24 +218,25 @@ impl MockWorld {
     }
     pub fn new(floor: crate::map::Grid) -> MockWorld {
         let n = floor.w * floor.h;
-        MockWorld { floor, logodds: vec![0.0; n], seen: vec![false; n], body_r: 0.28, fov: 49.6f64.to_radians(), range: 6.0, min_range: 0.4, kf_every: 6, contacts: 0, events: vec![], last_scan_hits: 0, map_us: 0, contact_log: vec![] }
+        MockWorld { floor, logodds: vec![0.0; n], seen: vec![false; n], body_r: 0.28, fov: 49.6f64.to_radians(), range: 6.0, min_range: 0.4, kf_every: 6, contacts: 0, events: vec![], last_scan_hits: 0, map_us: 0, contact_log: vec![], in_contact: false, contact_steps: 0 }
     }
     pub fn is_floor(&self, x: f64, y: f64) -> bool {
         self.floor.at(x, y) == 1
     }
-    /// 몸통 원이 바닥만 덮나
-    pub fn body_ok(&self, x: f64, y: f64) -> bool {
-        let r = self.body_r;
-        let k = (r / self.floor.res).ceil() as i64;
-        let (cx, cy) = self.floor.cell_of(x, y);
-        for dy in -k..=k {
-            for dx in -k..=k {
-                if let Some(i) = self.floor.idx(cx + dx, cy + dy) {
-                    let (px, py) = self.floor.center(i);
-                    if (px - x).hypot(py - y) <= r && self.floor.cells[i] != 1 {
-                        return false;
-                    }
-                } else {
+    /// 몸통 사각형(0.55 × 0.52 m, R1Pro 베이스)이 바닥만 덮나. body_r 은 둘레 여유(0 = 딱 맞음)
+    pub fn body_ok(&self, x: f64, y: f64, yaw: f64) -> bool {
+        let (hl, hw) = (0.275 + self.body_r * 0.0, 0.26);
+        let (s, c) = yaw.sin_cos();
+        let step = self.floor.res * 0.5;
+        let nx = (2.0 * hl / step).ceil() as i64;
+        let ny = (2.0 * hw / step).ceil() as i64;
+        for i in 0..=nx {
+            for j in 0..=ny {
+                if i != 0 && i != nx && j != 0 && j != ny && (i % 4 != 0 || j % 4 != 0) {
+                    continue;
+                }
+                let (lx, ly) = (-hl + 2.0 * hl * i as f64 / nx as f64, -hw + 2.0 * hw * j as f64 / ny as f64);
+                if !self.is_floor(x + c * lx - s * ly, y + s * lx + c * ly) {
                     return false;
                 }
             }
@@ -370,9 +375,11 @@ impl Mock {
         self.sim_steps += 1;
         if let Some(w) = self.world.as_mut() {
             w.apply_events(self.sim_steps);
-            if !w.body_ok(self.plant.pose[0], self.plant.pose[1]) {
-                // 닿음: 위치는 그대로(회전만 허용), 속도 0 으로 보임
-                if w.body_ok(before[0], before[1]) {
+            if !w.body_ok(self.plant.pose[0], self.plant.pose[1], self.plant.pose[2]) {
+                // 닿음: 자세는 그대로, 속도 0 으로 보임
+                w.contact_steps += 1;
+                if !w.in_contact {
+                    w.in_contact = true;
                     w.contacts += 1;
                     w.contact_log.push([before[0], before[1], before[2], self.sim_steps as f64 / crate::HZ]);
                     if let Ok(dir) = std::env::var("MR_DEBUG_DIR") {
@@ -384,10 +391,10 @@ impl Mock {
                         });
                     }
                 }
-                self.plant.pose[0] = before[0];
-                self.plant.pose[1] = before[1];
-                self.plant.base_v[0] = 0.0;
-                self.plant.base_v[1] = 0.0;
+                self.plant.pose = before;
+                self.plant.base_v = [0.0; 3];
+            } else {
+                w.in_contact = false;
             }
             if self.sim_steps % w.kf_every == 0 {
                 self.feed_map();

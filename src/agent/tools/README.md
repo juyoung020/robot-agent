@@ -85,7 +85,7 @@ LLM (Qwen3.5-9B, raw tool loop) ── tool_call ──▶ move_robot::link::run
 
 ```bash
 cd src/agent/tools/move_robot
-cargo test --release                      # 단위 시험 19개 (Isaac Sim 없이)
+cargo test --release                      # 단위 시험 26개 (Isaac Sim 없이)
 cargo build --release --features llm      # libmove_robot.so + move-robot 명령
 ./target/release/move-robot schema
 ./target/release/move-robot mock '{"part":"left_arm","mode":"delta","values":[0,20,0,-30,0,0,0]}'   # 가짜 로봇
@@ -96,3 +96,36 @@ set -a; . ~/.config/behavior-2026/kau.env; set +a   # 키는 환경변수로만
 ./target/release/move-robot llm "오른쪽 그리퍼를 반쯤 닫고 앞으로 50cm 가" [--mock]
 python3 src/behavior-2026/src/sim/move_robot/test_move_robot_sim.py   # 시뮬 접착부 시험 (Isaac Sim 없이)
 ```
+
+## 2026-10-03 변경: 탐사용 베이스 모드·지도 관측·안전 정지 (스킬 [`explore`](../skills/explore/))
+
+스키마(약 1.5 KB): `mode` enum 이 `go_to | probe | delta | absolute`, `target`(go_to 의 id) 추가, 필수는 `part`, `mode` 만.
+
+| 베이스 모드 | values / target | 하는 일 |
+|---|---|---|
+| `go_to` | `target`: 지난 지도 요약의 `F1`(프런티어)·`R2`(방) — 또는 values `[앞 m, 왼쪽 m]`(아는 빈칸이어야 함) | **아는 빈칸만** 지나는 경로(부풀린 격자 Dijkstra)를 지역 제어기(DWA)가 따라감. 도착하면 프런티어의 모르는 쪽을 봄. 모르는 점·장애물 점이면 `error` + 고칠 문장 |
+| `probe` | `[왼쪽으로 돌기 °, 앞 m]`(앞 ≤ 1.5 m) | 제자리에서 돌고 0.25 m/s 로 천천히 앞으로. 지금 깊이 프레임·지도 장애물 앞(몸통 원 + 12 cm)에서 멈춤 → `blocked` + `stopped_by`, `clear_m`. 앞 0 = 돌아보기만 |
+| `delta` | `[앞, 왼쪽, 돌기°]` | 예전과 같음 + 지도가 있으면 진행 방향 안전 정지(지도 장애물·카메라 밖 모르는 곳·깊이) |
+
+주행 층(`src/nav.rs`, `src/robot_nav.rs`, Nav2 와 같은 층 구조, ROS 없음)
+- 비용 지도 = scenemap 2D 점유 격자 하나(로그 오즈라 치운 물체는 광선이 비움). 바뀐 칸은 scenemap 의 바뀐 영역(`sgrt_map_view.dirty_box`) 안에서만 비교,
+  거리장은 장애물이 바뀔 때만 다시. 물체 기억의 옮길 수 있는 물체 둘레는 계획 벌점.
+- 전역 경로: 바뀐 칸이 경로 통로(몸통 + 0.3 m)에 걸리고 실제로 막혔을 때, 또는 3 s 마다 다시 계획(ms 단위).
+- 지역 제어: 30 Hz 마다 DWA(속도 6 × 회전 13 표본, 1.2 s 굴림, 몸통 원 0.30 m 충돌 검사, 멈춤 거리 v²/2a). 가야 할 쪽이 30° 넘게 옆이면 제자리 돌기.
+- 얇은 안전 정지: 마지막 깊이 프레임 장애물 점 중 **지도에 아직 없는** 것(새로 나타남·발밑·움직임)으로 앞 속도를 줄이고 멈춤.
+- 회복: 다시 계획 → 35° 돌아보기 → 0.25 m 뒤로 → `blocked`("path blocked (…)"). 밀었는데 안 움직이면(접촉) 0.15 m 물러난 뒤 `blocked`.
+  두 번 실패한 목표 둘레 프런티어는 다음 관측에서 뺌(`skipped_failed`).
+
+베이스 결과에 붙는 것
+- `map`(LLM 관측): `free_m2`, `new_free_m2`, `frontiers`[`id`, `path_m`(아는 빈칸 경로 길이), `dir`(`ahead`·`40L`·`75R`·`back`), `new_area_m2`(둘레 2.5 m 모르는 넓이), `room`],
+  `around`(8 방향 `F, FL, L, BL, B, BR, R, FR`: "known 2.1m then wall|unknown, depth clear 1.8m"), `rooms`[`id`, `visited`, `path_m`], `in_room`, `status`.
+- `_m`(측정, 에이전트가 LLM 에게서 뺌): `gt_cov`, `free_m2`, `path_m`(오도메트리 누적), `sim_s`, `contacts`, `stalls`, `blocked`, `replans`, `min_clear_m`, `obs_us`, `plan_us`, `costmap_us`, `pose`.
+
+베이스 덜 감 고침: 허용 오차 2 cm·2° → 1 cm·1°, 남은 거리가 있으면 최소 접근 속도(3 cm/s, 3°/s), 도착 뒤 0 지령으로 멈출 때까지 기다려 실제 자리를 재고
+2 배 오차 밖이면 다시 접근(최대 2 번). 가짜 로봇 시험: 0.2 m → 오차 < 12 mm, 30° → < 1.2°.
+
+속도: go_to 0.5 m/s·50°/s, probe 0.25 m/s, delta 0.3 m/s(예전 그대로). 가감속 0.6 m/s²·90°/s².
+
+C ABI 추가(`include/move_robot.h`): `mr_set_map(r, &sgrt_map_view)`(평가기 접착부가 sgrt 구조체 포인터를 그대로 넘김), `mr_set_reference`(정답 바닥, 측정용),
+`mr_set_contacts`, `mr_overlay_json`(뷰어 겹침). 가짜 집 `link::MockWorld`(정답 바닥 PGM + 머리 카메라 흉내 ±49.6°, 6 m, 로그 오즈 격자, 몸통 원 접촉).
+시험 26개(`cargo test --release`): 지도 요약, 프런티어 go_to 무접촉, probe 벽 앞 정지, 모르는 점 go_to 거절, 옆(안 보이는 곳) delta 정지, 덜 감, 길에 나타나는 장애물.

@@ -401,15 +401,15 @@ fn obstacle_appearing_on_path_is_avoided_or_reported() {
     let mut m = Mock::with_world(two_rooms(), [1.0, 3.0, 0.0]);
     // 문 쪽으로 보며 지도 쌓기
     exec(&mut m, r#"{"part":"base","mode":"probe","values":[0,0.5]}"#);
-    // 가는 길 가운데(2.6, 3.0)에 0.3 m 장애물이 1 s 뒤 나타남
+    // 가는 길(3.4, 3.0)에 0.25 m 장애물이 0.5 s 뒤 나타남(로봇 앞 약 1.5 m — 멈출 수 있는 거리)
     let now = m.sim_steps;
-    m.world.as_mut().unwrap().events.push((now + 30, 2.6, 3.0, 0.3, true));
+    m.world.as_mut().unwrap().events.push((now + 15, 3.4, 3.0, 0.25, true));
     let r = exec(&mut m, r#"{"part":"base","mode":"go_to","values":[2.5,0]}"#);
     assert!(r["status"] == "reached" || r["status"] == "blocked", "{r}");
     assert_eq!(m.world.as_ref().unwrap().contacts, 0, "{r}");
     // 치우면 다시 열림
     let now = m.sim_steps;
-    m.world.as_mut().unwrap().events.push((now + 1, 2.6, 3.0, 0.3, false));
+    m.world.as_mut().unwrap().events.push((now + 1, 3.4, 3.0, 0.25, false));
     for _ in 0..3 {
         exec(&mut m, r#"{"part":"base","mode":"probe","values":[0,0]}"#);
     }
