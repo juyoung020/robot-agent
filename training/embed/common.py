@@ -43,7 +43,9 @@ class Enc:
         self.key, self.dev = key, device
         self.dtype = torch.float16 if (half and device == 'cuda') else torch.float32
         if visual_only:                       # image tower on the GPU, the rest stays on the CPU (shared GPU)
-            self.m = m.eval(); self.m.visual.to(device, self.dtype)
+            import types                      # drop the text tower: nothing big left in RAM to copy into workers
+            v = m.visual.eval().to(device, self.dtype); del m
+            self.m = types.SimpleNamespace(visual=v, encode_image=v); m = self.m
         else:
             self.m = m.eval().to(device, self.dtype)
         self.tok = open_clip.get_tokenizer(name)
@@ -52,8 +54,7 @@ class Enc:
         self.std = np.array(t[0].std if t else (0.5,) * 3, np.float32)
         sz = getattr(m.visual, 'image_size', 224)
         self.size = sz[0] if isinstance(sz, (tuple, list)) else int(sz)
-        self.dim = int(self.m.text_projection.shape[1]) if getattr(self.m, 'text_projection', None) is not None and \
-            hasattr(self.m.text_projection, 'shape') else None
+        self.dim = None
 
     @torch.no_grad()
     def image(self, x):
@@ -79,7 +80,7 @@ class Enc:
         return self.m.visual.head(p).float()
 
     @torch.no_grad()
-    def text(self, texts, bs=512):
+    def text(self, texts, bs=128):
         out = []
         for i in range(0, len(texts), bs):
             out.append(self.m.encode_text(self.tok(texts[i:i + bs]).to(self.dev)).float().cpu())

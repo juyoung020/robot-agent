@@ -66,6 +66,8 @@ def main():
     ap.add_argument('--w_cos', type=float, default=1.0)
     ap.add_argument('--w_kl', type=float, default=1.0)
     ap.add_argument('--w_rel', type=float, default=1.0)
+    ap.add_argument('--crops', default=f'{WORK}/data/lvis_crops')
+    ap.add_argument('--done_only', action='store_true', help='train only on rows of shards listed in done_shards.txt')
     ap.add_argument('--n_lab', type=int, default=8192, help='labels sampled per step for the KL (all if <=0)')
     a = ap.parse_args()
     tk = a.teacher.split(',')
@@ -78,7 +80,14 @@ def main():
     X = {v: torch.from_numpy(np.load(f'{a.emb}/{a.base}_{v}.npy')) for v in views}   # fp16 cpu
     N, Dt, Db = T.shape[0], T.shape[1], X[views[0]].shape[1]
     ids = [l.strip() for l in open(f'{a.emb}/ids.txt')][:N]
-    g = np.random.default_rng(0); perm = g.permutation(N); nval = max(2000, N // 50)
+    keep = np.arange(N)
+    if a.done_only:                                                  # extraction still running: use finished shards
+        import glob
+        done = set(open(f'{a.emb}/done_shards.txt').read().split())
+        sh = sorted(glob.glob(f'{a.crops}/shard_*.tar')); cnt = [sum(1 for _ in open(x[:-4] + '.jsonl')) for x in sh]
+        off = np.cumsum([0] + cnt[:-1])
+        keep = np.concatenate([np.arange(o, o + c) for x, o, c in zip(sh, off, cnt) if os.path.basename(x) in done])
+    g = np.random.default_rng(0); perm = keep[g.permutation(len(keep))]; nval = max(2000, len(keep) // 50)
     val, tr = perm[:nval], perm[nval:]
     P = nn.Linear(Dt, DIMS[0], bias=False).to(dev)
     h = Head(Db, DIMS[0], a.hid, a.depth).to(dev)
@@ -86,16 +95,19 @@ def main():
     opt = torch.optim.AdamW([{'params': P.parameters(), 'weight_decay': 0}, {'params': h.parameters(), 'weight_decay': 0.05},
                              {'params': [ls_p, ls_h], 'weight_decay': 0}], lr=a.lr)
     steps = a.epochs * (len(tr) // a.bs); sched = torch.optim.lr_scheduler.OneCycleLR(opt, a.lr, total_steps=steps, pct_start=0.05)
-    print(f'{name}: N {N} (val {nval}) base {Db} teacher {Dt} labels {Lt.shape[0]} views {views} params head '
+    print(f'{name}: N {len(keep)} (val {nval}) base {Db} teacher {Dt} labels {Lt.shape[0]} views {views} params head '
           f'{sum(p.numel() for p in h.parameters()) / 1e6:.2f}M P {Dt * 128 / 1e6:.2f}M', flush=True)
     t0 = time.time(); step = 0
     for ep in range(a.epochs):
         g.shuffle(tr); h.train()
         for i in range(0, len(tr) - a.bs + 1, a.bs):
             idx = torch.from_numpy(np.sort(tr[i:i + a.bs]))
-            v = views[step % len(views)] if len(views) else views[0]
             vb = torch.from_numpy(g.integers(0, len(views), a.bs))   # random view per sample
-            xb = torch.stack([X[views[j]][k] for j, k in zip(vb.tolist(), idx.tolist())]).to(dev).float()
+            xb = torch.empty(len(idx), Db, dtype=torch.float16)
+            for j, vv in enumerate(views):
+                sel = vb == j
+                if sel.any(): xb[sel] = X[vv][idx[sel]]
+            xb = xb.to(dev).float()
             t = T[idx].to(dev)
             lab = Lt if a.n_lab <= 0 else Lt[torch.randint(0, Lt.shape[0], (a.n_lab,), device=dev)]
             tl = t @ lab.T / a.tau_t                                    # teacher logits

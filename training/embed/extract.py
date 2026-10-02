@@ -42,19 +42,18 @@ class Shards(torch.utils.data.IterableDataset):
         self.shards, self.offsets, self.specs = shards, offsets, specs   # specs: [(name, size, mean, views)]
 
     def __iter__(self):
+        torch.set_num_threads(1)
         wi = torch.utils.data.get_worker_info()
         mine = self.shards[wi.id::wi.num_workers] if wi else self.shards
-        for sh in mine:
+        for si, sh in mine:
             off = self.offsets[sh]
             meta = [json.loads(l) for l in open(sh[:-4] + '.jsonl')]
-            tf = tarfile.open(sh); files = {}
-            for ti in tf:
-                files[ti.name] = tf.extractfile(ti).read()
+            tf = tarfile.open(sh); members = {ti.name: ti for ti in tf}     # read lazily, one crop at a time
+            rd = lambda n: io.BytesIO(tf.extractfile(members[n]).read())
             for j, md in enumerate(meta):
-                im = np.asarray(Image.open(io.BytesIO(files[md['id'] + '.jpg'])).convert('RGB'), np.float32) / 255.
-                mk = np.asarray(Image.open(io.BytesIO(files[md['id'] + '.png'])).convert('L'), np.float32) / 255.
-                rng = np.random.default_rng(off + j)
-                out = {'row': off + j}
+                im = np.asarray(Image.open(rd(md['id'] + '.jpg')).convert('RGB'), np.float32) / 255.
+                mk = np.asarray(Image.open(rd(md['id'] + '.png')).convert('L'), np.float32) / 255.
+                out = {'row': off + j, 'shard': si}
                 for name, S, mean, views in self.specs:
                     for v in views:
                         if v in ('pool', 'poolaug'):
@@ -79,7 +78,8 @@ def main():
     ap.add_argument('--base', default='siglip2_b32,b32_openai,mc2_s0')
     ap.add_argument('--teacher', default='pe_l14,siglip2_so400m')
     ap.add_argument('--bs', type=int, default=128)
-    ap.add_argument('--workers', type=int, default=14)
+    ap.add_argument('--workers', type=int, default=4)
+    ap.add_argument('--min_free_gb', type=float, default=10, help='pause when available RAM drops below this')
     ap.add_argument('--limit_shards', type=int, default=0)
     a = ap.parse_args()
     shards = sorted(glob.glob(f'{a.crops}/shard_*.tar'))
@@ -91,6 +91,10 @@ def main():
     with open(f'{a.out}/ids.txt', 'w') as f:
         for s in shards:
             for l in open(s[:-4] + '.jsonl'): f.write(json.loads(l)['id'] + '\n')
+    donef = f'{a.out}/done_shards.txt'        # resume: shards fully written by an earlier run
+    done = set(open(donef).read().split()) if os.path.exists(donef) else set()
+    todo = [(i, s) for i, s in enumerate(shards) if os.path.basename(s) not in done]
+    print(f'shards {len(shards)}, already done {len(shards) - len(todo)}', flush=True)
     encs, specs = {}, []
     for k in [x for x in a.base.split(',') if x]:
         encs[k] = Enc(k, visual_only=True); specs.append((k, encs[k].size, encs[k].mean, BASE_VIEWS + (('pool', 'poolaug') if k in POOL else ())))
@@ -101,18 +105,32 @@ def main():
         with torch.no_grad():
             d = encs[name].image(torch.zeros(1, 3, S, S)).shape[1]
         for v in views:
-            arrs[f'{name}/{v}'] = np.lib.format.open_memmap(f'{a.out}/{name}_{v}.npy', 'w+', np.float16, (N, d))
+            f = f'{a.out}/{name}_{v}.npy'
+            if os.path.exists(f) and np.load(f, mmap_mode='r').shape == (N, d):
+                arrs[f'{name}/{v}'] = np.load(f, mmap_mode='r+')
+            else:
+                assert not done, f'{f} missing but done_shards.txt says otherwise'
+                arrs[f'{name}/{v}'] = np.lib.format.open_memmap(f, 'w+', np.float16, (N, d))
     print('N', N, {k: x.shape for k, x in arrs.items()}, flush=True)
-    dl = torch.utils.data.DataLoader(Shards(shards, offsets, specs), batch_size=a.bs, num_workers=a.workers,
-                                     persistent_workers=False, prefetch_factor=4)
-    t0, n = time.time(), 0
+    dl = torch.utils.data.DataLoader(Shards(todo, offsets, specs), batch_size=a.bs, num_workers=a.workers,
+                                     persistent_workers=False, prefetch_factor=2,
+                                     multiprocessing_context='spawn' if a.workers else None)
+    import psutil
+    t0, n = time.time(), 0; left = {i: c for i, c in enumerate(counts)}
     for b in dl:
+        while psutil.virtual_memory().available < a.min_free_gb * 2 ** 30:
+            print('low RAM, waiting', flush=True); time.sleep(10)
         rows = b['row'].numpy()
         for k, arr in arrs.items():
             name, v = k.split('/')
             e = encs[name].image_pool(b[k], b[k + '_w']) if v in ('pool', 'poolaug') else encs[name].image(b[k])
             arr[rows] = e.cpu().numpy().astype(np.float16)
         n += len(rows)
+        for si in b['shard'].tolist():
+            left[si] -= 1
+            if left[si] == 0:
+                for arr in arrs.values(): arr.flush()
+                with open(donef, 'a') as f: f.write(os.path.basename(shards[si]) + '\n')
         if (n // a.bs) % 50 == 0:
             print(f'{n}/{N} {n / (time.time() - t0):.0f}/s', flush=True)
     for arr in arrs.values(): arr.flush()

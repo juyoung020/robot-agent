@@ -13,8 +13,12 @@ from PIL import Image
 _argv = sys.argv; sys.argv = ['x']; sys.path.insert(0, BENCH)
 import score as S                         # read-only use: items, VOCAB, Q, ok, retrieval
 sys.argv = _argv
+EVALSET = os.environ.get('EVALSET', '')            # '' = clip_bench set; 'other' = make_evalset_other.py (other house)
+if EVALSET == 'other':
+    S.items = json.load(open(f'{WORK}/eval_other/evalset.json'))
 items, VOCAB, Q = S.items, S.VOCAB, S.Q
 EMB = f'{WORK}/emb'
+TAG = f'_{EVALSET}' if EVALSET else ''
 
 
 def load(it):
@@ -26,7 +30,7 @@ def load(it):
 
 
 def embed(key, views=VIEWS):
-    out = f'{EMB}/eval_{key}.npz'
+    out = f'{EMB}/eval{TAG}_{key}.npz'
     if os.path.exists(out): return out
     e = Enc(key); data = [load(it) for it in items]; res = {v: [] for v in views}
     for i in range(0, len(items), 32):
@@ -83,5 +87,5 @@ if __name__ == '__main__':
     for k in keys:
         embed(k)
         if cmd == 'score':
-            z = np.load(f'{EMB}/eval_{k}.npz')
+            z = np.load(f'{EMB}/eval{TAG}_{k}.npz')
             print(fmt(k, score_all({v: z[v] for v in VIEWS + ('pool',) if v in z}, z['vocab'], VOCAB, z['qe'], z['qk'])), flush=True)

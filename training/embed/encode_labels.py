@@ -22,8 +22,8 @@ def nllb():
     tok = AutoTokenizer.from_pretrained(name, src_lang='eng_Latn')
     m = AutoModelForSeq2SeqLM.from_pretrained(name, torch_dtype=torch.float16).cuda().eval()
     bos = tok.convert_tokens_to_ids('kor_Hang')
-    for i in range(0, len(todo), 256):
-        ch = todo[i:i + 256]
+    for i in range(0, len(todo), 64):
+        ch = todo[i:i + 64]
         x = tok([r['name'] for r in ch], return_tensors='pt', padding=True).to('cuda')
         with torch.no_grad():
             y = m.generate(**x, forced_bos_token_id=bos, max_new_tokens=16, num_beams=2)
