@@ -22,6 +22,17 @@ void mr_reset(MrRobot *r);                  /* 새 판: 다음 관측에서 유�
 ssize_t mr_take_result(MrRobot *r, char *buf, size_t cap);
 const char *mr_tool_definition(void);       /* OpenAI tools 항목 JSON (정적) */
 
+/* 지도(탐사): sgrt.h 의 sgrt_map_view 를 그대로 넘긴다(배치가 같다 — src/ffi.rs SgrtMapView). keyframe 마다 한 번.
+ * 베이스 결과에 지도 요약("map")과 측정값("_m")이 붙고, go_to/probe 와 안전 정지가 이 지도를 쓴다. 0 성공 */
+struct sgrt_map_view_s;
+int mr_set_map(MrRobot *r, const void *sgrt_map_view);
+/* 정답 기준(측정용): map 좌표 격자, cells[y*w+x] 1 = 닿을 수 있는 바닥 */
+int mr_set_reference(MrRobot *r, const unsigned char *cells, int w, int h, double res, double ox, double oy);
+/* 시뮬이 센 접촉 누적 수 */
+void mr_set_contacts(MrRobot *r, unsigned long long n);
+/* 뷰어 겹침 JSON(지나온 길·계획 경로·목표·프런티어·자세, map 좌표). 쓴 길이 / -(필요 길이) */
+ssize_t mr_overlay_json(MrRobot *r, char *buf, size_t cap);
+
 #ifdef __cplusplus
 }
 #endif

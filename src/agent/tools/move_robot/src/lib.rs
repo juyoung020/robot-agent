@@ -519,16 +519,16 @@ struct BaseMove {
 }
 
 #[derive(Clone, Debug)]
-enum Motion {
+pub(crate) enum Motion {
     Joints(JointMove),
     Base(BaseMove),
     Nav(robot_nav::NavMove),
 }
 
 #[derive(Clone, Debug)]
-struct Active {
-    cmd: Command,
-    motion: Motion,
+pub(crate) struct Active {
+    pub(crate) cmd: Command,
+    pub(crate) motion: Motion,
     clamped: Vec<usize>,
     slowed: bool,
     steps: u64,

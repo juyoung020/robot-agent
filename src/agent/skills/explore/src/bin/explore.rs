@@ -58,7 +58,12 @@ fn main() {
         let (ox, oy) = (gt["origin"][0].as_f64().unwrap(), gt["origin"][1].as_f64().unwrap());
         let world = MockWorld::from_pgm(&pgm, res, ox, oy).unwrap();
         let sp = &gt["start_pose_world"];
-        let start = [sp[0].as_f64().unwrap(), sp[1].as_f64().unwrap(), sp[2].as_f64().unwrap()];
+        let mut start = [sp[0].as_f64().unwrap(), sp[1].as_f64().unwrap(), sp[2].as_f64().unwrap()];
+        if let Some(st) = flag(&a, "--start") {
+            // x,y,yaw_deg (world)
+            let v: Vec<f64> = st.split(',').map(|x| x.trim().parse().unwrap()).collect();
+            start = [v[0], v[1], v[2].to_radians()];
+        }
         let reference = reachable_reference(&world.floor, start);
         let mut m = Mock::with_world(world, start);
         m.robot.set_reference(reference);

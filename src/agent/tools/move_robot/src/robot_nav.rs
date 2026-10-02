@@ -55,6 +55,8 @@ pub struct NavState {
     /// 마지막 경로(뷰어·기록용, map 점)
     pub last_path: Vec<[f64; 2]>,
     pub path_log: Vec<[f64; 2]>,
+    /// 실패한 go_to 목표(map x, y, 횟수) — 두 번 실패한 자리 둘레 0.6 m 프런티어는 관측에서 뺀다
+    pub failed_goals: Vec<([f64; 2], u32)>,
 }
 
 impl Default for NavState {
@@ -86,6 +88,7 @@ impl Default for NavState {
             style: ObsStyle::Full,
             last_path: vec![],
             path_log: vec![],
+            failed_goals: vec![],
         }
     }
 }
@@ -104,7 +107,7 @@ impl NavState {
         self.pose[2] += v[2] * dt;
         self.odo_m += v[0].hypot(v[1]) * dt;
         if self.have_map {
-            let c = self.cm.clear_at(self.pose[0], self.pose[1]) - self.dwa.body_r;
+            let c = self.cm.clear_at(self.pose[0], self.pose[1]);
             if v[0].hypot(v[1]) > 0.02 {
                 self.min_clear = self.min_clear.min(c);
             }
@@ -353,8 +356,8 @@ impl Robot {
                     m.phase = 1;
                 } else {
                     let herr = ang_diff((carrot[1] - xy[1]).atan2(carrot[0] - xy[0]), pose[2]);
-                    if herr.abs() > 50f64.to_radians() {
-                        des[2] = sat(2.0 * herr, s.nav_wmax);
+                    if herr.abs() > 30f64.to_radians() {
+                        des[2] = sat(2.0 * herr, s.nav_wmax).abs().max(0.3) * herr.signum();
                         m.stuck = 0;
                     } else {
                         let vmax = s.nav_vmax.min((2.0 * s.base_acc * remain).sqrt() + s.base_creep);
@@ -369,6 +372,10 @@ impl Robot {
                             m.guard_stops += 1;
                         }
                         let guard_blocked = g.map_or(false, |d| d - margin <= 0.02);
+                        if std::env::var("MR_DEBUG_DWA").is_ok() {
+                            eprintln!("dwa t={:.2} pose=({:.2},{:.2},{:.0}) carrot=({:.2},{:.2}) herr={:.0} ok={} v={:.2} w={:.2} clear={:.2} guard={:?} cur_clear={:.2} stuck={}",
+                                t, pose[0], pose[1], pose[2].to_degrees(), carrot[0], carrot[1], herr.to_degrees(), o.ok, o.v, o.w, o.clear, g, self.nav.cm.clear_at(xy[0], xy[1]), m.stuck);
+                        }
                         if guard_blocked && herr.abs() > 8f64.to_radians() {
                             // 앞이 막혔지만 가야 할 쪽은 옆: 제자리에서 그쪽으로 돈다(몸통 원이라 돌기는 안전)
                             des[2] = sat(2.0 * herr, s.nav_wmax).abs().max(0.3) * herr.signum();
@@ -377,8 +384,9 @@ impl Robot {
                             des[0] = v_ok;
                             des[2] = o.w;
                             m.stuck = 0;
-                        } else if o.ok && o.w.abs() > 0.05 && !guard_blocked {
-                            des[2] = o.w;
+                        } else if herr.abs() > 8f64.to_radians() {
+                            // 앞으로 갈 안전한 궤적이 없으면 먼저 가야 할 쪽으로 제자리 돌기
+                            des[2] = sat(2.0 * herr, s.nav_wmax).abs().max(0.3) * herr.signum();
                             m.stuck += 1;
                         } else {
                             m.stuck += 1;
@@ -401,7 +409,7 @@ impl Robot {
                             let back = pose[2] + std::f64::consts::PI;
                             let (bs, bc) = back.sin_cos();
                             let bp = [xy[0] + 0.25 * bc, xy[1] + 0.25 * bs];
-                            if self.nav.cm.clear_at(bp[0], bp[1]) > dp.body_r + 0.03 && !self.nav.cm.unknown_at(bp[0], bp[1]) {
+                            if self.nav.cm.clear_at(bp[0], bp[1]) > (dp.body_r - 0.015).min(self.nav.cm.clear_at(xy[0], xy[1])) && !self.nav.cm.unknown_at(bp[0], bp[1]) {
                                 m.phase = 4;
                                 m.back_start = xy;
                             } else {
@@ -436,6 +444,14 @@ impl Robot {
                     self.replan(m);
                 }
             }
+            (_, 5) => {
+                des[0] = -0.12;
+                if (xy[0] - m.back_start[0]).hypot(xy[1] - m.back_start[1]) > 0.15 || m.settle > 60 {
+                    m.phase = 2;
+                    m.settle = 0;
+                }
+                m.settle += 1;
+            }
             (NavKind::GoTo, 4) => {
                 des[0] = -0.15;
                 if (xy[0] - m.back_start[0]).hypot(xy[1] - m.back_start[1]) > 0.25 {
@@ -460,19 +476,23 @@ impl Robot {
         if m.phase == 2 {
             m.v_cmd = [0.0; 3];
         }
+        let _ = m.phase;
         // 막힘(접촉): 지령은 움직이는데 측정은 거의 0
         let cmd_sp = m.v_cmd[0].hypot(m.v_cmd[1]);
         let moving_cmd = cmd_sp > 0.05 || m.v_cmd[2].abs() > 0.1;
         let barely = meas_v[0].hypot(meas_v[1]) < 0.2 * cmd_sp.max(0.05) && meas_v[2].abs() < 0.2 * m.v_cmd[2].abs().max(0.1);
         m.stall = if moving_cmd && barely { m.stall + 1 } else { 0 };
-        if m.stall >= 30 && finish.is_none() {
-            m.stop = Some(("contact: base pushed but did not move".into(), 0.0));
+        if m.stall >= 30 && finish.is_none() && m.phase != 5 {
+            m.stop = Some(("contact: base pushed but did not move; backed off".into(), 0.0));
             m.outcome = Some("blocked");
             self.nav.n_stall += 1;
-            m.phase = 2;
+            // 닿았으면 왔던 쪽(뒤)으로 0.15 m 물러난 뒤 보고
+            m.phase = 5;
+            m.back_start = xy;
+            m.stall = 0;
             m.v_cmd = [0.0; 3];
         }
-        if t > m.t_max && finish.is_none() && m.phase != 2 {
+        if t > m.t_max && finish.is_none() && m.phase != 2 && m.phase != 5 {
             m.outcome = Some("timeout");
             m.phase = 2;
             m.v_cmd = [0.0; 3];
@@ -540,6 +560,12 @@ impl Robot {
 
     fn nav_result(&mut self, m: &NavMove, outcome: &'static str, t: f64) -> Value {
         let pose = self.nav.pose;
+        if outcome != "reached" && m.kind == NavKind::GoTo {
+            match self.nav.failed_goals.iter_mut().find(|(g, _)| (g[0] - m.goal[0]).hypot(g[1] - m.goal[1]) < 0.6) {
+                Some(e) => e.1 += 1,
+                None => self.nav.failed_goals.push((m.goal, 1)),
+            }
+        }
         if outcome != "reached" {
             if let Ok(dir) = std::env::var("MR_DEBUG_DIR") {
                 self.debug_dump(&dir, m);
@@ -601,7 +627,9 @@ impl Robot {
         let new_free = free - self.nav.last_free_m2;
         self.nav.last_free_m2 = free;
         let mut targets = vec![];
-        let fr: Vec<&Frontier> = a.frontiers.iter().take(p.max_frontiers).collect();
+        let bad = |f: &Frontier| self.nav.failed_goals.iter().any(|(g, n)| *n >= 2 && (g[0] - f.goal[0]).hypot(g[1] - f.goal[1]) < 0.6);
+        let n_skipped = a.frontiers.iter().filter(|f| bad(f)).count();
+        let fr: Vec<&Frontier> = a.frontiers.iter().filter(|f| !bad(f)).take(p.max_frontiers).collect();
         let mut fl = vec![];
         for (k, f) in fr.iter().enumerate() {
             let id = format!("F{}", k + 1);
@@ -638,7 +666,7 @@ impl Robot {
             rl.push(o);
         }
         self.nav.targets = tg;
-        let nf = a.frontiers.len();
+        let nf = a.frontiers.len() - n_skipped;
         self.nav.last_frontiers = nf;
         let mut o = json!({
             "free_m2": r1(free),
@@ -657,6 +685,9 @@ impl Robot {
         } else {
             format!("{nf} reachable frontier(s); all frontier goals are in KNOWN free space (go_to works)")
         });
+        if n_skipped > 0 {
+            o["skipped_failed"] = json!(n_skipped);
+        }
         o
     }
 }
@@ -725,5 +756,21 @@ impl Robot {
         let mut out = format!("P6\n{} {}\n255\n", g.w, g.h).into_bytes();
         out.extend_from_slice(&img);
         let _ = std::fs::write(f, out);
+    }
+}
+
+impl Robot {
+    /// 뷰어 겹침(map 좌표): 지나온 길, 계획 경로, 목표, 지난 관측의 목표 id, 자세
+    pub fn overlay(&self) -> Value {
+        let n = &self.nav;
+        let rp = |v: &[[f64; 2]]| v.iter().map(|q| [r2(q[0]), r2(q[1])]).collect::<Vec<_>>();
+        let goal = match &self.active {
+            Some(crate::Active { motion: crate::Motion::Nav(m), .. }) => json!({"label": m.label, "xy": [r2(m.goal[0]), r2(m.goal[1])], "mode": if m.kind == NavKind::GoTo { "go_to" } else { "probe" }}),
+            _ => Value::Null,
+        };
+        json!({"stamp": r2(n.now), "pose": [r2(n.pose[0]), r2(n.pose[1]), r1(n.pose[2].to_degrees())],
+            "trail": rp(&n.path_log), "plan": rp(&n.last_path), "goal": goal,
+            "targets": n.targets.iter().map(|t| json!({"id": t.id, "xy": [r2(t.goal[0]), r2(t.goal[1])], "path_m": r1(t.path_m)})).collect::<Vec<_>>(),
+            "odo_m": r2(n.odo_m), "gt_cov": n.gt_coverage().map(|c| (c * 1000.0).round() / 1000.0), "contacts": n.contacts})
     }
 }

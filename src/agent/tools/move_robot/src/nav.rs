@@ -102,13 +102,27 @@ impl Costmap {
         let _ = &self.tmp;
     }
 
+    /// 점 (x, y) 에서 가장 가까운 장애물 칸 "면"까지(m): 칸 중심 거리장을 쌍선형 보간하고 반 칸을 뺀다(접촉 판정과 같은 뜻)
     #[inline]
     pub fn clear_at(&self, x: f64, y: f64) -> f64 {
-        let (cx, cy) = self.grid.cell_of(x, y);
-        match self.grid.idx(cx, cy) {
-            Some(i) => self.dobs[i] as f64,
-            None => 2.5,
+        let g = &self.grid;
+        if g.w == 0 {
+            return 2.5;
         }
+        let fx = (x - g.ox) / g.res - 0.5;
+        let fy = (y - g.oy) / g.res - 0.5;
+        let (x0, y0) = (fx.floor() as i64, fy.floor() as i64);
+        let (tx, ty) = (fx - x0 as f64, fy - y0 as f64);
+        let d = |cx: i64, cy: i64| -> f64 {
+            match g.idx(cx, cy) {
+                Some(i) => self.dobs[i] as f64,
+                None => 2.5,
+            }
+        };
+        let v = (1.0 - ty) * ((1.0 - tx) * d(x0, y0) + tx * d(x0 + 1, y0)) + ty * ((1.0 - tx) * d(x0, y0 + 1) + tx * d(x0 + 1, y0 + 1));
+        // 보간은 장애물 칸 바로 옆에서 실제보다 크게 나올 수 있다: 네 칸 중 가장 작은 것 + 한 칸을 넘지 않게
+        let mn = d(x0, y0).min(d(x0 + 1, y0)).min(d(x0, y0 + 1)).min(d(x0 + 1, y0 + 1));
+        v.min(mn + g.res) - 0.5 * g.res
     }
     #[inline]
     pub fn unknown_at(&self, x: f64, y: f64) -> bool {
@@ -209,6 +223,9 @@ fn safe_at(cm: &Costmap, x: f64, y: f64, body: f64, start: [f64; 2], start_r: f6
 pub fn dwa(cm: &Costmap, path: &[[f64; 2]], pose: [f64; 3], anchor: [f64; 2], carrot: [f64; 2], goal_dist: f64, vmax: f64, wmax: f64, margin: f64, dp: &DwaParams, start_r: f64, allow_unknown: bool) -> DwaOut {
     let mut best: Option<(f64, DwaOut)> = None;
     let start = anchor;
+    // 좁은 곳에 이미 들어와 있으면(여유 < 몸통) 여유를 더 줄이지 않는 궤적만(빠져나오기), 바닥은 몸통 − 1.5 cm
+    let cur = cm.clear_at(pose[0], pose[1]) - margin;
+    let need = (cur - 0.005).min(dp.body_r).max(dp.body_r - 0.015);
     let steps = (dp.horizon_s / dp.dt).round() as usize;
     for iv in 0..dp.nv {
         let v = vmax * iv as f64 / (dp.nv - 1) as f64;
@@ -227,7 +244,7 @@ pub fn dwa(cm: &Costmap, path: &[[f64; 2]], pose: [f64; 3], anchor: [f64; 2], ca
                 travelled += v * dp.dt;
                 // 모르는 칸: 전역 경로(아는 빈칸) 0.35 m 안이면 괜찮다(경로를 따라가는 작은 벗어남)
                 let near_path = path.len() >= 2 && (0..path.len() - 1).any(|k| seg_dist(path[k], path[k + 1], [x, y]) < 0.35);
-                match safe_at(cm, x, y, dp.body_r + margin, start, start_r, allow_unknown || near_path) {
+                match safe_at(cm, x, y, need + margin, start, start_r, allow_unknown || near_path) {
                     Some(c) => minc = minc.min(c),
                     None => {
                         // 멈춤 거리 안에서 막히면 이 표본은 못 씀

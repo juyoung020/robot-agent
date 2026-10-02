@@ -110,3 +110,133 @@ pub extern "C" fn mr_tool_definition() -> *const c_char {
     static DEF: OnceLock<std::ffi::CString> = OnceLock::new();
     DEF.get_or_init(|| std::ffi::CString::new(definition().to_string()).unwrap()).as_ptr()
 }
+
+// ---------------------------------------------------------------- 지도(탐사)
+
+/// `sgrt_map_view`(behavior-2026 src/scene_graph/runtime/include/sgrt.h)와 같은 배치. 평가기 접착부는 sgrt_map 이 채운
+/// 구조체 포인터를 그대로 [`mr_set_map`] 에 넘긴다(파이썬은 바이트를 만지지 않음).
+#[repr(C)]
+pub struct SgrtMapView {
+    pub stamp: f64,
+    pub pose: [f64; 3],
+    pub res: f64,
+    pub origin: [f64; 2],
+    pub w: i32,
+    pub h: i32,
+    pub cells: *const i8,
+    pub room_res: f64,
+    pub room_origin: [f64; 2],
+    pub room_w: i32,
+    pub room_h: i32,
+    pub room_ids: *const u32,
+    pub n_rooms: i32,
+    pub scan_pose: [f64; 3],
+    pub scan_origin: [f32; 2],
+    pub n_hit: i32,
+    pub hit_x: *const f32,
+    pub hit_y: *const f32,
+    pub n_free: i32,
+    pub free_x: *const f32,
+    pub free_y: *const f32,
+    pub dirty: i32,
+    pub dirty_box: [i32; 4],
+    pub map_version: u64,
+    pub n_movable: i32,
+    pub movable_xyr: *const f32,
+}
+
+/// 지도 하나 받기. 반환: 0 성공, -2 인자 이상. 걸린 시간(µs)은 결과 `_m.costmap_us`.
+///
+/// # Safety
+/// `v` 는 sgrt_map 이 채운(포인터가 아직 유효한) 구조체.
+#[no_mangle]
+pub unsafe extern "C" fn mr_set_map(r: *mut Robot, v: *const SgrtMapView) -> c_int {
+    if r.is_null() || v.is_null() {
+        return -2;
+    }
+    let v = &*v;
+    if v.w <= 0 || v.h <= 0 || v.cells.is_null() {
+        return -2;
+    }
+    let n = (v.w as usize) * (v.h as usize);
+    let grid = crate::map::Grid { res: v.res, ox: v.origin[0], oy: v.origin[1], w: v.w as usize, h: v.h as usize, cells: std::slice::from_raw_parts(v.cells, n).to_vec() };
+    let rooms = if !v.room_ids.is_null() && v.room_w > 0 && v.room_h > 0 {
+        let rn = (v.room_w as usize) * (v.room_h as usize);
+        Some(crate::map::RoomGrid { res: v.room_res, ox: v.room_origin[0], oy: v.room_origin[1], w: v.room_w as usize, h: v.room_h as usize, ids: std::slice::from_raw_parts(v.room_ids, rn).to_vec() })
+    } else {
+        None
+    };
+    let pts = |n: i32, x: *const f32, y: *const f32| -> Vec<[f64; 2]> {
+        if n <= 0 || x.is_null() || y.is_null() {
+            return vec![];
+        }
+        let (xs, ys) = (std::slice::from_raw_parts(x, n as usize), std::slice::from_raw_parts(y, n as usize));
+        xs.iter().zip(ys).map(|(a, b)| [*a as f64, *b as f64]).collect()
+    };
+    let hits = pts(v.n_hit, v.hit_x, v.hit_y);
+    let free = pts(v.n_free, v.free_x, v.free_y);
+    let scan = if hits.is_empty() && free.is_empty() {
+        None
+    } else {
+        Some(crate::map::Scan::from_base(v.scan_pose, [v.scan_origin[0] as f64, v.scan_origin[1] as f64], &hits, &free, v.stamp))
+    };
+    let mut movable = vec![];
+    if v.n_movable > 0 && !v.movable_xyr.is_null() {
+        let m = std::slice::from_raw_parts(v.movable_xyr, 3 * v.n_movable as usize);
+        for k in 0..v.n_movable as usize {
+            movable.push([m[3 * k] as f64, m[3 * k + 1] as f64, m[3 * k + 2] as f64]);
+        }
+    }
+    let d = crate::nav::MapDelta {
+        dirty: if v.dirty != 0 { Some([v.dirty_box[0] as i64, v.dirty_box[1] as i64, v.dirty_box[2] as i64, v.dirty_box[3] as i64]) } else { None },
+        unknown_dirty: false,
+        map_version: v.map_version,
+        movable,
+    };
+    (*r).set_map(crate::map::MapIn { stamp: v.stamp, pose: v.pose, grid, rooms, n_rooms: v.n_rooms, scan }, &d);
+    0
+}
+
+/// 정답 기준(측정용, map 좌표): cells[y·w + x] 1 = 닿을 수 있는 바닥.
+///
+/// # Safety
+/// `cells` 는 w·h 바이트.
+#[no_mangle]
+pub unsafe extern "C" fn mr_set_reference(r: *mut Robot, cells: *const u8, w: i32, h: i32, res: f64, ox: f64, oy: f64) -> c_int {
+    if r.is_null() || cells.is_null() || w <= 0 || h <= 0 {
+        return -2;
+    }
+    let n = (w as usize) * (h as usize);
+    let g = crate::map::Grid { res, ox, oy, w: w as usize, h: h as usize, cells: std::slice::from_raw_parts(cells, n).iter().map(|v| (*v > 0) as i8).collect() };
+    (*r).set_reference(g);
+    0
+}
+
+/// 시뮬이 센 접촉(로봇 링크 ↔ 바닥 아닌 것) 누적 수 — 결과 `_m.contacts`
+///
+/// # Safety
+/// `r` 는 mr_new 가 준 것.
+#[no_mangle]
+pub unsafe extern "C" fn mr_set_contacts(r: *mut Robot, n: u64) {
+    if !r.is_null() {
+        (*r).nav.contacts = n;
+    }
+}
+
+/// 뷰어용 겹침(JSON, map 좌표): 지나온 길·지금 계획 경로·목표·보인 프런티어·자세. 반환 = 쓴 길이, 모자라면 −필요 길이.
+///
+/// # Safety
+/// `buf` 는 `cap` 바이트.
+#[no_mangle]
+pub unsafe extern "C" fn mr_overlay_json(r: *mut Robot, buf: *mut c_char, cap: usize) -> isize {
+    if r.is_null() || buf.is_null() {
+        return 0;
+    }
+    let s = (*r).overlay().to_string();
+    if s.len() + 1 > cap {
+        return -(s.len() as isize + 1);
+    }
+    std::ptr::copy_nonoverlapping(s.as_ptr(), buf as *mut u8, s.len());
+    *buf.add(s.len()) = 0;
+    s.len() as isize
+}
