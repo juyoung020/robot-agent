@@ -12,10 +12,10 @@
 | 같은 물체 판단 (DA) | **직접 만듦** | 같은 이름끼리 위치로 비교 | 결정 |
 | 지도 갱신 | **직접 만듦** | 바뀐 부분만 고침 | 결정 |
 | 물체 지도 저장·보기 | **Spark-DSG** 저장, 보기는 **2D 지도** | Hydra·Khronos 와 같은 형식. 웹 3D 뷰어는 안 씀(10-02) | 결정 |
-| 큰 계획·대화 (LLM) | **Qwen3.5-9B**, AI agent 수업이 주는 KAU API | 요금·외부 인터넷 없이 사용 | 결정 |
+| 큰 계획·대화 (LLM) | **Qwen3.5-9B**, AI agent 수업이 주는 KAU API | 요금 없이 사용 (인터넷 필요) | 결정 |
 | 작은 계획·행동 (VLA) | **π0.5** | 2025 BEHAVIOR 대회 상위 팀이 모두 사용 | 잠정 |
 | π0.5 실행 위치 | **리모**, 안 되면 라즈베리파이 5 + DEEPX DX-M1 (보유) | 로봇이 서버 없이 스스로 움직이게 | 결정 |
-| 시뮬레이션 | **2025 BEHAVIOR Challenge 벤치마크** | 대회 상위 팀과 점수를 비교할 수 있음 | 결정 |
+| 시뮬레이션 | **2026 BEHAVIOR Challenge 벤치마크** (참고 코드는 2025 상위 팀 것) | 대회 상위 팀과 점수를 비교할 수 있음 | 결정 |
 | 앱 | **iOS (SwiftUI) · Android (Compose)** | 네이티브, 카카오톡식 채팅 | 결정 |
 
 ## 고를 때 따지는 것
@@ -92,6 +92,13 @@
 
 잴 것: 같은 물체가 두 번 등록된 수, 다른 물체가 하나로 합쳐진 수.
 
+### 물체 찾기 — 임베딩 벡터 찾기 + 이름(의미) 찾기, 둘 다 쓴다
+
+- **임베딩 벡터 찾기**: 질의 글("빨간 컵", 한국어도)을 SigLIP 2 B/32 글 공간의 벡터로 바꾸고, 기억 속 물체 벡터(물체 조각의 원본 영상 임베딩)와 **코사인 유사도**(L2 정규화한 벡터의 내적)로 비교해 가까운 순으로 고른다. 이름표에 없는 말("물 마시는 거")로도 찾을 수 있다.
+- **이름(의미) 찾기**: 물체마다 라벨 표에서 고른 이름·상위어(기억 폴더 `cache/`)를 붙여 두고, 이름이나 상위어("컵" ⊂ "식기")로 찾는다. 빠르고 결과를 설명하기 쉽다.
+- 찾은 물체(이름·위치·상태)를 LLM 프롬프트에 넣어 답·계획을 만들게 하는 구조가 **RAG**(Retrieval-Augmented Generation, 검색 증강 생성)다. 우리 agent 는 물체 기억을 도구로 찾아 그 결과로 답하므로 이 방식에 해당한다.
+- 임베딩·라벨 표·한국어 질의 모델은 [`training/embed`](../training/embed/README.md), 실행 쪽은 서브모듈 `src/behavior-2026/src/scene_graph/clip`.
+
 ### 지도 갱신 — 직접 만듦
 
 - 물체가 옮겨지거나·사라지거나·새로 생기면 지도에서 **바뀐 부분만** 고친다.
@@ -108,12 +115,12 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 
 ### 큰 계획·대화 (LLM) — Qwen3.5-9B, KAU API (AI agent 수업)
 
-- 리모의 agent 가 AI agent 수업(최영식 교수님)이 주는 Qwen API 로 질문을 보낸다: `https://agent.kau.ac.kr/v1`, 모델 `qwen3.5-9b` (vLLM). 요금이 없고 외부 인터넷도 필요 없다.
+- 리모의 agent 가 AI agent 수업(최영식 교수님)이 주는 Qwen API 로 질문을 보낸다: `https://agent.kau.ac.kr/v1`, 모델 `qwen3.5-9b` (vLLM). 요금이 없다. 학교 서버(`agent.kau.ac.kr`)에 HTTPS 로 붙으므로 인터넷이 필요하다.
 - 서버는 수업 쪽이 운영한다. 우리가 띄우거나 끄지 않는다.
 
 | 다른 후보 | 안 고른 이유 |
 |---|---|
-| Claude · GPT 등 유료 API | 요금과 외부 인터넷이 필요 |
+| Claude · GPT 등 유료 API | 요금이 든다 |
 
 잴 것: 명령 10~20개로 π0.5 에게 맞는 지시를 주는 비율, 물체를 놓쳤을 때 다시 찾아가는 비율, 응답 시간.
 
@@ -138,7 +145,9 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 
 양자화 단계: bf16 (원래) → int8 → int4 순으로 줄이며 성공률이 얼마나 떨어지는지 잰다.
 
-### 시뮬레이션 — 2025 BEHAVIOR Challenge 벤치마크
+### 시뮬레이션 — 2026 BEHAVIOR Challenge 벤치마크
+
+- 참고하는 코드·체크포인트는 2025 대회 상위 팀 것이다(서브모듈 `docs/2025상위팀_깃허브.md`).
 
 - 대회가 준 과제와 평가 방식을 그대로 쓴다 → 점수를 대회 상위 팀과 바로 비교할 수 있다.
 - 사람이 조종한 시연 데이터 약 10,000개와 상위 팀의 학습된 모델이 공개돼 있어 학습도 여기서 시작한다.
@@ -168,4 +177,4 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 - LLM: [Qwen3.5-9B GPU 가이드](https://www.spheron.network/tools/gpu-recommender/Qwen/Qwen3.5-9B/)
 - VLA 크기·메모리: openpi README (`refs/code/openpi/README.md`), [VLA 비교 연구 (arXiv 2603.19233)](https://arxiv.org/pdf/2603.19233)
 - NPU: [DEEPX DX-M1 사양 (DFRobot)](https://wiki.dfrobot.com/SKU_DFR1252_DX-M1%20AI%20Accelerator), [dx-all-suite (DEEPX SDK)](https://github.com/juyoung020/dx-all-suite)
-- 시뮬레이션: [2025 BEHAVIOR Challenge](https://behavior.stanford.edu/challenge/archive/2025/call_for_participation.html)
+- 시뮬레이션: [2026 BEHAVIOR Challenge](https://behavior.stanford.edu/challenge/index.html), 참고 [2025 BEHAVIOR Challenge](https://behavior.stanford.edu/challenge/archive/2025/call_for_participation.html)
