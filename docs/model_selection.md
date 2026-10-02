@@ -9,7 +9,7 @@
 |---|---|---|---|
 | 지도·위치 (SLAM) | **Cartographer (2D 라이다)** | 리모에서 가볍게 돌고, 물체 높이는 depth 로 알 수 있음 | 결정 |
 | 물체 인식 | **FastSAM-s (입력 416) + SigLIP 2 B/32** — SAM + CLIP 구조로 돌아옴 (그 사이: YOLO-seg nano, 시뮬은 아직 YOLOE) | 임베딩 벡터 찾기를 택해서 물체마다 CLIP 류 임베딩이 필요 | 결정, 코드 작업 중 |
-| 같은 물체 판단 (DA) | **직접 만듦** | 같은 이름끼리 위치로 비교 (FastSAM-s 면 이름이 하나라 위치만) | 결정, 임베딩 붙이기는 후보 |
+| 같은 물체 판단 (DA) | **직접 만듦** | 같은 이름끼리 위치로 비교 | 결정 |
 | 물체 찾기 | **임베딩 벡터 찾기 + 이름(의미) 찾기** 둘 다 | 질의 글 ↔ 물체 벡터 코사인, 라벨 표 이름·상위어 | 결정 |
 | 지도 갱신 | **직접 만듦** | 바뀐 부분만 고침 | 결정 |
 | 물체 지도 저장·보기 | **Spark-DSG** 저장, 보기는 **2D 지도** | Hydra·Khronos 와 같은 형식. 웹 3D 뷰어는 안 씀(10-02) | 결정 |
@@ -60,14 +60,10 @@
 흐름: 처음엔 SAM + CLIP → 09-30 에 YOLO-seg 하나로 바꿈 → **물체 찾기를 임베딩 벡터 찾기로 정하면서 다시 SAM + CLIP 구조**(분할 = FastSAM-s, 임베딩 = SigLIP 2). YOLO 는 이름만 주고 물체 벡터를 주지 않아서, 벡터로 찾으려면 CLIP 류 인코더가 따로 있어야 한다.
 
 - **FastSAM-s**(입력 416)가 keyframe 에서만 이름 없는 물체 마스크를 낸다. 클래스가 없어서 목록 밖 물건도 빠짐없이 잡는다.
-- **SigLIP 2 B/32** 가 물체 조각(원본 RGB 에서 상자 + 10 % 둘레, 정사각 256 × 256)마다 768-d 영상 임베딩을 낸다. 마스크는 픽셀을 지우지 않고 마지막 풀링의 가중치(8 × 8 칸 비율)로만 쓴다.
-- keyframe 마다 (1) 임베딩이 없는 새 물체 (2) best view 가 바뀌고 품질이 1.2 배 이상 좋아진 물체 순으로 **최대 8 개**를 묶어 비동기로 넣는다(`runtime/src/sgrt_clip.hpp`).
+- **SigLIP 2 B/32** 가 물체 조각(원본 RGB 에서 상자 + 10 % 둘레, 정사각)마다 768-d 영상 임베딩을 낸다. 새 물체 / best view 가 바뀐 물체만, 묶어서, 비동기로 돈다.
 - 이름은 그 임베딩과 미리 계산한 **라벨 표**(글 임베딩)의 코사인으로 고른다. 확신이 낮으면 WordNet 상위어로 올린다. 벽·바닥 같은 구조물은 표시만 하고 agent 목록에서 뺀다.
 - 저장: 물체 벡터는 **원본 임베딩 그대로**(`objects/O<id>_emb.f16`), 이름은 다시 만들 수 있는 **캐시**(기억 폴더 `cache/names.json`).
-- 코드(서브모듈 `src/behavior-2026/src/scene_graph/`)
-  - 분할은 `ovdet` 에 TensorRT 엔진을 끼워 돈다. **기본 엔진은 아직 YOLOE**(`SGRT_ENGINE` 기본 `yoloe-11l-all.plan`). FastSAM-s 416 엔진은 `SGRT_ENGINE` 으로 바꿔 끼운다(클래스 없음, 이름 `object`).
-  - 임베딩은 `clip/`(sgclip) + `runtime/`(sgrt 연결). **`SGRT_CLIP` 으로 켠다**(기본 꺼짐). 라벨 표는 `SGRT_LABELS`.
-  - Jetson Nano(TensorRT 8.2)에서는 아직 빌드·실행해 보지 않았다(PC 에 TRT 8.2 가 없음). 후보·측정: [CLIP 후보](clip_candidates.md), [물체 인식 모델 후보](perception_model_candidates.md).
+- 코드는 서브모듈 `src/behavior-2026/src/scene_graph/clip`(작업 중). 지금 시뮬에서 돌아가는 검출기는 아직 YOLOE(`src/behavior-2026/src/scene_graph/ovdet`). 후보·측정: [CLIP 후보](clip_candidates.md), [물체 인식 모델 후보](perception_model_candidates.md).
 
 **왜 SAM + CLIP 으로 돌아왔나 (YOLO-seg → FastSAM-s + SigLIP 2)**
 
@@ -99,10 +95,8 @@
 
 ### 같은 물체 판단 (DA) — 직접 만듦
 
-- 새로 본 물체가 이미 지도에 있는 물체인지 판단한다. **같은 이름 번호끼리, 가까운 쌍부터 1:1** 로 짝짓는다(위치 거리 ≤ max(`da_min`, `da_k` × 오차) 이거나 점구름 간격 < `da_gap`). 코드: `scenemap/src/objmap.cpp` 2단계.
-- 임베딩은 아직 DA 에 안 쓴다.
-- **FastSAM-s 로 바꾸면 이름이 `object` 하나**라 사실상 위치로만 비교한다 → 같은 자리에 놓인 다른 물체, 옮겨진 같은 물체를 가리기 약해진다.
-- 약점을 메울 첫 후보: 물체마다 이미 있는 SigLIP 2 임베딩의 코사인 유사도를 짝짓기 비용에 더한다(아직 안 정함).
+- 새로 본 물체가 이미 지도에 있는 물체인지 판단한다. **같은 이름끼리 위치로 비교**한다 (컵은 컵끼리만).
+- 약점: 컵이 두 개일 때 어느 컵이 옮겨졌는지 구분이 어렵다 → 부족하면 생김새 정보를 붙인다. 물체마다 SigLIP 2 임베딩이 이미 있으므로 그 코사인 유사도가 첫 후보다(아직 안 정함).
 - 비교 기준: 위치 거리만 쓰는 가장 단순한 방법.
 
 잴 것: 같은 물체가 두 번 등록된 수, 다른 물체가 하나로 합쳐진 수.
@@ -112,12 +106,6 @@
 - **임베딩 벡터 찾기**: 질의 글("빨간 컵", 한국어도)을 SigLIP 2 B/32 글 공간의 벡터로 바꾸고, 기억 속 물체 벡터(물체 조각의 원본 영상 임베딩)와 **코사인 유사도**(L2 정규화한 벡터의 내적)로 비교해 가까운 순으로 고른다. 이름표에 없는 말("물 마시는 거")로도 찾을 수 있다.
 - **이름(의미) 찾기**: 물체마다 라벨 표에서 고른 이름·상위어(기억 폴더 `cache/`)를 붙여 두고, 이름이나 상위어("컵" ⊂ "식기")로 찾는다. 빠르고 결과를 설명하기 쉽다.
 - 찾은 물체(이름·위치·상태)를 LLM 프롬프트에 넣어 답·계획을 만들게 하는 구조가 **RAG**(Retrieval-Augmented Generation, 검색 증강 생성)다. 우리 agent 는 물체 기억을 도구로 찾아 그 결과로 답하므로 이 방식에 해당한다.
-- 지금 코드에 있는 것(서브모듈 `scene_graph/runtime` C ABI `sgrt.h`)
-  - `sgrt_query_embedding`: 질의 벡터(768-d) → 물체 벡터 코사인 상위 k.
-  - `sgrt_query_label`: 라벨 표에 **정확히 있는 이름**(영·한) → 그 줄의 글 임베딩 → 물체 벡터 코사인 상위 k. 로봇에 글 인코더가 없어도 된다.
-  - `sgrt_object_names`: 물체마다 이름 캐시 상위 5(영·한·점수) + 확신 맞춘 이름(상위어로 올렸을 수 있음) + 구조물 표시.
-  - 표에 없는 자유 글은 `clip/tools/text_query.py`(SigLIP 2 글 탑, 로봇 밖, HTTP `/encode`·`/search`)로 벡터를 만든다. 한국어 작은 학생 모델은 `training/embed` 에서 학습 중.
-- agent 도구 `find_object` 는 설계만 있다([`src/agent/plan.md`](../src/agent/plan.md)), 아직 구현 전.
 - 임베딩·라벨 표·한국어 질의 모델은 [`training/embed`](../training/embed/README.md), 실행 쪽은 서브모듈 `src/behavior-2026/src/scene_graph/clip`.
 
 ### 지도 갱신 — 직접 만듦
@@ -199,7 +187,6 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 - VLA 크기·메모리: openpi README (`refs/code/openpi/README.md`), [VLA 비교 연구 (arXiv 2603.19233)](https://arxiv.org/pdf/2603.19233)
 - NPU: [DEEPX DX-M1 사양 (DFRobot)](https://wiki.dfrobot.com/SKU_DFR1252_DX-M1%20AI%20Accelerator), [dx-all-suite (DEEPX SDK)](https://github.com/juyoung020/dx-all-suite)
 - 시뮬레이션: [2026 BEHAVIOR Challenge](https://behavior.stanford.edu/challenge/index.html), 참고 [2025 BEHAVIOR Challenge](https://behavior.stanford.edu/challenge/archive/2025/call_for_participation.html)
-
 ---
 
 <details>
@@ -214,6 +201,5 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 | 2026-10-03 | 물체 인식: YOLO-seg → 다시 **SAM + CLIP 구조**(FastSAM-s 416 + SigLIP 2 B/32). 물체 벡터 = 원본 임베딩, 이름 = 기억 폴더 `cache/` | 물체 찾기를 임베딩 벡터 찾기로 정해서 물체마다 CLIP 류 임베딩이 필요 |
 | 2026-10-03 | 물체 찾기 절 추가: **임베딩 벡터 찾기 + 이름(의미) 찾기** 둘 다, RAG 구조 | |
 | 2026-10-03 | 시뮬레이션: **2026 BEHAVIOR Challenge**(참고 코드는 2025 상위 팀). 장비: 시뮬 평가·π0.5 추론 = `jy-desktop`(RTX 5070 Ti 16GB), LoRA 학습 = 학교 4090 | 16GB 에 LoRA 학습이 안 들어감 |
-| 2026-10-03 | 코드와 맞춤: 기본 검출 엔진은 아직 YOLOE(`SGRT_ENGINE`), 임베딩은 `SGRT_CLIP` 으로 켬, DA 는 같은 이름 번호끼리 위치(FastSAM-s 면 위치만), 찾기 C ABI(`sgrt_query_embedding`·`sgrt_query_label`), `find_object` 는 설계만 | 코드를 읽고 확인 |
 
 </details>
