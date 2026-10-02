@@ -1,0 +1,29 @@
+[package]
+name = "move_robot"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+description = "LLM 도구 move_robot: R1Pro 관절·베이스를 직접 움직이기 (스키마·검증·한계·보간·닫힌 고리, C ABI)"
+publish = false
+
+[lib]
+name = "move_robot"
+# rlib: 에이전트(Rust)가 그대로 쓴다. cdylib: 시뮬 쪽 파이썬 접착부가 ctypes 로 부른다(libmove_robot.so).
+crate-type = ["rlib", "cdylib"]
+
+[[bin]]
+name = "move-robot"
+path = "src/bin/move-robot.rs"
+
+[features]
+# `move-robot llm "..."`: KAU Qwen 원형 도구 호출 루프 시연. 기존 계획기의 llm.rs(HttpLlm, curl)를 경로 의존성으로 재사용.
+llm = ["dep:bagent"]
+
+[dependencies]
+serde_json = "1"
+bagent = { package = "behavior-agent", path = "../../../behavior-2026/src/agent/planner", optional = true }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
