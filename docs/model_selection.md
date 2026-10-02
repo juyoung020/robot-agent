@@ -8,8 +8,9 @@
 | 부품 | 선택 | 한 줄 이유 | 상태 |
 |---|---|---|---|
 | 지도·위치 (SLAM) | **Cartographer (2D 라이다)** | 리모에서 가볍게 돌고, 물체 높이는 depth 로 알 수 있음 | 결정 |
-| 물체 인식 | **FastSAM-s (입력 416) + SigLIP 2 B/32** 로 바꾸는 중 (그 전: YOLO-seg nano, 시뮬은 YOLOE) | 마스크는 FastSAM-s, 이름·임베딩은 SigLIP 2. 후보·측정은 [CLIP 후보](clip_candidates.md) | 결정, 코드 작업 중 |
+| 물체 인식 | **FastSAM-s (입력 416) + SigLIP 2 B/32** (그 전: YOLO-seg nano, 시뮬은 아직 YOLOE) | 이름 없는 마스크 + 물체마다 임베딩 → 목록 밖 물건·아무 말로나 찾기 | 결정, 코드 작업 중 |
 | 같은 물체 판단 (DA) | **직접 만듦** | 같은 이름끼리 위치로 비교 | 결정 |
+| 물체 찾기 | **임베딩 벡터 찾기 + 이름(의미) 찾기** 둘 다 | 질의 글 ↔ 물체 벡터 코사인, 라벨 표 이름·상위어 | 결정 |
 | 지도 갱신 | **직접 만듦** | 바뀐 부분만 고침 | 결정 |
 | 물체 지도 저장·보기 | **Spark-DSG** 저장, 보기는 **2D 지도** | Hydra·Khronos 와 같은 형식. 웹 3D 뷰어는 안 씀(10-02) | 결정 |
 | 큰 계획·대화 (LLM) | **Qwen3.5-9B**, AI agent 수업이 주는 KAU API | 요금 없이 사용 (인터넷 필요) | 결정 |
@@ -25,7 +26,8 @@
 | 조건 | 영향 |
 |---|---|
 | **우리 코드는 전부 리모에서 돈다** (Jetson Nano 4GB) | 모든 모델이 4GB 안에 같이 올라가야 한다 → 가벼운 것 우선 |
-| LLM 은 AI agent 수업(최영식 교수님)이 주는 Qwen API, 학교 4090 (24GB) 은 학습만 | 로봇이 쓰는 모델은 4090 에 기대지 않는다 |
+| LLM 은 AI agent 수업(최영식 교수님)이 주는 Qwen API, 학교 4090 (24GB) 은 π0.5 LoRA 학습만 | 로봇이 쓰는 모델은 4090 에 기대지 않는다 |
+| 시뮬 작업 PC `jy-desktop` (RTX 5070 Ti 16GB) | 시뮬 평가·π0.5 추론은 여기서 돈다. LoRA 학습은 16GB 에 안 들어가서 학교 4090 으로 |
 | 리모 기본형은 Ubuntu 18.04 (ROS 1) | ROS 2 로 포팅된 리모 패키지를 찾아 쓴다 |
 | **리모 프로를 받을 수도 있다** (Jetson Orin Nano 8GB, ROS 2 Foxy 공식 지원) | 받으면 메모리 한도가 8GB 로, CUDA·TensorRT 도 새 버전을 쓸 수 있다 → 아래 선택 중 "리모에 무거워서" 뺀 것들을 다시 볼 수 있다 |
 
@@ -53,41 +55,45 @@
 
 잴 것: 리모 CPU·메모리 사용량, 방을 한 바퀴 돌고 출발점에 왔을 때 어긋난 거리.
 
-### 물체 인식 — YOLO-seg (nano) → FastSAM-s + SigLIP 2 로 바꾸는 중
+### 물체 인식 — FastSAM-s (416) + SigLIP 2 B/32 (작업 중)
 
-> **지금 방향 (10-03~)**: FastSAM-s(입력 416)가 이름 없는 마스크를 내고, SigLIP 2 B/32 가 물체 조각마다 영상 임베딩을 내서 라벨 표에서 이름을 찾는다. 물체 벡터는 원본 임베딩 그대로 두고, 이름은 기억 폴더의 `cache/` 에 둔다. 코드는 서브모듈 `src/behavior-2026/src/scene_graph/clip`(작업 중), 지금 돌아가는 검출기는 아직 YOLOE(`src/behavior-2026/src/scene_graph/ovdet`). 후보·측정: [CLIP 후보](clip_candidates.md), [물체 인식 모델 후보](perception_model_candidates.md).
-> 아래는 처음(09-30) YOLO-seg 를 고를 때의 근거로 남긴다.
+- **FastSAM-s**(입력 416)가 keyframe 에서만 이름 없는 물체 마스크를 낸다. 클래스가 없어서 목록 밖 물건도 빠짐없이 잡는다.
+- **SigLIP 2 B/32** 가 물체 조각(원본 RGB 에서 상자 + 10 % 둘레, 정사각)마다 768-d 영상 임베딩을 낸다. 새 물체 / best view 가 바뀐 물체만, 묶어서, 비동기로 돈다.
+- 이름은 그 임베딩과 미리 계산한 **라벨 표**(글 임베딩)의 코사인으로 고른다. 확신이 낮으면 WordNet 상위어로 올린다. 벽·바닥 같은 구조물은 표시만 하고 agent 목록에서 뺀다.
+- 저장: 물체 벡터는 **원본 임베딩 그대로**(`objects/O<id>_emb.f16`), 이름은 다시 만들 수 있는 **캐시**(기억 폴더 `cache/names.json`).
+- 코드는 서브모듈 `src/behavior-2026/src/scene_graph/clip`(작업 중). 지금 시뮬에서 돌아가는 검출기는 아직 YOLOE(`src/behavior-2026/src/scene_graph/ovdet`). 후보·측정: [CLIP 후보](clip_candidates.md), [물체 인식 모델 후보](perception_model_candidates.md).
 
-- 카메라 영상에서 물체의 **영역과 이름을 한 번에** 준다.
-- 컵·병·의자·식탁·소파·노트북·책 등 집 안 물건은 기본 목록(COCO 80종)에 대부분 들어 있다. 목록 밖의 물건이 필요해지면 원하는 단어로 찾는 YOLOE / YOLO-World 로 바꾼다.
-- **리모에서 돌린다**: 가장 작은 nano 모델을 TensorRT FP16 엔진으로 바꿔 C++ 로 실행 (참고: [Qengineering/YoloV8-TensorRT-Jetson_Nano](https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano), `tensorrt8` 브랜치). 엔진은 리모와 같은 TensorRT 버전으로 만들어야 한다.
-- 속도 참고치: Jetson Nano 에서 검출만 약 19 FPS (YOLOv8n, FP16). 영역까지 내면 더 느리므로 우리 리모에서 직접 잰다.
+**왜 바꿨나 (YOLO-seg → FastSAM-s + SigLIP 2)**
 
-**왜 CLIP·SAM 이 아니라 YOLO 인가**
-
-- **정밀한 물체 영역이 필요 없다.** 물체를 실제로 집는 건 π0.5 이고, π0.5 는 카메라 이미지를 그대로 보고 행동하도록 학습된 모델이다. 우리가 뽑은 영역(mask)이나 정확한 정답 위치(GT)를 입력으로 받지 않는다. 그래서 물체 기억에는 "무엇이 대략 어디에 있나"만 있으면 된다. 로봇을 그 물체가 보이는 곳까지 데려가는 데 쓰기 때문이다.
-- **위치 계산도 대충 맞는 영역이면 충분하다.** 영역 안 depth 의 가장자리를 빼고 **중앙값**을 쓰므로, SAM 처럼 테두리까지 정확한 영역을 따 봐야 결과 위치는 거의 같다.
-- **이름이 한 번에 나온다.** SAM 은 영역만 주고 이름이 없어서 CLIP 같은 모델로 이름을 따로 붙여야 한다 (모델 2개). YOLO-seg 는 한 번 돌리면 영역과 이름이 같이 나온다.
-- **리모에서 돈다.** SAM·CLIP 은 둘 다 큰 이미지 모델(ViT)이라 Jetson Nano 4GB 에서 π0.5 와 같이 올리기 어렵다. YOLO nano 는 TensorRT 로 실시간에 가깝게 돈다.
-- **CLIP 의 장점(아무 단어로 찾기)은 지금 필요 없다.** 집 안 물건은 대부분 COCO 목록에 있고, 같은 물체 판단도 이름 + 위치로 한다. 목록 밖 물건이 필요해지면 YOLO 안에서 단어로 찾는 YOLOE / YOLO-World 로 바꾸면 된다.
-- **이름 차이는 LLM 이 메운다.** YOLO 는 정해진 이름(`cup`, `bottle` …)만 붙이지만, 사람이 "머그잔"·"텀블러"라고 해도 LLM 이 기억에서 `cup` 을 찾아 같은 물건으로 이어 준다. 그릇을 `cup` 으로 잘못 불러도 매번 똑같이 부르면 괜찮고, LLM 이 기억에 "사실 그릇"이라고 고쳐 적으면 된다. 실제로 집는 π0.5 는 이미지를 직접 보므로 이름이 틀려도 상관없다.
-- **LLM 이 못 메우는 것** (따로 챙길 것)
-  1. YOLO 가 아예 못 잡는 물건 — 기억에 등록이 안 되니 이어 줄 대상이 없다 → YOLOE 로 바꾼다.
-  2. 같은 물건의 이름이 프레임마다 바뀜 (`cup` ↔ `bowl`) — 같은 물체 판단에서 두 개로 갈라진다 → 등록 단계에서 막는다.
-  3. 같은 이름의 물건이 여러 개 — LLM 은 이미지를 안 보므로 "빨간 컵"을 구분 못 한다 → 색 같은 간단한 생김새 정보를 기억에 같이 넣는다.
+- **이름보다 임베딩이 중요했다.** 우리 데이터에서 이름 붙이기 정답률은 0.30–0.35 에 그쳤지만(라디오는 모든 모델이 0), 글 → 물체 찾기는 SigLIP 2 B/32 가 영어 R@1 0.70, 한국어 0.65 로 "라디오"·"빨간 라디오"를 1·2위 안에 찾았다. 그래서 물체마다 벡터를 저장하고 이름은 캐시로 둔다.
+- **아무 말로나 찾기가 필요해졌다.** "빨간 컵"처럼 생김새로, 한국어로 찾으려면 영상·글이 정렬된 임베딩이 있어야 한다. YOLO 는 정해진 이름만 준다.
+- **같은 이름 여러 개·목록 밖 물건**(처음 YOLO 를 고를 때 따로 챙길 것으로 적었던 약점)을 임베딩이 메운다.
+- **리모 예산 안(추정)**: 영상 인코더 엔진 약 0.22–0.24 GB + 라벨 표 0.05 GB. Nano 에서 새 물체 5개 keyframe 약 0.35–0.5 s(비동기라 SLAM·주행은 안 막음).
+- 주의: SigLIP 2 는 TensorRT FP16 그대로면 망가진다 → LayerNorm 을 FP32 로 고정한다.
 
 | 다른 후보 | 안 고른 이유 |
 |---|---|
-| FastSAM | 빠르지만 이름이 없고 물체가 조각남 (처음엔 골랐다가 바꿈) |
-| MobileSAM · EfficientViT-SAM · SAM 2 | 이름을 따로 붙여야 하고, 리모에는 무거움. 정밀한 영역은 π0.5 에 쓰이지 않음 |
-| CLIP (SAM 과 조합) | 잘라 낸 물체마다 한 번씩 더 돌려야 해서 느리고 무거움. 아무 단어로 찾기는 지금 필요 없음 |
+| YOLO-seg nano (09-30 첫 선택) | 영역과 이름을 한 번에 주지만 정해진 이름만, 목록 밖 물건·자유 글 찾기가 안 됨 |
+| YOLOE (시뮬에서 지금 돌아감) | 단어로 찾을 수 있지만 프롬프트 어휘 안에서만. 물체 벡터가 없어 생김새로 못 찾음 |
+| OpenAI CLIP B/32 + 한국어 글 인코더 | 바로 쓸 수 있는 2순위 대안. 한국어 찾기는 좋지만 이름 정답률이 낮음(0.28) |
+| MobileCLIP 계열 | 이름 정확도는 가장 높지만 가중치가 비상업 라이선스 |
+| MobileSAM · EfficientViT-SAM · SAM 2 | 리모에 무거움. 정밀한 영역은 π0.5 에 쓰이지 않음 |
 
-잴 것: 리모에서 FPS, 우리 물체를 놓치거나 이름을 틀리는 비율, 메모리.
+잴 것: 리모에서 keyframe 지연·메모리, 이름 정답률, 글 → 물체 찾기 R@1(영어·한국어).
+
+<details>
+<summary>처음 결정(09-30): YOLO-seg nano 를 골랐던 근거</summary>
+
+- 영역과 이름을 한 번에 줘서 모델 하나로 끝나고, nano + TensorRT FP16 이면 Jetson Nano 에서 실시간에 가깝다(검출만 약 19 FPS).
+- 물체를 집는 건 π0.5 라 정밀한 영역이 필요 없고, 위치는 영역 안 depth 의 중앙값이라 대충 맞는 영역이면 충분하다(이 근거는 지금도 맞다).
+- 그때는 "아무 단어로 찾기는 필요 없다"고 봤다 → 위 측정으로 바뀌었다.
+
+</details>
 
 ### 같은 물체 판단 (DA) — 직접 만듦
 
 - 새로 본 물체가 이미 지도에 있는 물체인지 판단한다. **같은 이름끼리 위치로 비교**한다 (컵은 컵끼리만).
-- 약점: 컵이 두 개일 때 어느 컵이 옮겨졌는지 구분이 어렵다 → 부족하면 색 분포 같은 가벼운 생김새 정보를 붙인다.
+- 약점: 컵이 두 개일 때 어느 컵이 옮겨졌는지 구분이 어렵다 → 부족하면 생김새 정보를 붙인다. 물체마다 SigLIP 2 임베딩이 이미 있으므로 그 코사인 유사도가 첫 후보다(아직 안 정함).
 - 비교 기준: 위치 거리만 쓰는 가장 단순한 방법.
 
 잴 것: 같은 물체가 두 번 등록된 수, 다른 물체가 하나로 합쳐진 수.
@@ -109,6 +115,7 @@
 ### 물체 지도 저장·보기 — Spark-DSG + 뷰어
 
 - Hydra·Khronos 가 쓰는 형식이라 참고 코드의 도구를 그대로 쓸 수 있다. 층·방·물체 계층을 지원한다.
+- 기억 폴더: `scene.json`(Spark-DSG), `objects/`(물체마다 RGB·depth·마스크·점구름·임베딩 = 원본), `cache/`(이름·찾기 색인 = 지워도 다시 만듦). 지도 자세는 `SGRT_POSE`(`slam`·`odom`·`gt`, 시뮬은 `gt`)로 고른다.
 - 보기는 **2D 지도** 뷰어 sgviz(서브모듈 `src/behavior-2026/src/scene_graph/viewer`, Spark-DSG + viser). spark-dsg 의 웹 3D 뷰어는 안 쓴다(10-02).
 
 agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
@@ -127,7 +134,7 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 ### 작은 계획·행동 (VLA) — π0.5 (잠정)
 
 - LLM 의 지시와 카메라 영상을 받아, 할 일을 스스로 잘게 나눠 로봇을 움직이고 눈앞의 실패는 스스로 복구한다. 2025 BEHAVIOR 대회 1~3위 팀이 모두 π0.5 를 썼고, 공개된 모델과 코드가 많다.
-- 학습은 4090 에서 LoRA (22.5GB 이상 필요, 4090 에 겨우 들어감).
+- 학습(LoRA)은 학교 4090(24GB)에서 한다 (22.5GB 이상 필요, 4090 에 겨우 들어감). 시뮬 평가·추론은 시뮬 작업 PC(RTX 5070 Ti 16GB)에서 잘 돈다.
 
 | 다른 후보 | 크기 | 특징 |
 |---|---|---|
@@ -148,7 +155,6 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 ### 시뮬레이션 — 2026 BEHAVIOR Challenge 벤치마크
 
 - 참고하는 코드·체크포인트는 2025 대회 상위 팀 것이다(서브모듈 `docs/2025상위팀_깃허브.md`).
-
 - 대회가 준 과제와 평가 방식을 그대로 쓴다 → 점수를 대회 상위 팀과 바로 비교할 수 있다.
 - 사람이 조종한 시연 데이터 약 10,000개와 상위 팀의 학습된 모델이 공개돼 있어 학습도 여기서 시작한다.
 - 대회 로봇(Galaxea R1 Pro, 바퀴 + 양팔) 은 리모와 몸이 다르다 → 실제 리모용은 따로 학습한다.
@@ -173,8 +179,8 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 ## 출처
 
 - 리모 사양·SLAM 데모: [AgileX LIMO 사양](https://www.wevolver.com/specs/agilex-limo), [LIMO ROS2 매핑·내비게이션](https://www.hackster.io/agilexrobotics/ros2-mapping-and-navigation-with-limo-ros2-1936a9), [Trossen LIMO 데모](https://docs.trossenrobotics.com/agilex_limo_docs/demos.html), [LIMO Pro 공식](https://global.agilex.ai/products/limo-pro)
-- 물체 인식: [SAM 계열 속도·정확도 비교 (2025)](https://scitepress.org/PublishedPapers/2025/137785), [MobileSAM](https://docs.ultralytics.com/ko/models/mobile-sam), [YOLOv8 TensorRT Jetson Nano](https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano)
-- LLM: [Qwen3.5-9B GPU 가이드](https://www.spheron.network/tools/gpu-recommender/Qwen/Qwen3.5-9B/)
+- 물체 인식: [CLIP 후보](clip_candidates.md)(SigLIP 2·FastSAM-s 측정), [SAM 계열 속도·정확도 비교 (2025)](https://scitepress.org/PublishedPapers/2025/137785), [MobileSAM](https://docs.ultralytics.com/ko/models/mobile-sam), [YOLOv8 TensorRT Jetson Nano](https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano)
+- LLM: AI agent 수업 KAU API (`https://agent.kau.ac.kr/v1`, `qwen3.5-9b`), 사용법은 서브모듈 `docs/에이전트_설계.md`
 - VLA 크기·메모리: openpi README (`refs/code/openpi/README.md`), [VLA 비교 연구 (arXiv 2603.19233)](https://arxiv.org/pdf/2603.19233)
 - NPU: [DEEPX DX-M1 사양 (DFRobot)](https://wiki.dfrobot.com/SKU_DFR1252_DX-M1%20AI%20Accelerator), [dx-all-suite (DEEPX SDK)](https://github.com/juyoung020/dx-all-suite)
 - 시뮬레이션: [2026 BEHAVIOR Challenge](https://behavior.stanford.edu/challenge/index.html), 참고 [2025 BEHAVIOR Challenge](https://behavior.stanford.edu/challenge/archive/2025/call_for_participation.html)
