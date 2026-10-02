@@ -193,6 +193,7 @@ pub struct Footprint {
     pub hw: f64,
     /// 둘레 점(로봇 기준), 약 5 cm 간격
     pts: [[f64; 2]; 44],
+    pub round: bool,
 }
 
 impl Footprint {
@@ -212,10 +213,23 @@ impl Footprint {
             pts[k + 1] = [-hl, t];
             k += 2;
         }
-        Footprint { hl, hw, pts }
+        Footprint { hl, hw, pts, round: false }
+    }
+    /// 원 몸통(둘레 44 점). sweep_hit 은 외접 정사각형으로(보수적)
+    pub fn circle(r: f64) -> Footprint {
+        let mut pts = [[0.0; 2]; 44];
+        for (k, q) in pts.iter_mut().enumerate() {
+            let a = k as f64 * 2.0 * std::f64::consts::PI / 44.0;
+            *q = [r * a.cos(), r * a.sin()];
+        }
+        Footprint { hl: r, hw: r, pts, round: true }
     }
     pub fn circum(&self) -> f64 {
-        self.hl.hypot(self.hw)
+        if self.round {
+            self.hl
+        } else {
+            self.hl.hypot(self.hw)
+        }
     }
     /// 자세 (x, y, yaw) 에서 몸통 둘레의 가장 작은 장애물 거리(m). 음수 = 겹침
     pub fn clear(&self, cm: &Costmap, x: f64, y: f64, yaw: f64) -> f64 {
@@ -267,8 +281,11 @@ impl Footprint {
 }
 
 impl Default for Footprint {
+    /// 시뮬에서 잰 R1Pro 베이스: base_link AABB 가 yaw 148.6° 에서 0.743 × 0.732 m — 사각형으로는 풀리지 않고(바퀴가
+    /// base_link 상자 밖 y ±0.31 m) 반지름 약 0.37 m 원과 맞는다. 사각형(0.57 × 0.54)으로 했을 때 시뮬에서 바퀴(wheel_motor_link1·2)가
+    /// 소파·탁자에 12 번 닿았다(explore_20261003_074931).
     fn default() -> Self {
-        Footprint::new(0.285, 0.27)
+        Footprint::circle(0.37)
     }
 }
 
