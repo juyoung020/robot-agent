@@ -7,7 +7,152 @@
 - 표기
   - (추정): 출처 없이 비슷한 모델에서 미루어 본 값.
   - (출처 기기): 우리 기기가 아닌 곳에서 잰 값.
-  - 숫자 옆 [n]: 5절 출처 번호.
+  - 숫자 옆 [n]: 5절 출처 번호. [D1]… 은 바로 아래 새 절의 출처.
+- 문서 순서
+  - **A**: 리모 기본형·온디바이스 가정 추천. 지금 기준이다.
+  - **B**: 시뮬 추천(짧게).
+  - **이전 가정**: 리모 프로와 4090 을 쓸 수 있다고 본 첫 판. 근거 표로 남긴다.
+
+## A. 리모 기본형·온디바이스 가정 추천 (10-03 갱신)
+
+**가정**
+- 로봇: 리모 기본형(Jetson Nano 4 GB, JetPack 4.6, TensorRT 8.2, Maxwell GPU. bf16·텐서코어가 없다) + DEEPX DX-M1(25 TOPS INT8, 자체 LPDDR5 4 GB).
+- **모두 로봇 안에서 돈다.** 학교 4090, KAU API, 원격 확인은 쓰지 않는다.
+- Nano 메모리 4 GB 는 Cartographer, ROS 2, 물체 기억, agent 가 함께 쓴다.
+
+### A.0 한눈에
+
+| # | 모델 | 맡는 일 | 도는 곳 | 예상 속도·메모리 |
+|---|---|---|---|---|
+| 1 | **YOLO26-seg (s/m), 우리 물체로 미세조정** (닫힌 어휘 약 100–300개) | 실시간 등록. **확실한 경로** | DX-M1 (INT8) | RPi5 + DX-M1 에서 n–l 모두 end-to-end 약 55 FPS [5][D6]. NPU 메모리 수십 MB(추정) |
+| 2 | **YOLOE-11s / 26s-seg, 어휘를 굳혀서(272 + 동의어) DX-COM 으로 컴파일** | 실시간 등록. 열린 어휘를 유지한다. **컴파일이 되면 1위** | DX-M1 (INT8) | 30–55 FPS(추정. 같은 크기 YOLO-seg 와 거의 같은 conv 망이다). 공식 지원 목록에는 없다 [6] |
+| 3 | **YOLO26n-seg / YOLO11n-seg, TensorRT 8.2 FP16** | DX-M1 이 없을 때의 대체. 손목 카메라 보조 | Nano GPU | 640 입력 약 4–5 FPS(v8n-seg 4.2 FPS 측정 [12]), 416 입력 8–10 FPS(추정). 메모리 0.4–0.6 GB(CUDA 문맥 포함, 추정) |
+| 4 | **CLIP ViT-B/32 영상 인코더** (OpenAI, MIT). 같은 자리의 비교 후보: SigLIP 2 B/16(Apache), MobileCLIP 2-S0(연구 전용) | best-view crop 임베딩 + **라벨 목록 zero-shot 이름 붙이기** | DX-M1. 글 임베딩은 미리 계산하고, 자유 질의만 CPU 에서 | crop 당 2–5 ms(추정), 모델 약 90 MB INT8(추정). best view 를 고칠 때만 돈다 |
+| 5 | **SmolVLM-256M / 500M** (Apache-2.0, llama.cpp GGUF) | (선택) 새 물체를 **한가할 때 천천히** 확인 | RPi5 CPU (Nano 에는 올리지 않는다) | crop 하나에 10–30 s(추정), 메모리 0.3–0.8 GB(추정). 빠지면 3번 역할은 4번 CLIP zero-shot 만 남는다 |
+
+**결론**
+- **DX-M1 은 Nano 에 바로 꽂지 말고, 팀 문서대로 라즈베리파이 5 에 꽂아 "인지 상자"로 쓴다.** 이유는 A.1 의 DX-RT 지원 OS 다.
+- 등록 + 임베딩 + 이름 고르기를 DX-M1 하나에서 처리하고, Nano 는 SLAM · 물체 기억 · agent 만 맡는다.
+- 무거운 확인(SAM 3, 9B VLM)은 **뺀다**. 대신 다음 셋으로 메운다.
+  - 같은 물체 판단(DA)에서 이름을 다수결로 정한다.
+  - CLIP zero-shot 으로 이름을 다시 매긴다.
+  - (선택) 작은 VLM 을 느리게 돌린다.
+
+### A.1 기기 사실 (제약)
+
+| 기기 | 사실 | 우리에게 뜻하는 것 |
+|---|---|---|
+| Jetson Nano | Maxwell 128 코어, FP16 은 되지만 INT8 가속·텐서코어가 없다. JetPack 4.6 = Ubuntu 18.04, Python 3.6, TensorRT 8.2 | YOLO 계열 n 크기만 실시간 근처로 돈다. 트랜스포머 영상 모델은 사실상 불가(추정) |
+| TensorRT 8.2 export | Ultralytics 는 TRT ≤ 8.2 에 **opset 12** 를 권한다 [D3]. Nano 안에서는 export 가 안 된다(PyTorch·Ultralytics 가 너무 새것). PC 에서 ONNX 로 내보내고, 엔진은 Nano 에서 만든다 [D2][D3] | YOLO11-seg 는 opset 12 ONNX → `trtexec` 로 된다(Qengineering 이 v8 로 같은 경로를 썼다 [12]). YOLO26 은 `end2end=False`(NMS 있는 출력)로 내보내는 편이 안전하다. TopK·NMS 없는 머리가 TRT 8.2 에서 되는지는 확인해야 한다(추정) [D4] |
+| DX-COM (컴파일러) | 컴파일은 x86-64 Linux 에서만 된다 [6]. 입력은 **정적 크기**, INT8 고정이다 | 프롬프트 없는 YOLOE(LRPC 의 동적 걸러내기)는 그대로 못 올린다 → 어휘를 굳힌 text-prompt 판으로 바꿔 올린다(추정) |
+| DX-COM 연산자 | MatMul·Gemm 은 제한이 없다. Softmax 는 축 길이 ≤ 4080. Gelu 를 지원하고, LayerNorm 은 쪼개진 형태(Div)로 지원한다. Resize 는 `pytorch_half_pixel` 과 정수 배율만. 채널 방향 broadcast 는 안 된다. 동적 크기 불가 [D1] | ViT 주의집중(토큰 50–197개)은 연산자 조건 안에 든다. DEEPX 모델 동물원에 ViT/DeiT/BEiT · FastViT · SegFormer 가 있다 [26]. Advantech 의 DX-M1 CLIP 데모는 영상 인코더를 NPU 에, 글 인코더를 CPU 에 둔다 [D5]. 다만 Sixfab 문서는 "트랜스포머는 아직 안 된다"고 적는다 [D7] → **서로 어긋난다. 직접 컴파일해 봐야 한다** |
+| DX-M1 INT8 정확도 | Sixfab 기준 FP32 대비 약 2% 손실 [D7]. 교정 이미지에 따라 달라진다 | 작은 물체·낮은 conf 쪽이 먼저 깨진다(추정). 교정 이미지는 우리 집·실험실 프레임으로 고른다 |
+| DX-M1 속도 | RPi5 + DX-M1 YOLO26 seg: end-to-end 55 FPS(n). RPi5 는 PCIe Gen3 ×1 이 병목이라 **seg 는 large 까지 같은 FPS** 다 [D6]. m-seg 모델 처리량은 80 FPS [D6] | 크기를 키워도 거의 공짜다 → **s/m-seg 를 기본으로** |
+| DX-RT (런타임) 지원 OS | x86_64·aarch64, **Ubuntu 20.04 이상**, Debian 12/13 [D8]. Ubuntu 18.04(JetPack 4.6, 커널 4.9)는 목록에 없다 | Nano 에 직접 꽂으면 커널 드라이버 빌드부터 막힐 가능성이 크다(추정). Nano 개발 키트의 M.2 는 Key E(PCIe ×1)라 어댑터도 필요하다. **RPi5 + DX-M1 을 따로 두고 Ethernet 으로 Nano 와 잇는다** |
+| DX-M1 를 π0.5 와 나눔 | 팀 문서는 π0.5(INT8 약 3.3 GB)도 DX-M1 에 올릴 수 있다고 본다 | 인지 모델(합쳐 약 0.1–0.2 GB)은 메모리에 들어간다. 다만 **NPU 시간을 나눠 써서 π0.5 지연이 늘어난다**. π0.5 를 올리면 검출은 2–5 Hz 로 낮춘다 |
+
+### A.2 Nano 메모리 예산 (추정)
+
+| 항목 | 추정 |
+|---|---|
+| Ubuntu 18.04 (화면 없이) + ROS 2 노드들 | 0.8–1.2 GB |
+| Cartographer (2D) | 0.3–0.6 GB |
+| scenemap · Spark-DSG 기억 · best view PNG 캐시 | 0.1–0.3 GB |
+| agent (LLM 이 로봇 안에 있다면 모델 크기만큼 더) | 이 문서 범위 밖. 4 GB 에서 남는 몫이 거의 없다 |
+| **남는 것** | **약 1–2 GB** → Nano GPU 에 검출기를 올리면(3번, 0.4–0.6 GB) 빠듯하다. 그래서 인지는 DX-M1 쪽으로 뺀다 |
+
+### A.3 역할별 다시 거르기
+
+| 역할 | 후보 | Nano GPU | DX-M1 | 판정 |
+|---|---|---|---|---|
+| ① 실시간 seg | YOLO26/11-seg 미세조정 | n: 4–5 FPS | **공식 지원, 약 55 FPS** | **채택(1)** |
+| | YOLOE-11/26 text prompt(굳힘) | s: 1–2 FPS(추정, 연산량이 v8n-seg 의 약 3배) | 공식 목록 밖. 구조는 YOLO-seg + 1×1 conv 대조 머리라 될 가능성이 높다(추정) | **채택(2), 컴파일 시험 1순위** |
+| | YOLOE 프롬프트 없음(4,585) | 불가(느림) | LRPC 는 동적이라 불가. 4,585개를 text-prompt 로 굳히면 머리 채널 4,585개(제한 32,768 안) → 시험 대상(추정) | 2번의 변형으로 시험 |
+| | RF-DETR-Seg (Apache) | DINOv2 백본이라 느림(추정) | 트랜스포머가 될지 불확실 | 뺌(라이선스 대안으로만 기억) |
+| | FastSAM (+CLIP) | 느림 | **DX 동물원에 있다** [26] | 뺌. 우리 비교에서 이름 정밀도 0.21, 조각남 2.9 [ovdet_검출기.md]. 이름 없는 "무엇이든" 보조로만 |
+| | NanoOWL · Grounding DINO · OWLv2 · YOLO-World | Orin 전용이거나 너무 느림 | 상자만 내고, 트랜스포머 검출기는 불확실 | 뺌 |
+| ② 임베딩 | CLIP ViT-B/32 (MIT) | 1–3 FPS(추정) | DX-M1 CLIP 데모가 있다 [D5] | **채택(4)** |
+| | SigLIP 2 B/16 (Apache, 다국어) | 느림 | ViT-B/16 196 토큰 → 연산자 조건 안(추정) | 4번 비교 후보. 한국어 글을 바로 넣을 수 있다. 다만 글 인코더(어휘 256k)는 CPU 에서 무겁다 |
+| | MobileCLIP 2-S0 (FastViT) | 2–4 FPS(추정) | FastViT 가 동물원에 있다 → 가장 잘 될 것 | 성능은 가장 좋을 수 있지만 **연구 전용 라이선스** [27] → 공개 데모에 걸리면 뺀다 |
+| | YOLOE 물체 임베딩 | 2번과 함께 | 2번이 되면 따로 돌 필요가 없다 | 2번이 되면 첫 시도 |
+| ③ 이름 확인 | CLIP zero-shot (라벨 목록 = 272 + RAM++ 4,585 태그 + 한국어 사전) | — | 4번과 같은 모델, 글 임베딩은 미리 계산 | **채택(4번이 겸함)** |
+| | SmolVLM-256M/500M | 메모리가 없다 | VLM 은 지원 근거가 없다 | **(5) 선택**, RPi5 CPU 에서 한가할 때만 |
+| | Moondream 2 (1.9B), Qwen3-VL-2B, Florence-2 | 4 GB 에 SLAM 과 같이 못 올림 | 근거 없음 | 뺌 |
+| | RAM++ (Swin-L), SAM 3, Qwen3.5-9B | 불가 | 불가 | 뺌 |
+
+### A.4 온디바이스 파이프라인
+
+```
+[머리 RGB-D · 손목 RGB]──USB──▶ RPi5 + DX-M1 (인지 상자, Ubuntu 22.04/24.04)
+     ① YOLO26-seg 또는 YOLOE-seg(굳힘) INT8  ── 머리 5–10 Hz(필요한 만큼만), 손목 2–5 Hz
+     ② best view 가 바뀐 물체만 crop → CLIP B/32 영상 인코더 INT8 → 512-d
+     ③ 512-d · (미리 계산한 라벨 글 임베딩) → zero-shot 이름 후보 상위 3개
+     (선택) 새 물체 → SmolVLM 대기열(CPU, 느림)
+        │ 검출(이름·점수·상자·마스크 비트·임베딩)을 ROS 2 토픽으로 (Ethernet)
+        ▼
+  Jetson Nano: Cartographer · scenemap(무게중심 + depth → xyz, DA = 이름 다수결 + 위치 + 임베딩 거리) · Spark-DSG · agent
+```
+
+| 항목 | 예상 (추정, [D6] 기준으로 미룸) |
+|---|---|
+| 머리 검출 | YOLO26s/m-seg 640: NPU 처리 12–20 ms, RPi5 쪽 전후처리 포함 end-to-end 20–30 ms → 30 FPS 이상 가능. **실제로는 5–10 Hz 로 묶어** π0.5·임베딩과 NPU 를 나눈다 |
+| 임베딩 | crop 당 2–5 ms. 초당 수 개 |
+| DX-M1 메모리 | seg 20–40 MB + CLIP 영상 약 90 MB → 약 0.15 GB. π0.5 를 올려도 4 GB 안 |
+| RPi5 메모리 | 디코딩·전후처리·DX-RT 0.3–0.5 GB. SmolVLM 을 쓰면 +0.3–0.8 GB |
+| Nano 추가 부담 | 검출 메시지를 받는 데 수십 MB, GPU 0 |
+| DX-M1 이 없을 때 | Nano GPU 에 YOLO26n-seg 416 FP16 → 8–10 FPS(추정), +0.4–0.6 GB. 임베딩은 빼거나, best view 때만 CPU 에서 MobileCLIP 2-S0/CLIP(장당 0.5–1 s, 추정) |
+
+- **한국어·동의어 검색**: CLIP 은 영어 글만 받는다. 그래서 agent 계획의 한국어 사전("머그잔"→mug→cup)으로 먼저 영어로 바꾼 뒤 글 임베딩과 비교한다.
+  - 사전에 있는 단어는 글 임베딩을 미리 계산해 두므로 실행 중 글 인코더가 필요 없다.
+  - 사전 밖 자유 질의만 RPi5 CPU 에서 CLIP 글 인코더를 돌린다(ONNX Runtime C++, 질의당 수십 ms, 추정).
+- **이름 안정**: 프레임마다 나온 이름을 노드에서 점수 가중 다수결로 정한다. 이름 후보가 갈리면 CLIP zero-shot 상위 1개로 정한다. 그래도 갈리면 "불확실" 표시를 하고 agent 가 사용자에게 묻는다.
+
+### A.5 확인할 것 (순서대로, 각 반나절–하루)
+
+1. RPi5(Ubuntu 24.04)에 DX-RT·드라이버를 설치하고 `run_model` 로 YOLO26s-seg 동물원 모델을 돌린다(55 FPS 재현).
+2. **YOLOE-11s / 26s text-prompt(272 + 동의어)를 opset 11+ 정적 ONNX 로 내보내고 `dxcom` 으로 컴파일**한다. 마스크 IoU·이름을 FP32 와 비교한다. 실패하면 1번(YOLO26-seg 미세조정)으로 확정한다.
+3. CLIP B/32 · SigLIP 2 B/16 · MobileCLIP 2-S0 영상 인코더를 DX-COM 으로 컴파일한다. INT8 과 FP32 임베딩의 코사인 유사도, zero-shot top-1 을 잰다.
+4. PC 에서 opset 12 로 YOLO26n-seg(end2end=False) · YOLO11n-seg 를 내보낸다. Nano TRT 8.2 로 엔진을 만들고, Cartographer 와 ROS 2 를 띄운 채 FPS·메모리를 잰다.
+5. (선택) RPi5 에서 SmolVLM-256M llama.cpp 로 crop 하나에 걸리는 시간을 잰다. 30 s 를 넘으면 뺀다.
+6. 위 결과를 이전 가정의 4.2 비교 계획(같은 지표, 팀 벤치마크)에 넣는다. 다만 "VRAM" 대신 **Nano RAM · DX-M1 메모리 · NPU 점유율**을 잰다.
+
+### A.6 뺀 것 (이 가정에서)
+
+| 뺀 것 | 이유 |
+|---|---|
+| SAM 3 / 3.1 | 848M. Nano·DX-M1 어디에도 안 들어간다. 오프라인 라벨 도구로는 개발 PC 에서 계속 쓸 수 있다(실행 경로가 아님) |
+| Qwen3.5-9B 확인, Qwen3-VL-2B, Moondream 2, Florence-2 | 4090 이 없고, Nano 4 GB 에 SLAM 과 같이 못 올린다. VLM 이 DX-COM 에서 된다는 근거가 없다 |
+| 무거운 열린 어휘 검출기 (Grounding DINO 계열, OWL, Mask Grounding DINO, OmDet) | 트랜스포머 검출기. Nano 에 너무 느리고 DX-COM 지원이 불확실하다. 상자만 내는 것도 많다 |
+| EfficientViT-SAM · NanoSAM · EdgeTAM | 분할기를 하나 더 두는 메모리·시간이 없다. YOLO-seg 마스크로 충분하다(팀 문서 근거) |
+| RAM++ | Swin-L 급. 태그 목록만 가져와 CLIP zero-shot 라벨로 쓴다 |
+| 이전 판 5위 "가끔 하는 무거운 확인" 역할 | **축소**: CLIP zero-shot + DA 다수결 + (선택) SmolVLM |
+
+## B. 시뮬 (BEHAVIOR, RTX 5070 Ti) 추천 — 짧게
+
+| 역할 | 추천 | 비고 |
+|---|---|---|
+| 실시간 seg | YOLOE-26 s/m text prompt, TRT 10 FP16 (지금 11m 을 바꿀 후보) | 이전 가정 3.1 그대로. 2–5 ms(추정), 약 0.2 GB |
+| 임베딩 | **로봇과 같은 모델**(CLIP B/32 또는 A.5-3 에서 고른 것)을 TRT FP16 으로 | 시뮬과 실물의 기억 형식·검색 방식이 같아진다 |
+| 이름 확인 | 로봇과 같게 CLIP zero-shot + DA 다수결 | 대회 평가 중 원격 API 는 규칙 확인 전까지 쓰지 않는다 |
+| 오프라인 | SAM 3 로 의사 라벨 → A.0-1 의 YOLO26-seg 미세조정 데이터 | Isaac Sim 이 꺼져 있을 때만 |
+
+### A·B 출처
+
+- [D1] DEEPX DX-COM 지원 ONNX 연산자 — https://developer.deepx.ai/tech-docs/DXNN-SDK/DX-COM/Building_Models/
+- [D2] Ultralytics Jetson 빠른 시작(JetPack 4 도커, Nano 안에서 export 불가) — https://docs.ultralytics.com/guides/nvidia-jetson/
+- [D3] Ultralytics DeepStream on Jetson(JetPack 4.6.4 · DeepStream 6.0.1 · TRT 8.2 이하는 opset 12) — https://docs.ultralytics.com/guides/deepstream-nvidia-jetson
+- [D4] Ultralytics end-to-end 검출 안내(YOLO26 end2end, TRT 에서 자동 해제 조건) — https://docs.ultralytics.com/guides/end2end-detection
+- [D5] Advantech DEEPX NPU CLIP VLM 컨테이너(영상 인코더 NPU, 글 CPU) — https://catalog.advantech.com/en-us/containers/deepx-npu-clip-vlm , https://github.com/Advantech-Containers/DEEPX-NPU-demo
+- [D6] DEEPX dx-benchmark YOLO26 분석(RPi5B_M1 seg 55.1 FPS, m-seg 처리량 80 FPS, seg 는 large 까지 같은 FPS) — `/tmp/claude-1000/dxas/dx-benchmark/docs/ANALYSIS_EN.md` · `ANALYSIS_KOR.md`, https://github.com/jyun69/dx-all-suite
+- [D7] Sixfab DEEPX 지원 모델 목록(트랜스포머 미지원 표기, INT8 약 2% 손실) — https://docs.sixfab.com/docs/ai-model-deployment-supported-models
+- [D8] DX-AllSuite 구조 개요(DX-RT 지원 OS·아키텍처, 모델 동물원 345개) — `/tmp/claude-1000/dxas/docs/source/01_DX-AllSuite_Architecture_Overview.md`
+- [D9] SmolVLM — https://huggingface.co/HuggingFaceTB/SmolVLM-256M-Instruct
+
+---
+
+# 이전 가정: 리모 프로(Orin) · 학교 4090 사용 가능 (10-03 첫 판)
+
+> 아래는 첫 판 분석이다. 후보 20개 표와 출처는 A 절의 근거로 그대로 쓴다. **추천은 A 절이 앞선다.**
 
 ## 0. 한눈에
 
