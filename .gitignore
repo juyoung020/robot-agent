@@ -226,3 +226,6 @@ refs/papers/
 # 참고 코드 (각 원본 레포 클론) — refs/download.sh 로 받기
 refs/code/
 
+
+# AI Agent 수업 자료 사본 (비공개 — 공개 저장소에 올리지 않음)
+docs/ai-agent/
