@@ -45,7 +45,7 @@ AgileX 리모(LIMO) 기본형(가정, **프로를 받을 수도 있음**) + 매�
 ## 폴더 구조
 
 ```
-robot-programming-team/
+robot-agent/
 ├── docs/            # 계획(plan.md), 회의 자료, 설계 문서, 발표 자료
 ├── src/             # 코드 (ROS 2 패키지)
 │   ├── scene_graph/ # ① 물체 기억
@@ -69,8 +69,8 @@ git submodule update --init src/behavior-2026   # 서브모듈 받기 (그 안�
 ## 시작하기
 
 ```bash
-git clone https://github.com/juyoung020/robot-programming-team.git
-cd robot-programming-team
+git clone https://github.com/juyoung020/robot-agent.git
+cd robot-agent
 bash refs/download.sh   # 참고 논문 PDF·코드를 refs/ 에 받기 (깃에는 안 올라감)
 python3 -m pytest tests/  # 테스트 실행
 ```
