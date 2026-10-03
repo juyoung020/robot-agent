@@ -17,7 +17,7 @@
 | 10 | `src/behavior-2026/src/scene_graph/da/merge.hpp`·`merge.cpp` | 주석은 `max_ext` 를 넘는 쌍은 병합 안 한다는데 `merge.cpp` 가 `max_ext` 를 확인하지 않는다. `mergeable()` 이 `kinds` 를 안 본다 | 큰 물체끼리, 다른 종류끼리 병합될 수 있음 | `max_ext`·`kinds` 확인을 넣거나 주석을 고친다 |
 | 11 | `src/behavior-2026/src/scene_graph/scenemap/src/objmap.cpp`, `dsg_save.cpp` (`eventName`) | 병합을 이벤트 7 로 기록하는데 `eventName` 은 0–6 만 안다 | 기록·뷰어에 "?" 로 보임 | `eventName` 에 7(병합) 추가 |
 | 12 | `src/behavior-2026/src/scene_graph/scenemap/CMakeLists.txt` (`walls` 시험) | `${WALLS_REF_CELLS}`·`${WALLS_REF_JSON}` 를 넘기지만 어디서도 정하지 않는다 | ctest 가 파이썬 기준 비교 없이 돈다 | 변수를 정하거나 인자를 뺀다 |
-| 13 | `src/agent/tools/move_robot/src/lib.rs` (`Motion::Base`) | `SGRT_POSE=gt` 로 정답 자세를 넣어도 base delta 의 도착 판정·결과 `state`·`error` 는 바퀴 속도(base_qvel) 적분. 지도·go_to·probe·`moved_m` 만 정답 자세 | 바퀴가 미끄러지면 delta 가 덜 가고도 "도착", 지도 위치와 어긋남 | 의도인지 확인 필요. 아니면 GT 일 때 base delta 도 정답 자세 기준으로 |
+| 13 | `src/agent/tools/move_robot/src/lib.rs` (`Motion::Base`) | **버그 아님(메모)**: `SGRT_POSE=gt` 로 정답 자세를 넣어도 base delta 의 도착 판정·결과 `state`·`error` 는 바퀴 속도(base_qvel) 적분이다. 지도·go_to·probe·`moved_m` 만 정답 자세 | 실제 로봇에는 정답 자세가 없어 delta 는 오도메트리로 판정한다 → 시뮬에서도 같은 방식으로 시험하는 것이 맞다 | 그대로 둔다 |
 
 ## 3 번 목록 (`/mnt/c/behavior-2026` 을 쓰는 실행 줄이 있는 파일, 주석만 있는 것은 뺌)
 
