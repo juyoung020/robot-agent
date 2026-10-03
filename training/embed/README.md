@@ -246,4 +246,4 @@ labels/objects-v1/
 - [ ] 여러 집 시뮬 crop(다른 과제 시연 받기) → 다른 집 B 로 일반화 확인. 평가 B 는 정답 잡음을 줄여 다시 만든다(짧은 구간, 정답 자세).
 - [ ] 한국어: 평가 질의 100개 이상(clip_candidates 7-5), NLLB 이름 검수, 우리말샘 동의어.
 - [ ] Nano 실측(TRT 8.2): 기반 B/32, 머리 CPU, 라벨 찾기 NEON.
-- [ ] 런타임: `objects-v1` 표를 port 쪽 라벨 찾기·`cache/names.json` 과 맞춘다(형식은 위 약속).
+- [x] 런타임: `objects-v1` 표를 port 쪽 라벨 찾기·`cache/names.json` 과 맞춘다(형식은 위 약속).
