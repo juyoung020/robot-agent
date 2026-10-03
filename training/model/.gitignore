@@ -1,0 +1,4 @@
+# 모델 가중치는 저장소에 넣지 않는다(수 GB). 받는 방법은 README.md
+*
+!.gitignore
+!README.md

@@ -1,0 +1,53 @@
+--- a/src/sim/move_robot/move_robot_sim.py	2026-10-03 20:53:49.883878574 +0900
++++ b/src/sim/move_robot/move_robot_sim.py	2026-10-03 20:53:49.893878488 +0900
+@@ -54,6 +54,11 @@
+         L.mr_busy.restype = ctypes.c_int
+         L.mr_busy.argtypes = [ctypes.c_void_p]
+         L.mr_reset.argtypes = [ctypes.c_void_p]
++        # GT pose input (Map_Vla): older libmove_robot.so builds do not export it
++        self.has_gt_pose = hasattr(L, "mr_set_gt_pose")
++        if self.has_gt_pose:
++            L.mr_set_gt_pose.restype = ctypes.c_int
++            L.mr_set_gt_pose.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double]
+         L.mr_take_result.restype = ctypes.c_ssize_t
+         L.mr_take_result.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t]
+         L.mr_tool_definition.restype = ctypes.c_char_p
+@@ -73,6 +78,10 @@
+                 self.prop[i] = float(proprio[i])
+         return self.L.mr_tick(self.h, self.prop, n, self.act)
+ 
++    def set_gt_pose(self, x: float, y: float, yaw: float) -> int:
++        """GT base pose in the map frame for the NEXT tick only (replaces base_qvel integration there). -1 if the lib is old."""
++        return self.L.mr_set_gt_pose(self.h, x, y, yaw) if self.has_gt_pose else -1
++
+     def command(self, args) -> int:
+         """0 started, 1 finished at once (read or error: take_result)"""
+         s = args if isinstance(args, str) else json.dumps(args)
+--- a/src/sim/explore/run_explore.py	2026-10-03 20:53:49.884878566 +0900
++++ b/src/sim/explore/run_explore.py	2026-10-03 20:53:49.894878480 +0900
+@@ -219,6 +219,17 @@
+                                                           "map_start": [mx, my, myaw], "map_from_world": self.T}))
+         print(f"[explore] reference set: {int(ref.sum())} cells ({ref.sum() * res * res:.1f} m2)", flush=True)
+ 
++    def _push_gt_pose_to_move_robot(self):
++        """SGRT_POSE=gt: the robot's pose, trajectory (path_log) and path length follow the simulator's GT pose, not base_qvel integration."""
++        if os.environ.get("SGRT_POSE", "").lower() != "gt" or not self.mr.lib.has_gt_pose:
++            return
++        import math
++        pos, q = self._robot().get_position_orientation()
++        wyaw = yaw_of(q)
++        c, s, tx, ty = getattr(self, "T", (1.0, 0.0, 0.0, 0.0))  # map_from_world; identity in GT mode (map = world)
++        x, y = float(pos[0]), float(pos[1])
++        self.mr.lib.set_gt_pose(c * x - s * y + tx, s * x + c * y + ty, wyaw + math.atan2(s, c))
++
+     def _contacts(self):
+         try:
+             from omnigibson.utils.usd_utils import RigidContactAPI
+@@ -265,6 +276,7 @@
+             self._robot()
+             self._contacts()
+         t3 = time.perf_counter()
++        self._push_gt_pose_to_move_robot()
+         if self.vla_active is not None:
+             # move_robot holds still meanwhile (its own tick keeps observing)
+             self.mr.lib.tick(self.mr._proprio(obs)[0])

@@ -6,6 +6,9 @@
 
 - 모델 하나에 폴더 하나.
   - `embed/`: 물체 이름 붙이기·검색용 영상–글 임베딩(증류). 설계와 결과는 [embed/README.md](embed/README.md).
+  - `RL/`: 시뮬에서 RL 전문가(교사) 정책 학습 — 관측·보상·신경망·설정. [RL/README.md](RL/README.md)
+  - `BC/`: 전문가 궤적 + 자연어 단계 지시로 Qwen 기반 VLA 모방학습(증류). [BC/README.md](BC/README.md)
+  - `model/`: 베이스 모델 가중치(저장소에 없음, 받는 방법은 [model/README.md](model/README.md)).
 - 폴더마다 `README.md` 를 둔다(한국어). 내용은 목표, 데이터와 라이선스, 실행 순서, 결과 표, 남은 일.
 
 ## 공통 규칙

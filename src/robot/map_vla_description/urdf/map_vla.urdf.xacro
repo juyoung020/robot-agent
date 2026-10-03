@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<!-- LIMO (mobile base) + OMX-F (arm on top). TF: base_footprint -> base_link -> omx_link0 -> ... -> omx_end_effector_link -->
+<robot name="map_vla" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:include filename="$(find limo_description)/urdf/limo_four_diff.xacro" />
+  <xacro:include filename="$(find open_manipulator_description)/urdf/omx_f/omx_f_arm.urdf.xacro" />
+
+  <!-- arm mount pose in LIMO base_link. OMX base plate is 120 x 150 mm; x=-0.04 is the chosen seat (x in -0.02..0.00 has more clearance but was judged worse by eye) (rear lip at x<-0.08, antennas/front pod at x>0.03). No LIMO screw holes match the OMX 25 mm hole grid, so a real mount needs an adapter plate. -->
+  <xacro:property name="arm_x" value="-0.04"/>
+  <xacro:property name="arm_y" value="0.0"/>
+  <xacro:property name="arm_z" value="0.0"/>
+  <xacro:property name="arm_yaw" value="0.0"/>
+
+  <xacro:omx_f prefix="omx_" />
+
+  <joint name="omx_mount_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="omx_link0"/>
+    <origin xyz="${arm_x} ${arm_y} ${arm_z}" rpy="0 0 ${arm_yaw}"/>
+  </joint>
+
+  <joint name="omx_end_effector_joint" type="fixed">
+    <parent link="omx_link5"/>
+    <child link="omx_end_effector_link"/>
+    <origin xyz="0.09193 -0.0016 0" rpy="0 0 0"/>
+  </joint>
+  <link name="omx_end_effector_link"/>
+  <!-- ===== Manipulator wrist camera: the RGB camera already modelled in the OMX-F link5 mesh (no depth) =====
+       The OMX-F mesh (follower_06_pan_Revised.stl, link5) contains a camera module. Pose measured from that mesh
+       (link5 frame): the lens front is a 14 mm disc centred at (0.0498, 0, 0.0351); the camera plate normal /
+       optical axis points forward and 37.94 deg DOWN, yaw 0 (axis = 0.7887, 0, -0.6148).
+       No extra camera body is added (an earlier box stacked on this one was wrong).
+       Matches ROBOTIS physical_ai_tools topic camera1 (/camera1/image_raw). Intrinsics unknown (640x480 USB cam). -->
+  <joint name="wrist_cam_joint" type="fixed">
+    <parent link="omx_link5"/>
+    <child link="wrist_cam_link"/>
+    <origin xyz="0.0498 0 0.0351" rpy="0 0.66212 0"/>
+  </joint>
+  <link name="wrist_cam_link"/>
+  <!-- optical frame: z forward, x right, y down (REP-103) -->
+  <joint name="wrist_cam_optical_joint" type="fixed">
+    <parent link="wrist_cam_link"/>
+    <child link="wrist_cam_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+  <link name="wrist_cam_optical_frame"/>
+</robot>
