@@ -67,6 +67,13 @@
     <div class="num">Robot size × <input type="number" id="n_rscale" value="1.5" min="0.5" max="6" step="0.1"></div>
   </details>
 
+  <details id="jdetails" style="display:none" open><summary>Robot joints</summary>
+    <div id="jpanel"></div>
+    <label class="row"><input type="checkbox" id="j_stream" checked> Use the joint stream when it has an order</label>
+    <button id="j_home">Home pose</button>
+    <div class="legend">Wheels roll with the base motion. Sliders pose the arm; a robot that publishes joints overrides them.</div>
+  </details>
+
   <details open><summary>Scene graph (objects · rooms)</summary>
     <label class="row"><input type="checkbox" id="g_on" checked> Show graph layers</label>
     <label class="row"><input type="checkbox" id="g_objs" checked> Objects layer</label>
@@ -760,9 +767,54 @@ async function loadRobotModel() {
     jg.add(motion); motion.add(groups[j.child]); groups[j.parent].add(jg);
     if (j.type !== "fixed") joints[j.name] = { motion, axis:new THREE.Vector3(...j.axis).normalize(), type:j.type };
   }
-  robotModel = { root:groups[spec.root], joints, order:spec.joint_order || [] };
+  robotModel = { root:groups[spec.root], joints, order:spec.joint_order || [], home:spec.home || {}, limits:Object.fromEntries(spec.joints.filter(j => j.limit).map(j => [j.name, j.limit])) };
+  styleRobot(robotModel.root);
+  setJoints(robotModel.home);
+  buildJointPanel();
   if (robotGrp) attachRobotModel();
   invalidate();
+}
+// The LIMO shell is white, like the map floor: tint it light blue-grey and draw dark edges so the silhouette reads on a white map.
+function styleRobot(root) {
+  const edgeCache = new Map(), edgeMat = new THREE.LineBasicMaterial({ color:0x15171d });
+  root.traverse(o => {
+    if (!o.isMesh) return;
+    const c = o.material.color;
+    if (c.r > 0.9 && c.g > 0.9 && c.b > 0.9) c.set(0xc3c9d6);
+    if (!edgeCache.has(o.geometry)) edgeCache.set(o.geometry, new THREE.EdgesGeometry(o.geometry, 38));
+    o.add(new THREE.LineSegments(edgeCache.get(o.geometry), edgeMat));
+  });
+}
+const JOINT_SLIDERS = ["omx_joint1", "omx_joint2", "omx_joint3", "omx_joint4", "omx_joint5", "omx_gripper_joint_1", "omx_gripper_joint_2"];
+const jointVal = {};   // current arm values (rad), what the sliders show
+function buildJointPanel() {
+  const panel = $("jpanel"); panel.innerHTML = "";
+  for (const n of JOINT_SLIDERS) {
+    if (!robotModel.joints[n]) continue;
+    const lim = robotModel.limits[n] || [-3.14, 3.14];
+    const row = document.createElement("div"); row.className = "num";
+    row.innerHTML = `<span>${n.replace("omx_", "")}</span><input type="range" id="js_${n}" min="${lim[0]}" max="${lim[1]}" step="0.01" value="${jointVal[n] ?? 0}" style="width:120px"><span id="jv_${n}" class="mono" style="width:44px;text-align:right"></span>`;
+    panel.appendChild(row);
+    $("js_" + n).oninput = e => { jointVal[n] = +e.target.value; setJoints({ [n]: jointVal[n] }); };
+  }
+  $("jdetails").style.display = "";
+  $("j_home").onclick = () => setJoints(robotModel.home);
+}
+function syncJointPanel() {
+  for (const n of JOINT_SLIDERS) { const e = $("js_" + n); if (e) { e.value = jointVal[n] ?? 0; $("jv_" + n).textContent = (jointVal[n] ?? 0).toFixed(2); } }
+}
+// wheel angles from the base motion: left/right wheel travel = forward distance ∓ yaw × half track, divided by the (scaled) wheel radius
+const wheel = { prev:null, aL:0, aR:0 };
+function rollWheels() {
+  if (!robotModel || !robotModel.joints.front_left_wheel) return;
+  if (!wheel.prev) { wheel.prev = { x:poseCur.x, y:poseCur.y, yaw:poseCur.yaw }; return; }
+  const dx = poseCur.x - wheel.prev.x, dy = poseCur.y - wheel.prev.y;
+  let dyaw = poseCur.yaw - wheel.prev.yaw; dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
+  const mid = wheel.prev.yaw + dyaw / 2, fwd = dx * Math.cos(mid) + dy * Math.sin(mid), sc = robotModel.root.scale.x || 1, r = 0.048 * sc, half = 0.065 * sc;
+  wheel.prev = { x:poseCur.x, y:poseCur.y, yaw:poseCur.yaw };
+  if (Math.abs(fwd) + Math.abs(dyaw) < 1e-7) return;
+  wheel.aL += (fwd - dyaw * half) / r; wheel.aR += (fwd + dyaw * half) / r;
+  setJoints({ front_left_wheel:wheel.aL, rear_left_wheel:wheel.aL, front_right_wheel:wheel.aR, rear_right_wheel:wheel.aR });
 }
 function attachRobotModel() {
   if (!robotModel || !robotGrp) return;
@@ -772,12 +824,12 @@ function attachRobotModel() {
 }
 function setJoints(vals) {
   if (!robotModel) return;
-  for (const [n, v] of Object.entries(vals)) { const j = robotModel.joints[n]; if (j) j.motion.quaternion.setFromAxisAngle(j.axis, v); }
-  invalidate();
+  for (const [n, v] of Object.entries(vals)) { const j = robotModel.joints[n]; if (j) { j.motion.quaternion.setFromAxisAngle(j.axis, v); if (JOINT_SLIDERS.includes(n)) jointVal[n] = v; } }
+  syncJointPanel(); invalidate();
 }
 window.setJoints = setJoints;
 function applyJointStream() {
-  if (!robotModel || !jointsCur || !robotModel.order.length) return;
+  if (!robotModel || !jointsCur || !robotModel.order.length || !$("j_stream").checked) return;
   const vals = {}; robotModel.order.forEach((n, i) => { if (i < jointsCur.length) vals[n] = jointsCur[i]; });
   setJoints(vals);
 }
@@ -886,6 +938,7 @@ function stepRobot(now) {
   let dyaw = poseTgt.yaw - poseCur.yaw; dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
   poseCur.x += (poseTgt.x - poseCur.x) * k; poseCur.y += (poseTgt.y - poseCur.y) * k; poseCur.yaw += dyaw * k;
   robotGrp.position.set(poseCur.x, poseCur.y, 0); robotGrp.rotation.z = poseCur.yaw;
+  rollWheels();
   return Math.abs(poseTgt.x - poseCur.x) + Math.abs(poseTgt.y - poseCur.y) + Math.abs(dyaw) > 1e-4;
 }
 

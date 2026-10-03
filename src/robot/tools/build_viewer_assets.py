@@ -22,6 +22,8 @@ import trimesh
 
 BUDGET = {"limo_base": {(250, 250, 250): 60000, (25, 25, 25): 20000, (255, 0, 0): 5000, (0, 184, 9): 900}, "limo_wheel": 12000}
 OMX_COLOR = (62, 64, 72)
+# 뷰어 기본 자세(대기 자세): 윗팔을 앞으로 들고 아래팔을 내린다 — 영점(팔이 곧게 위로)보다 로봇 위에서 보기 좋다. 슬라이더·관절 스트림이 덮어쓴다
+HOME = {"omx_joint1": 0.0, "omx_joint2": 1.3, "omx_joint3": -1.9, "omx_joint4": 0.7, "omx_joint5": 0.0, "omx_gripper_joint_1": 0.0, "omx_gripper_joint_2": 0.0}
 
 
 def resolve(fn: str, pkg_root: str) -> str:
@@ -146,7 +148,7 @@ def main(urdf, pkg_root, out):
                        "limit": [float(lim.get("lower")), float(lim.get("upper"))] if lim is not None and lim.get("lower") else None})
     movable = [j["name"] for j in joints if j["type"] in ("revolute", "continuous", "prismatic")]
     with open(os.path.join(out, "robot.json"), "w") as f:
-        json.dump({"root": "base_footprint", "links": links, "joints": joints, "movable": movable, "joint_order": []}, f, separators=(",", ":"))
+        json.dump({"root": "base_footprint", "links": links, "joints": joints, "movable": movable, "home": HOME, "joint_order": []}, f, separators=(",", ":"))
     print("robot.json:", len(links), "links,", len(joints), "joints, movable:", movable)
 
 
