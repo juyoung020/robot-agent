@@ -52,7 +52,7 @@ def load_text(keys):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--emb', default=f'{WORK}/emb/lvis')
+    ap.add_argument('--emb', default=f'{WORK}/emb/lvis', help='comma list; the first may be partial (--done_only)')
     ap.add_argument('--base', default='mc2_s0')
     ap.add_argument('--teacher', default='pe_l14')
     ap.add_argument('--views', default='box,stretch,masked,aug')
@@ -74,19 +74,21 @@ def main():
     name = a.name or f'{a.base}_{"+".join(tk)}'
     run = f'{WORK}/runs/{name}'; os.makedirs(run, exist_ok=True); json.dump(vars(a), open(f'{run}/args.json', 'w'), indent=1)
     dev = 'cuda'; torch.manual_seed(0)
-    T = load_teacher(a.emb, tk)                                     # (N, Dt) cpu
+    dirs = a.emb.split(',')                                          # extra dirs (e.g. sim crops) are appended in full
+    T = torch.cat([load_teacher(D, tk) for D in dirs])               # (N, Dt) cpu
     Lt = load_text(tk).to(dev)                                       # (K, Dt)
     views = a.views.split(',')
-    X = {v: torch.from_numpy(np.load(f'{a.emb}/{a.base}_{v}.npy')) for v in views}   # fp16 cpu
+    X = {v: torch.cat([torch.from_numpy(np.load(f'{D}/{a.base}_{v}.npy')) for D in dirs]) for v in views}   # fp16 cpu
+    N0 = sum(1 for _ in open(f'{dirs[0]}/ids.txt'))
     N, Dt, Db = T.shape[0], T.shape[1], X[views[0]].shape[1]
-    ids = [l.strip() for l in open(f'{a.emb}/ids.txt')][:N]
     keep = np.arange(N)
     if a.done_only:                                                  # extraction still running: use finished shards
         import glob
-        done = set(open(f'{a.emb}/done_shards.txt').read().split())
+        done = set(open(f'{dirs[0]}/done_shards.txt').read().split())
         sh = sorted(glob.glob(f'{a.crops}/shard_*.tar')); cnt = [sum(1 for _ in open(x[:-4] + '.jsonl')) for x in sh]
         off = np.cumsum([0] + cnt[:-1])
-        keep = np.concatenate([np.arange(o, o + c) for x, o, c in zip(sh, off, cnt) if os.path.basename(x) in done])
+        keep = np.concatenate([np.arange(o, o + c) for x, o, c in zip(sh, off, cnt) if os.path.basename(x) in done]
+                              + [np.arange(N0, N)])
     g = np.random.default_rng(0); perm = keep[g.permutation(len(keep))]; nval = max(2000, len(keep) // 50)
     val, tr = perm[:nval], perm[nval:]
     P = nn.Linear(Dt, DIMS[0], bias=False).to(dev)
@@ -126,10 +128,10 @@ def main():
                 logs[d] = (lp.item(), lc.item(), lk.item())
             opt.zero_grad(set_to_none=True); loss.backward(); opt.step(); sched.step(); step += 1
             with torch.no_grad(): ls_p.clamp_(0, 4.6); ls_h.clamp_(0, 4.6)
-        # validation: cosine to projected teacher target, box view
+        # validation: cosine to projected teacher target, first view
         h.eval()
         with torch.no_grad():
-            vi = torch.from_numpy(np.sort(val)); xb = X['box'][vi].to(dev).float(); t = T[vi].to(dev)
+            vi = torch.from_numpy(np.sort(val)); xb = X[views[0]][vi].to(dev).float(); t = T[vi].to(dev)
             cos = {d: (norm(h(xb)[:, :d]) * norm(P(t)[:, :d])).sum(-1).mean().item() for d in DIMS}
         print(f'ep {ep} loss {loss.item():.3f} P-kl/cos/h-kl128 {logs[128]} val cos128 {cos[128]:.3f} cos64 {cos[64]:.3f} '
               f'{time.time() - t0:.0f}s', flush=True)

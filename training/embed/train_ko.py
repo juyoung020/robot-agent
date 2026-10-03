@@ -26,10 +26,19 @@ LOC = [('부엌에 있는', 'in the kitchen'), ('거실에 있는', 'in the livi
        ('선반 위의', 'on the shelf'), ('소파 옆의', 'next to the sofa')]
 
 
-def object_pairs(n_per=6, seed=0):
+CURATED = {'eval_vocab', 'ovdet', 'coco', 'lvis', 'openimages', 'behavior1k'}
+
+
+def held_out(r):
+    """every 5th curated (main-tier) name with a Wikidata Korean name is never trained on (text eval in eval_ko.py)."""
+    return r['i'] % 5 == 0 and bool(set(r['src']) & CURATED) and r['ko_src'].startswith('wikidata')
+
+
+def object_pairs(n_per=6, seed=0, holdout=False):
     rnd = random.Random(seed); out = []
     for r in (json.loads(l) for l in open(f'{WORK}/labels/labels.jsonl')):
         if not r['ko']: continue
+        if holdout and held_out(r): continue
         w = 1 if r['ko_src'] == 'nllb' else 3
         if r['ko_src'] == 'nllb' and 'wordnet' in r['src'] and len(r['src']) == 1 and rnd.random() < 0.5: continue
         en = r['name']
@@ -58,10 +67,12 @@ def sentence_pairs(n, seed=0):
 
 
 def build(a):
+    global KO
+    if a.holdout: KO = KO + '_ho'
     os.makedirs(KO, exist_ok=True)
     f = f'{KO}/pairs.json'
     if not os.path.exists(f):
-        op = object_pairs(); sp = sentence_pairs(a.n_sent)
+        op = object_pairs(holdout=a.holdout); sp = sentence_pairs(a.n_sent)
         pairs = op + sp; random.Random(1).shuffle(pairs)
         json.dump(pairs, open(f, 'w'), ensure_ascii=False); print('pairs', len(op), 'object', len(sp), 'sentence', flush=True)
     pairs = json.load(open(f)); en = [p[1] for p in pairs]
@@ -98,12 +109,13 @@ def main():
     ap.add_argument('--bs', type=int, default=256)
     ap.add_argument('--lr', type=float, default=1e-4)
     ap.add_argument('--maxlen', type=int, default=48)
-    ap.add_argument('--w_nce', type=float, default=0.2)
+    ap.add_argument('--w_nce', type=float, default=1.0)
+    ap.add_argument('--holdout', action='store_true', help='keep 1/5 of curated Wikidata names out of training')
     a = ap.parse_args()
     run = f'{WORK}/runs/{a.name}'; os.makedirs(run, exist_ok=True); json.dump(vars(a), open(f'{run}/args.json', 'w'), indent=1)
     pairs = build(a); ko = [p[0] for p in pairs]
     tk = a.targets.split(',')
-    T = {k: torch.from_numpy(np.load(f'{KO}/target_{k}.npy')) for k in tk}
+    T = {k: torch.from_numpy(np.load(f'{KO}/target_{k}.npy')) for k in tk}   # KO set by build()
     from transformers import AutoTokenizer
     tok = AutoTokenizer.from_pretrained(a.student)
     dev = 'cuda'; torch.manual_seed(0)
