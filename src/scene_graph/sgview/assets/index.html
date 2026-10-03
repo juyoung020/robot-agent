@@ -64,6 +64,7 @@
     <label class="row"><input type="checkbox" id="c_walls" checked> Walls as 2D lines</label>
     <label class="row"><input type="checkbox" id="c_map" checked> Occupancy map</label>
     <label class="row"><input type="checkbox" id="c_robot" checked> Robot</label>
+    <div class="num">Robot size × <input type="number" id="n_rscale" value="1.5" min="0.5" max="6" step="0.1"></div>
   </details>
 
   <details open><summary>Scene graph (objects · rooms)</summary>
@@ -95,6 +96,7 @@
 
 <script src="/three.min.js"></script>
 <script src="/OrbitControls.js"></script>
+<script src="/GLTFLoader.js"></script>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
@@ -410,6 +412,7 @@ function drawGraph() {
 // ---------------- robot, walls ----------------
 function drawRobot() {
   invalidate();
+  if (robotModel && robotModel.root.parent) robotModel.root.parent.remove(robotModel.root);   // the loaded model outlives each redraw
   disposeGroup(gRobot);
   if (!view || !view.pose) return;
   const [x, y, yaw] = view.pose;
@@ -422,8 +425,9 @@ function drawRobot() {
   for (let i = 0; i <= 12; i++) { const a = a0 + (a1 - a0) * i / 12; fov.lineTo(1.6 * Math.cos(a), 1.6 * Math.sin(a)); }
   const wedge = new THREE.Mesh(new THREE.ShapeGeometry(fov), new THREE.MeshBasicMaterial({ color:0xe03030, transparent:true, opacity:0.14, side:THREE.DoubleSide, depthWrite:false }));
   wedge.position.z = 0.04;
+  body.userData.fallback = nose.userData.fallback = true;
   const grp = new THREE.Group(); grp.add(body, nose, wedge); grp.position.set(x, y, 0); grp.rotation.z = yaw;
-  gRobot.add(grp);
+  gRobot.add(grp); robotGrp = grp; attachRobotModel();
   gRobot.visible = opt("c_robot");
 }
 
@@ -725,6 +729,59 @@ setInterval(() => {
   perf.n = { pose:0, map:0, view:0, walls:0, joints:0 }; perf.ms = { pose:0, map:0, view:0, walls:0, joints:0 }; perf.frames = 0; perf.renderMs = 0; perf.t0 = performance.now();
 }, 2000);
 
+
+// ---------------- robot model (URDF → GLB, see src/robot/tools/build_viewer_assets.py) ----------------
+// robot.json = link/joint tree, GLB = simplified meshes. The model sits at the streamed base pose; joint values come from the `joints`
+// stream through robot.json "joint_order" (empty until a robot publishes its own vector) or window.setJoints({name: rad}).
+let robotModel = null;                 // { root, joints: {name: {motion, axis, type}} }
+const lights = [new THREE.HemisphereLight(0xffffff, 0x8890a8, 0.95), new THREE.DirectionalLight(0xffffff, 0.75)];
+lights[1].position.set(-3, -4, 8); scene.add(...lights);   // only the model's standard materials use them; the map and nodes are unlit
+function eulerRPY(r) { return new THREE.Euler(r[0], r[1], r[2], "ZYX"); }   // URDF rpy = Rz(yaw) Ry(pitch) Rx(roll)
+async function loadRobotModel() {
+  let spec; try { const r = await fetch("/robot/robot.json"); if (!r.ok) return; spec = await r.json(); } catch (e) { return; }
+  if (!spec.links) return;   // build without a robot model
+  const loader = new THREE.GLTFLoader(), gltf = {};
+  const files = [...new Set(spec.links.flatMap(l => l.visuals.map(v => v.mesh)))];
+  await Promise.all(files.map(f => new Promise(res => loader.load("/robot/" + f, g => { gltf[f] = g.scene; res(); }, undefined, () => res()))));
+  const groups = {};
+  for (const l of spec.links) {
+    const g = new THREE.Group(); g.name = l.name; groups[l.name] = g;
+    for (const v of l.visuals) {
+      if (!gltf[v.mesh]) continue;
+      const m = gltf[v.mesh].clone(true);
+      m.traverse(o => { if (o.isMesh) o.material.side = THREE.DoubleSide; });   // the source meshes are open shells with mixed winding
+      m.position.set(...v.xyz); m.rotation.copy(eulerRPY(v.rpy)); g.add(m);
+    }
+  }
+  const joints = {};
+  for (const j of spec.joints) {
+    const jg = new THREE.Group(), motion = new THREE.Group();
+    jg.position.set(...j.xyz); jg.rotation.copy(eulerRPY(j.rpy));
+    jg.add(motion); motion.add(groups[j.child]); groups[j.parent].add(jg);
+    if (j.type !== "fixed") joints[j.name] = { motion, axis:new THREE.Vector3(...j.axis).normalize(), type:j.type };
+  }
+  robotModel = { root:groups[spec.root], joints, order:spec.joint_order || [] };
+  if (robotGrp) attachRobotModel();
+  invalidate();
+}
+function attachRobotModel() {
+  if (!robotModel || !robotGrp) return;
+  robotGrp.remove(...robotGrp.children.filter(c => c.userData.fallback));   // the box/cone stand-in goes away
+  if (!robotModel.root.parent) robotGrp.add(robotModel.root);
+  robotModel.root.scale.setScalar(opt("n_rscale"));
+}
+function setJoints(vals) {
+  if (!robotModel) return;
+  for (const [n, v] of Object.entries(vals)) { const j = robotModel.joints[n]; if (j) j.motion.quaternion.setFromAxisAngle(j.axis, v); }
+  invalidate();
+}
+window.setJoints = setJoints;
+function applyJointStream() {
+  if (!robotModel || !jointsCur || !robotModel.order.length) return;
+  const vals = {}; robotModel.order.forEach((n, i) => { if (i < jointsCur.length) vals[n] = jointsCur[i]; });
+  setJoints(vals);
+}
+
 // ---------------- live stream (SSE from the Rust server, fed by C++ sgrt over a socket; no files) ----------------
 let LIVE = false;
 const boot = { t0: performance.now(), first: null, full: null };
@@ -804,6 +861,7 @@ function onPoseEvent(d) {
 }
 
 function buildRobot() {
+  if (robotModel && robotModel.root.parent) robotModel.root.parent.remove(robotModel.root);   // keep the loaded model alive across rebuilds
   disposeGroup(gRobot);
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.22, 0.1), new THREE.MeshBasicMaterial({ color:0x2a2a30 }));
   body.position.set(0, 0, 0.07);
@@ -813,7 +871,9 @@ function buildRobot() {
   for (let i = 0; i <= 12; i++) { const a = a0 + (a1 - a0) * i / 12; fov.lineTo(1.6 * Math.cos(a), 1.6 * Math.sin(a)); }
   const wedge = new THREE.Mesh(new THREE.ShapeGeometry(fov), new THREE.MeshBasicMaterial({ color:0xe03030, transparent:true, opacity:0.14, side:THREE.DoubleSide, depthWrite:false }));
   wedge.position.z = 0.04;
+  body.userData.fallback = nose.userData.fallback = true;   // replaced by the URDF model once it is loaded
   robotGrp = new THREE.Group(); robotGrp.add(body, nose, wedge); gRobot.add(robotGrp);
+  attachRobotModel();
   gRobot.visible = opt("c_robot");
 }
 
@@ -849,7 +909,7 @@ async function startLive() {
   es.addEventListener("map", e => { bootDone("first"); timed("map", () => onMapEvent(JSON.parse(e.data))); });
   es.addEventListener("pose", e => timed("pose", () => onPoseEvent(JSON.parse(e.data))));
   es.addEventListener("view", e => timed("view", () => { try { applyView(JSON.parse(e.data)); } catch (err) {} }));
-  es.addEventListener("joints", e => timed("joints", () => { const d = JSON.parse(e.data); jointsCur = d.q; jointsT = d.t; }));
+  es.addEventListener("joints", e => timed("joints", () => { const d = JSON.parse(e.data); jointsCur = d.q; jointsT = d.t; applyJointStream(); }));
   es.addEventListener("walls", e => timed("walls", () => showWalls(JSON.parse(e.data))));
   return true;
 }
@@ -861,6 +921,7 @@ $("c_walls").onchange = () => { gWalls.visible = $("c_walls").checked; invalidat
 $("c_map").onchange = () => { gMap.visible = $("c_map").checked; invalidate(); };
 $("c_robot").onchange = () => { gRobot.visible = $("c_robot").checked; invalidate(); };
 $("c_labels").onchange = invalidate;
+$("n_rscale").onchange = () => { if (robotModel) robotModel.root.scale.setScalar(opt("n_rscale")); invalidate(); };
 
 // render only when something changed (camera moved, data/options changed): an idle viewer costs nothing
 (function loop() {
@@ -876,7 +937,8 @@ $("c_labels").onchange = invalidate;
   updatePointScale(); renderer.render(scene, camera); updateLabels();
   perf.frames++; perf.renderMs += performance.now() - tr;
 })();
-startLive().then(live => { if (!live) poll(); });
+loadRobotModel();
+startLive().then(live => { if (!live) { $("boot").classList.add("gone"); poll(); } });
 </script>
 </body>
 </html>

@@ -25,6 +25,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const THREE_JS: &[u8] = include_bytes!("../assets/three.min.js");
 const ORBIT_JS: &[u8] = include_bytes!("../assets/OrbitControls.js");
+const GLTF_JS: &[u8] = include_bytes!("../assets/GLTFLoader.js");
+include!(concat!(env!("OUT_DIR"), "/robot_assets.rs"));   // ROBOT_FILES: the URDF model (GLB meshes + robot.json)
 
 const WALL_STATE_LEN: usize = 56;
 
@@ -457,6 +459,12 @@ fn handle(mut s: TcpStream, st: Arc<State>) {
     match path {
         "/" | "/index.html" => respond(&mut s, 200, "text/html; charset=utf-8", "", INDEX_HTML.as_bytes()),
         "/three.min.js" => respond(&mut s, 200, "application/javascript", "", THREE_JS),
+        "/GLTFLoader.js" => respond(&mut s, 200, "application/javascript", "", GLTF_JS),
+        _ if path.starts_with("/robot/") => match ROBOT_FILES.iter().find(|(n, _)| *n == &path["/robot/".len()..]) {
+            Some((n, b)) => respond(&mut s, 200, if n.ends_with(".json") { "application/json" } else { "model/gltf-binary" }, "", b),
+            None if &path["/robot/".len()..] == "robot.json" => respond(&mut s, 200, "application/json", "", b"{}"),   // no model in this build: the page keeps its box stand-in
+            None => respond(&mut s, 404, "text/plain", "", b"no such model file"),
+        },
         "/OrbitControls.js" => respond(&mut s, 200, "application/javascript", "", ORBIT_JS),
         "/favicon.ico" => respond(&mut s, 204, "image/x-icon", "", b""),
         "/api/mode" => respond(&mut s, 200, "application/json", "", format!("{{\"live\":{}}}", st.live_mode).as_bytes()),

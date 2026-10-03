@@ -8,7 +8,8 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SRC="$ROOT/src/behavior-2026/src/scene_graph"
 DST="$ROOT/src/scene_graph"
 [ -d "$SRC" ] || { echo "서브모듈이 없다: git submodule update --init src/behavior-2026"; exit 2; }
-OPTS=(-a --exclude target --exclude build --exclude __pycache__ --exclude '*.pyc')
+# sgview/assets/robot (URDF 모델 GLB·robot.json) 은 실제 로봇 쪽(robot-agent)에만 있다 — 동기화가 지우지 않게 제외. behavior-2026 에는 없고, 없으면 뷰어는 상자 모양으로 대체한다
+OPTS=(-a --exclude target --exclude build --exclude __pycache__ --exclude '*.pyc' --exclude '/assets/robot')
 rc=0
 for d in scenemap da spark_dsg sgview runtime ovdet clip; do
   if [ "${1:-}" = "--check" ]; then
