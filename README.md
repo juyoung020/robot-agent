@@ -14,7 +14,7 @@
 
 <img src="docs/assets/scene_graph_live.gif" width="760" alt="실시간 물체 기억 뷰어 (3배속)">
 
-<sub>로봇의 물체 기억(Spark-DSG) 뷰어 — 2D 지도 위에 물체를 세그먼트 점구름으로 등록하고, 누르면 위치·상태와 그 물체를 본 순간의 RGB·깊이 조각을 보여 준다 (BEHAVIOR 시뮬레이션, 3배속)</sub>
+<sub>로봇의 물체 기억(Spark-DSG를 수정해 사용) 뷰어 — 2D 지도 위에 물체를 세그먼트 점구름으로 등록하고, 누르면 위치·상태와 그 물체를 본 순간의 RGB·깊이 조각을 보여 준다 (BEHAVIOR 시뮬레이션, 3배속)</sub>
 
 <br><br>
 
