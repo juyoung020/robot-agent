@@ -136,4 +136,4 @@ cmake -S ../../../behavior-2026/src/scene_graph/runtime -B ~/sgrt_build_explore 
 ../../../behavior-2026/src/sim/explore/viewer_8080.sh <run dir>                        # 8080 뷰어를 이 판으로(하나만)
 ./target/release/decisions-agg ../../../behavior-2026/outputs/explore_*/ --by policy
 ```
-시뮬 판은 `SGRT_POSE=gt`(정답 자세, map = world — 측정·시험용)로 돈다. 실제 로봇 기본은 `slam`. 시뮬은 실제 로봇과 같은 방식으로 돌아야 하므로 `gt` 는 지도·탐사를 떼어 보는 확인용이고, 성능·점수는 `slam` 판에서 잰다([계획](../../../../docs/plan.md)).
+시뮬 판 기본은 `SGRT_POSE=slam`(실제 로봇과 같음 — 오도메트리 + 스캔 맞추기, 위치 오차까지 시험, 10-03 부터). 시뮬은 실제 로봇과 같은 방식으로 돌아야 하므로 성능·점수는 `slam` 판에서 잰다([계획](../../../../docs/plan.md)). 정답 자세(map = world)는 지도·탐사를 떼어 보는 확인용으로 `SGRT_POSE=gt` 를 줄 때만.
