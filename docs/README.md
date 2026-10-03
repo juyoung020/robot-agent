@@ -8,13 +8,16 @@
 | [model_selection.md](model_selection.md) | 모델 선택: 부품마다 무엇을 골랐고 왜 골랐나 |
 | [perception_model_candidates.md](perception_model_candidates.md) | 물체 인식 모델 후보 (① 물체 기억, 추천만) |
 | [clip_candidates.md](clip_candidates.md) | CLIP 류 임베딩 모델 후보·측정 (FastSAM-s 마스크 → 이름·임베딩) |
-| [assets/](assets/) | README 아이콘·뷰어 그림 |
+| [map_vla/](map_vla/README.md) | Map_Vla(리모 + 매니퓰레이터 VLA) 조사·설계 문서 |
+| [assets/](assets/) | README 아이콘·뷰어·시뮬·로봇 그림 |
 
 ## 다른 곳의 문서
 
 | 문서 | 내용 |
 |---|---|
-| [training/README.md](../training/README.md) | 로봇에 올릴 작은 모델 학습 (embed/: 영상–글 임베딩 증류) |
+| [training/README.md](../training/README.md) | 로봇에 올릴 작은 모델 학습 (embed/: 영상–글 임베딩 증류, RL/·BC/: VLA 학습, model/: 베이스 모델) |
+| [src/scene_graph/README.md](../src/scene_graph/README.md) | 물체 기억 코드(실제 로봇 쪽)·동기화·빌드 |
+| [src/robot/README.md](../src/robot/README.md) | 리모 + 매니퓰레이터 로봇 설명(URDF·RViz) |
 | [scenemap_설계.md](https://github.com/juyoung020/behavior-2026/blob/main/docs/scenemap_설계.md) | 서브모듈: 물체 기억 scenemap 설계 (2D SLAM·물체 지도·계획기 질의·자세 원천) |
 | [archive/README.md](https://github.com/juyoung020/behavior-2026/blob/main/archive/README.md) | 서브모듈: 지금 안 쓰는 모듈, 왜 옮겼고 어떻게 되살리나 |
 | [tools/README.md](https://github.com/juyoung020/behavior-2026/blob/main/tools/README.md) | 서브모듈: 실행·측정·검증 스크립트 |

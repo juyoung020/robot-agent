@@ -1,6 +1,6 @@
 # training/ — AI 모델 학습
 
-로봇에 올릴 작은 모델을 우리가 직접 학습하는 곳이다. 실행(런타임) 코드는 여기 두지 않는다. 런타임 쪽은 `src/behavior-2026/src/scene_graph/` 에 둔다.
+로봇에 올릴 작은 모델을 우리가 직접 학습하는 곳이다. 실행(런타임) 코드는 여기 두지 않는다. 런타임 쪽은 `src/scene_graph/` 에 둔다(원본은 `src/behavior-2026/src/scene_graph/`).
 
 ## 배치
 
