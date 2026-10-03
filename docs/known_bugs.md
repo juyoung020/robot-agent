@@ -11,6 +11,13 @@
 | 4 | `src/behavior-2026/src/sim/integ/build_simlink.sh:4,8` | 사용 예가 `wsl.exe -d Ubuntu-22.04 ...`, 본문이 `cd /mnt/c/behavior-2026/...` | 3 과 같음 | 3 과 같이 |
 | 5 | `src/behavior-2026/src/agent/planner/src/main.rs:214` | `build-assets --root` 기본값이 `/mnt/c/behavior-2026` | `--root` 를 안 주면 3 과 같음 | 기본값을 실행 파일 위치나 현재 폴더 기준으로 |
 | 6 | `src/behavior-2026/tools/check_agent_hook.py:16` | `sys.path` 에 `/mnt/c/behavior-2026/tools` | 3 과 같음 | 파일 위치 기준(`Path(__file__).parent`) |
+| 7 | `src/behavior-2026/src/scene_graph/scenemap/src/dsg_save.cpp` (`sceneJsonFast`), `tests/test_scene_json.cpp`, `include/scenemap.h` | 그래프는 물체 + 방 2 층(장소는 백엔드에서 계산)으로 정했는데, scene.json 쓰기가 아직 장소(층 3)·agent 노드를 쓰고, 시험이 `numLayers() == 3`·PLACES 층을 확인한다. `scenemap.h` 층 목록도 OBJECTS/AGENTS/PLACES/ROOMS/BUILDINGS | 저장 파일·시험이 2 층 결정과 다름 | scene.json 에서 장소 층을 빼고 시험·헤더를 2 층으로 |
+| 8 | `src/behavior-2026/src/scene_graph/scenemap/CMakeLists.txt` 메시지, `include/scenemap.h` 주석 | "Spark-DSG 가 없으면 scene.json 을 안 쓴다" 고 적혀 있지만 빠른 쓰기(`sceneJsonFast`)가 늘 쓴다 | 주석·메시지만 틀림 | 문구를 고친다 |
+| 9 | `src/behavior-2026/src/scene_graph/runtime/src/sgrt.cpp` | `SGRT_STREAM_HZ` 주석은 기본 5 인데 코드는 60(0.5–240 으로 자름) | 주석만 틀림 | 주석을 60 으로 |
+| 10 | `src/behavior-2026/src/scene_graph/da/merge.hpp`·`merge.cpp` | 주석은 `max_ext` 를 넘는 쌍은 병합 안 한다는데 `merge.cpp` 가 `max_ext` 를 확인하지 않는다. `mergeable()` 이 `kinds` 를 안 본다 | 큰 물체끼리, 다른 종류끼리 병합될 수 있음 | `max_ext`·`kinds` 확인을 넣거나 주석을 고친다 |
+| 11 | `src/behavior-2026/src/scene_graph/scenemap/src/objmap.cpp`, `dsg_save.cpp` (`eventName`) | 병합을 이벤트 7 로 기록하는데 `eventName` 은 0–6 만 안다 | 기록·뷰어에 "?" 로 보임 | `eventName` 에 7(병합) 추가 |
+| 12 | `src/behavior-2026/src/scene_graph/scenemap/CMakeLists.txt` (`walls` 시험) | `${WALLS_REF_CELLS}`·`${WALLS_REF_JSON}` 를 넘기지만 어디서도 정하지 않는다 | ctest 가 파이썬 기준 비교 없이 돈다 | 변수를 정하거나 인자를 뺀다 |
+| 13 | `src/agent/tools/move_robot/src/lib.rs` (`Motion::Base`) | `SGRT_POSE=gt` 로 정답 자세를 넣어도 base delta 의 도착 판정·결과 `state`·`error` 는 바퀴 속도(base_qvel) 적분. 지도·go_to·probe·`moved_m` 만 정답 자세 | 바퀴가 미끄러지면 delta 가 덜 가고도 "도착", 지도 위치와 어긋남 | 의도인지 확인 필요. 아니면 GT 일 때 base delta 도 정답 자세 기준으로 |
 
 ## 3 번 목록 (`/mnt/c/behavior-2026` 을 쓰는 실행 줄이 있는 파일, 주석만 있는 것은 뺌)
 
