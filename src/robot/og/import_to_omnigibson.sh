@@ -59,6 +59,28 @@ t = re.sub(r'(<link name="base_link">)', lambda mo: mo.group(1) + inertial, t, c
 t = re.sub(r'(<link name="inertial_link">.*?)<mass value="[^"]*"\s*/>(\s*<inertia)[^>]*/>', lambda mo: mo.group(1) + '<mass value="0.001"/>' + mo.group(2) + ' ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>', t, count=1, flags=re.S)
 open(p, "w").write(t)
 PY
+# 업스트림 URDF 의 팔·그리퍼 관절 범위는 ±2π 자리표시라 USD 에도 그대로 들어간다 → real_limits.json(실제 범위)으로 <limit> 를 바꿔 쓴다.
+python3 - "$W/limo_omx_source.urdf" "$HERE/../real_limits.json" <<'PY'
+import json, re, sys
+p, lj = sys.argv[1], sys.argv[2]; t = open(p).read()
+real = {k: v for k, v in json.load(open(lj)).items() if not k.startswith("_")}
+done = set()
+def joint(m):
+    name, body = m.group(1), m.group(2)
+    if name not in real: return m.group(0)
+    lo, hi = real[name]
+    body, n = re.subn(r'(<limit\b[^>]*?)\slower="[^"]*"', r'\1', body)
+    body = re.sub(r'(<limit\b[^>]*?)\supper="[^"]*"', r'\1', body)
+    body, n = re.subn(r'<limit\b', '<limit lower="%r" upper="%r"' % (lo, hi), body, count=1)
+    if n != 1: sys.exit("[import] %s 에 <limit> 가 없다" % name)
+    done.add(name)
+    return '<joint name="%s"%s</joint>' % (name, body)
+t = re.sub(r'<joint name="([^"]+)"(.*?)</joint>', joint, t, flags=re.S)
+miss = set(real) - done
+if miss: sys.exit("[import] URDF 에 없는 관절: %s" % sorted(miss))
+open(p, "w").write(t)
+print("[import] 실제 관절 범위 적용:", {k: real[k] for k in sorted(done)})
+PY
 sed "s#__URDF__#$W/limo_omx_source.urdf#" "$HERE/limo_omx_source_config.yaml" > "$W/limo_omx_source_config.yaml"
 source ~/miniconda3/etc/profile.d/conda.sh; conda activate behavior
 export OMNI_KIT_ACCEPT_EULA=YES
