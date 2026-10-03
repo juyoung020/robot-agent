@@ -127,6 +127,8 @@ struct sm_ctx {
   std::vector<int8_t> st_scratch;
   std::string st_last_view;                 // 마지막으로 보낸 요약(맨 앞 stamp·pose 제외) — 같으면 안 보냄
   TClock::time_point st_last_view_t{};
+  uint64_t st_view_key = ~0ull;             // 마지막으로 요약을 만든 때의 상태 키(영상 수 + 그래프 버전) — 같으면 만들지 않는다
+  std::atomic<uint64_t> st_views_built{0}, st_views_skipped{0};
   std::atomic<double> st_view_us{0};         // 요약 한 번 만드는 시간(µs, 비동기 스레드)
   uint64_t walls_grid_ver = ~0ull;
   // 단계별 시간(timing.hpp). 쓰기는 입력·스냅숏 스레드, 읽기는 sm_get_timing — 작은 잠금 하나
@@ -1408,6 +1410,14 @@ void sm_stream_stop(sm_ctx* c) { if (c) c->stream.stop(); }
 int sm_stream_view(sm_ctx* c) {
   if (!c || !c->stream.running()) return -1;
   const auto t_start = TClock::now();
+  {
+    // 바뀐 게 없으면 스냅숏도 안 만든다: 요약이 바뀌는 때는 영상(지도·물체)이 들어왔거나 그래프(로봇 궤적·방)가 새 사본이 되었을 때뿐
+    std::lock_guard<std::mutex> g(c->mu);
+    const auto gv = c->graph.publish();
+    const uint64_t key = uint64_t(c->st.n_images) * 1000003ull + (gv ? gv->version : 0) * 7919ull + c->om.events().size();
+    if (key == c->st_view_key && usBetween(c->st_last_view_t, TClock::now()) < 1000000) { c->st_views_skipped.fetch_add(1, std::memory_order_relaxed); return 0; }
+    c->st_view_key = key;
+  }
   sm_snapshot_t* s = nullptr;
   if (sm_snapshot(c, &s) != 0) return -1;
   SaveInput in;
@@ -1445,6 +1455,7 @@ int sm_stream_view(sm_ctx* c) {
   if (tail == c->st_last_view && usBetween(c->st_last_view_t, now) < 1000000) return 0;
   c->st_last_view = tail;
   c->st_last_view_t = now;
+  c->st_views_built.fetch_add(1, std::memory_order_relaxed);
   c->st_view_us.store(usBetween(t_start, TClock::now()), std::memory_order_relaxed);
   return c->stream.pushView(json) ? 0 : -1;
 }
@@ -1452,7 +1463,7 @@ int sm_stream_view(sm_ctx* c) {
 int sm_stream_get_stats(sm_ctx* c, sm_stream_stats* o) {
   if (!c || !o) return -1;
   const StreamStats t = c->stream.stats();
-  *o = sm_stream_stats{t.frames_in, t.dropped, t.frames_sent, t.bytes_sent, t.reconnects, t.connected ? 1 : 0, float(c->st_view_us.load())};
+  *o = sm_stream_stats{t.frames_in, t.dropped, t.frames_sent, t.bytes_sent, t.reconnects, t.connected ? 1 : 0, float(c->st_view_us.load()), c->st_views_built.load(), c->st_views_skipped.load()};
   return 0;
 }
 

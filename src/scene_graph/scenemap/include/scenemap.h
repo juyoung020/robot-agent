@@ -107,7 +107,7 @@ void    sm_stream_stop(sm_ctx*);
 int     sm_stream_joints(sm_ctx*, double stamp, const float* q, int n);
 /* 물체·방·그래프·최근 사건 요약(view.json 과 같은 내용)을 스트림으로(파일 안 씀). 비동기 스레드에서 5~10 Hz 로 부르는 용도 */
 int     sm_stream_view(sm_ctx*);
-typedef struct { uint64_t frames_in, dropped, frames_sent, bytes_sent, reconnects; int32_t connected; float view_build_us; } sm_stream_stats;
+typedef struct { uint64_t frames_in, dropped, frames_sent, bytes_sent, reconnects; int32_t connected; float view_build_us; uint64_t views_built, views_skipped; } sm_stream_stats;
 int     sm_stream_get_stats(sm_ctx*, sm_stream_stats* out);
 double  sm_snap_reachable(const sm_snapshot_t*, const double from[2], const double to[2]);  /* 경로 길이 m, < 0 = 못 감 */
 

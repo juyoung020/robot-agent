@@ -225,9 +225,23 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
       if (const char* h = std::getenv("SGRT_STREAM_HZ")) hz = std::clamp(std::atof(h), 0.5, 240.0);
       const auto period = std::chrono::microseconds(int64_t(1e6 / hz));
       s->viewer = std::thread([s, period] {
+        auto t_log = std::chrono::steady_clock::now();
+        sm_stream_stats prev{};
         while (!s->view_quit.load(std::memory_order_relaxed)) {
           sm_stream_view(s->sm);
           std::this_thread::sleep_for(period);
+          const auto now = std::chrono::steady_clock::now();
+          if (now - t_log >= std::chrono::seconds(5)) {   // 5 s 마다 스트림 통계(로그): 보낸 양·버려진 것·요약 만드는 시간
+            sm_stream_stats ss{};
+            if (sm_stream_get_stats(s->sm, &ss) == 0) {
+              const double dt = std::chrono::duration<double>(now - t_log).count();
+              std::fprintf(stderr, "[sgrt] stream %.0fs: %.0f frames/s in, %llu dropped, %.2f MB/s sent, summaries built %llu skipped %llu (build %.0f us)\n", dt,
+                           double(ss.frames_in - prev.frames_in) / dt, (unsigned long long)ss.dropped, double(ss.bytes_sent - prev.bytes_sent) / dt / 1e6,
+                           (unsigned long long)(ss.views_built - prev.views_built), (unsigned long long)(ss.views_skipped - prev.views_skipped), ss.view_build_us);
+            }
+            prev = ss;
+            t_log = now;
+          }
         }
       });
       std::fprintf(stderr, "[sgrt] streaming to %s (view %.1f Hz)\n", st, 1e6 / double(period.count()));
