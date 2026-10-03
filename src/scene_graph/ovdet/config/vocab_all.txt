@@ -1,0 +1,273 @@
+# BEHAVIOR Challenge 2026: 100개 과제 BDDL 물체 + 장면 구조물 18개 (make_category_vocab.py 로 생성)
+allen wrench
+apple
+apple pie
+armchair
+ashcan
+ax
+bacon
+bag of chips
+bar soap
+barrow
+baseball cap
+baseboard
+basket
+battery
+bed
+beefsteak tomato
+beet
+bell pepper
+board game
+bok choy
+book
+bookcase
+booth
+bottle
+bottle of coffee
+bottle of detergent
+bottle of olive oil
+bottle of tea
+bow
+bowl
+box
+box of oatmeal
+box of sanitary napkin
+boxing glove
+branch
+bratwurst
+bread slice
+breakfast table
+briefcase
+brisket
+broccoli
+broccolini
+broken glass
+broom
+brussels sprouts
+bucket
+butter cookie
+cabinet
+cabinet base
+cabinet door
+calculator
+caldron
+camera tripod
+can of soda
+candle
+candy cane
+car
+carrel
+carryall
+carton of milk
+carving knife
+ceiling
+chair
+chicken breast
+chili
+chocolate chip cookie
+chopping block
+chopping board
+christmas tree
+cigar lighter
+clove
+club sandwich
+coffee cup
+coffee maker
+coffee table
+comic book
+computer
+container
+cooked diced chili
+cooked diced head cabbage
+cooked popcorn
+cookie sheet
+cork
+corkscrew
+cornet
+countertop
+cup
+cupcake
+curtain
+debris
+desk
+diced beet
+diced bell pepper
+diced pineapple
+diced steak
+diced vidalia onion
+diced zucchini
+die
+digital camera
+dirt
+dishwasher
+door
+drill
+driveway
+dust
+easter egg
+electric kettle
+electric outlet
+electric refrigerator
+facsimile
+fire alarm
+firewood
+flashlight
+floor
+folder
+food processor
+footstool
+french press
+frying pan
+gift box
+glue stick
+grated cheese
+gym shoe
+half apple
+half apple pie
+half banana
+half brussels sprouts
+half chicken
+half log
+half pomegranate
+hallstand
+hardback
+head cabbage
+hinged jar
+hotdog
+ice cube
+insectifuge
+insectifuge atomizer
+jar of honey
+jar of sugar
+jigsaw puzzle
+keyboard
+lamp
+laptop
+lawn
+lawn chair
+leek
+light switch
+log
+magazine
+mango
+marker
+microwave
+mixing bowl
+modem
+monitor
+mouse
+mousetrap
+mud
+mushroom
+newspaper
+notebook
+oven
+packing box
+paintbrush
+paper coffee filter
+paperback book
+parer
+pen
+pencil
+pencil box
+pepperoni
+pesticide
+pesticide atomizer
+picture frame
+pillar candle
+pillow
+pineapple
+pipe cleaner
+pizza
+pizza dough
+plant
+plate
+pliers
+plywood
+pomegranate
+popcorn
+popcorn bag
+poster
+pot plant
+pruner
+pumpkin
+radiator
+radio receiver
+railing
+recycling bin
+rose
+rubber eraser
+rug
+rust
+sack
+sand
+sandal
+satchel
+saucer
+scanner
+scraper
+screwdriver
+scrub brush
+shears
+shelf
+shoe
+sink
+soap dish
+soap dispenser
+sofa
+softball
+stain
+staircase
+stand
+stapler
+steak
+steel wool
+storage container
+stove
+strawberry
+sweet corn
+swiss cheese
+switch
+swivel chair
+table
+table knife
+table lamp
+tablefork
+tabletop
+taco
+teddy
+television receiver
+tennis ball
+tennis racket
+tile
+tissue dispenser
+toaster
+toilet
+toilet tissue
+toolbox
+toothbrush
+toy box
+toy dice
+toy figure
+train set
+tray
+tree
+trowel
+tube of toothpaste
+tupperware
+vacuum
+vase
+vidalia onion
+wafer
+wall
+wall nail
+washer
+water glass
+wicker basket
+window
+wine bottle
+wineglass
+wood fireplace
+wrapped hamburger
+wreath
+zucchini

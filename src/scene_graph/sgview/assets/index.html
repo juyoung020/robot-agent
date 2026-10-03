@@ -1,0 +1,674 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sgview — scene graph</title>
+<style>
+  :root { --bg:#f4f4f6; --panel:#ffffff; --ink:#1d1d22; --mute:#6b6b76; --line:#dcdce2; --acc:#2a7de1; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#16161a; --panel:#202026; --ink:#ececf1; --mute:#9a9aa6; --line:#34343c; --acc:#5aa2ff; } }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:13px/1.45 system-ui, sans-serif; overflow:hidden; }
+  #view { position:absolute; inset:0 340px 0 0; }
+  canvas { display:block; }
+  #labels { position:absolute; inset:0 340px 0 0; pointer-events:none; overflow:hidden; }
+  .lbl { position:absolute; transform:translate(-50%,-100%); background:rgba(255,255,255,.78); color:#111; padding:0 3px; border-radius:3px; font-size:11px; white-space:nowrap; }
+  .lbl.room { font-size:14px; font-weight:600; background:rgba(255,255,255,.9); }
+  #panel { position:absolute; top:0; right:0; bottom:0; width:340px; box-sizing:border-box; overflow-y:auto; background:var(--panel); border-left:1px solid var(--line); padding:10px 12px 24px; }
+  #status { font-weight:600; margin-bottom:6px; }
+  details { border-top:1px solid var(--line); padding:6px 0; }
+  summary { cursor:pointer; font-weight:600; }
+  label.row { display:flex; align-items:center; gap:6px; padding:1px 0; }
+  .num { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:1px 0; }
+  input[type=number] { width:64px; }
+  select { max-width:190px; }
+  table { border-collapse:collapse; width:100%; font-size:12px; }
+  td { padding:1px 4px; vertical-align:top; border-bottom:1px solid var(--line); }
+  td:first-child { color:var(--mute); white-space:nowrap; }
+  .crop { margin-top:6px; } .crop img { max-width:100%; image-rendering:pixelated; border:1px solid var(--line); }
+  button { cursor:pointer; padding:3px 8px; }
+  .mono { font-family:ui-monospace, monospace; font-size:11px; word-break:break-all; color:var(--mute); }
+  .legend { color:var(--mute); font-size:12px; }
+  .lbl.obj { border-left:3px solid var(--c, #2ea043); }
+  .lbl.layer { background:none; color:var(--mute); font-size:11px; letter-spacing:.12em; font-weight:600; transform:translate(0,-100%); }
+  .lbl.traj { background:rgba(40,110,230,.9); color:#fff; }
+  #tip { position:absolute; pointer-events:none; background:rgba(20,20,26,.92); color:#fff; padding:3px 7px; border-radius:4px; font-size:12px; display:none; z-index:5; }
+  #tools { position:absolute; left:10px; top:10px; display:flex; gap:6px; z-index:4; }
+  #tools button { background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:5px; }
+  canvas.crop { max-width:100%; image-rendering:pixelated; border:1px solid var(--line); display:block; }
+  .stats { color:var(--mute); font-size:11px; }
+  @media (max-width:700px) { #view, #labels { right:0; } #panel { width:100%; top:55%; border-left:0; border-top:1px solid var(--line); } }
+</style>
+</head>
+<body>
+<div id="view"></div>
+<div id="labels"></div>
+<div id="tip"></div>
+<div id="tools"><button id="b_top">Top view</button><button id="b_fit">Fit</button></div>
+<div id="panel">
+  <div id="status">waiting for view.json …</div>
+
+  <details open><summary>Display</summary>
+    <label class="row"><input type="checkbox" id="c_labels" checked> Labels</label>
+    <label class="row"><input type="checkbox" id="c_points" checked> Segment points</label>
+    <label class="row">Point colour
+      <select id="s_pcolor"><option>true colour</option><option>state colour</option></select></label>
+    <div class="num">Point size × voxel <input type="number" id="n_psize" value="1.6" min="0.2" max="5" step="0.1"></div>
+    <label class="row"><input type="checkbox" id="c_boxes"> Boxes (objects w/o points)</label>
+    <label class="row"><input type="checkbox" id="c_struct" checked> Structural objects</label>
+    <label class="row"><input type="checkbox" id="c_gone" checked> Gone objects</label>
+    <label class="row"><input type="checkbox" id="c_ceil"> Show ceiling</label>
+    <label class="row"><input type="checkbox" id="c_walls" checked> Walls as 2D lines</label>
+    <label class="row"><input type="checkbox" id="c_map" checked> Occupancy map</label>
+    <label class="row"><input type="checkbox" id="c_robot" checked> Robot</label>
+  </details>
+
+  <details open><summary>Scene graph (objects · rooms)</summary>
+    <label class="row"><input type="checkbox" id="g_on" checked> Show graph layers</label>
+    <label class="row"><input type="checkbox" id="g_objs" checked> Objects layer</label>
+    <label class="row"><input type="checkbox" id="g_thumbs" checked> Object thumbnails</label>
+    <label class="row"><input type="checkbox" id="g_agents" checked> Agent trajectory</label>
+    <label class="row"><input type="checkbox" id="g_rooms" checked> Rooms</label>
+    <label class="row"><input type="checkbox" id="g_intra" checked> Intra-layer edges</label>
+    <label class="row"><input type="checkbox" id="g_inter" checked> Inter-layer edges</label>
+    <div class="num">Objects layer z [m] <input type="number" id="n_objz" value="4" min="0" max="10" step="0.1"></div>
+    <div class="num">Layer spacing [m] <input type="number" id="n_h" value="2" min="0.3" max="5" step="0.1"></div>
+    <div class="num">Thumbnail size [m] <input type="number" id="n_thumb" value="0.35" min="0.05" max="2" step="0.05"></div>
+    <div class="legend">Objects (z 4 m): <span style="color:#2ea043">■</span> seen · <span style="color:#f58c14">■</span> moved · <span style="color:#286ee6">■</span> held · <span style="color:#8c8c8c">■</span> gone · blue line on the floor = robot trajectory.<br>
+      Rooms (above): one colour each. Grey lines: room → object.<br>
+      Places (free-space skeleton) are computed in the backend for planning and are not shown.</div>
+  </details>
+
+  <details open><summary>Wall state (2D walls → numbers)</summary>
+    <div id="wstate" class="legend">waiting for the map …</div>
+    <button id="wsave">Save wall state (.json)</button>
+  </details>
+
+  <details open><summary>Object</summary>
+    <div class="num">Select <select id="s_obj"><option value="">(none)</option></select></div>
+    <div id="info" class="legend">Click a node or pick one above.</div>
+  </details>
+</div>
+
+<script src="/three.min.js"></script>
+<script src="/OrbitControls.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const STATE_COL = { seen:0x2ea043, moved:0xf58c14, held:0x286ee6, gone:0x8c8c8c };
+const EDGE_COL = { place:0x5a5a5a, door:0xe67814, agent:0x286ee6, inter:0x969696 };
+
+// ---------------- three.js ----------------
+const host = $("view");
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+host.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const isDark = matchMedia("(prefers-color-scheme: dark)").matches;
+scene.background = new THREE.Color(isDark ? 0x16161a : 0xf4f4f6);
+THREE.Object3D.DefaultUp.set(0, 0, 1);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 500);
+camera.up.set(0, 0, 1);
+camera.position.set(-9, -9, 9);
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 4);
+controls.update();
+scene.add(new THREE.AmbientLight(0xffffff, 1));
+
+const gMap = new THREE.Group(), gObjs = new THREE.Group(), gGraph = new THREE.Group(), gWalls = new THREE.Group(), gRobot = new THREE.Group();
+scene.add(gMap, gObjs, gGraph, gWalls, gRobot);
+
+let needsRender = true;
+function invalidate() { needsRender = true; }
+function resize() {
+  const w = host.clientWidth, h = host.clientHeight;
+  renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener("resize", () => { resize(); invalidate(); }); resize();
+controls.addEventListener("change", invalidate);
+
+// Points that share a cached geometry are marked userData.shared: the group must not dispose that geometry.
+function disposeGroup(g) {
+  for (const c of [...g.children]) {
+    g.remove(c);
+    c.traverse(o => {
+      if (o.material) { if (o.material.map && !o.userData.keepMap) o.material.map.dispose(); o.material.dispose(); }
+      if (o.geometry && !o.userData.shared) o.geometry.dispose();
+    });
+  }
+}
+
+// ---------------- data ----------------
+let view = null, viewVer = "", mapVer = "";
+const prev = {};
+const objs = new Map();             // id -> object (from view.json)
+let selected = null;
+const plyCache = new Map();         // id -> {stamp, geom, n}
+const thumbCache = new Map();       // url -> THREE.Texture
+const texLoader = new THREE.TextureLoader();
+
+// Round, softly edged flat points whose size is in world units (perspective-correct).
+const pointUniforms = { scale:{ value:600 } };
+function pointMat({ size, color = 0xffffff, vertexColors = false, rim = 0, opacity = 1, square = false }) {
+  // Flat discs (no lighting): the colour is exactly the node/state colour, so the map stays the emphasised element.
+  // Coverage is analytic and symmetric around the true radius (the point quad is padded by 1.5 px), so the outline is smooth
+  // at any size instead of being cut at the quad edge.
+  return new THREE.ShaderMaterial({
+    uniforms:{ uSize:{ value:size }, uColor:{ value:new THREE.Color(color) }, uRim:{ value:rim }, uOpacity:{ value:opacity }, uScale:pointUniforms.scale },
+    vertexShader:`attribute vec3 color; uniform float uSize; uniform float uScale; varying vec3 vC; varying float vPx; varying float vPad;
+      void main(){ vC = color; vec4 mv = modelViewMatrix * vec4(position,1.0);
+        vPx = max(${square ? "2.0" : "3.0"}, uSize * uScale / -mv.z); vPad = vPx + ${square ? "0.0" : "3.0"}; gl_PointSize = vPad; gl_Position = projectionMatrix * mv; }`,
+    fragmentShader:`uniform vec3 uColor; uniform float uRim; uniform float uOpacity; varying vec3 vC; varying float vPx; varying float vPad;
+      void main(){
+        vec2 q = (gl_PointCoord * 2.0 - 1.0) * (vPad / vPx);     // 1.0 = the true radius
+        float r2 = dot(q, q), r = sqrt(r2);
+        float aa = 1.0 / vPx;                                     // ~half a pixel in radius units
+        float cov = ${square ? "1.0" : "1.0 - smoothstep(1.0 - aa, 1.0 + aa, r)"};   // square: one voxel = one filled cell
+        if (cov <= 0.0) discard;
+        vec3 base = ${vertexColors ? "vC" : "uColor"};
+        vec3 c = base;
+        gl_FragColor = vec4(c, uOpacity * cov);
+      }`,
+    transparent:true, depthWrite:opacity >= 1 });
+}
+function updatePointScale() { pointUniforms.scale.value = renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360)); }
+
+function opt(id) { const e = $(id); return e.type === "checkbox" ? e.checked : (e.tagName === "SELECT" ? e.value : parseFloat(e.value)); }
+
+function objVisible(o) {
+  if (!opt("c_struct") && o.structural) return false;
+  if (!opt("c_gone") && o.state === "gone") return false;
+  if (!opt("c_ceil") && /ceiling/i.test(o.name || "")) return false;
+  return true;
+}
+
+// ---------------- map ----------------
+let mapState = null;   // {w, h, rgba, tex, mesh, ver, key}
+function paintRows(px, y0, y1) {   // px = PGM rows y0..y1; texture row 0 = min y
+  const { w, h, rgba } = mapState;
+  for (let r = y0; r <= y1; r++) {
+    const src = (r - y0) * w, dst = (h - 1 - r) * w * 4;
+    for (let x = 0; x < w; x++) {
+      const v = px[src + x], o = dst + x * 4;
+      if (v === 205) { rgba[o] = 140; rgba[o+1] = 148; rgba[o+2] = 170; } else { rgba[o] = rgba[o+1] = rgba[o+2] = v; }
+      rgba[o+3] = 255;
+    }
+  }
+}
+async function loadMap() {
+  // only the rows that changed since the version we hold; a full map when the size/origin changed or we are too far behind
+  const r = await fetch("/api/map" + (mapState ? "?since=" + encodeURIComponent(mapState.ver) : ""));
+  if (!r.ok) return;
+  const w = +r.headers.get("X-W"), h = +r.headers.get("X-H"), y0 = +r.headers.get("X-Y0"), y1 = +r.headers.get("X-Y1"), full = r.headers.get("X-Full") === "1";
+  const ver = r.headers.get("X-Ver"), px = new Uint8Array(await r.arrayBuffer());
+  const g = view.grid, key = [w, h, g.origin[0], g.origin[1], g.resolution].join("|");
+  if (!mapState || mapState.key !== key || full) {
+    if (mapState) { mapState.tex.dispose(); mapState.mesh.geometry.dispose(); mapState.mesh.material.dispose(); gMap.remove(mapState.mesh); }
+    const rgba = new Uint8Array(w * h * 4);
+    const tex = new THREE.DataTexture(rgba, w, h, THREE.RGBAFormat);
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    const res = g.resolution;
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w * res, h * res), new THREE.MeshBasicMaterial({ map:tex, side:THREE.DoubleSide }));
+    mesh.position.set(g.origin[0] + w * res / 2, g.origin[1] + h * res / 2, 0);
+    gMap.add(mesh);
+    mapState = { w, h, rgba, tex, mesh, ver, key };
+    paintRows(px, 0, h - 1);
+  } else if (y0 <= y1) {
+    paintRows(px, y0, y1);
+  }
+  mapState.ver = ver; mapState.tex.needsUpdate = true;
+  gMap.visible = opt("c_map"); invalidate();
+}
+
+// ---------------- object point clouds ----------------
+function parsePly(buf) {
+  const u8 = new Uint8Array(buf);
+  let end = 0; const dec = new TextDecoder();
+  for (let i = 0; i < Math.min(u8.length, 2048); i++) if (u8[i] === 10 && dec.decode(u8.subarray(Math.max(0, i - 10), i + 1)).includes("end_header")) { end = i + 1; break; }
+  const head = dec.decode(u8.subarray(0, end)).split("\n");
+  let n = 0; const props = [];
+  for (const l of head) { const t = l.trim().split(/\s+/); if (t[0] === "element" && t[1] === "vertex") n = +t[2]; else if (t[0] === "property") props.push({ type:t[1], name:t[2] }); }
+  const size = { float:4, float32:4, double:8, uchar:1, uint8:1, char:1, int8:1, ushort:2, uint16:2, short:2, int16:2, int:4, int32:4, uint:4, uint32:4 };
+  let stride = 0; const off = {};
+  for (const p of props) { off[p.name] = { o:stride, t:p.type }; stride += size[p.type] || 4; }
+  const dv = new DataView(buf, end);
+  const pos = new Float32Array(n * 3), col = new Uint8Array(n * 3).fill(200);
+  const rd = (b, p) => { const t = p.t; return t === "float" || t === "float32" ? dv.getFloat32(b + p.o, true) : t === "double" ? dv.getFloat64(b + p.o, true) : dv.getUint8(b + p.o); };
+  for (let i = 0; i < n; i++) {
+    const b = i * stride;
+    pos[3*i] = rd(b, off.x); pos[3*i+1] = rd(b, off.y); pos[3*i+2] = rd(b, off.z);
+    if (off.red) { col[3*i] = rd(b, off.red); col[3*i+1] = rd(b, off.green); col[3*i+2] = rd(b, off.blue); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  g.setAttribute("color", new THREE.BufferAttribute(col, 3, true));
+  g.computeBoundingSphere();
+  return g;
+}
+
+async function ensurePoints(o) {
+  if (!o.points || !o.points.path) return null;
+  const c = plyCache.get(o.id);
+  if (c && c.stamp === o.points.stamp) return c;
+  if (c && c.loading === o.points.stamp) return c;
+  const entry = { stamp:o.points.stamp, loading:o.points.stamp, geom:c ? c.geom : null };
+  plyCache.set(o.id, entry);
+  try {
+    const r = await fetch("/file/" + o.points.path + "?v=" + o.points.stamp);
+    if (!r.ok) throw 0;
+    const g = parsePly(await r.arrayBuffer());
+    if (entry.geom) entry.geom.dispose();
+    entry.geom = g; delete entry.loading;
+    drawObjects();
+  } catch (e) { entry.loading = null; }
+  return entry;
+}
+
+function drawObjects() {
+  invalidate();
+  disposeGroup(gObjs);
+  gObjs.visible = true;
+  for (const o of objs.values()) {
+    if (!objVisible(o)) continue;
+    const st = STATE_COL[o.state] ?? 0xc83cc8;
+    if (o.points) ensurePoints(o);
+    const ent = plyCache.get(o.id);
+    const sel = selected === o.id;
+    if (o.points && ent && ent.geom && opt("c_points")) {
+      const true_ = opt("s_pcolor") === "true colour";
+      const m = pointMat({ size:(o.points.voxel || 0.02) * opt("n_psize") * (sel ? 1.25 : 1), vertexColors:true_, color:st, square:true });
+      const pts = new THREE.Points(ent.geom, m); pts.userData.shared = true;   // geometry belongs to plyCache
+      gObjs.add(pts);
+      if (sel) { const y = new THREE.Points(ent.geom, pointMat({ size:(o.points.voxel || 0.02) * opt("n_psize") * 1.5, color:0xffe14a, opacity:0.5, square:true })); y.userData.shared = true; gObjs.add(y); }
+    } else if (!o.points || !ent || !ent.geom) {
+      // no points: state-coloured sphere (+ optional box)
+      const r = Math.max(0.06, Math.min(0.25, Math.max(...o.extent) * 0.15));
+      const s = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 8), new THREE.MeshBasicMaterial({ color:sel ? 0xffe14a : st, transparent:o.state === "gone", opacity:o.state === "gone" ? 0.45 : 1 }));
+      s.position.set(...o.pos); gObjs.add(s);
+      if (opt("c_boxes")) {
+        const b = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(...o.extent.map(v => Math.min(v, 3)))), new THREE.LineBasicMaterial({ color:st }));
+        b.position.set(...o.pos); gObjs.add(b);
+      }
+    }
+  }
+}
+// ---------------- graph layers ----------------
+const labelEls = new Map();
+function zOf(kind) {   // two layers: objects and rooms one spacing above; the robot trajectory lies on the floor
+  return kind === "room" ? opt("n_objz") + opt("n_h") : kind === "agent" ? 0.06 : opt("n_objz");
+}
+let graphNodes = [];   // for picking/labels/hover: {id, kind, x, y, z, oid?}
+let trajInfo = null;   // {len, last:[x,y,z]}
+
+// thumbnail with a state-coloured frame, cached per (url, state)
+const thumbTex = new Map();
+function thumbFor(o) {
+  const url = "/file/" + o.rgbd.rgb + "?v=" + o.last_seen, key = url + "|" + o.state;
+  let e = thumbTex.get(key);
+  if (e) return e.ready ? e : null;
+  for (const [k, v] of thumbTex) if (k.startsWith("/file/" + o.rgbd.rgb + "?") && k !== key) { if (v.tex) v.tex.dispose(); thumbTex.delete(k); }
+  e = { ready:false }; thumbTex.set(key, e);
+  const img = new Image();
+  img.onload = () => {
+    const f = 5, c = document.createElement("canvas"); c.width = img.width + 2 * f; c.height = img.height + 2 * f;
+    const g = c.getContext("2d"); g.fillStyle = "#" + new THREE.Color(STATE_COL[o.state] ?? 0xc83cc8).getHexString(); g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(img, f, f);
+    e.tex = new THREE.CanvasTexture(c); e.w = c.width; e.h = c.height; e.ready = true; drawGraph();
+  };
+  img.src = url;
+  return null;
+}
+
+function drawGraph() {
+  invalidate();
+  disposeGroup(gGraph);
+  graphNodes = []; trajInfo = null;
+  if (!view || !opt("g_on")) return;
+  const nodes = new Map();
+  for (const n of (view.graph && view.graph.nodes) || []) nodes.set(n.id, { ...n, pos:n.pos });
+  for (const o of view.objects) nodes.set("O" + o.id, { id:"O" + o.id, kind:"object", pos:o.pos, state:o.state, o });
+  for (const r of view.rooms || []) nodes.set("R" + r.id, { id:"R" + r.id, kind:"room", pos:r.centroid, name:r.name, color:r.color });
+  const shown = k => ({ object:opt("g_objs"), agent:opt("g_agents"), room:opt("g_rooms") })[k] || false;   // places are backend-only
+  const xyz = n => [n.pos[0], n.pos[1], zOf(n.kind)];
+
+  for (const [kind, size, rim] of [["object", 0.26, 1], ["agent", 0.12, 1], ["room", 0.70, 1]]) {
+    const ns = [...nodes.values()].filter(n => n.kind === kind && shown(kind) && (kind !== "object" || objVisible(n.o)));
+    if (!ns.length) continue;
+    const p = new Float32Array(ns.length * 3), c = new Float32Array(ns.length * 3);
+    ns.forEach((n, i) => {
+      const q = xyz(n); p.set(q, 3 * i);
+      const col = kind === "room" ? new THREE.Color(n.color[0]/255, n.color[1]/255, n.color[2]/255)
+        : kind === "object" ? new THREE.Color(STATE_COL[n.state] ?? 0xc83cc8) : new THREE.Color(0x286ee6);
+      c.set([col.r, col.g, col.b], 3 * i);
+      graphNodes.push({ id:n.id, kind, x:q[0], y:q[1], z:q[2], oid:n.o ? n.o.id : null, name:n.name });
+    });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(p, 3)); g.setAttribute("color", new THREE.BufferAttribute(c, 3));
+    gGraph.add(new THREE.Points(g, pointMat({ size, vertexColors:true, rim })));
+  }
+
+  // edges
+  const groups = {};
+  for (const [a, b, rel] of (view.graph && view.graph.edges) || []) {
+    const na = nodes.get(a), nb = nodes.get(b);
+    if (!na || !nb || !shown(na.kind) || !shown(nb.kind)) continue;
+    if (rel === "on" || rel === "in" || rel === "near") continue;
+    if (na.kind === "object" && !objVisible(na.o) || nb.kind === "object" && !objVisible(nb.o)) continue;
+    const same = na.kind === nb.kind || (na.kind === "object" && nb.kind === "agent") || (na.kind === "agent" && nb.kind === "object");
+    let key;
+    if (same) { if (!opt("g_intra")) continue; key = rel in EDGE_COL ? rel : "place"; }
+    else { if (!opt("g_inter")) continue; key = "inter"; }
+    (groups[key] ||= []).push(...xyz(na), ...xyz(nb));
+  }
+  for (const [key, arr] of Object.entries(groups)) {
+    if (key === "agent") continue;   // drawn as the trajectory below
+    const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(arr), 3));
+    gGraph.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color:EDGE_COL[key], transparent:key === "inter", opacity:key === "inter" ? 0.4 : 0.9 })));
+  }
+
+  // robot trajectory: time-ordered polyline, older = paler; mirrored on the floor; start ring; path length
+  const ag = ((view.graph && view.graph.nodes) || []).filter(n => n.kind === "agent").sort((a, b) => a.t - b.t);
+  if (ag.length > 1) {
+    let len = 0; for (let i = 1; i < ag.length; i++) len += Math.hypot(ag[i].pos[0] - ag[i-1].pos[0], ag[i].pos[1] - ag[i-1].pos[1]);
+    const mk = z => { const p = [], c = []; ag.forEach((n, i) => { p.push(n.pos[0], n.pos[1], z); const t = i / (ag.length - 1), k = 0.35 + 0.65 * t; c.push(0.16 * k + (1 - k), 0.43 * k + (1 - k), 0.9 * k + (1 - k)); });
+      const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(p), 3)); g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(c), 3)); return g; };
+    if (opt("g_agents")) gGraph.add(new THREE.Line(mk(0.06), new THREE.LineBasicMaterial({ vertexColors:true })));
+    const s0 = ag[0].pos;
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.16, 24), new THREE.MeshBasicMaterial({ color:0x2ea043, side:THREE.DoubleSide })); ring.position.set(s0[0], s0[1], 0.07); gGraph.add(ring);
+    const last = ag[ag.length - 1].pos; trajInfo = { len, last:[last[0], last[1], 0.1] };
+  }
+
+  // thumbnails (sprites facing the camera) with a state-coloured frame
+  if (opt("g_objs") && opt("g_thumbs")) {
+    const size = opt("n_thumb");
+    for (const o of view.objects) {
+      if (!o.rgbd || !objVisible(o)) continue;
+      const t = thumbFor(o); if (!t) continue;
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map:t.tex }));
+      sp.userData.keepMap = true;
+      const [rw, rh] = t.w >= t.h ? [size, size * t.h / t.w] : [size * t.w / t.h, size];
+      sp.scale.set(rw, rh, 1);
+      sp.position.set(o.pos[0], o.pos[1], zOf("object") + 0.12 + rh / 2);
+      gGraph.add(sp);
+    }
+  }
+}
+
+// ---------------- robot, walls ----------------
+function drawRobot() {
+  invalidate();
+  disposeGroup(gRobot);
+  if (!view || !view.pose) return;
+  const [x, y, yaw] = view.pose;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.22, 0.1), new THREE.MeshBasicMaterial({ color:0x2a2a30 }));
+  body.position.set(0, 0, 0.07);
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 16), new THREE.MeshBasicMaterial({ color:0xe03030 }));
+  nose.rotation.z = -Math.PI / 2; nose.position.set(0.24, 0, 0.07);
+  // camera field of view on the floor (60° wedge, 1.6 m)
+  const fov = new THREE.Shape(); fov.moveTo(0, 0); const a0 = -Math.PI / 6, a1 = Math.PI / 6;
+  for (let i = 0; i <= 12; i++) { const a = a0 + (a1 - a0) * i / 12; fov.lineTo(1.6 * Math.cos(a), 1.6 * Math.sin(a)); }
+  const wedge = new THREE.Mesh(new THREE.ShapeGeometry(fov), new THREE.MeshBasicMaterial({ color:0xe03030, transparent:true, opacity:0.14, side:THREE.DoubleSide, depthWrite:false }));
+  wedge.position.z = 0.04;
+  const grp = new THREE.Group(); grp.add(body, nose, wedge); grp.position.set(x, y, 0); grp.rotation.z = yaw;
+  gRobot.add(grp);
+  gRobot.visible = opt("c_robot");
+}
+
+let wallKey = "", lastWalls = null, wallSegKey = "";
+async function updateWalls() {
+  if (!view || !view.pose) return;
+  const [x, y, yaw] = view.pose;
+  const key = [mapVer, x.toFixed(3), y.toFixed(3), yaw.toFixed(3)].join("|");
+  if (key === wallKey) return; wallKey = key;
+  const r = await fetch(`/api/walls?x=${x}&y=${y}&yaw=${yaw}`);
+  if (!r.ok) return;
+  const w = await r.json(); lastWalls = w;
+  const segKey = JSON.stringify(w.segments);
+  if (segKey !== wallSegKey) {
+  wallSegKey = segKey;
+  disposeGroup(gWalls);
+  const p = []; for (const s of w.segments) p.push(s[0], s[1], 0.05, s[2], s[3], 0.05);
+  const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(p), 3));
+  gWalls.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color:0x00c8ff })));
+  }
+  gWalls.visible = opt("c_walls"); invalidate();
+  const rays = w.state.slice(0, 16).map(v => (v * w.max_range).toFixed(2)).join(" ");
+  $("wstate").innerHTML = `pose (${x.toFixed(2)}, ${y.toFixed(2)}, ${yaw.toFixed(2)}) · ${w.segments.length} wall segments · vector length ${w.state.length}<br>` +
+    `<span class="mono">rays [m], ahead → counter-clockwise:<br>${rays}</span>`;
+}
+$("wsave").onclick = () => {
+  if (!lastWalls) return;
+  const blob = new Blob([JSON.stringify(lastWalls, null, 1)], { type:"application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "wall_state.json"; a.click();
+};
+
+// ---------------- labels ----------------
+function ensureLabel(key, text, cls) {
+  let e = labelEls.get(key);
+  if (!e) { e = document.createElement("div"); e.className = "lbl" + (cls ? " " + cls : ""); $("labels").appendChild(e); labelEls.set(key, e); }
+  if (e.textContent !== text) e.textContent = text;
+  return e;
+}
+const _v = new THREE.Vector3();
+function updateLabels() {
+  const want = new Set();
+  if (view && opt("c_labels")) {
+    const w = host.clientWidth, h = host.clientHeight;
+    const put = (key, text, pos, cls) => {
+      _v.set(...pos).project(camera);
+      if (_v.z > 1 || Math.abs(_v.x) > 1.1 || Math.abs(_v.y) > 1.1) return;
+      const e = ensureLabel(key, text, cls); want.add(key);
+      e.style.left = ((_v.x + 1) / 2 * w) + "px"; e.style.top = ((1 - _v.y) / 2 * h) + "px";
+    };
+    for (const o of view.objects) if (objVisible(o)) {
+      put("o" + o.id, `${o.name}#${o.id}`, [o.pos[0], o.pos[1], o.pos[2] + o.extent[2] / 2 + 0.1], "obj");
+      const e = labelEls.get("o" + o.id); if (e) e.style.setProperty("--c", "#" + new THREE.Color(STATE_COL[o.state] ?? 0xc83cc8).getHexString());
+    }
+    if (opt("g_on")) {
+      if (trajInfo && opt("g_agents")) put("traj", `R1 ${trajInfo.len.toFixed(1)} m`, trajInfo.last, "traj");
+    }
+    if (opt("g_on") && opt("g_rooms")) for (const r of view.rooms || []) put("r" + r.id, r.name || ("room " + r.id), [r.centroid[0], r.centroid[1], zOf("room") + 0.6], "room");
+  }
+  for (const [k, e] of labelEls) if (!want.has(k)) { e.remove(); labelEls.delete(k); }
+}
+
+// ---------------- selection / panel ----------------
+function select(id) {
+  selected = id; $("s_obj").value = id == null ? "" : String(id);
+  drawObjects(); renderInfo();
+}
+function renderInfo() {
+  const el = $("info");
+  const o = selected != null ? objs.get(selected) : null;
+  if (!o) { el.className = "legend"; el.textContent = "Click a node or pick one above."; return; }
+  el.className = "";
+  const f = a => "(" + a.map(v => v.toFixed(3)).join(", ") + ")";
+  const room = (view.rooms || []).find(r => (r.objects || []).includes(o.id));
+  const rows = [["state", `<b>${o.state}</b>${o.structural ? " (structural)" : ""}`], ["pos", f(o.pos)], ["first_pos", f(o.first_pos)], ["n_obs", o.n_obs],
+    ["score", o.score.toFixed(3)], ["last seen", `${o.last_seen.toFixed(2)} s (now ${view.stamp.toFixed(2)})`], ["extent", f(o.extent)], ["room", room ? room.name : "-"]];
+  if (o.points) rows.push(["points", `${o.points.n} pts, voxel ${o.points.voxel} m`]);
+  let h = `<b>${o.name}</b> #${o.id}<table>` + rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("") + "</table>";
+  if (o.rgbd) {
+    h += `<div class="crop">RGB crop${o.rgbd.mask ? " + segment" : ""}<br><canvas class="crop" id="cv_rgb"></canvas></div>`;
+    h += `<div class="crop">Depth crop (near bright)<br><canvas class="crop" id="cv_depth"></canvas><div class="stats" id="d_stats"></div></div>`;
+  }
+  el.innerHTML = h;
+  if (o.rgbd) renderCrops(o);
+}
+// RGB crop with the segment shown (outside dimmed, yellow outline) and the depth crop as grey (near bright), stats from the mask.
+function loadImg(url) { return new Promise(res => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = url; }); }
+function fitCanvas(cv, w, h) {
+  const k = Math.max(1, Math.min(8, Math.floor(300 / Math.max(w, h))));
+  cv.width = w * k; cv.height = h * k; return k;
+}
+async function renderCrops(o) {
+  const tag = o.id + "|" + o.last_seen, v = "?v=" + o.last_seen;
+  const [rgb, mask] = await Promise.all([loadImg("/file/" + o.rgbd.rgb + v), o.rgbd.mask ? loadImg("/file/" + o.rgbd.mask + v) : null]);
+  if (selected !== o.id) return;
+  let m = null, mw = 0, mh = 0;
+  const readMask = (w, h) => {   // mask resampled to w×h, true inside
+    const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d"); g.imageSmoothingEnabled = false; g.drawImage(mask, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data, out = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) out[i] = d[4 * i] >= 128 ? 1 : 0; return out;
+  };
+  const cv = $("cv_rgb");
+  if (rgb && cv) {
+    const w = rgb.width, h = rgb.height, k = fitCanvas(cv, w, h), g = cv.getContext("2d"); g.imageSmoothingEnabled = false;
+    g.drawImage(rgb, 0, 0, cv.width, cv.height);
+    if (mask) {
+      m = readMask(cv.width, cv.height); mw = cv.width; mh = cv.height;
+      const im = g.getImageData(0, 0, mw, mh), d = im.data;
+      for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+        const i = y * mw + x, inside = m[i];
+        if (!inside) { d[4*i] = d[4*i] * 0.45 + 30; d[4*i+1] = d[4*i+1] * 0.45 + 30; d[4*i+2] = d[4*i+2] * 0.45 + 30; continue; }
+        const edge = x === 0 || y === 0 || x === mw - 1 || y === mh - 1 || !m[i - 1] || !m[i + 1] || !m[i - mw] || !m[i + mw];
+        if (edge) { d[4*i] = 255; d[4*i+1] = 210; d[4*i+2] = 0; }
+      }
+      g.putImageData(im, 0, 0);
+    }
+  }
+  const dc = $("cv_depth");
+  if (dc) {
+    try {
+      const r = await fetch("/api/depth?path=" + encodeURIComponent(o.rgbd.depth) + "&" + v.slice(1));
+      if (!r.ok || selected !== o.id) return;
+      const w = +r.headers.get("X-W"), h = +r.headers.get("X-H"), u = new Uint16Array(await r.arrayBuffer());
+      const k = fitCanvas(dc, w, h), small = document.createElement("canvas"); small.width = w; small.height = h;
+      const mk = mask ? (() => { const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d"); g.imageSmoothingEnabled = false; g.drawImage(mask, 0, 0, w, h); const d = g.getImageData(0, 0, w, h).data, out = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) out[i] = d[4*i] >= 128 ? 1 : 0; return out; })() : null;
+      let sel = []; for (let i = 0; i < u.length; i++) if (u[i] > 0 && (!mk || mk[i])) sel.push(u[i] * 1e-3);
+      if (!sel.length) for (let i = 0; i < u.length; i++) if (u[i] > 0) sel.push(u[i] * 1e-3);
+      const sg = small.getContext("2d"), im = sg.createImageData(w, h);
+      if (sel.length) {
+        sel.sort((a, b) => a - b);
+        const q = p => sel[Math.min(sel.length - 1, Math.floor(p * (sel.length - 1)))];
+        let lo = q(0.02), hi = q(0.98); if (hi - lo < 1e-3) { lo -= 0.05; hi += 0.05; }
+        for (let i = 0; i < u.length; i++) {
+          const dm = u[i] * 1e-3; let g = 0;
+          if (u[i] > 0) { const t = Math.max(0, Math.min(1, (dm - lo) / (hi - lo))); g = 255 - 200 * t; if (mk && !mk[i]) g *= 0.35; }
+          im.data[4*i] = im.data[4*i+1] = im.data[4*i+2] = g; im.data[4*i+3] = 255;
+        }
+        $("d_stats").textContent = `in mask: min ${sel[0].toFixed(2)} · median ${q(0.5).toFixed(2)} · max ${sel[sel.length - 1].toFixed(2)} m`;
+      }
+      sg.putImageData(im, 0, 0);
+      const g2 = dc.getContext("2d"); g2.imageSmoothingEnabled = false; g2.drawImage(small, 0, 0, dc.width, dc.height);
+    } catch (e) {}
+  }
+}
+function fillSelect() {
+  const s = $("s_obj"), cur = s.value;
+  s.innerHTML = '<option value="">(none)</option>' + [...objs.values()].sort((a, b) => a.id - b.id).map(o => `<option value="${o.id}">${o.name}#${o.id}</option>`).join("");
+  s.value = cur;
+}
+$("s_obj").onchange = e => select(e.target.value === "" ? null : +e.target.value);
+
+// click picking: graph node within 12 px, else the nearest object box along the ray
+let down = null;
+renderer.domElement.addEventListener("pointerdown", e => { down = [e.clientX, e.clientY]; });
+renderer.domElement.addEventListener("pointerup", e => {
+  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4) { down = null; return; }
+  down = null;
+  const rc = renderer.domElement.getBoundingClientRect();
+  const mx = e.clientX - rc.left, my = e.clientY - rc.top;
+  let best = null, bd = 12;
+  for (const n of graphNodes) {
+    if (n.oid == null) continue;
+    _v.set(n.x, n.y, n.z).project(camera);
+    if (_v.z > 1) continue;
+    const d = Math.hypot((_v.x + 1) / 2 * rc.width - mx, (1 - _v.y) / 2 * rc.height - my);
+    if (d < bd) { bd = d; best = n.oid; }
+  }
+  if (best == null) {
+    const ray = new THREE.Raycaster(); ray.setFromCamera(new THREE.Vector2(mx / rc.width * 2 - 1, -(my / rc.height) * 2 + 1), camera);
+    let bt = Infinity;
+    for (const o of objs.values()) {
+      if (!objVisible(o)) continue;
+      const pad = 0.03, hb = o.extent.map(v => v / 2 + pad);
+      const box = new THREE.Box3(new THREE.Vector3(o.pos[0] - hb[0], o.pos[1] - hb[1], o.pos[2] - hb[2]), new THREE.Vector3(o.pos[0] + hb[0], o.pos[1] + hb[1], o.pos[2] + hb[2]));
+      const hit = ray.ray.intersectBox(box, new THREE.Vector3());
+      if (hit) { const t = hit.distanceTo(ray.ray.origin); if (t < bt) { bt = t; best = o.id; } }
+    }
+  }
+  if (best != null) select(best);
+});
+
+// hover: tooltip + pointer cursor over object nodes
+renderer.domElement.addEventListener("pointermove", e => {
+  if (e.buttons) { $("tip").style.display = "none"; return; }
+  const rc = renderer.domElement.getBoundingClientRect(), mx = e.clientX - rc.left, my = e.clientY - rc.top;
+  let best = null, bd = 10;
+  for (const n of graphNodes) {
+    if (n.oid == null) continue;
+    _v.set(n.x, n.y, n.z).project(camera); if (_v.z > 1) continue;
+    const d = Math.hypot((_v.x + 1) / 2 * rc.width - mx, (1 - _v.y) / 2 * rc.height - my);
+    if (d < bd) { bd = d; best = n.oid; }
+  }
+  const tip = $("tip");
+  if (best == null) { tip.style.display = "none"; renderer.domElement.style.cursor = ""; return; }
+  const o = objs.get(best);
+  tip.textContent = `${o.name}#${o.id} · ${o.state} · ${o.n_obs} obs`;
+  tip.style.left = (mx + 14) + "px"; tip.style.top = (my + 10) + "px"; tip.style.display = "block"; renderer.domElement.style.cursor = "pointer";
+});
+renderer.domElement.addEventListener("pointerleave", () => { $("tip").style.display = "none"; });
+
+// toolbar: top view / fit
+function fitView(top) {
+  if (!view) return;
+  const g = view.grid, W = g.width * g.resolution, H = g.height * g.resolution;
+  const cx = g.origin[0] + W / 2, cy = g.origin[1] + H / 2, R = Math.max(W, H);
+  controls.target.set(cx, cy, top ? 0 : 3);
+  if (top) camera.position.set(cx, cy - 0.001, R * 1.15); else camera.position.set(cx - R * 0.55, cy - R * 0.55, R * 0.5 + 3);
+  controls.update();
+}
+$("b_top").onclick = () => fitView(true); $("b_fit").onclick = () => fitView(false);
+addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return; if (e.key === "t") fitView(true); if (e.key === "f") fitView(false); });
+
+// faint floor grid under the map
+const grid = new THREE.GridHelper(80, 80, isDark ? 0x3a3a46 : 0xcfcfd8, isDark ? 0x2a2a34 : 0xe2e2e8); grid.rotation.x = Math.PI / 2; grid.position.z = -0.02; scene.add(grid);
+
+// ---------------- polling ----------------
+function status() {
+  const c = k => (view.graph.nodes || []).filter(n => n.kind === k).length;
+  $("status").textContent = `stamp ${view.stamp.toFixed(1)} s · objects ${view.objects.length} · rooms ${(view.rooms || []).length} · trajectory ${c("agent")} poses`;
+}
+async function poll() {
+  if (document.hidden) { setTimeout(poll, 1000); return; }
+  try {
+    const r = await fetch("/api/view?v=" + encodeURIComponent(viewVer));
+    const j = await r.json();
+    if (j.view) {
+      const first = !view;
+      view = j.view; viewVer = j.v;
+      objs.clear(); for (const o of view.objects) objs.set(o.id, o);
+      if (selected != null && !objs.has(selected)) selected = null;
+      // redraw only the parts whose content changed (string compare is far cheaper than rebuilding geometry)
+      const sObj = JSON.stringify(view.objects), sGraph = JSON.stringify(view.graph), sRooms = JSON.stringify(view.rooms), sPose = JSON.stringify(view.pose);
+      const objChanged = sObj !== prev.obj, graphChanged = objChanged || sGraph !== prev.graph || sRooms !== prev.rooms || JSON.stringify(view.grid) !== prev.grid;
+      if (first || j.map_v !== mapVer) { mapVer = j.map_v; await loadMap(); }
+      if (objChanged) { fillSelect(); drawObjects(); }
+      if (graphChanged) drawGraph();
+      if (sPose !== prev.pose) drawRobot();
+      status(); if (objChanged) renderInfo(); updateWalls();
+      Object.assign(prev, { obj:sObj, graph:sGraph, rooms:sRooms, pose:sPose, grid:JSON.stringify(view.grid) });
+      if (first) fitView(false);
+    }
+  } catch (e) {}
+  setTimeout(poll, 250);
+}
+// controls
+for (const id of ["c_points", "s_pcolor", "n_psize", "c_boxes", "c_struct", "c_gone", "c_ceil"]) $(id).onchange = () => { drawObjects(); drawGraph(); };
+for (const id of ["g_on", "g_objs", "g_thumbs", "g_agents", "g_rooms", "g_intra", "g_inter", "n_objz", "n_h", "n_thumb"]) $(id).onchange = drawGraph;
+$("c_walls").onchange = () => { gWalls.visible = $("c_walls").checked; invalidate(); };
+$("c_map").onchange = () => { gMap.visible = $("c_map").checked; invalidate(); };
+$("c_robot").onchange = () => { gRobot.visible = $("c_robot").checked; invalidate(); };
+$("c_labels").onchange = invalidate;
+
+// render only when something changed (camera moved, data/options changed): an idle viewer costs nothing
+(function loop() {
+  requestAnimationFrame(loop);
+  controls.update();
+  if (!needsRender) return;
+  needsRender = false;
+  updatePointScale(); renderer.render(scene, camera); updateLabels();
+})();
+poll();
+</script>
+</body>
+</html>

@@ -1,0 +1,102 @@
+# task: BDDL object categories + "_scene" structures (ovdet prompt table, tools/make_task_prompts.py)
+_scene: wall, floor, ceiling, door, window, rug, curtain, picture frame, lamp, plant, staircase, railing, baseboard, light switch, electric outlet, radiator, sofa, shelf
+turning_on_radio: radio receiver, table
+picking_up_trash: ashcan, can of soda
+putting_away_Halloween_decorations: pumpkin, caldron, table, candle, cabinet
+cleaning_up_plates_and_food: plate, bowl, pizza, breakfast table, electric refrigerator, sink
+can_meat: hinged jar, cabinet, countertop, chopping board, bratwurst
+setting_mousetraps: mousetrap, sink, cabinet
+hiding_Easter_eggs: easter egg, wicker basket, lawn, tree
+picking_up_toys: board game, jigsaw puzzle, tennis ball, bed, table, toy box
+rearranging_kitchen_furniture: toaster, food processor, french press, countertop, cabinet
+putting_up_Christmas_decorations_inside: christmas tree, wreath, candy cane, pillar candle, gift box, wicker basket, table, sofa
+set_up_a_coffee_station_in_your_kitchen: coffee maker, countertop, bottle of coffee, shelf, paper coffee filter, coffee cup, dishwasher, saucer, electric kettle
+putting_dishes_away_after_cleaning: plate, countertop, cabinet
+preparing_lunch_box: half apple, chopping board, countertop, packing box, club sandwich, bottle of tea, electric refrigerator, chocolate chip cookie
+loading_the_car: car, container, tennis racket, digital camera, table
+carrying_in_groceries: car, sack, beefsteak tomato, carton of milk, electric refrigerator
+bringing_in_wood: plywood
+moving_boxes_to_storage: storage container
+bringing_water: bottle, coffee table, electric refrigerator
+tidying_bedroom: sandal, table, book, bed
+outfit_a_basic_toolbox: drill, tabletop, pliers, toolbox, flashlight, allen wrench, screwdriver
+sorting_vegetables: mixing bowl, countertop, wicker basket, bok choy, vidalia onion, sweet corn, broccoli, leek
+collecting_childrens_toys: die, teddy, train set, board game, desk, bed, bookcase
+putting_shoes_on_rack: gym shoe, sandal, hallstand
+boxing_books_up_for_storage: book, bookcase, box
+storing_food: box of oatmeal, countertop, bag of chips, bottle of olive oil, jar of sugar, cabinet
+clearing_food_from_table_into_fridge: half chicken, half apple pie, plate, breakfast table, tupperware, countertop, electric refrigerator
+assembling_gift_baskets: wicker basket, candle, butter cookie, swiss cheese, bow, table
+sorting_household_items: bottle of detergent, basket, box of sanitary napkin, soap dispenser, tube of toothpaste, toothbrush, cup, shelf, sink
+getting_organized_for_work: mouse, swivel chair, keyboard, notebook, pen, folder, desk, computer, monitor
+clean_up_your_desk: laptop, desk, folder, pencil, pen, stapler, paperback book, pencil box, bookcase, chair, bed
+setting_the_fire: firewood, newspaper, table, cigar lighter, wood fireplace
+clean_boxing_gloves: boxing glove, dust, washer, countertop
+wash_a_baseball_cap: baseball cap, dirt, washer, countertop
+wash_dog_toys: teddy, washer, dirt, dust, tennis ball, debris, softball, cabinet
+hanging_pictures: poster, countertop, wall nail
+attach_a_camera_to_a_tripod: digital camera, camera tripod
+clean_a_patio: mud, broom
+clean_a_trumpet: dust, cornet, scrub brush, desk
+spraying_for_bugs: insectifuge atomizer, insectifuge, pot plant
+spraying_fruit_trees: pesticide, pesticide atomizer, tree
+make_microwave_popcorn: popcorn, cooked popcorn, popcorn bag, microwave, countertop
+cook_cabbage: head cabbage, cooked diced chili, cooked diced head cabbage, electric refrigerator, chili, chopping board, carving knife, frying pan, plate, stove, countertop
+chop_an_onion: chopping board, sink, vidalia onion, diced vidalia onion, parer, countertop, bowl
+slicing_vegetables: bell pepper, diced bell pepper, electric refrigerator, beet, diced beet, chopping board, zucchini, diced zucchini, parer, countertop
+chopping_wood: log, half log, driveway, ax, chopping block
+cook_hot_dogs: microwave, hotdog, electric refrigerator
+cook_bacon: bacon, tray, electric refrigerator, stove, frying pan
+freeze_pies: apple pie, plate, countertop, tupperware, cabinet, electric refrigerator
+canning_food: steak, diced steak, pineapple, diced pineapple, electric refrigerator, bowl, cabinet, chopping board, countertop, carving knife
+make_pizza: pizza dough, grated cheese, pepperoni, mushroom, vidalia onion, pizza, oven, cookie sheet, chopping board, carving knife, bowl, tupperware, electric refrigerator, cabinet, countertop
+freeze_fruit: tupperware, cabinet, bowl, countertop, apple, tray, strawberry, electric refrigerator
+cook_a_brisket: chopping board, brisket, frying pan, countertop, electric refrigerator, oven
+sorting_bottles_cans_and_paper: bucket, wine bottle, countertop, can of soda, newspaper, magazine
+tidying_living_room: pot plant, newspaper, hardback, notebook, coffee table, desk, bookcase
+putting_away_toys: toy figure, toy box, table
+re_shelving_library_books: book, table, bookcase
+make_rose_centerpieces: vase, cabinet, coffee table, rose
+sweeping_garage: broom, sand, dust, bucket
+stacking_wood: log, driveway
+organizing_art_supplies: desk, carryall, glue stick, rubber eraser, paintbrush, marker
+scrubbing_bathroom_floor: dirt, scrub brush
+bringing_paper_to_recycling: sack, newspaper, recycling bin, countertop
+halve_an_egg: carving knife, chopping board, countertop, electric refrigerator, sink, plate
+installing_smoke_detectors: wall nail, table, fire alarm
+setting_the_table: cupcake, breakfast table, tablefork, table knife, plate, electric refrigerator, cabinet, sink
+unloading_the_car: car, briefcase, satchel, sofa
+turning_out_all_lights_before_sleep: switch, table lamp, countertop, coffee table
+boxing_food_after_dinner: countertop, sink, cabinet, electric refrigerator, taco, plate, tupperware
+cleaning_up_branches_and_twigs: branch, recycling bin
+vacuuming_floors: dust, vacuum
+thawing_frozen_food: chicken breast, bread slice, plate, microwave, countertop, electric refrigerator
+clean_your_rusty_garden_tools: rust, trowel, scraper, driveway, steel wool, toolbox
+cook_a_frozen_pie: apple pie, tray, oven, electric refrigerator, countertop
+organizing_school_stuff: bed, pencil, pen, calculator, book, folder, table, carryall
+carrying_out_garden_furniture: lawn chair, barrow, lawn
+put_together_a_basic_pruning_kit: pruner, shears, toolbox
+dispose_of_glass: water glass, ashcan, sink
+installing_a_modem: modem, coffee table, cabinet, television receiver
+make_cabinet_doors: cabinet base, cabinet door
+polishing_shoes: dust, shoe, scrub brush, stand, footstool
+clean_up_broken_glass: broken glass, ashcan
+packing_meal_for_delivery: wrapped hamburger, tray, storage container, countertop, sack
+store_batteries: battery, coffee table, cabinet, countertop
+store_honey: jar of honey, countertop, cabinet
+tidying_bathroom: bar soap, soap dish, tissue dispenser, cork, toilet tissue, ashcan, sink, toilet, shelf
+putting_dirty_dishes_in_sink: stain, dirt, bowl, plate, booth, sink
+make_gift_bags_for_baby_showers: toy dice, breakfast table, coffee table, cabinet, wafer, sack
+collecting_aluminum_cans: can of soda, bed, bucket
+rearrange_your_room: pillow, bed, armchair, tissue dispenser, stand
+installing_a_fax_machine: facsimile, carrel
+composting_waste: countertop, half banana, half pomegranate, ashcan
+store_produce: mango, pomegranate, wicker basket, electric refrigerator
+installing_a_scanner: scanner, laptop, table
+clean_a_keyboard: dust, keyboard, pipe cleaner, desk
+dispose_of_batteries: battery, desk, cabinet, ashcan
+cook_brussels_sprouts: brussels sprouts, half brussels sprouts, tupperware, carving knife, chopping board, cookie sheet, oven, electric refrigerator, countertop
+cook_broccolini: broccolini, frying pan, clove, plate, stove, countertop
+setup_a_bar_for_a_cocktail_party: electric refrigerator, wine bottle, countertop, cabinet, can of soda, ice cube, wineglass, bucket, corkscrew, tray
+laying_tile_floors: tile
+sorting_books_on_shelf: hardback, comic book, notebook, bookcase

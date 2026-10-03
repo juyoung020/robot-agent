@@ -1,0 +1,15 @@
+[package]
+name = "sgview"
+version = "0.1.0"
+edition = "2021"
+description = "Native scene-graph viewer server (Rust, no Python / Spark-DSG): serves view.json + map + object files and the three.js page; walls via scenemap C++."
+
+[dependencies]
+serde_json = "1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+[build-dependencies]
+cc = "1"
+
+[profile.release]
+opt-level = 3
