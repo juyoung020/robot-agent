@@ -70,7 +70,9 @@
   <details id="jdetails" style="display:none" open><summary>Robot joints</summary>
     <div id="jpanel"></div>
     <label class="row"><input type="checkbox" id="j_stream" checked> Use the joint stream when it has an order</label>
-    <button id="j_home">Home pose</button>
+    <label class="row"><input type="checkbox" id="c_follow"> Follow the robot (close-up)</label>
+    <label class="row"><input type="checkbox" id="c_eetrace" checked> Gripper path</label>
+    <button id="j_home">Home pose</button> <button id="j_clear">Clear path</button>
     <div class="legend">Wheels roll with the base motion. Sliders pose the arm; a robot that publishes joints overrides them.</div>
   </details>
 
@@ -767,8 +769,9 @@ async function loadRobotModel() {
     jg.add(motion); motion.add(groups[j.child]); groups[j.parent].add(jg);
     if (j.type !== "fixed") joints[j.name] = { motion, axis:new THREE.Vector3(...j.axis).normalize(), type:j.type };
   }
-  robotModel = { root:groups[spec.root], joints, order:spec.joint_order || [], home:spec.home || {}, limits:Object.fromEntries(spec.joints.filter(j => j.limit).map(j => [j.name, j.limit])) };
+  robotModel = { root:groups[spec.root], eeGroup:groups["omx_end_effector_link"] || null, joints, order:spec.joint_order || [], home:spec.home || {}, limits:Object.fromEntries(spec.joints.filter(j => j.limit).map(j => [j.name, j.limit])) };
   styleRobot(robotModel.root);
+  setupEE();
   setJoints(robotModel.home);
   buildJointPanel();
   if (robotGrp) attachRobotModel();
@@ -816,6 +819,43 @@ function rollWheels() {
   wheel.aL += (fwd - dyaw * half) / r; wheel.aR += (fwd + dyaw * half) / r;
   setJoints({ front_left_wheel:wheel.aL, rear_left_wheel:wheel.aL, front_right_wheel:wheel.aR, rear_right_wheel:wheel.aR });
 }
+// ---- watching a grasp: close-up follow camera and the gripper-tip path (end-effector link of the URDF) ----
+let eeMark = null, eeTrace = null, eeN = 0, eeLast = null;
+const EE_MAX = 6000;
+function setupEE() {
+  const g = robotModel.eeGroup; if (!g) return;
+  eeMark = new THREE.Mesh(new THREE.SphereGeometry(0.012, 12, 8), new THREE.MeshBasicMaterial({ color:0xff7a00 }));
+  g.add(eeMark);
+  const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(EE_MAX * 3), 3)); geo.setDrawRange(0, 0);
+  eeTrace = new THREE.Line(geo, new THREE.LineBasicMaterial({ color:0xff7a00 })); eeTrace.frustumCulled = false; scene.add(eeTrace);
+}
+const _eeV = new THREE.Vector3();
+function updateEE() {
+  if (!eeMark || !robotModel || !robotModel.root.parent) return false;   // not attached to the robot pose yet
+  robotModel.root.updateWorldMatrix(true, true); eeMark.getWorldPosition(_eeV);
+  if (eeLast && eeLast.distanceTo(_eeV) > 0.5) clearEE();   // the robot jumped (new run / pose reset): start a new path
+  if ($("c_eetrace").checked && (!eeLast || eeLast.distanceTo(_eeV) > 0.004) && eeN < EE_MAX) {
+    const a = eeTrace.geometry.attributes.position.array; a[3 * eeN] = _eeV.x; a[3 * eeN + 1] = _eeV.y; a[3 * eeN + 2] = _eeV.z; eeN++;
+    eeTrace.geometry.setDrawRange(0, eeN); eeTrace.geometry.attributes.position.needsUpdate = true; eeLast = _eeV.clone(); return true;
+  }
+  return false;
+}
+function clearEE() { eeN = 0; eeLast = null; if (eeTrace) eeTrace.geometry.setDrawRange(0, 0); invalidate(); }
+let followOff = new THREE.Vector3(-0.8, -0.8, 0.55);
+function stepFollow(dt) {
+  if (!$("c_follow").checked || !robotGrp) return false;
+  const tgt = new THREE.Vector3(robotGrp.position.x, robotGrp.position.y, 0.2);
+  const k = 1 - Math.exp(-dt / 0.12), before = controls.target.clone();
+  controls.target.lerp(tgt, k);
+  camera.position.add(controls.target.clone().sub(before));   // the camera keeps its offset: the user can still orbit and zoom around the robot
+  return true;
+}
+$("c_follow").onchange = () => {
+  autoFit = false; camGoal = null;
+  if ($("c_follow").checked && robotGrp) { const t = new THREE.Vector3(robotGrp.position.x, robotGrp.position.y, 0.2); camGoal = { pos:t.clone().add(followOff), target:t }; invalidate(); }
+};
+$("j_clear").onclick = clearEE;
+
 function attachRobotModel() {
   if (!robotModel || !robotGrp) return;
   robotGrp.remove(...robotGrp.children.filter(c => c.userData.fallback));   // the box/cone stand-in goes away
@@ -982,7 +1022,10 @@ $("n_rscale").onchange = () => { if (robotModel) robotModel.root.scale.setScalar
   controls.update();
   const nowT = performance.now();
   if (stepRobot(nowT)) needsRender = true;
-  if (stepCamera(Math.min(0.1, (nowT - lastCamT) / 1000))) needsRender = true;
+  const dtc = Math.min(0.1, (nowT - lastCamT) / 1000);
+  if (stepCamera(dtc)) needsRender = true;
+  if (stepFollow(dtc)) needsRender = true;
+  if (updateEE()) needsRender = true;
   lastCamT = nowT;
   if (!needsRender) return;
   needsRender = false;
