@@ -546,6 +546,8 @@ pub struct Robot {
     pub ticks: u64,
     /// 지도·주행 층(지도를 받은 적이 있을 때만 쓰임)
     pub nav: robot_nav::NavState,
+    /// 이번 스텝의 GT 자세(map 틀). 다음 tick 한 번에서 base_qvel 적분 대신 쓰인다(Map_Vla)
+    gt_pose: Option<[f64; 3]>,
 }
 
 /// [`Robot::tick`] 결과
@@ -567,7 +569,7 @@ impl Default for Robot {
 
 impl Robot {
     pub fn new(hz: f64) -> Robot {
-        Robot { safety: Safety::default(), dt: 1.0 / hz, hold: [0.0; ACTION_DIM], state: None, active: None, result: None, ticks: 0, nav: Default::default() }
+        Robot { safety: Safety::default(), dt: 1.0 / hz, hold: [0.0; ACTION_DIM], state: None, active: None, result: None, ticks: 0, nav: Default::default(), gt_pose: None }
     }
 
     pub fn busy(&self) -> bool {
@@ -602,6 +604,14 @@ impl Robot {
         }
         self.active = None;
         self.state = None;
+        self.gt_pose = None;
+        self.nav.gt_prev = None; // 새 판의 첫 GT 자세를 지난 판 끝에서 잰 거리로 세지 않게
+    }
+
+    /// 이번 스텝의 GT 자세(map 틀: x, y, yaw rad). 다음 [`Robot::tick`] 한 번에서 base_qvel 적분 대신 쓰인다.
+    /// 시뮬 GT 모드(SGRT_POSE=gt, map = world)에서 매 스텝 tick 앞에 부른다. 부르지 않은 스텝은 예전처럼 속도 적분.
+    pub fn set_gt_pose(&mut self, pose: [f64; 3]) {
+        self.gt_pose = Some(pose);
     }
 
     /// 지금 관측으로 유지값을 잡는다(첫 관측)
@@ -719,7 +729,10 @@ impl Robot {
         if self.state.is_none() {
             self.init_hold(&st);
         }
-        self.nav.integrate(st.base_v, self.dt);
+        match self.gt_pose.take() {
+            Some(g) => self.nav.integrate_gt(g, self.dt),
+            None => self.nav.integrate(st.base_v, self.dt),
+        }
         self.state = Some(st.clone());
         let Some(mut a) = self.active.take() else {
             self.write_action(action, None);

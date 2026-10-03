@@ -414,3 +414,72 @@ fn obstacle_appearing_on_path_is_avoided_or_reported() {
         exec(&mut m, r#"{"part":"base","mode":"probe","values":[0,0]}"#);
     }
 }
+
+// ---- GT 자세로 갱신(Map_Vla): 궤적·이동 거리·자세가 base_qvel 적분이 아니라 정답 자세를 따른다 ----
+
+#[test]
+fn gt_pose_replaces_velocity_integration() {
+    // 속도는 1 m/s 라고 하는데(적분하면 1 s 에 1 m) 정답은 0.5 m/s 로 움직였다
+    let mut m = Mock::default();
+    m.plant.base_v = [1.0, 0.0, 0.0];
+    let mut r = Robot::default();
+    r.nav.have_map = true;
+    let mut a = [0f32; ACTION_DIM];
+    let dt = r.dt;
+    let n = 30;
+    for k in 0..=n {
+        r.set_gt_pose([0.5 * k as f64 * dt, 0.0, 0.0]);
+        r.tick(&m.plant.proprio(), &mut a);
+    }
+    let gt_x = 0.5 * n as f64 * dt; // 0.5 m
+    assert!((r.nav.pose[0] - gt_x).abs() < 1e-12, "pose {:?}", r.nav.pose);
+    assert!((r.nav.odo_m - gt_x).abs() < 1e-9, "odo_m {} (velocity integration would give ~1.0)", r.nav.odo_m);
+    // 궤적 점은 5 cm 넘게 움직였을 때만 찍힌다(한 스텝 1.67 cm → 4 스텝 6.7 cm 마다): 점 사이 간격이 5~7 cm, 끝 점은 정답 끝에서 한 간격 이내, 모두 y = 0
+    let pl = &r.nav.path_log;
+    assert!(pl.len() >= 2 && pl.iter().all(|p| p[1].abs() < 1e-12), "path_log {:?}", pl);
+    for w in pl.windows(2) {
+        let d = (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]);
+        assert!(d > 0.05 && d < 0.07, "spacing {d}");
+    }
+    assert!((pl.last().unwrap()[0] - gt_x).abs() < 0.07, "path_log tail {:?} vs GT {gt_x}", pl.last());
+    // 속도 적분으로 그렸다면 끝 점이 1.0 m 근처였을 것
+    assert!(pl.last().unwrap()[0] < 0.6);
+}
+
+#[test]
+fn without_gt_pose_velocity_integration_is_unchanged() {
+    let mut m = Mock::default();
+    m.plant.base_v = [1.0, 0.0, 0.0];
+    let mut r = Robot::default();
+    let mut a = [0f32; ACTION_DIM];
+    let n = 30;
+    for _ in 0..=n {
+        r.tick(&m.plant.proprio(), &mut a);
+    }
+    assert!((r.nav.odo_m - (n + 1) as f64 * r.dt).abs() < 1e-9, "odo_m {}", r.nav.odo_m);
+    assert!((r.nav.pose[0] - (n + 1) as f64 * r.dt).abs() < 1e-9, "pose {:?}", r.nav.pose);
+}
+
+#[test]
+fn gt_pose_is_used_for_one_tick_only_and_reset_forgets_it() {
+    let m = Mock::default();
+    let mut r = Robot::default();
+    let mut a = [0f32; ACTION_DIM];
+    r.set_gt_pose([2.0, 1.0, 0.5]);
+    r.tick(&m.plant.proprio(), &mut a);
+    assert_eq!(r.nav.pose, [2.0, 1.0, 0.5]);
+    // 다음 스텝에 GT 를 안 주면 속도 적분(속도 0)이라 자세 그대로, 거리 0
+    r.tick(&m.plant.proprio(), &mut a);
+    assert_eq!(r.nav.pose, [2.0, 1.0, 0.5]);
+    assert_eq!(r.nav.odo_m, 0.0);
+    // 새 판: 첫 GT 자세가 멀어도 지난 판 끝에서 잰 거리로 세지 않는다
+    r.reset();
+    r.set_gt_pose([10.0, -4.0, 0.0]);
+    r.tick(&m.plant.proprio(), &mut a);
+    assert_eq!(r.nav.odo_m, 0.0, "reset must clear the previous GT pose");
+    // 한 스텝에 부른 GT 가 쌓여 다음 스텝에 두 번 쓰이지 않는다
+    r.set_gt_pose([10.0, -4.0, 0.0]);
+    r.set_gt_pose([10.3, -4.0, 0.0]);
+    r.tick(&m.plant.proprio(), &mut a);
+    assert!((r.nav.odo_m - 0.3).abs() < 1e-12);
+}

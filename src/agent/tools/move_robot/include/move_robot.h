@@ -14,6 +14,8 @@ void mr_free(MrRobot *r);
 /* 한 스텝: proprio(61, R1Pro PROPRIOCEPTION_INDICES) -> action(23, ACTION_QPOS_INDICES).
  * 0 대기(유지), 1 움직이는 중, 2 이번에 끝남(결과 준비), -1 proprio 이상(유지값), -2 인자 이상 */
 int mr_tick(MrRobot *r, const float *proprio, size_t n, float *action);
+/* 이번 스텝의 정답(GT) 자세(map 틀 x, y, yaw[rad]). 다음 mr_tick 한 번에서 base_qvel 적분 대신 쓰임(SGRT_POSE=gt 일 때 매 스텝). 0 / -2 */
+int mr_set_gt_pose(MrRobot *r, double x, double y, double yaw);
 /* 도구 인자 JSON. 0 움직이기 시작, 1 바로 끝남(읽기·오류: 결과 준비), -2 인자 이상 */
 int mr_command(MrRobot *r, const char *args_json);
 int mr_busy(const MrRobot *r);

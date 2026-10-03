@@ -45,6 +45,8 @@ pub struct NavState {
     pub last_frontiers: usize,
     /// 측정(LLM 에 안 보임)
     pub odo_m: f64,
+    /// 지난 스텝의 GT 자세(map 틀) — GT 자세로 갱신할 때 이동 거리를 재는 기준(Map_Vla)
+    pub gt_prev: Option<[f64; 3]>,
     pub reference: Option<Grid>,
     pub ref_cells: usize,
     pub contacts: u64,
@@ -79,6 +81,7 @@ impl Default for NavState {
             last_free_m2: 0.0,
             last_frontiers: 0,
             odo_m: 0.0,
+            gt_prev: None,
             reference: None,
             ref_cells: 0,
             contacts: 0,
@@ -109,9 +112,26 @@ impl NavState {
         self.pose[1] += (s * v[0] + c * v[1]) * dt;
         self.pose[2] += v[2] * dt;
         self.odo_m += v[0].hypot(v[1]) * dt;
+        self.track(v[0].hypot(v[1]));
+    }
+
+    /// GT 자세(map 틀: x, y, yaw)가 있는 스텝: base_qvel 적분 대신 그 자세를 그대로 쓴다(Map_Vla).
+    /// 자세, 이동 거리(odo_m), 궤적(path_log) 모두 정답 자세를 따른다. 시뮬 GT 모드(SGRT_POSE=gt: map = world)에서만 쓸 것.
+    pub fn integrate_gt(&mut self, gt: [f64; 3], dt: f64) {
+        self.now += dt;
+        self.skip_integrate = false; // set_map 이 건 건너뜀 표시는 속도 적분용이다
+        let moved = self.gt_prev.map_or(0.0, |p| (gt[0] - p[0]).hypot(gt[1] - p[1]));
+        self.gt_prev = Some(gt);
+        self.pose = gt;
+        self.odo_m += moved;
+        self.track(if dt > 0.0 { moved / dt } else { 0.0 });
+    }
+
+    /// 자세를 고친 뒤 공통 기록: 가장 좁았던 여유, 궤적 점(5 cm 넘게 움직였을 때만)
+    fn track(&mut self, speed: f64) {
         if self.have_map {
             let c = self.dwa.fp.clear(&self.cm, self.pose[0], self.pose[1], self.pose[2]);
-            if v[0].hypot(v[1]) > 0.02 {
+            if speed > 0.02 {
                 self.min_clear = self.min_clear.min(c);
             }
             if self.path_log.last().map_or(true, |q| (q[0] - self.pose[0]).hypot(q[1] - self.pose[1]) > 0.05) {

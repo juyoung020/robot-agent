@@ -40,6 +40,20 @@ pub unsafe extern "C" fn mr_tick(r: *mut Robot, proprio: *const f32, n: usize, a
     }
 }
 
+/// 이번 스텝의 정답(GT) 자세를 넣는다(map 틀: x, y, yaw[rad]). 다음 `mr_tick` 한 번에서 base_qvel 적분 대신 쓰여 자세·이동 거리·궤적이
+/// 정답을 따른다. 시뮬 GT 모드(`SGRT_POSE=gt`)에서 매 스텝 `mr_tick` 앞에 부른다. 반환 0, 인자 이상(NaN·널) -2.
+///
+/// # Safety
+/// `r` 는 `mr_new` 가 준 것.
+#[no_mangle]
+pub unsafe extern "C" fn mr_set_gt_pose(r: *mut Robot, x: f64, y: f64, yaw: f64) -> c_int {
+    if r.is_null() || !x.is_finite() || !y.is_finite() || !yaw.is_finite() {
+        return -2;
+    }
+    (*r).set_gt_pose([x, y, yaw]);
+    0
+}
+
 /// 도구 호출 시작(`args` = 도구 인자 JSON, UTF-8). 반환: 0 움직이기 시작, 1 바로 끝남(읽기·오류, 결과 준비), -2 인자 이상.
 ///
 /// # Safety
