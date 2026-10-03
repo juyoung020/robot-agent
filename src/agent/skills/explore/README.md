@@ -125,7 +125,7 @@ LLM go_to 의 timeout 대부분은 v2 판의 R5 되풀이(15 번)와 지도가 �
 
 ```bash
 cd src/agent/skills/explore && cargo build --release           # explore, decisions-agg (move_robot·planner llm.rs 경로 의존)
-(cd ../../tools/move_robot && cargo build --release && cargo test --release)   # libmove_robot.so, 시험 26 개
+(cd ../../tools/move_robot && cargo build --release && cargo test --release)   # libmove_robot.so, 시험 29 개
 set -a; . ~/.config/behavior-2026/kau.env; set +a              # 키는 환경변수로만
 # 가짜 집(정답 바닥 + 카메라 흉내), Isaac Sim 없이 몇 분
 (cd ../../../behavior-2026/src/sim/explore && python gt_trav.py --task bringing_water && python gt_trav.py --task turning_on_radio)

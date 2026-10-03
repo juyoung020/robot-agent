@@ -63,7 +63,7 @@ LLM 이 골라 부르는 도구를 둔다. 설계는 [`../plan.md`](../plan.md) 
 | 그리퍼 | 1 초에 끝까지 (비율 1.0/s) |
 | 베이스 | 0.3 m/s, 35 °/s, 가속 0.6 m/s²·90 °/s², 한 번에 축마다 2 m·180° 까지 |
 | 막힘 판정 | 관절: 지령과 실제 차이 20° 넘게 0.2 s → 멈추고 그 자리 유지 / 보간 끝난 뒤 정지 0.27 s. 베이스: 지령의 20 % 미만으로 1 s |
-| 도착 허용 | 관절 1.5°, 그리퍼 0.05, 베이스 2 cm·2° |
+| 도착 허용 | 관절 1.5°, 그리퍼 0.05, 베이스 1 cm·1° |
 | 시간 초과 | 관절: 보간 + 1.5 s, 베이스: 예상 시간 × 1.5 + 3 s |
 
 그리퍼가 닫다가 막히면(물체를 쥠) 지령은 그대로 둔다(계속 쥔다). 팔이 막히면 측정 위치로 지령을 바꿔 더 밀지 않는다.
@@ -85,16 +85,16 @@ LLM (Qwen3.5-9B, raw tool loop) ── tool_call ──▶ move_robot::link::run
 
 ```bash
 cd src/agent/tools/move_robot
-cargo test --release                      # 단위 시험 26개 (Isaac Sim 없이)
+cargo test --release                      # 단위 시험 29개 (Isaac Sim 없이)
 cargo build --release --features llm      # libmove_robot.so + move-robot 명령
 ./target/release/move-robot schema
 ./target/release/move-robot mock '{"part":"left_arm","mode":"delta","values":[0,20,0,-30,0,0,0]}'   # 가짜 로봇
 # 시뮬: 평가기 안에서 도구 호출을 받는다 (behavior-2026)
-python src/behavior-2026/src/sim/move_robot/run_eval_move.py --listen 127.0.0.1:8771 -- --task-name turning_on_radio --max-steps 6000 --headless
+python ../../../behavior-2026/src/sim/move_robot/run_eval_move.py --listen 127.0.0.1:8771 -- --task-name turning_on_radio --max-steps 6000 --headless
 ./target/release/move-robot call '{"part":"base","mode":"delta","values":[0.3,0,0]}'
 set -a; . ~/.config/behavior-2026/kau.env; set +a   # 키는 환경변수로만
 ./target/release/move-robot llm "오른쪽 그리퍼를 반쯤 닫고 앞으로 50cm 가" [--mock]
-python3 src/behavior-2026/src/sim/move_robot/test_move_robot_sim.py   # 시뮬 접착부 시험 (Isaac Sim 없이)
+python3 ../../../behavior-2026/src/sim/move_robot/test_move_robot_sim.py   # 시뮬 접착부 시험 (Isaac Sim 없이)
 ```
 
 ## 2026-10-03 변경: 탐사용 베이스 모드·지도 관측·안전 정지 (스킬 [`explore`](../skills/explore/))
