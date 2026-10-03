@@ -25,13 +25,14 @@ def fix(m):
 t = re.sub(r'<mesh filename="([^"]+\.stl)"(?:\s+scale="([^"]*)")?\s*/>', fix, t)
 open(p, "w").write(t)
 PY
-# STL 은 색이 없어 로봇이 전부 하얗게 나온다 → 링크별 색을 URDF material 로 준다(뷰어 색과 같게: 차체 연한 회청, 바퀴 검정, 팔 공식 0.2 회색)
+# STL 은 색이 없어 로봇이 전부 하얗게 나온다 → 링크별 색을 URDF material 로 준다(공식 색: 차체 limo_base.dae 주색 0.9804 흰색, 바퀴 limo_wheel.dae 0.2, 팔 ROBOTIS 0.2).
+#   차체의 검정·표시등 면은 recolor_usd.py 가 DAE 면 색을 읽어 GeomSubset 으로 따로 칠한다.
 "$HOME/miniconda3/envs/behavior/bin/python" - "$W" <<'PY'
 import re, sys, os
 p = os.path.join(sys.argv[1], "limo_omx_source.urdf"); t = open(p).read()
 def color(name):
-    if name == "base_link": return (0.76, 0.79, 0.84)
-    if name.endswith("wheel_link"): return (0.06, 0.06, 0.06)
+    if name == "base_link": return (0.9804, 0.9804, 0.9804)
+    if name.endswith("wheel_link"): return (0.2, 0.2, 0.2)
     if name.startswith("omx_"): return (0.2, 0.2, 0.2)
     return None
 def link(m):
@@ -63,7 +64,7 @@ source ~/miniconda3/etc/profile.d/conda.sh; conda activate behavior
 export OMNI_KIT_ACCEPT_EULA=YES
 python "$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/OmniGibson/omnigibson/examples/robots/import_custom_robot.py" --config "$W/limo_omx_source_config.yaml"
 
-python3 "$HERE/recolor_usd.py" "$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/datasets/omnigibson-robot-assets/objects/robot/limo_omx/usd/limo_omx.usda"
+python "$HERE/recolor_usd.py" "$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/datasets/omnigibson-robot-assets/objects/robot/limo_omx/usd/limo_omx.usda"
 mkdir -p "$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/datasets/omnigibson-robot-assets/models/limo_omx"
 cp "$HERE/limo_omx.yaml" "$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/datasets/omnigibson-robot-assets/models/limo_omx/limo_omx.yaml"
 A=$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/datasets/omnigibson-robot-assets
