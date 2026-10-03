@@ -86,7 +86,7 @@ LLM (Qwen3.5-9B, raw tool loop) ── tool_call ──▶ move_robot::link::run
 - C ABI(`move_robot/include/move_robot.h`, `src/ffi.rs`): `mr_new`, `mr_free`, `mr_tick`(0 대기 / 1 움직이는 중 / 2 이번에 끝남 / -1 proprio 이상 / -2 인자 이상), `mr_command`(0 시작 / 1 바로 끝남 / -2),
   `mr_busy`, `mr_reset`, `mr_take_result`(쓴 길이 / 0 없음 / -필요 길이), `mr_tool_definition`, 지도용 `mr_set_map`·`mr_set_reference`·`mr_set_contacts`·`mr_overlay_json`,
   `mr_set_gt_pose(r, x, y, yaw)`(map 틀 정답 자세, rad. 다음 `mr_tick` 한 번에서 base_qvel 적분 대신 지도·go_to·probe 자세와 이동 거리에 쓰임, 0 / -2).
-  `SGRT_POSE=gt` 일 때 behavior-2026 `src/sim/move_robot/move_robot_sim.py`·`src/sim/explore/run_explore.py` 가 매 스텝 `mr_tick` 앞에 부른다. 베이스 delta 의 `state` 는 그래도 base_qvel 적분.
+  `SGRT_POSE=gt` 일 때 behavior-2026 `src/sim/move_robot/move_robot_sim.py`·`src/sim/explore/run_explore.py` 가 매 스텝 `mr_tick` 앞에 부른다. 베이스 delta 의 도착 판정·`state`·`error` 는 그래도 base_qvel 적분 — **의도**다. 실제 로봇에는 정답 자세가 없어 delta 를 오도메트리로 판정하므로, 시뮬도 실제와 같게 둔다([계획](../../../docs/plan.md) "시뮬은 실제 로봇과 같은 방식으로 돈다").
 - 에이전트 쪽 의존성: `serde_json` 하나. `--features llm` 일 때만 기존 계획기 `llm.rs`(KAU HTTPS, curl)를 경로 의존성으로 쓴다.
 
 ### 쓰는 법
