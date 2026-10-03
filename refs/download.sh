@@ -21,6 +21,12 @@ done <<'LIST'
 2512.10071 BEHAVIOR25-2nd-Comet
 2607.06256 BEHAVIOR25-3rd-SimpleAI
 2501.14147 HAMMER
+2501.09747 FAST
+2505.23705 knowledge-insulating
+2410.00425 ManiSkill3
+2502.08844 MuJoCo-Playground
+2511.04831 IsaacLab
+2601.22074 mjlab
 LIST
 echo "논문 완료: $(ls papers/*.pdf | wc -l)개"
 
@@ -36,6 +42,10 @@ for repo in \
   robot-learning-freiburg/MoMa-LLM \
   IliaLarchenko/behavior-1k-solution \
   mli0603/openpi-comet \
+  google-deepmind/mujoco_warp \
+  newton-physics/newton \
+  haosulab/ManiSkill \
+  shacklettbp/madrona \
   neoul-ro/dynamic-object-mapping-benchmark; do
   dir="code/${repo#*/}"
   [ -d "$dir" ] && continue
