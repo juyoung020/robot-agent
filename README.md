@@ -16,6 +16,19 @@
 
 <sub>로봇의 물체 기억(Spark-DSG) 뷰어 — 2D 지도 위에 물체를 세그먼트 점구름으로 등록하고, 누르면 위치·상태와 그 물체를 본 순간의 RGB·깊이 조각을 보여 준다 (BEHAVIOR 시뮬레이션)</sub>
 
+<br><br>
+
+<table>
+<tr>
+<td align="center" width="50%"><img src="docs/assets/behavior_sim.gif" width="380" alt="BEHAVIOR 시뮬레이션"></td>
+<td align="center" width="50%"><img src="docs/assets/limo_manipulator.png" width="380" alt="리모 + 매니퓰레이터"></td>
+</tr>
+<tr>
+<td align="center"><sub>BEHAVIOR Challenge 2026 시뮬레이터(OmniGibson)에서 로봇이 물체를 찾아 집는 모습 (6배속)</sub></td>
+<td align="center"><sub>리모 + 매니퓰레이터 URDF 를 RViz 에 띄운 모습 (TF 프레임 표시)</sub></td>
+</tr>
+</table>
+
 </div>
 
 <br>
