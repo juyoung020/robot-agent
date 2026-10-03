@@ -1,12 +1,12 @@
 """가져온 limo_omx.usda 의 재질을 링크별 색으로 바꾼다(임포터는 STL 색이 없어 모두 흰색(1,1,1)으로 만든다).
-차체 연한 회청(뷰어와 같게), 바퀴 검정, 팔 짙은 회색, 나머지는 그대로. 사용: python recolor_usd.py <limo_omx.usda>
+차체 연한 회청(뷰어와 같게), 바퀴 검정, 팔 짙은 회색 0.2(공식 ROBOTIS open_manipulator mujoco/omx/omx.xml 의 rgba), 나머지는 그대로. 사용: python recolor_usd.py <limo_omx.usda>
 """
 import re
 import sys
 
 p = sys.argv[1]
 lines = open(p).read().split("\n")
-COLORS = {"body": (0.76, 0.79, 0.84), "wheel": (0.06, 0.06, 0.06), "arm": (0.16, 0.17, 0.19)}
+COLORS = {"body": (0.76, 0.79, 0.84), "wheel": (0.06, 0.06, 0.06), "arm": (0.2, 0.2, 0.2)}
 
 
 def kind(mesh):

@@ -25,14 +25,14 @@ def fix(m):
 t = re.sub(r'<mesh filename="([^"]+\.stl)"(?:\s+scale="([^"]*)")?\s*/>', fix, t)
 open(p, "w").write(t)
 PY
-# STL 은 색이 없어 로봇이 전부 하얗게 나온다 → 링크별 색을 URDF material 로 준다(뷰어 색과 같게: 차체 연한 회청, 바퀴 검정, 팔 짙은 회색)
+# STL 은 색이 없어 로봇이 전부 하얗게 나온다 → 링크별 색을 URDF material 로 준다(뷰어 색과 같게: 차체 연한 회청, 바퀴 검정, 팔 공식 0.2 회색)
 "$HOME/miniconda3/envs/behavior/bin/python" - "$W" <<'PY'
 import re, sys, os
 p = os.path.join(sys.argv[1], "limo_omx_source.urdf"); t = open(p).read()
 def color(name):
     if name == "base_link": return (0.76, 0.79, 0.84)
     if name.endswith("wheel_link"): return (0.06, 0.06, 0.06)
-    if name.startswith("omx_"): return (0.16, 0.17, 0.19)
+    if name.startswith("omx_"): return (0.2, 0.2, 0.2)
     return None
 def link(m):
     name, body = m.group(1), m.group(2)
