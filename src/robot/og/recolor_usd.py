@@ -9,17 +9,22 @@ lines = open(p).read().split("\n")
 COLORS = {"body": (0.76, 0.79, 0.84), "wheel": (0.06, 0.06, 0.06), "arm": (0.16, 0.17, 0.19)}
 
 
-def kind(link):
-    if link == "base_link":
+def kind(mesh):
+    """시각 메시 이름(임포트 때 'm<해시>_<파일명>')으로 색 종류를 정한다."""
+    if "limo_base" in mesh:
         return "body"
-    if link.endswith("wheel_link"):
+    if "limo_wheel" in mesh:
         return "wheel"
-    if link.startswith("omx_link") or link == "omx_end_effector_link":
+    if "follower_" in mesh:
         return "arm"
     return None
 
 
 # 1) 기본 재질 블록을 찾아 색별 사본을 만든다
+if any('def Material "LimoMat_' in l for l in lines):
+    copies_exist = True
+else:
+    copies_exist = False
 start = next(i for i, l in enumerate(lines) if l.strip() == 'def Material "DefaultMaterial"')
 indent = len(lines[start]) - len(lines[start].lstrip())
 end = start + 1
@@ -32,15 +37,18 @@ for k, c in COLORS.items():
     b = [re.sub(r"(inputs:diffuse_color_constant = )\([^)]*\)", r"\1(%g, %g, %g)" % c, l) for l in b]
     b = [l.replace("/DefaultMaterial", "/LimoMat_%s" % k) for l in b]
     copies += b
-lines[end:end] = copies
+if not copies_exist:
+    lines[end:end] = copies
 
-# 2) 링크별로 바인딩을 바꾼다
+# 2) 메시별로 바인딩을 바꾼다
 cur = None
+n = 0
 for i, l in enumerate(lines):
-    m = re.match(r'\s*def Xform "([^"]+)"', l)
-    if m and m.group(1) not in ("visuals", "collisions", "Looks"):
+    m = re.match(r'\s*def Mesh "([^"]+)"', l)
+    if m:
         cur = m.group(1)
     if "rel material:binding" in l and cur and kind(cur):
         lines[i] = re.sub(r"</limo_omx/Looks/[^>]*>", "</limo_omx/Looks/LimoMat_%s>" % kind(cur), l)
+        n += 1
 open(p, "w").write("\n".join(lines))
-print("[recolor] 완료")
+print("[recolor] 바인딩 %d개 변경" % n)
