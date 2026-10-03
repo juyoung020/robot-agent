@@ -97,6 +97,18 @@ int     sm_snap_map(const sm_snapshot_t*, sm_grid* out);
 #define SM_WALL_STATE_LEN 56
 int     sm_snap_wall_state(const sm_snapshot_t*, const double pose[3], float out[SM_WALL_STATE_LEN]);
 int     sm_snap_wall_segments(const sm_snapshot_t*, double* out /* 선분당 ax ay bx by (map, m) */, int cap_segments);   /* 개수(cap 보다 클 수 있음) */
+
+/* 실시간 스트림(뷰어 sgview): 로봇 자세·지도 변화분을 소켓으로 바로 보낸다 — 파일을 거치지 않는다. 설계는 stream.hpp.
+   스텝 스레드(sm_push_*)는 락·시스템 호출 없이 링 버퍼에만 쓰고(자세 ≈ 수십 ns, 지도 영역 10 KB ≈ 0.5 µs), 별도 스레드가 비차단으로 보낸다.
+   host_port = "127.0.0.1:9001". 연결이 끊겨도 스텝은 막히지 않고 다시 붙으면 전체 상태를 보낸다. 0 성공. */
+int     sm_stream_start(sm_ctx*, const char* host_port);
+void    sm_stream_stop(sm_ctx*);
+/* 로봇 관절·상태 벡터를 스트림으로(스텝 스레드, 복사만). sm_push_proprio 가 자동으로도 보낸다. 뷰어는 URDF 를 올릴 때 이 값으로 로봇을 움직인다 */
+int     sm_stream_joints(sm_ctx*, double stamp, const float* q, int n);
+/* 물체·방·그래프·최근 사건 요약(view.json 과 같은 내용)을 스트림으로(파일 안 씀). 비동기 스레드에서 5~10 Hz 로 부르는 용도 */
+int     sm_stream_view(sm_ctx*);
+typedef struct { uint64_t frames_in, dropped, frames_sent, bytes_sent, reconnects; int32_t connected; float view_build_us; } sm_stream_stats;
+int     sm_stream_get_stats(sm_ctx*, sm_stream_stats* out);
 double  sm_snap_reachable(const sm_snapshot_t*, const double from[2], const double to[2]);  /* 경로 길이 m, < 0 = 못 감 */
 
 #endif /* SM_API_H */

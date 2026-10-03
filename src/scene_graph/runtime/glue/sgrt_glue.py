@@ -117,6 +117,9 @@ class SceneMemory:
         self.use_gt = os.environ.get("SGRT_GT_POSE", "1") != "0" and self.has_pose
         self.gt_every = os.environ.get("SGRT_GT_EVERY", "0") == "1"
         self.kf_every = kf_every
+        # SGRT_MAP_EVERY=n: the occupancy map is updated every n steps (depth only, ~0.4 ms) instead of only on detection keyframes (kf_every).
+        # 0/unset = keyframes only (old behaviour). Detection, the object map and embeddings stay on keyframes.
+        self.map_every = int(os.environ.get("SGRT_MAP_EVERY", "0"))
         self.gt_log = None
         if os.environ.get("SGRT_GT_LOG"):
             self.gt_log_path = os.environ["SGRT_GT_LOG"]
@@ -143,6 +146,8 @@ class SceneMemory:
             # reading the sim pose costs ~0.6 ms (python/torch); scenemap needs it only at image stamps (keyframe step - lag)
             # and for the keyframe step itself -> read on those steps unless SGRT_GT_EVERY=1
             kf, lag = self.kf_every, int(os.environ.get("SGRT_IMAGE_LAG", "1"))
+            if self.map_every > 0:
+                kf = min(kf, self.map_every)   # the pose is needed at every map step's image stamp too
             need = self.gt_every or kf <= 1 or (self.t % kf) in {0, (-lag) % kf} or self.t < 2
             if self.robot is not None and need:
                 pos, q = self.robot.get_position_orientation()
@@ -163,6 +168,20 @@ class SceneMemory:
         if want and not (kr in obs and kd in obs) and not getattr(self, "_warned", False):
             self._warned = True
             print(f"[sgrt] no head RGB-D in obs ({kr}, {kd}); keys: {sorted(obs)} — use RGBDFullResWrapper", flush=True)
+        want_map = (not want) and self.map_every > 0 and (self.t % self.map_every) == 0 and kd in obs
+        if want_map:   # depth only: no RGB, no detection
+            depth = obs[kd]
+            depth = depth[0] if depth.ndim == 3 else depth
+            h, w = int(depth.shape[0]), int(depth.shape[1])
+            if hasattr(depth, "is_cuda") and depth.is_cuda:
+                buf = getattr(self, "_dbuf", None)
+                if buf is None or tuple(buf.shape) != tuple(depth.shape):
+                    import torch
+                    self._dbuf = buf = torch.empty(tuple(depth.shape), dtype=torch.float32, pin_memory=True)
+                buf.copy_(depth)
+                depth = buf.numpy()
+            else:
+                depth = np.ascontiguousarray((depth.detach().cpu().numpy() if hasattr(depth, "detach") else np.asarray(depth)), np.float32)
         if want and kr in obs and kd in obs:
             rgb, depth = obs[kr], obs[kd]
             rgb = rgb[0] if rgb.ndim == 4 else rgb

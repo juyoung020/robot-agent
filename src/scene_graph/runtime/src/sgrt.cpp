@@ -61,6 +61,10 @@ struct sgrt {
   std::condition_variable scv;
   bool save_req = false, save_quit = false, save_busy = false;
   int32_t n_save_skipped = 0;
+  // 실시간 스트림(SGRT_STREAM=host:port): 자세·지도 변화분은 sm_push_* 안에서 링에 바로 들어가고, 물체·방·그래프 요약은 이 스레드가
+  // SGRT_STREAM_HZ(기본 5)로 만든다 — 스텝 스레드는 아무것도 기다리지 않는다. 파일 저장(위 saver)과 별개.
+  std::thread viewer;
+  std::atomic<bool> view_quit{false};
   sgrt_clip::ClipMem clip;          // 물체 영상 임베딩(SGRT_CLIP 이면 켜짐)
   std::vector<std::string> name_buf;  // sgrt_object_names 문자열
 };
@@ -215,6 +219,20 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
         s->save_busy = false;
       }
     });
+  if (const char* st = std::getenv("SGRT_STREAM")) {
+    if (sm_stream_start(s->sm, st) == 0) {
+      double hz = 60.0;
+      if (const char* h = std::getenv("SGRT_STREAM_HZ")) hz = std::clamp(std::atof(h), 0.5, 240.0);
+      const auto period = std::chrono::microseconds(int64_t(1e6 / hz));
+      s->viewer = std::thread([s, period] {
+        while (!s->view_quit.load(std::memory_order_relaxed)) {
+          sm_stream_view(s->sm);
+          std::this_thread::sleep_for(period);
+        }
+      });
+      std::fprintf(stderr, "[sgrt] streaming to %s (view %.1f Hz)\n", st, 1e6 / double(period.count()));
+    }
+  }
   s->clip.init(s->out_dir);
   if (const char* rp = std::getenv("SGRT_RECORD")) {
     s->rec = std::fopen(rp, "wb");
@@ -230,6 +248,14 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
 
 void sgrt_destroy(sgrt* s) {
   if (!s) return;
+  if (s->viewer.joinable()) { s->view_quit = true; s->viewer.join(); }
+  if (s->sm) {
+    sm_stream_stats ss{};
+    if (sm_stream_get_stats(s->sm, &ss) == 0 && (ss.frames_in || ss.reconnects))
+      std::fprintf(stderr, "[sgrt] stream: %llu frames in, %llu dropped, %llu bytes sent, %llu connects, summary build %.0f us\n", (unsigned long long)ss.frames_in,
+                   (unsigned long long)ss.dropped, (unsigned long long)ss.bytes_sent, (unsigned long long)ss.reconnects, ss.view_build_us);
+    sm_stream_stop(s->sm);
+  }
   if (s->saver.joinable()) {
     {
       std::lock_guard<std::mutex> lk(s->smu);
@@ -338,6 +364,18 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
     if (d) s->clip.keyframe(im_stamp, rgb, rgb_on_device, row_stride, pix_stride, w, h, d, s->sm);   // 새·좋아진 물체만, 비동기
     s->n_kf++;
     s->n_det = d ? d->n : 0;
+  }
+  else if (rc == 0 && !rgb && depth_m && w > 0 && h > 0) {
+    // 지도 전용 스텝(SGRT_MAP_EVERY): 깊이만 있고 검출 키프레임이 아님 — slam2d 지도만 갱신(스캔 ≈ 0.35 ms + 격자 ≈ 0.06 ms).
+    // 물체 지도·검출·임베딩은 그대로 키프레임(kf_every)에서만. 지도(와 스트림 지도 영역)가 키프레임 주기가 아니라 이 주기로 갱신된다.
+    sm_image si{};
+    si.stamp = im_stamp;
+    si.cam = 0;
+    si.w = w;
+    si.h = h;
+    si.depth_m = depth_m;
+    si.fx = fx; si.fy = fy; si.cx = cx; si.cy = cy;
+    rc = sm_push_image(s->sm, &si, nullptr);
   }
   s->clip.poll();
   s->step++;

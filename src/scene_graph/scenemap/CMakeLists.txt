@@ -8,7 +8,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O2")
 
-add_library(scenemap STATIC src/scan.cpp src/grid.cpp src/slam2d.cpp src/fk.cpp src/capi.cpp src/objmap.cpp src/bestview.cpp src/cloud.cpp src/png.cpp src/walls.cpp ../da/src/merge.cpp
+add_library(scenemap STATIC src/scan.cpp src/grid.cpp src/slam2d.cpp src/fk.cpp src/capi.cpp src/objmap.cpp src/bestview.cpp src/cloud.cpp src/png.cpp src/walls.cpp src/stream.cpp ../da/src/merge.cpp
             src/dsg_save.cpp src/rooms.cpp src/sgraph.cpp)
 target_include_directories(scenemap PUBLIC include ../da/include)
 find_package(ZLIB REQUIRED)   # best view PNG(deflate·crc32)
@@ -102,3 +102,10 @@ add_test(NAME walls COMMAND test_walls ${WALLS_REF_CELLS} ${WALLS_REF_JSON})
 add_executable(test_da_merge ../da/tests/test_merge.cpp)
 target_link_libraries(test_da_merge scenemap)
 add_test(NAME da_merge COMMAND test_da_merge)
+
+add_executable(test_stream tests/test_stream.cpp)
+target_link_libraries(test_stream scenemap pthread)
+add_test(NAME stream COMMAND test_stream)
+
+add_executable(stream_sim tools/stream_sim.cpp)
+target_link_libraries(stream_sim scenemap pthread)

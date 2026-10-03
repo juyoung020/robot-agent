@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "scenemap.h"
+#include "scenemap/stream.hpp"
 #include "scenemap/walls.hpp"
 #include "scenemap/bestview.hpp"
 #include "scenemap/dsg_save.hpp"
@@ -120,6 +121,13 @@ struct sm_ctx {
   std::shared_ptr<const std::vector<scenemap::WallSeg>> wallsp;
   int walls_x0 = 0, walls_y0 = 0;
   std::vector<scenemap::WallRect> walls_rects;
+  // 실시간 스트림(stream.hpp): 마지막으로 보낸 격자 모양(바뀌면 전체), 영역 복사 버퍼
+  scenemap::Streamer stream;
+  int st_w = 0, st_h = 0, st_x0 = 0, st_y0 = 0;
+  std::vector<int8_t> st_scratch;
+  std::string st_last_view;                 // 마지막으로 보낸 요약(맨 앞 stamp·pose 제외) — 같으면 안 보냄
+  TClock::time_point st_last_view_t{};
+  std::atomic<double> st_view_us{0};         // 요약 한 번 만드는 시간(µs, 비동기 스레드)
   uint64_t walls_grid_ver = ~0ull;
   // 단계별 시간(timing.hpp). 쓰기는 입력·스냅숏 스레드, 읽기는 sm_get_timing — 작은 잠금 하나
   std::mutex tmu;
@@ -211,6 +219,30 @@ bool gtAt(const sm_ctx* c, double stamp, Pose2* out, double max_age = 0.1) {
   return false;
 }
 
+// 격자에서 바뀐 영역만 스트림으로(잠금 안, 스텝 스레드). 모양·원점이 바뀌면 전체. 보내지 못하면(링이 가득 참) 다음에 전체를 다시 보낸다
+void streamMap(sm_ctx* c) {
+  if (!c->stream.running()) return;
+  OccGrid& gr = c->slam.gridMut();
+  const int w = gr.width(), h = gr.height();
+  if (w <= 0 || h <= 0) return;
+  int d0, d1, d2, d3;
+  const bool dirty = gr.takeDirty(&d0, &d1, &d2, &d3, 3);
+  const bool reshaped = w != c->st_w || h != c->st_h || gr.x0() != c->st_x0 || gr.y0() != c->st_y0;
+  int lx0, ly0, lx1, ly1;
+  if (reshaped) { lx0 = 0; ly0 = 0; lx1 = w - 1; ly1 = h - 1; }
+  else if (dirty) {
+    lx0 = std::max(0, d0 - gr.x0()); ly0 = std::max(0, d1 - gr.y0());
+    lx1 = std::min(w - 1, d2 - gr.x0()); ly1 = std::min(h - 1, d3 - gr.y0());
+    if (lx0 > lx1 || ly0 > ly1) return;
+  } else return;
+  c->st_scratch.resize(size_t(lx1 - lx0 + 1) * size_t(ly1 - ly0 + 1));
+  gr.exportRect(lx0, ly0, lx1, ly1, c->st_scratch.data());
+  const bool ok = c->stream.pushMapRect(w, h, double(gr.res()), gr.x0() * double(gr.res()), gr.y0() * double(gr.res()), lx0, ly0, lx1, ly1,
+                                        c->st_scratch.data());
+  if (ok) { c->st_w = w; c->st_h = h; c->st_x0 = gr.x0(); c->st_y0 = gr.y0(); }
+  else c->st_w = 0;   // 놓쳤다: 다음에 전체
+}
+
 void integrate(sm_ctx* c, const Prop& p) {
   if (c->have_used) {
     const double dt = p.stamp - c->last_used.stamp;
@@ -229,6 +261,7 @@ void integrate(sm_ctx* c, const Prop& p) {
   const Pose2 P = c->slam.pose();
   toMap(P, eef, eefm);
   c->om.updateHands(p.stamp, eefm, grip, P.th);
+  if (c->pose_mode != SM_POSE_GT && c->stream.running()) c->stream.pushPose(p.stamp, P.x, P.y, P.th);
   c->addT(kStIntegrate, usBetween(t0, TClock::now()));
 }
 
@@ -369,6 +402,7 @@ int sm_push_proprio(sm_ctx* c, const sm_proprio* p) {
   e.stamp = p->stamp;
   std::memcpy(e.q, p->proprio, sizeof(e.q));
   c->pending.push_back(e);
+  if (c->stream.running()) c->stream.pushJoints(p->stamp, p->proprio, p->n_proprio);   // 관절·상태 벡터 그대로(뷰어가 URDF 로 해석)
   // 영상이 오지 않아도 쌓이지 않게: 최신보다 0.5 s 넘게 오래된 것은 적분해 둔다(영상 stamp 는 최신 − 1 스텝)
   while (c->pending.size() > 1 && c->pending.front().stamp < p->stamp - 0.5) {
     integrate(c, c->pending.front());
@@ -566,6 +600,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
     else c->slam.keyframe(dv, body, nullptr, &c->tm);
   }
   poseDiag(c, im->stamp);
+  streamMap(c);
   if (!dets) { c->last_assoc.clear(); c->last_view_upd.clear(); c->last_view_q.clear(); updateGraph(c, im->stamp, false); return 0; }   // 검출 없음: 지도(slam2d)만
   // 물체 지도: map ← 카메라 = slam 자세 ∘ 순기구학 머리 카메라(objmap_eval 과 같은 계산)
   const Pose2 P = c->slam.pose();
@@ -1213,7 +1248,10 @@ int sm_push_pose(sm_ctx* c, const sm_pose2* p) {
   c->gtq.push_back(*p);
   // The robot trajectory (AGENTS layer) follows the GT pose directly: every pushed pose goes through the same keyframe thresholds
   // (GraphParams agent_xy / agent_yaw / agent_s), with no image or proprio needed in between.
-  if (c->pose_mode == SM_POSE_GT) c->graph.updateAgent(p->stamp, Pose2{p->x, p->y, p->yaw});
+  if (c->pose_mode == SM_POSE_GT) {
+    c->graph.updateAgent(p->stamp, Pose2{p->x, p->y, p->yaw});
+    if (c->stream.running()) c->stream.pushPose(p->stamp, p->x, p->y, p->yaw);
+  }
   // 적분·짝짓기에 쓸 만큼만(가장 오래 기다리는 proprio·영상보다 2 s 앞까지)
   const double keep = (c->have_used ? c->last_used.stamp : p->stamp) - 2.0;
   while (c->gtq.size() > 2 && c->gtq[1].stamp < keep) c->gtq.pop_front();
@@ -1359,6 +1397,62 @@ int sm_set_object_meta(sm_ctx* c, uint32_t id, const char* json) {
   std::lock_guard<std::mutex> g(c->mu);
   if (!json || !*json) c->obj_meta.erase(id);
   else c->obj_meta[id] = json;
+  return 0;
+}
+
+// ---- 실시간 스트림 ----
+int sm_stream_joints(sm_ctx* c, double stamp, const float* q, int n) { return c && q && c->stream.running() && c->stream.pushJoints(stamp, q, n) ? 0 : -1; }
+int sm_stream_start(sm_ctx* c, const char* host_port) { return c && host_port && c->stream.start(host_port) ? 0 : -1; }
+void sm_stream_stop(sm_ctx* c) { if (c) c->stream.stop(); }
+
+int sm_stream_view(sm_ctx* c) {
+  if (!c || !c->stream.running()) return -1;
+  const auto t_start = TClock::now();
+  sm_snapshot_t* s = nullptr;
+  if (sm_snapshot(c, &s) != 0) return -1;
+  SaveInput in;
+  in.stamp = s->pose.stamp;
+  in.pose[0] = s->pose.x; in.pose[1] = s->pose.y; in.pose[2] = s->pose.yaw;
+  in.objs = s->objs.data();
+  in.n_objs = int(s->objs.size());
+  in.grid_res = s->res; in.grid_ox = s->ox; in.grid_oy = s->oy; in.grid_w = s->w; in.grid_h = s->h;
+  in.views = s->views;
+  in.movable = s->movable;
+  in.clouds = s->clouds;
+  in.voxel = s->voxel;
+  in.rooms = s->rseg;
+  in.room_names = s->rnames;
+  in.graph = s->graph;
+  in.stream_lite = true;
+  SaveOut out;
+  out.png_ok.assign(s->objs.size(), 0);
+  out.ply_ok.assign(s->objs.size(), 0);
+  {
+    std::lock_guard<std::mutex> g(c->mu);
+    const auto& ev = c->om.events();
+    in.events.assign(ev.end() - std::min<size_t>(ev.size(), 50), ev.end());
+    for (size_t i = 0; i < s->objs.size(); ++i) {   // 파일이 이미 있는 것(지난 저장 기준)만 이미지·점 경로를 가리킨다
+      out.png_ok[i] = c->saved_ver.count(s->objs[i].id) && s->views[i] ? 1 : 0;
+      out.ply_ok[i] = c->saved_cloud_ver.count(s->objs[i].id) ? 1 : 0;
+    }
+  }
+  const std::string json = sceneViewJson(in, out);
+  sm_snapshot_release(s);
+  // 바뀐 게 없으면 보내지 않는다(stamp·pose 는 맨 앞이라 제외하고 비교 — 자세는 pose 프레임이 따로). 그래도 1 s 에 한 번은 보낸다(stamp 갱신·새로 붙은 뷰어)
+  const size_t k = json.find("\"grid\":");
+  const std::string tail = k == std::string::npos ? json : json.substr(k);
+  const auto now = TClock::now();
+  if (tail == c->st_last_view && usBetween(c->st_last_view_t, now) < 1000000) return 0;
+  c->st_last_view = tail;
+  c->st_last_view_t = now;
+  c->st_view_us.store(usBetween(t_start, TClock::now()), std::memory_order_relaxed);
+  return c->stream.pushView(json) ? 0 : -1;
+}
+
+int sm_stream_get_stats(sm_ctx* c, sm_stream_stats* o) {
+  if (!c || !o) return -1;
+  const StreamStats t = c->stream.stats();
+  *o = sm_stream_stats{t.frames_in, t.dropped, t.frames_sent, t.bytes_sent, t.reconnects, t.connected ? 1 : 0, float(c->st_view_us.load())};
   return 0;
 }
 

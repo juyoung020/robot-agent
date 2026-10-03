@@ -12,9 +12,9 @@
 
 <br><br>
 
-<img src="docs/assets/scene_graph_merged.png" width="760" alt="물체 기억 뷰어">
+<img src="docs/assets/scene_graph_live.gif" width="760" alt="실시간 물체 기억 뷰어 (3배속)">
 
-<sub>로봇의 물체 기억(Spark-DSG를 수정해 사용 — 뷰어는 물체·방 2층, 물체 간 전치사 관계·building·mesh 제거, 장소는 백엔드에서만 계산) 뷰어 — 2D 지도 위에 물체를 세그먼트 점구름으로 등록하고, 누르면 위치·상태와 그 물체를 본 순간의 RGB·깊이 조각을 보여 준다. 파란 선은 로봇이 지나간 길 (BEHAVIOR 시뮬레이션)</sub>
+<sub>로봇의 물체 기억(Spark-DSG를 수정해 사용 — 뷰어는 물체·방 2층, 장소는 백엔드에서만 계산) 실시간 뷰어 — 시뮬 `turning_on_radio` 를 돌리는 동안 C++ 가 자세·지도 변화분을 소켓으로 바로 보내(파일 없이, 60 Hz 이상 받아냄) 지도가 채워지고 물체가 등록되고 로봇 궤적(파란 선)이 그려지는 모습(3배속). 누르면 위치·상태와 그 물체를 본 순간의 RGB·깊이 조각을 보여 준다.</sub>
 
 <br><br>
 

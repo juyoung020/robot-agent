@@ -10,6 +10,8 @@
   html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:13px/1.45 system-ui, sans-serif; overflow:hidden; }
   #view { position:absolute; inset:0 340px 0 0; }
   canvas { display:block; }
+  #boot { position:absolute; left:0; top:0; right:340px; bottom:0; display:flex; align-items:center; justify-content:center; pointer-events:none; color:var(--mute); font-size:15px; letter-spacing:.04em; z-index:3; transition:opacity .25s; }
+  #boot.gone { opacity:0; }
   #labels { position:absolute; inset:0 340px 0 0; pointer-events:none; overflow:hidden; }
   .lbl { position:absolute; transform:translate(-50%,-100%); background:rgba(255,255,255,.78); color:#111; padding:0 3px; border-radius:3px; font-size:11px; white-space:nowrap; }
   .lbl.room { font-size:14px; font-weight:600; background:rgba(255,255,255,.9); }
@@ -41,11 +43,13 @@
 </head>
 <body>
 <div id="view"></div>
+<div id="boot">connecting …</div>
 <div id="labels"></div>
 <div id="tip"></div>
 <div id="tools"><button id="b_top">Top view</button><button id="b_fit">Fit</button></div>
 <div id="panel">
   <div id="status">waiting for view.json …</div>
+  <div id="hud" class="mono"></div>
 
   <details open><summary>Display</summary>
     <label class="row"><input type="checkbox" id="c_labels" checked> Labels</label>
@@ -136,6 +140,11 @@ function disposeGroup(g) {
     });
   }
 }
+
+// Async file loads (thumbnails, point clouds) can finish dozens of times within a frame at start-up: rebuild once per frame, not once per file.
+let qGraph = false, qObjects = false;
+function queueGraph() { if (!qGraph) { qGraph = true; requestAnimationFrame(() => { qGraph = false; drawGraph(); }); } }
+function queueObjects() { if (!qObjects) { qObjects = true; requestAnimationFrame(() => { qObjects = false; drawObjects(); }); } }
 
 // ---------------- data ----------------
 let view = null, viewVer = "", mapVer = "";
@@ -248,18 +257,19 @@ function parsePly(buf) {
 async function ensurePoints(o) {
   if (!o.points || !o.points.path) return null;
   const c = plyCache.get(o.id);
-  if (c && c.stamp === o.points.stamp) return c;
+  if (c && c.stamp === o.points.stamp && !(c.failedAt && performance.now() - c.failedAt > 1500)) return c;
   if (c && c.loading === o.points.stamp) return c;
-  const entry = { stamp:o.points.stamp, loading:o.points.stamp, geom:c ? c.geom : null };
-  plyCache.set(o.id, entry);
+  const entry = { stamp:o.points.stamp, loading:o.points.stamp, geom:c ? c.geom : null, failedAt:0 };
+  plyCache.set(o.id, entry); pendingLoads++;
   try {
     const r = await fetch("/file/" + o.points.path + "?v=" + o.points.stamp);
     if (!r.ok) throw 0;
     const g = parsePly(await r.arrayBuffer());
     if (entry.geom) entry.geom.dispose();
     entry.geom = g; delete entry.loading;
-    drawObjects();
-  } catch (e) { entry.loading = null; }
+    queueObjects();
+  } catch (e) { entry.loading = null; entry.failedAt = performance.now(); }
+  pendingLoads--; loadDone();
   return entry;
 }
 
@@ -300,22 +310,26 @@ let graphNodes = [];   // for picking/labels/hover: {id, kind, x, y, z, oid?}
 let trajInfo = null;   // {len, last:[x,y,z]}
 
 // thumbnail with a state-coloured frame, cached per (url, state)
-const thumbTex = new Map();
+const thumbTex = new Map(), lastThumb = new Map();   // lastThumb: newest ready thumbnail per image path
 function thumbFor(o) {
   const url = "/file/" + o.rgbd.rgb + "?v=" + o.last_seen, key = url + "|" + o.state;
+  const base = "/file/" + o.rgbd.rgb + "?";
   let e = thumbTex.get(key);
-  if (e) return e.ready ? e : null;
-  for (const [k, v] of thumbTex) if (k.startsWith("/file/" + o.rgbd.rgb + "?") && k !== key) { if (v.tex) v.tex.dispose(); thumbTex.delete(k); }
-  e = { ready:false }; thumbTex.set(key, e);
+  if (e) return e.ready ? e : (lastThumb.get(base) || null);    // new version still loading: keep the previous picture on screen
+  e = { ready:false }; thumbTex.set(key, e); pendingLoads++;
   const img = new Image();
   img.onload = () => {
     const f = 5, c = document.createElement("canvas"); c.width = img.width + 2 * f; c.height = img.height + 2 * f;
     const g = c.getContext("2d"); g.fillStyle = "#" + new THREE.Color(STATE_COL[o.state] ?? 0xc83cc8).getHexString(); g.fillRect(0, 0, c.width, c.height);
     g.drawImage(img, f, f);
-    e.tex = new THREE.CanvasTexture(c); e.w = c.width; e.h = c.height; e.ready = true; drawGraph();
+    e.tex = new THREE.CanvasTexture(c); e.w = c.width; e.h = c.height; e.ready = true;
+    const prevE = lastThumb.get(base); lastThumb.set(base, e);
+    if (prevE && prevE !== e) { for (const [k, v] of thumbTex) if (v === prevE) thumbTex.delete(k); setTimeout(() => prevE.tex && prevE.tex.dispose(), 500); }   // free the old one after the new one is shown
+    queueGraph(); pendingLoads--; loadDone();
   };
+  img.onerror = () => { pendingLoads--; setTimeout(() => thumbTex.delete(key), 1500); };   // the file may not be written yet: try again later
   img.src = url;
-  return null;
+  return lastThumb.get(base) || null;   // while the new one loads, keep showing the previous picture (returning null here made the thumbnail vanish for a frame)
 }
 
 function drawGraph() {
@@ -384,7 +398,7 @@ function drawGraph() {
       if (!o.rgbd || !objVisible(o)) continue;
       const t = thumbFor(o); if (!t) continue;
       const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map:t.tex }));
-      sp.userData.keepMap = true;
+      sp.userData.keepMap = true; sp.userData.oid = o.id;
       const [rw, rh] = t.w >= t.h ? [size, size * t.h / t.w] : [size * t.w / t.h, size];
       sp.scale.set(rw, rh, 1);
       sp.position.set(o.pos[0], o.pos[1], zOf("object") + 0.12 + rh / 2);
@@ -413,7 +427,7 @@ function drawRobot() {
   gRobot.visible = opt("c_robot");
 }
 
-let wallKey = "", lastWalls = null, wallSegKey = "";
+let wallKey = "", lastWalls = null, wallSegKey = "", wallTextT = 0;
 async function updateWalls() {
   if (!view || !view.pose) return;
   const [x, y, yaw] = view.pose;
@@ -421,8 +435,13 @@ async function updateWalls() {
   if (key === wallKey) return; wallKey = key;
   const r = await fetch(`/api/walls?x=${x}&y=${y}&yaw=${yaw}`);
   if (!r.ok) return;
-  const w = await r.json(); lastWalls = w;
-  const segKey = JSON.stringify(w.segments);
+  showWalls(await r.json());
+}
+function showWalls(w) {
+  if (w.segments === null) w.segments = lastWalls ? lastWalls.segments : [];   // unchanged since the last event
+  lastWalls = w;
+  const [x, y, yaw] = w.pose;
+  const segKey = w.segments.length + "|" + (w.segments.length ? w.segments[0].join(",") + "|" + w.segments[w.segments.length - 1].join(",") : "");
   if (segKey !== wallSegKey) {
   wallSegKey = segKey;
   disposeGroup(gWalls);
@@ -432,8 +451,13 @@ async function updateWalls() {
   }
   gWalls.visible = opt("c_walls"); invalidate();
   const rays = w.state.slice(0, 16).map(v => (v * w.max_range).toFixed(2)).join(" ");
-  $("wstate").innerHTML = `pose (${x.toFixed(2)}, ${y.toFixed(2)}, ${yaw.toFixed(2)}) · ${w.segments.length} wall segments · vector length ${w.state.length}<br>` +
-    `<span class="mono">rays [m], ahead → counter-clockwise:<br>${rays}</span>`;
+  const now = performance.now();
+  if (now - wallTextT > 250) {   // text is for reading: 4 Hz is plenty, and it is updated in place so a selection survives
+    wallTextT = now;
+    if (!$("w_head")) $("wstate").innerHTML = `<span id="w_head"></span><br><span class="mono">rays [m], ahead → counter-clockwise:<br><span id="w_rays"></span></span>`;
+    $("w_head").textContent = `pose (${x.toFixed(2)}, ${y.toFixed(2)}, ${yaw.toFixed(2)}) · ${w.segments.length} wall segments · vector length ${w.state.length}`;
+    $("w_rays").textContent = rays;
+  }
 }
 $("wsave").onclick = () => {
   if (!lastWalls) return;
@@ -476,32 +500,57 @@ function select(id) {
   selected = id; $("s_obj").value = id == null ? "" : String(id);
   drawObjects(); renderInfo();
 }
-function renderInfo() {
-  const el = $("info");
-  const o = selected != null ? objs.get(selected) : null;
-  if (!o) { el.className = "legend"; el.textContent = "Click a node or pick one above."; return; }
-  el.className = "";
+let infoTimer = 0;
+function renderInfoSoon() { if (!infoTimer) infoTimer = setTimeout(() => { infoTimer = 0; renderInfo(); }, 250); }   // n_obs / last_seen tick: refresh the panel at 2 Hz, not per update
+let infoFor = null;   // {id, rgbd paths} the panel structure was built for
+function infoRows(o) {
   const f = a => "(" + a.map(v => v.toFixed(3)).join(", ") + ")";
   const room = (view.rooms || []).find(r => (r.objects || []).includes(o.id));
   const rows = [["state", `<b>${o.state}</b>${o.structural ? " (structural)" : ""}`], ["pos", f(o.pos)], ["first_pos", f(o.first_pos)], ["n_obs", o.n_obs],
     ["score", o.score.toFixed(3)], ["last seen", `${o.last_seen.toFixed(2)} s (now ${view.stamp.toFixed(2)})`], ["extent", f(o.extent)], ["room", room ? room.name : "-"]];
   if (o.points) rows.push(["points", `${o.points.n} pts, voxel ${o.points.voxel} m`]);
-  let h = `<b>${o.name}</b> #${o.id}<table>` + rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("") + "</table>";
-  if (o.rgbd) {
-    h += `<div class="crop">RGB crop${o.rgbd.mask ? " + segment" : ""}<br><canvas class="crop" id="cv_rgb"></canvas></div>`;
-    h += `<div class="crop">Depth crop (near bright)<br><canvas class="crop" id="cv_depth"></canvas><div class="stats" id="d_stats"></div></div>`;
+  return rows;
+}
+function renderInfo() {
+  const el = $("info");
+  const o = selected != null ? objs.get(selected) : null;
+  if (!o) { infoFor = null; el.className = "legend"; el.textContent = "Click a node or pick one above."; return; }
+  const rows = infoRows(o);
+  const sig = o.id + "|" + (o.rgbd ? o.rgbd.rgb + o.rgbd.depth : "") + "|" + rows.length;
+  if (infoFor !== sig) {
+    // the structure changes only when another object is selected: rebuild once, then fill the crops
+    infoFor = sig; el.className = "";
+    let h = `<b>${o.name}</b> #${o.id}<table id="info_t"></table>`;
+    if (o.rgbd) {
+      h += `<div class="crop">RGB crop${o.rgbd.mask ? " + segment" : ""}<br><canvas class="crop" id="cv_rgb"></canvas></div>`;
+      h += `<div class="crop">Depth crop (near bright)<br><canvas class="crop" id="cv_depth"></canvas><div class="stats" id="d_stats"></div></div>`;
+    }
+    el.innerHTML = h;
+    cropKey = "";
   }
-  el.innerHTML = h;
+  // values: update cells in place (no flicker, text selection survives)
+  const t = $("info_t");
+  if (t) {
+    if (t.rows.length !== rows.length) t.innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td></td></tr>`).join("");
+    rows.forEach((r, i) => { const c = t.rows[i].cells[1]; if (c.innerHTML !== String(r[1])) c.innerHTML = r[1]; });
+  }
   if (o.rgbd) renderCrops(o);
 }
 // RGB crop with the segment shown (outside dimmed, yellow outline) and the depth crop as grey (near bright), stats from the mask.
 function loadImg(url) { return new Promise(res => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = url; }); }
 function fitCanvas(cv, w, h) {
   const k = Math.max(1, Math.min(8, Math.floor(300 / Math.max(w, h))));
-  cv.width = w * k; cv.height = h * k; return k;
+  if (cv.width !== w * k || cv.height !== h * k) { cv.width = w * k; cv.height = h * k; }   // resizing clears a canvas: only when the size really changed
+  return k;
 }
+let cropKey = "", cropBusy = false;
 async function renderCrops(o) {
-  const tag = o.id + "|" + o.last_seen, v = "?v=" + o.last_seen;
+  const v = "?v=" + o.last_seen, key = o.id + v;
+  if (key === cropKey || cropBusy) return;   // same version already drawn (or being loaded)
+  cropBusy = true;
+  try { await renderCropsNow(o, v); cropKey = key; } finally { cropBusy = false; }
+}
+async function renderCropsNow(o, v) {
   const [rgb, mask] = await Promise.all([loadImg("/file/" + o.rgbd.rgb + v), o.rgbd.mask ? loadImg("/file/" + o.rgbd.mask + v) : null]);
   if (selected !== o.id) return;
   let m = null, mw = 0, mh = 0;
@@ -617,7 +666,7 @@ function fitView(top) {
   if (top) camera.position.set(cx, cy - 0.001, R * 1.15); else camera.position.set(cx - R * 0.55, cy - R * 0.55, R * 0.5 + 3);
   controls.update();
 }
-$("b_top").onclick = () => fitView(true); $("b_fit").onclick = () => fitView(false);
+$("b_top").onclick = () => { autoFit = false; fitView(true); }; $("b_fit").onclick = () => { autoFit = true; if (LIVE && liveGrid) fitViewTo(liveGrid); else fitView(false); };
 addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return; if (e.key === "t") fitView(true); if (e.key === "f") fitView(false); });
 
 // faint floor grid under the map
@@ -625,9 +674,29 @@ const grid = new THREE.GridHelper(80, 80, isDark ? 0x3a3a46 : 0xcfcfd8, isDark ?
 
 // ---------------- polling ----------------
 function status() {
+  if (!view || !view.graph) return;
   const c = k => (view.graph.nodes || []).filter(n => n.kind === k).length;
   $("status").textContent = `stamp ${view.stamp.toFixed(1)} s · objects ${view.objects.length} · rooms ${(view.rooms || []).length} · trajectory ${c("agent")} poses`;
 }
+// Redraw only the parts of a new summary (view.json content) that changed: string compare is far cheaper than rebuilding geometry.
+function applyView(v) {
+  const first = !view;
+  view = v;
+  objs.clear(); for (const o of view.objects) objs.set(o.id, o);
+  if (selected != null && !objs.has(selected)) selected = null;
+  // geometry-relevant signature only: n_obs / last_seen / score change every keyframe and must not rebuild anything
+  let sObj = ""; for (const o of view.objects) sObj += o.id + "|" + o.state + "|" + o.pos[0] + "," + o.pos[1] + "," + o.pos[2] + "|" + o.extent[0] + "," + o.extent[1] + "," + o.extent[2] + "|" + (o.points ? o.points.stamp : "") + "|" + (o.rgbd ? 1 : 0) + "|" + (o.room ?? "") + ";";
+  const sGraph = JSON.stringify(view.graph), sRooms = JSON.stringify(view.rooms), sGrid = JSON.stringify(view.grid);
+  const objChanged = sObj !== prev.obj, graphChanged = objChanged || sGraph !== prev.graph || sRooms !== prev.rooms || sGrid !== prev.grid;
+  if (objChanged) { fillSelect(); drawObjects(); }
+  if (graphChanged) drawGraph();
+  if (!objChanged && selected != null) renderInfoSoon();
+  if (!LIVE) { const sPose = JSON.stringify(view.pose); if (sPose !== prev.pose) drawRobot(); prev.pose = sPose; }
+  status(); if (objChanged) renderInfo();
+  Object.assign(prev, { obj:sObj, graph:sGraph, rooms:sRooms, grid:sGrid });
+  if (first) fitView(false);
+}
+
 async function poll() {
   if (document.hidden) { setTimeout(poll, 1000); return; }
   try {
@@ -635,23 +704,156 @@ async function poll() {
     const j = await r.json();
     if (j.view) {
       const first = !view;
-      view = j.view; viewVer = j.v;
-      objs.clear(); for (const o of view.objects) objs.set(o.id, o);
-      if (selected != null && !objs.has(selected)) selected = null;
-      // redraw only the parts whose content changed (string compare is far cheaper than rebuilding geometry)
-      const sObj = JSON.stringify(view.objects), sGraph = JSON.stringify(view.graph), sRooms = JSON.stringify(view.rooms), sPose = JSON.stringify(view.pose);
-      const objChanged = sObj !== prev.obj, graphChanged = objChanged || sGraph !== prev.graph || sRooms !== prev.rooms || JSON.stringify(view.grid) !== prev.grid;
-      if (first || j.map_v !== mapVer) { mapVer = j.map_v; await loadMap(); }
-      if (objChanged) { fillSelect(); drawObjects(); }
-      if (graphChanged) drawGraph();
-      if (sPose !== prev.pose) drawRobot();
-      status(); if (objChanged) renderInfo(); updateWalls();
-      Object.assign(prev, { obj:sObj, graph:sGraph, rooms:sRooms, pose:sPose, grid:JSON.stringify(view.grid) });
-      if (first) fitView(false);
+      viewVer = j.v;
+      if (first || j.map_v !== mapVer) { mapVer = j.map_v; view = j.view; await loadMap(); }
+      applyView(j.view);
+      updateWalls();
     }
   } catch (e) {}
   setTimeout(poll, 250);
 }
+
+
+// ---------------- live metrics: what each stage costs in this page ----------------
+let jointsCur = null, jointsT = 0;   // robot joint / state vector, order defined by the robot URDF (the model is added later)
+const perf = { n:{ pose:0, map:0, view:0, walls:0, joints:0 }, ms:{ pose:0, map:0, view:0, walls:0, joints:0 }, frames:0, renderMs:0, t0:performance.now() };
+function timed(name, fn) { const t = performance.now(); fn(); perf.ms[name] += performance.now() - t; perf.n[name]++; }
+setInterval(() => {
+  if (!LIVE) return;
+  const dt = (performance.now() - perf.t0) / 1000, f = k => `${k} ${(perf.n[k] / dt).toFixed(0)}/s ${(perf.n[k] ? perf.ms[k] / perf.n[k] : 0).toFixed(2)}ms`;
+  $("hud").textContent = `live · ${f("pose")} · ${f("joints")} · ${f("map")} · ${f("view")} · ${f("walls")} · render ${(perf.frames / dt).toFixed(0)} fps ${(perf.frames ? perf.renderMs / perf.frames : 0).toFixed(1)}ms` + (boot.first !== null ? ` · start: first data ${boot.first.toFixed(0)} ms` + (boot.full !== null ? `, scene complete ${boot.full.toFixed(0)} ms` : "") : "");
+  perf.n = { pose:0, map:0, view:0, walls:0, joints:0 }; perf.ms = { pose:0, map:0, view:0, walls:0, joints:0 }; perf.frames = 0; perf.renderMs = 0; perf.t0 = performance.now();
+}, 2000);
+
+// ---------------- live stream (SSE from the Rust server, fed by C++ sgrt over a socket; no files) ----------------
+let LIVE = false;
+const boot = { t0: performance.now(), first: null, full: null };
+function bootDone(what) { if (boot[what] === null) { boot[what] = performance.now() - boot.t0; if (what === "first") $("boot").classList.add("gone"); } }
+let pendingLoads = 0;   // thumbnails / point clouds still being fetched: when it drops to 0 after the first summary the scene is complete
+function loadDone() { if (view && pendingLoads <= 0) bootDone("full"); }
+const poseCur = { x:0, y:0, yaw:0, init:false }, poseTgt = { x:0, y:0, yaw:0, has:false };
+let robotGrp = null;
+const TRAIL_MAX = 20000;
+let trail = null, trailN = 0, trailLast = null;
+
+function b64bytes(b64) { const bin = atob(b64), a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; }
+
+function onMapEvent(d) {
+  const key = [d.w, d.h, d.ox, d.oy, d.res].join("|");
+  if (!mapState || mapState.key !== key) {
+    if (mapState) { mapState.tex.dispose(); mapState.mesh.geometry.dispose(); mapState.mesh.material.dispose(); gMap.remove(mapState.mesh); }
+    const rgba = new Uint8Array(d.w * d.h * 4);
+    for (let i = 0; i < d.w * d.h; i++) { rgba[4*i] = rgba[4*i+1] = rgba[4*i+2] = 205; rgba[4*i+3] = 255; }
+    const tex = new THREE.DataTexture(rgba, d.w, d.h, THREE.RGBAFormat);
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(d.w * d.res, d.h * d.res), new THREE.MeshBasicMaterial({ map:tex, side:THREE.DoubleSide }));
+    mesh.position.set(d.ox + d.w * d.res / 2, d.oy + d.h * d.res / 2, 0);
+    gMap.add(mesh);
+    mapState = { w:d.w, h:d.h, rgba, tex, mesh, ver:"live", key };
+    liveGrid = { origin:[d.ox, d.oy], resolution:d.res, width:d.w, height:d.h };
+    if (autoFit) fitViewTo(liveGrid, !view && !firstFit);   // first map: place the camera at once; later growth: fly
+    firstFit = true;
+  }
+  const g = b64bytes(d.b64), rw = d.x1 - d.x0 + 1, { rgba, w } = mapState;
+  for (let y = d.y0; y <= d.y1; y++) {
+    for (let x = 0; x < rw; x++) {
+      const v = g[(y - d.y0) * rw + x], o = (y * w + d.x0 + x) * 4;
+      rgba[o] = rgba[o+1] = rgba[o+2] = v;   // texture row y = scenemap row y (already bottom-up): no flip
+    }
+  }
+  mapState.tex.needsUpdate = true;
+  gMap.visible = opt("c_map"); invalidate();
+}
+let liveGrid = null, firstFit = false;
+// Live framing: the map grows while the robot explores, so the camera follows it (eased flight) until the user takes over.
+let autoFit = true, camGoal = null;
+function fitViewTo(g, instant) {
+  const W = g.width * g.resolution, H = g.height * g.resolution, cx = g.origin[0] + W / 2, cy = g.origin[1] + H / 2, R = Math.max(W, H, 6);
+  const goal = { pos:new THREE.Vector3(cx - R * 0.55, cy - R * 0.55, R * 0.5 + 3), target:new THREE.Vector3(cx, cy, 3) };
+  if (instant) { controls.target.copy(goal.target); camera.position.copy(goal.pos); controls.update(); camGoal = null; }
+  else camGoal = goal;
+  invalidate();
+}
+function stepCamera(dt) {
+  if (!camGoal) return false;
+  const k = 1 - Math.exp(-dt / 0.35);
+  camera.position.lerp(camGoal.pos, k); controls.target.lerp(camGoal.target, k);
+  const done = camera.position.distanceTo(camGoal.pos) + controls.target.distanceTo(camGoal.target) < 0.02;
+  if (done) camGoal = null;
+  return true;
+}
+controls.addEventListener("start", () => { autoFit = false; camGoal = null; });   // the user moved the camera: stop following
+
+function onPoseEvent(d) {
+  poseTgt.x = d.x; poseTgt.y = d.y; poseTgt.yaw = d.yaw; poseTgt.has = true;
+  if (!poseCur.init) { poseCur.x = d.x; poseCur.y = d.y; poseCur.yaw = d.yaw; poseCur.init = true; buildRobot(); }
+  // floor trail: one vertex per ~3 cm of travel, drawn as it happens
+  if (!trail) {
+    const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(TRAIL_MAX * 3), 3)); g.setDrawRange(0, 0);
+    trail = new THREE.Line(g, new THREE.LineBasicMaterial({ color:0x286ee6 })); trail.frustumCulled = false; scene.add(trail);
+  }
+  if (!trailLast || Math.hypot(d.x - trailLast[0], d.y - trailLast[1]) > 0.03) {
+    if (trailN < TRAIL_MAX) {
+      const a = trail.geometry.attributes.position.array; a[3*trailN] = d.x; a[3*trailN+1] = d.y; a[3*trailN+2] = 0.07; trailN++;
+      trail.geometry.setDrawRange(0, trailN); trail.geometry.attributes.position.needsUpdate = true;
+    }
+    trailLast = [d.x, d.y];
+  }
+  trail.visible = opt("g_agents");
+  invalidate();
+}
+
+function buildRobot() {
+  disposeGroup(gRobot);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.22, 0.1), new THREE.MeshBasicMaterial({ color:0x2a2a30 }));
+  body.position.set(0, 0, 0.07);
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 16), new THREE.MeshBasicMaterial({ color:0xe03030 }));
+  nose.rotation.z = -Math.PI / 2; nose.position.set(0.24, 0, 0.07);
+  const fov = new THREE.Shape(); fov.moveTo(0, 0); const a0 = -Math.PI / 6, a1 = Math.PI / 6;
+  for (let i = 0; i <= 12; i++) { const a = a0 + (a1 - a0) * i / 12; fov.lineTo(1.6 * Math.cos(a), 1.6 * Math.sin(a)); }
+  const wedge = new THREE.Mesh(new THREE.ShapeGeometry(fov), new THREE.MeshBasicMaterial({ color:0xe03030, transparent:true, opacity:0.14, side:THREE.DoubleSide, depthWrite:false }));
+  wedge.position.z = 0.04;
+  robotGrp = new THREE.Group(); robotGrp.add(body, nose, wedge); gRobot.add(robotGrp);
+  gRobot.visible = opt("c_robot");
+}
+
+// Robot pose smoothing at display rate: exponential approach (time constant 60 ms) so 30 Hz pose updates look continuous at 60+ fps.
+let lastFrameT = performance.now(), lastCamT = performance.now();
+function stepRobot(now) {
+  const dt = Math.min(0.1, (now - lastFrameT) / 1000); lastFrameT = now;
+  if (!LIVE || !poseTgt.has || !robotGrp) return false;
+  const k = 1 - Math.exp(-dt / 0.06);
+  let dyaw = poseTgt.yaw - poseCur.yaw; dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
+  poseCur.x += (poseTgt.x - poseCur.x) * k; poseCur.y += (poseTgt.y - poseCur.y) * k; poseCur.yaw += dyaw * k;
+  robotGrp.position.set(poseCur.x, poseCur.y, 0); robotGrp.rotation.z = poseCur.yaw;
+  return Math.abs(poseTgt.x - poseCur.x) + Math.abs(poseTgt.y - poseCur.y) + Math.abs(dyaw) > 1e-4;
+}
+
+async function startLive() {
+  let live = false;
+  try { live = (await (await fetch("/api/mode")).json()).live; } catch (e) {}
+  if (!live) return false;
+  LIVE = true;
+  $("boot").textContent = "connecting …";
+  const es = new EventSource("/stream");
+  es.addEventListener("reset", () => {   // a new run: forget the old map, trail and summary
+    if (mapState) { mapState.tex.dispose(); mapState.mesh.geometry.dispose(); mapState.mesh.material.dispose(); gMap.remove(mapState.mesh); mapState = null; }
+    trailN = 0; trailLast = null; if (trail) trail.geometry.setDrawRange(0, 0);
+    view = null; objs.clear(); selected = null; poseCur.init = false; poseTgt.has = false; robotGrp = null; liveGrid = null;
+    for (const g of [gObjs, gGraph, gWalls, gRobot]) disposeGroup(g);
+    for (const k of Object.keys(prev)) delete prev[k];
+    autoFit = true; firstFit = false; camGoal = null;
+    lastWalls = null; wallSegKey = ""; $("status").textContent = "waiting for the simulator …"; fillSelect(); renderInfo(); invalidate();
+  });
+  es.onopen = () => { $("boot").textContent = "connected — waiting for the simulator to load the scene …"; };
+  es.addEventListener("map", e => { bootDone("first"); timed("map", () => onMapEvent(JSON.parse(e.data))); });
+  es.addEventListener("pose", e => timed("pose", () => onPoseEvent(JSON.parse(e.data))));
+  es.addEventListener("view", e => timed("view", () => { try { applyView(JSON.parse(e.data)); } catch (err) {} }));
+  es.addEventListener("joints", e => timed("joints", () => { const d = JSON.parse(e.data); jointsCur = d.q; jointsT = d.t; }));
+  es.addEventListener("walls", e => timed("walls", () => showWalls(JSON.parse(e.data))));
+  return true;
+}
+
 // controls
 for (const id of ["c_points", "s_pcolor", "n_psize", "c_boxes", "c_struct", "c_gone", "c_ceil"]) $(id).onchange = () => { drawObjects(); drawGraph(); };
 for (const id of ["g_on", "g_objs", "g_thumbs", "g_agents", "g_rooms", "g_intra", "g_inter", "n_objz", "n_h", "n_thumb"]) $(id).onchange = drawGraph;
@@ -664,11 +866,17 @@ $("c_labels").onchange = invalidate;
 (function loop() {
   requestAnimationFrame(loop);
   controls.update();
+  const nowT = performance.now();
+  if (stepRobot(nowT)) needsRender = true;
+  if (stepCamera(Math.min(0.1, (nowT - lastCamT) / 1000))) needsRender = true;
+  lastCamT = nowT;
   if (!needsRender) return;
   needsRender = false;
+  const tr = performance.now();
   updatePointScale(); renderer.render(scene, camera); updateLabels();
+  perf.frames++; perf.renderMs += performance.now() - tr;
 })();
-poll();
+startLive().then(live => { if (!live) poll(); });
 </script>
 </body>
 </html>

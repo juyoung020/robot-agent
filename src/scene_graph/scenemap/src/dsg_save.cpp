@@ -664,7 +664,7 @@ std::string graphJson(const SaveInput& in) {
   bool first = true;
   for (const GNode& n : in.graph->nodes) {
     const char* kind = n.partition == 'a' ? "agent" : n.layer == 3 ? "place" : nullptr;
-    if (!kind) continue;
+    if (!kind || (in.stream_lite && n.layer == 3)) continue;
     if (!first) o += ",";
     first = false;
     o += "{\"id\":\"";
@@ -682,6 +682,7 @@ std::string graphJson(const SaveInput& in) {
   o += "],\"edges\":[";
   first = true;
   for (const GEdge& e : in.graph->edges) {
+    if (in.stream_lite && (symChar(e.a) == 'p' || symChar(e.b) == 'p')) continue;
     if (!first) o += ",";
     first = false;
     o += "[\"";
@@ -805,5 +806,7 @@ int saveScene(const SaveInput& in, const std::string& dir, SaveOut* out_) {
   ok &= writeAtomic(d / "view.json", viewJson(in, out));   // 마지막에: 뷰어는 view.json 이 바뀌면 다시 읽는다
   return ok ? 0 : -1;
 }
+
+std::string sceneViewJson(const SaveInput& in, const SaveOut& out) { return viewJson(in, out); }
 
 }  // namespace scenemap

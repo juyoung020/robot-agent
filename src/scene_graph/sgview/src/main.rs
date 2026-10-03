@@ -14,10 +14,12 @@
 //! GET /file/<relative path>  any file below the memory dir (PNG crops, PLY points)
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
+use std::sync::mpsc::{sync_channel, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
@@ -125,6 +127,28 @@ struct State {
     walls: Mutex<Option<Arc<WallMap>>>,
     view: Mutex<(String, Arc<String>)>,   // view.json text by version: several clients/polls read the file once
     maps: Mutex<MapHist>,
+    live_mode: bool,                      // --ingest: the C++ side streams here, no files
+    live: Mutex<Live>,
+    clients: Mutex<Vec<SyncSender<Arc<String>>>>,
+}
+
+/// Live state fed by the C++ stream (scenemap/stream.hpp): the grid, the latest summary and pose, and the wall segments derived from them.
+struct Live {
+    w: i32,
+    h: i32,
+    res: f64,
+    ox: f64,
+    oy: f64,
+    cells: Vec<i8>,          // scenemap layout (row 0 = min y)
+    view: Option<Arc<String>>,
+    pose: Option<[f64; 4]>,
+    joints: Option<String>,  // last joints event (SSE text), resent to new pages
+    ig: Vec<f64>,            // furniture footprints from the summary
+    segs: Vec<f64>,
+    seg_ver: u64,            // bumps when the segments actually change
+    seg_sent: u64,           // version last broadcast
+    segs_dirty: bool,
+    last_walls: Instant,
 }
 
 fn file_ver(p: &Path) -> Option<String> {
@@ -211,11 +235,14 @@ fn load_view(st: &State) -> Option<(String, Arc<String>)> {
 /// Footprints (x0 y0 x1 y1) of free-standing objects from view.json: bottom below 0.4 m, not room-sized, not gone, +0.1 m.
 /// Their occupied cells are furniture (sofa, table …), not walls. Wall-mounted things (frames, lamps) start higher and are left alone.
 fn furniture_rects(st: &State) -> Vec<f64> {
-    let text = match load_view(st) {
-        Some((_, t)) => t,
-        None => return Vec::new(),
-    };
-    let v: serde_json::Value = match serde_json::from_str(&text) {
+    match load_view(st) {
+        Some((_, t)) => furniture_rects_of(&t),
+        None => Vec::new(),
+    }
+}
+
+fn furniture_rects_of(text: &str) -> Vec<f64> {
+    let v: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
         Err(_) => return Vec::new(),
     };
@@ -352,6 +379,7 @@ fn content_type(p: &str) -> &'static str {
 fn respond(s: &mut TcpStream, code: u16, ctype: &str, extra: &str, body: &[u8]) {
     let reason = match code {
         200 => "OK",
+        204 => "No Content",
         400 => "Bad Request",
         404 => "Not Found",
         _ => "Error",
@@ -430,6 +458,12 @@ fn handle(mut s: TcpStream, st: Arc<State>) {
         "/" | "/index.html" => respond(&mut s, 200, "text/html; charset=utf-8", "", INDEX_HTML.as_bytes()),
         "/three.min.js" => respond(&mut s, 200, "application/javascript", "", THREE_JS),
         "/OrbitControls.js" => respond(&mut s, 200, "application/javascript", "", ORBIT_JS),
+        "/favicon.ico" => respond(&mut s, 204, "image/x-icon", "", b""),
+        "/api/mode" => respond(&mut s, 200, "application/json", "", format!("{{\"live\":{}}}", st.live_mode).as_bytes()),
+        "/stream" => {
+            let st2 = st.clone();
+            return serve_stream(s, st2);
+        }
         "/api/view" => {
             let vp = st.dir.join("view.json");
             let ver = file_ver(&vp).unwrap_or_default();
@@ -499,14 +533,268 @@ fn handle(mut s: TcpStream, st: Arc<State>) {
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Live stream: C++ (sgrt) -> TCP ingest -> state + SSE broadcast -> browsers
+// ---------------------------------------------------------------------------------------------------------------------
+const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn base64(data: &[u8]) -> String {
+    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    for c in data.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        out.push(B64[(n >> 18) as usize & 63] as char);
+        out.push(B64[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 { B64[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if c.len() > 2 { B64[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+/// scenemap cell (-1 unknown, 0..100 %) -> the grey the page draws (same mapping as map.pgm)
+fn cell_grey(v: i8) -> u8 {
+    let v = v as i32;
+    if v < 0 { 205 } else if v >= 65 { 0 } else if v <= 25 { 254 } else { (254 - (v * 254) / 100) as u8 }
+}
+
+fn sse(event: &str, data: &str) -> String {
+    format!("event: {}\ndata: {}\n\n", event, data)
+}
+
+fn broadcast(st: &State, msg: String) {
+    let m = Arc::new(msg);
+    st.clients.lock().unwrap().retain(|tx| tx.try_send(m.clone()).is_ok());   // a client that cannot keep up is dropped; it reconnects and gets the snapshot
+}
+
+fn map_event(l: &Live, x0: i32, y0: i32, x1: i32, y1: i32) -> String {
+    let mut grey = Vec::with_capacity(((x1 - x0 + 1) * (y1 - y0 + 1)) as usize);
+    for y in y0..=y1 {
+        let row = &l.cells[(y * l.w) as usize..((y + 1) * l.w) as usize];
+        grey.extend(row[x0 as usize..=x1 as usize].iter().map(|&v| cell_grey(v)));
+    }
+    sse("map", &format!("{{\"w\":{},\"h\":{},\"res\":{},\"ox\":{},\"oy\":{},\"x0\":{},\"y0\":{},\"x1\":{},\"y1\":{},\"b64\":\"{}\"}}", l.w, l.h, l.res, l.ox, l.oy, x0, y0, x1, y1, base64(&grey)))
+}
+
+fn pose_event(p: &[f64; 4]) -> String {
+    sse("pose", &format!("{{\"t\":{:.3},\"x\":{:.4},\"y\":{:.4},\"yaw\":{:.4}}}", p[0], p[1], p[2], p[3]))
+}
+
+fn recompute_segments(l: &mut Live) {
+    l.segs_dirty = false;
+    if l.w <= 0 || l.h <= 0 {
+        return;
+    }
+    let mut buf = vec![0f64; 4 * 512];
+    let mut n = unsafe { sgv_wall_segments(l.cells.as_ptr(), l.w, l.h, l.res, l.ox, l.oy, l.ig.as_ptr(), (l.ig.len() / 4) as i32, buf.as_mut_ptr(), 512) } as usize;
+    if n > 512 {
+        buf = vec![0f64; 4 * n];
+        n = unsafe { sgv_wall_segments(l.cells.as_ptr(), l.w, l.h, l.res, l.ox, l.oy, l.ig.as_ptr(), (l.ig.len() / 4) as i32, buf.as_mut_ptr(), n as i32) } as usize;
+    }
+    buf.truncate(4 * n);
+    if buf != l.segs {
+        l.segs = buf;
+        l.seg_ver += 1;
+    }
+}
+
+fn walls_event(l: &Live, with_segments: bool) -> Option<String> {
+    let p = l.pose?;
+    if l.w <= 0 {
+        return None;
+    }
+    let pose = [p[1], p[2], p[3]];
+    let mut out = [0f32; WALL_STATE_LEN];
+    unsafe {
+        sgv_wall_state(l.cells.as_ptr(), l.w, l.h, l.res, l.ox, l.oy, l.segs.as_ptr(), (l.segs.len() / 4) as i32, pose.as_ptr(), out.as_mut_ptr());
+    }
+    let segs = if with_segments {
+        let v: Vec<String> = l.segs.chunks(4).map(|c| json_f64s(c)).collect();
+        format!("[{}]", v.join(","))
+    } else {
+        "null".to_string()   // unchanged: the page keeps the segments it has
+    };
+    let state: Vec<String> = out.iter().map(|x| format!("{:.5}", x)).collect();
+    Some(sse("walls", &format!("{{\"segments\":{},\"state\":[{}],\"pose\":{},\"max_range\":4.0}}", segs, state.join(","), json_f64s(&pose))))
+}
+
+/// Walls are recomputed at most every 100 ms (only when the map or the furniture changed); the state vector goes out with them.
+fn maybe_walls(st: &State, l: &mut Live) {
+    if l.last_walls.elapsed() < Duration::from_millis(100) {
+        return;
+    }
+    l.last_walls = Instant::now();
+    if l.segs_dirty {
+        recompute_segments(l);
+    }
+    let with = l.seg_ver != l.seg_sent;
+    if let Some(e) = walls_event(l, with) {
+        l.seg_sent = l.seg_ver;
+        broadcast(st, e);
+    }
+}
+
+fn handle_frame(st: &State, ty: u8, pl: &[u8]) {
+    let mut l = st.live.lock().unwrap();
+    match ty {
+        1 if pl.len() == 32 => {
+            let f = |i: usize| f64::from_le_bytes(pl[i * 8..i * 8 + 8].try_into().unwrap());
+            let p = [f(0), f(1), f(2), f(3)];
+            l.pose = Some(p);
+            broadcast(st, pose_event(&p));
+            maybe_walls(st, &mut l);
+        }
+        2 if pl.len() >= 48 => {
+            let i32at = |o: usize| i32::from_le_bytes(pl[o..o + 4].try_into().unwrap());
+            let f64at = |o: usize| f64::from_le_bytes(pl[o..o + 8].try_into().unwrap());
+            let (w, h, res, ox, oy) = (i32at(0), i32at(4), f64at(8), f64at(16), f64at(24));
+            let (x0, y0, x1, y1) = (i32at(32), i32at(36), i32at(40), i32at(44));
+            if w <= 0 || h <= 0 || x0 < 0 || y0 < 0 || x1 >= w || y1 >= h || x1 < x0 || y1 < y0 || (x1 - x0 + 1) as usize * (y1 - y0 + 1) as usize + 48 != pl.len() {
+                return;
+            }
+            if w != l.w || h != l.h || res != l.res || ox != l.ox || oy != l.oy {
+                l.w = w; l.h = h; l.res = res; l.ox = ox; l.oy = oy;
+                l.cells = vec![-1i8; (w * h) as usize];
+            }
+            let rw = (x1 - x0 + 1) as usize;
+            for y in y0..=y1 {
+                let dst = (y * w + x0) as usize;
+                let src = 48 + (y - y0) as usize * rw;
+                for k in 0..rw {
+                    l.cells[dst + k] = pl[src + k] as i8;
+                }
+            }
+            l.segs_dirty = true;
+            let e = map_event(&l, x0, y0, x1, y1);
+            broadcast(st, e);
+        }
+        4 if pl.len() >= 12 => {
+            let t = f64::from_le_bytes(pl[0..8].try_into().unwrap());
+            let n = i32::from_le_bytes(pl[8..12].try_into().unwrap()) as usize;
+            if n > 0 && pl.len() == 12 + n * 4 {
+                let q: Vec<String> = (0..n).map(|i| format!("{:.4}", f32::from_le_bytes(pl[12 + i * 4..16 + i * 4].try_into().unwrap()))).collect();
+                let e = sse("joints", &format!("{{\"t\":{:.3},\"q\":[{}]}}", t, q.join(",")));
+                l.joints = Some(e.clone());
+                broadcast(st, e);
+            }
+        }
+        3 => {
+            if let Ok(t) = std::str::from_utf8(pl) {
+                let line = t.replace('\n', "");
+                let ig = furniture_rects_of(&line);
+                if ig != l.ig {
+                    l.ig = ig;
+                    l.segs_dirty = true;
+                }
+                let msg = Arc::new(line);
+                l.view = Some(msg.clone());
+                broadcast(st, sse("view", &msg));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn ingest_conn(st: Arc<State>, mut s: TcpStream) {
+    let _ = s.set_nodelay(true);
+    {
+        // a new simulator run (or a restart) starts from an empty state; the pages are told to clear theirs too
+        let mut l = st.live.lock().unwrap();
+        l.w = 0; l.h = 0; l.cells.clear(); l.view = None; l.pose = None; l.joints = None; l.ig.clear(); l.segs.clear(); l.seg_ver += 1; l.segs_dirty = false;
+        broadcast(&st, sse("reset", "{}"));
+    }
+    let mut head = [0u8; 5];
+    let mut pl = Vec::new();
+    loop {
+        if s.read_exact(&mut head).is_err() {
+            return;
+        }
+        let len = u32::from_le_bytes([head[0], head[1], head[2], head[3]]) as usize;
+        if len > (256 << 20) {
+            return;
+        }
+        pl.resize(len, 0);
+        if s.read_exact(&mut pl).is_err() {
+            return;
+        }
+        handle_frame(&st, head[4], &pl);
+    }
+}
+
+fn ingest_loop(st: Arc<State>, addr: String) {
+    let l = TcpListener::bind(&addr).unwrap_or_else(|e| {
+        eprintln!("cannot listen for the stream on {}: {}", addr, e);
+        std::process::exit(1);
+    });
+    eprintln!("sgview: stream ingest on {}", addr);
+    for c in l.incoming().flatten() {
+        let st = st.clone();
+        std::thread::spawn(move || ingest_conn(st, c));
+    }
+}
+
+/// GET /stream: server-sent events. The snapshot (map, summary, pose, walls) goes first, then every update as it arrives.
+fn serve_stream(mut s: TcpStream, st: Arc<State>) {
+    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: keep-alive\r\nX-Accel-Buffering: no\r\n\r\n";
+    if s.write_all(head.as_bytes()).is_err() {
+        return;
+    }
+    let (tx, rx) = sync_channel::<Arc<String>>(1024);
+    {
+        // build the snapshot and register under the live lock so no update is missed or duplicated
+        let l = st.live.lock().unwrap();
+        let mut snap = String::new();
+        if l.w > 0 {
+            snap.push_str(&map_event(&l, 0, 0, l.w - 1, l.h - 1));
+        }
+        if let Some(v) = &l.view {
+            snap.push_str(&sse("view", v));
+        }
+        if let Some(p) = &l.pose {
+            snap.push_str(&pose_event(p));
+        }
+        if let Some(j) = &l.joints {
+            snap.push_str(j);
+        }
+        if let Some(w) = walls_event(&l, true) {
+            snap.push_str(&w);
+        }
+        if s.write_all(snap.as_bytes()).is_err() {
+            return;
+        }
+        st.clients.lock().unwrap().push(tx);
+    }
+    let _ = s.set_nodelay(true);
+    loop {
+        match rx.recv_timeout(Duration::from_secs(10)) {
+            Ok(m) => {
+                // several queued events go out in one write
+                let mut buf = String::from(m.as_str());
+                while let Ok(m2) = rx.try_recv() {
+                    buf.push_str(&m2);
+                }
+                if s.write_all(buf.as_bytes()).is_err() {
+                    return;
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                if s.write_all(b": keepalive\n\n").is_err() {
+                    return;
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => return,
+        }
+    }
+}
+
 fn main() {
     let mut dir: Option<String> = None;
     let (mut port, mut bind) = (8080u16, "0.0.0.0".to_string());
+    let mut ingest: Option<String> = None;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--port" => port = it.next().and_then(|v| v.parse().ok()).unwrap_or(port),
             "--bind" => bind = it.next().unwrap_or(bind),
+            "--ingest" => ingest = it.next(),
             _ => dir = Some(a),
         }
     }
@@ -517,13 +805,17 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let st = Arc::new(State { dir, walls: Mutex::new(None), view: Mutex::new((String::new(), Arc::new(String::new()))), maps: Mutex::new(MapHist { vers: Vec::new() }) });
+    let st = Arc::new(State { dir, walls: Mutex::new(None), view: Mutex::new((String::new(), Arc::new(String::new()))), maps: Mutex::new(MapHist { vers: Vec::new() }), live_mode: ingest.is_some(), live: Mutex::new(Live { w: 0, h: 0, res: 0.05, ox: 0.0, oy: 0.0, cells: Vec::new(), view: None, pose: None, joints: None, ig: Vec::new(), segs: Vec::new(), seg_ver: 0, seg_sent: 0, segs_dirty: false, last_walls: Instant::now() }), clients: Mutex::new(Vec::new()) });
     let l = TcpListener::bind((bind.as_str(), port)).unwrap_or_else(|e| {
         eprintln!("cannot listen on {}:{}: {}", bind, port, e);
         std::process::exit(1);
     });
     let _ = SystemTime::now();
     eprintln!("sgview: http://localhost:{}  (memory dir {})", port, st.dir.display());
+    if let Some(a) = ingest {
+        let st2 = st.clone();
+        std::thread::spawn(move || ingest_loop(st2, a));
+    }
     for c in l.incoming().flatten() {
         let _ = c.set_nodelay(true);
         let st = st.clone();

@@ -52,6 +52,7 @@ struct SaveInput {
   RoomNaming room_names;           // rooms->rooms 와 같은 순서, obj_room 은 objs 순서
   std::shared_ptr<const GraphView> graph;   // 살아 있는 장면 그래프(AGENTS·PLACES·BUILDINGS 층과 모든 변) — null 이면 물체·방만
   std::vector<std::string> obj_meta;        // objs[i] 노드 metadata 에 덧붙일 JSON 멤버("\"emb\":{...}" 꼴, 비어 있어도 됨)
+  bool stream_lite = false;                 // 실시간 스트림용 요약: PLACES 노드·변을 뺀다(뷰어가 안 그리고 용량 대부분)
   struct JsonCache* json_cache = nullptr;   // place·agent·방·건물 노드 JSON 캐시(저장 사이 재사용, 호출자 소유)
 };
 
@@ -65,6 +66,9 @@ struct SaveOut {
   double json_ms = 0;              // scene.json 만들기·쓰기
   size_t json_bytes = 0;
 };
+
+// view.json 내용만 문자열로(파일을 쓰지 않음) — 실시간 스트림용. out.png_ok·ply_ok 는 파일이 이미 있는 물체(지난 저장 기준)
+std::string sceneViewJson(const SaveInput& in, const SaveOut& out);
 
 // 0 = 성공. Spark-DSG 없이 빌드하면 scene.json 만 빠진다.
 int saveScene(const SaveInput& in, const std::string& dir, SaveOut* out = nullptr);
