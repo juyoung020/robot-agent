@@ -1,0 +1,8 @@
+[package]
+name = "urdf2hdr"
+version = "0.1.0"
+edition = "2021"
+description = "URDF -> C++/CUDA header: joint tree constants (origins as exact rotation matrices, axes, limits). Source of truth for the env kernel; never edit the header by hand."
+
+[dependencies]
+serde_json = "1"

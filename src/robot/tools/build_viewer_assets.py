@@ -23,6 +23,8 @@ import trimesh
 BUDGET = {"limo_base": {(250, 250, 250): 60000, (25, 25, 25): 20000, (255, 0, 0): 5000, (0, 184, 9): 900}, "limo_wheel": 12000}
 OMX_COLOR = (62, 64, 72)
 # 뷰어 기본 자세(대기 자세): 윗팔을 앞으로 들고 아래팔을 내린다 — 영점(팔이 곧게 위로)보다 로봇 위에서 보기 좋다. 슬라이더·관절 스트림이 덮어쓴다
+# 스트림의 관절 벡터 순서(우리 시뮬 training/RL/env 의 env_view 와 같아야 한다): 팔 5, 그리퍼 2, 바퀴 4(앞왼·앞오·뒤왼·뒤오). 실제 로봇 브리지도 이 순서로 보낸다
+JOINT_ORDER = ["omx_joint1", "omx_joint2", "omx_joint3", "omx_joint4", "omx_joint5", "omx_gripper_joint_1", "omx_gripper_joint_2", "front_left_wheel", "front_right_wheel", "rear_left_wheel", "rear_right_wheel"]
 HOME = {"omx_joint1": 0.0, "omx_joint2": 1.3, "omx_joint3": -1.9, "omx_joint4": 0.7, "omx_joint5": 0.0, "omx_gripper_joint_1": 0.0, "omx_gripper_joint_2": 0.0}
 
 
@@ -121,6 +123,7 @@ def vec(s, n=3, d=0.0):
 
 def main(urdf, pkg_root, out):
     os.makedirs(out, exist_ok=True)
+    real = json.load(open(os.path.join(pkg_root, "real_limits.json")))   # 실제 관절 범위(업스트림 URDF 는 ±2π 자리표시) — 환경 헤더 생성기와 같은 파일
     root = ET.parse(urdf).getroot()
     done, links, joints = {}, [], []
     for l in root.findall("link"):
@@ -145,10 +148,10 @@ def main(urdf, pkg_root, out):
         joints.append({"name": j.get("name"), "type": j.get("type"), "parent": j.find("parent").get("link"), "child": j.find("child").get("link"),
                        "xyz": vec(o.get("xyz")) if o is not None else [0, 0, 0], "rpy": vec(o.get("rpy")) if o is not None else [0, 0, 0],
                        "axis": vec(a.get("xyz")) if a is not None else [0, 0, 1],
-                       "limit": [float(lim.get("lower")), float(lim.get("upper"))] if lim is not None and lim.get("lower") else None})
+                       "limit": real[j.get("name")] if j.get("name") in real else ([float(lim.get("lower")), float(lim.get("upper"))] if lim is not None and lim.get("lower") else None)})
     movable = [j["name"] for j in joints if j["type"] in ("revolute", "continuous", "prismatic")]
     with open(os.path.join(out, "robot.json"), "w") as f:
-        json.dump({"root": "base_footprint", "links": links, "joints": joints, "movable": movable, "home": HOME, "joint_order": []}, f, separators=(",", ":"))
+        json.dump({"root": "base_footprint", "links": links, "joints": joints, "movable": movable, "home": HOME, "joint_order": JOINT_ORDER}, f, separators=(",", ":"))
     print("robot.json:", len(links), "links,", len(joints), "joints, movable:", movable)
 
 

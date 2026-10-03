@@ -1,0 +1,149 @@
+//! urdf2hdr <flat.urdf> <out.h> [real_limits.json]
+//! (real_limits.json overrides the URDF joint limits where the upstream URDF has placeholders; the same file feeds the viewer assets)
+//!
+//! xacro 로 펼친 URDF 에서 관절 트리 상수를 뽑아 헤더로 쓴다(환경 커널의 기준 — 손으로 고치지 않는다).
+//!  · 관절마다 부모 → 자식 고정 변환 = origin(xyz, rpy) 를 f64 로 계산한 3×3 회전행렬 + 이동(float 리터럴, 16자리)
+//!  · 축(axis), 한계(lower/upper/velocity), 종류
+//! 의존 crate 없음(std 만) — URDF 는 규칙적이라 필요한 태그만 읽는 작은 스캐너로 충분하다.
+use std::fmt::Write as _;
+
+#[derive(Debug, Default, Clone)]
+struct Joint {
+    name: String,
+    kind: String,
+    parent: String,
+    child: String,
+    xyz: [f64; 3],
+    rpy: [f64; 3],
+    axis: [f64; 3],
+    lower: f64,
+    upper: f64,
+    velocity: f64,
+}
+
+fn attr(tag: &str, key: &str) -> Option<String> {
+    let pat = format!("{}=\"", key);
+    // exact attribute: preceded by whitespace
+    let mut from = 0;
+    while let Some(i) = tag[from..].find(&pat) {
+        let at = from + i;
+        if at == 0 || tag.as_bytes()[at - 1].is_ascii_whitespace() {
+            let s = at + pat.len();
+            let e = tag[s..].find('"')? + s;
+            return Some(tag[s..e].to_string());
+        }
+        from = at + pat.len();
+    }
+    None
+}
+
+fn vec3(s: &str) -> [f64; 3] {
+    let v: Vec<f64> = s.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+    [*v.first().unwrap_or(&0.0), *v.get(1).unwrap_or(&0.0), *v.get(2).unwrap_or(&0.0)]
+}
+
+/// first `<name .../>` or `<name ...>` tag inside `block`
+fn tag<'a>(block: &'a str, name: &str) -> Option<&'a str> {
+    let pat = format!("<{}", name);
+    let mut from = 0;
+    while let Some(i) = block[from..].find(&pat) {
+        let at = from + i;
+        let after = block.as_bytes().get(at + pat.len()).copied().unwrap_or(b' ');
+        if after.is_ascii_whitespace() || after == b'/' || after == b'>' {
+            let end = block[at..].find('>')? + at;
+            return Some(&block[at..=end]);
+        }
+        from = at + pat.len();
+    }
+    None
+}
+
+fn parse(urdf: &str) -> Vec<Joint> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(i) = urdf[from..].find("<joint ") {
+        let at = from + i;
+        let end = urdf[at..].find("</joint>").map(|e| e + at).unwrap_or(urdf.len());
+        let block = &urdf[at..end];
+        let head = &block[..block.find('>').unwrap_or(block.len())];
+        let mut j = Joint { name: attr(head, "name").unwrap_or_default(), kind: attr(head, "type").unwrap_or_default(), axis: [0.0, 0.0, 1.0], ..Default::default() };
+        j.parent = tag(block, "parent").and_then(|t| attr(t, "link")).unwrap_or_default();
+        j.child = tag(block, "child").and_then(|t| attr(t, "link")).unwrap_or_default();
+        if let Some(t) = tag(block, "origin") {
+            j.xyz = attr(t, "xyz").map(|s| vec3(&s)).unwrap_or([0.0; 3]);
+            j.rpy = attr(t, "rpy").map(|s| vec3(&s)).unwrap_or([0.0; 3]);
+        }
+        if let Some(t) = tag(block, "axis") {
+            j.axis = attr(t, "xyz").map(|s| vec3(&s)).unwrap_or([0.0, 0.0, 1.0]);
+        }
+        if let Some(t) = tag(block, "limit") {
+            j.lower = attr(t, "lower").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+            j.upper = attr(t, "upper").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+            j.velocity = attr(t, "velocity").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        }
+        out.push(j);
+        from = end;
+    }
+    out
+}
+
+/// URDF rpy = Rz(yaw) · Ry(pitch) · Rx(roll), row-major
+fn rot(rpy: [f64; 3]) -> [f64; 9] {
+    let (sr, cr) = rpy[0].sin_cos();
+    let (sp, cp) = rpy[1].sin_cos();
+    let (sy, cy) = rpy[2].sin_cos();
+    [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr, sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr, -sp, cp * sr, cp * cr]
+}
+
+/// exact-looking float literal: round to f32 first, print the f32 value with enough digits to round-trip
+fn lit(x: f64) -> String {
+    let f = x as f32;
+    let f = if f.abs() < 1e-9 { 0.0 } else { f };   // sin(pi) style residue -> exact zero (the matrix entries are meant to be 0 / ±1)
+    let s = format!("{:?}", f);
+    format!("{}f", if s.contains('.') || s.contains('e') { s } else { format!("{}.0", s) })
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() != 3 && args.len() != 4 {
+        eprintln!("usage: urdf2hdr <flat.urdf> <out.h> [real_limits.json]");
+        std::process::exit(2);
+    }
+    let urdf = std::fs::read_to_string(&args[1]).expect("read urdf");
+    let mut joints = parse(&urdf);
+    if let Some(p) = args.get(3) {
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(p).expect("read limits")).expect("parse limits");
+        for j in joints.iter_mut() {
+            if let Some(a) = v.get(&j.name).and_then(|x| x.as_array()) {
+                j.lower = a[0].as_f64().unwrap_or(j.lower);
+                j.upper = a[1].as_f64().unwrap_or(j.upper);
+            }
+        }
+    }
+    let mut h = String::new();
+    writeln!(h, "// GENERATED by urdf2hdr from {} — do not edit by hand (regenerate: training/RL/tools/urdf2hdr).", args[1].rsplit('/').next().unwrap()).unwrap();
+    writeln!(h, "// Joint tree of the LIMO + OMX-F robot. Each fixed transform = origin(xyz, rpy) as a row-major 3x3 rotation (computed in f64, stored as float) + translation.").unwrap();
+    writeln!(h, "#pragma once\nnamespace limo_omx {{\n").unwrap();
+    writeln!(h, "enum JointKind {{ kFixed = 0, kRevolute = 1, kContinuous = 2 }};").unwrap();
+    writeln!(h, "struct JointConst {{ int kind; float R[9]; float t[3]; float axis[3]; float lower, upper, vel_max; }};   // names: see the J_* indices below\n").unwrap();
+    writeln!(h, "constexpr int kNumJoints = {};", joints.len()).unwrap();
+    writeln!(h, "#define LIMO_OMX_JOINT_TABLE \\\n    {{ \\").unwrap();
+    for j in &joints {
+        let r = rot(j.rpy);
+        let kind = match j.kind.as_str() { "revolute" => "kRevolute", "continuous" => "kContinuous", _ => "kFixed" };
+        let rs: Vec<String> = r.iter().map(|&v| lit(v)).collect();
+        writeln!(h, "    /* {} */ {{{}, {{{}}}, {{{}, {}, {}}}, {{{}, {}, {}}}, {}, {}, {}}}, \\", j.name, kind, rs.join(", "), lit(j.xyz[0]), lit(j.xyz[1]), lit(j.xyz[2]),
+                 lit(j.axis[0]), lit(j.axis[1]), lit(j.axis[2]), lit(j.lower), lit(j.upper), lit(j.velocity)).unwrap();
+    }
+    writeln!(h, "    }}\n").unwrap();
+    writeln!(h, "constexpr JointConst kJoints[kNumJoints] = LIMO_OMX_JOINT_TABLE;   // host").unwrap();
+    writeln!(h, "#ifdef __CUDACC__\nstatic __constant__ JointConst kJointsDev[kNumJoints] = LIMO_OMX_JOINT_TABLE;   // device (the same table)\n#endif").unwrap();
+    writeln!(h, "#ifdef __CUDACC__\n__host__ __device__ __forceinline__\n#else\ninline\n#endif\nconst JointConst& joint(int j) {{\n#ifdef __CUDA_ARCH__\n  return kJointsDev[j];\n#else\n  return kJoints[j];\n#endif\n}}\n").unwrap();
+    writeln!(h, "// joint indices by name").unwrap();
+    for (i, j) in joints.iter().enumerate() {
+        writeln!(h, "constexpr int J_{} = {};   // {} -> {} ({})", j.name.to_uppercase(), i, j.parent, j.child, j.kind).unwrap();
+    }
+    writeln!(h, "\n}}  // namespace limo_omx").unwrap();
+    std::fs::write(&args[2], h).expect("write header");
+    eprintln!("urdf2hdr: {} joints -> {}", joints.len(), args[2]);
+}

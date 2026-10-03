@@ -1,0 +1,10 @@
+{
+  "_source": "OMX-F: https://docs.robotis.com/docs/systems/omx/specifications/hardware/ (joint ranges, XL430-W250-T / XL330-M288-T). The upstream URDF has +-2pi placeholders; these are the real ranges. Gripper: 0..100 deg.",
+  "omx_joint1": [-4.712389, 6.283185],
+  "omx_joint2": [-2.094395, 1.570796],
+  "omx_joint3": [-2.094395, 1.570796],
+  "omx_joint4": [-1.745329, 1.745329],
+  "omx_joint5": [-4.712389, 4.712389],
+  "omx_gripper_joint_1": [0.0, 1.745329],
+  "omx_gripper_joint_2": [0.0, 1.745329]
+}

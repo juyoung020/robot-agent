@@ -810,6 +810,7 @@ function syncJointPanel() {
 const wheel = { prev:null, aL:0, aR:0 };
 function rollWheels() {
   if (!robotModel || !robotModel.joints.front_left_wheel) return;
+  if (robotModel.order.includes("front_left_wheel") && jointsCur && $("j_stream").checked) return;   // the robot publishes its own wheel angles: use those
   if (!wheel.prev) { wheel.prev = { x:poseCur.x, y:poseCur.y, yaw:poseCur.yaw }; return; }
   const dx = poseCur.x - wheel.prev.x, dy = poseCur.y - wheel.prev.y;
   let dyaw = poseCur.yaw - wheel.prev.yaw; dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));

@@ -229,3 +229,6 @@ refs/code/
 
 # AI Agent 수업 자료 사본 (비공개 — 공개 저장소에 올리지 않음)
 docs/ai-agent/
+
+# 시뮬 환경 소스(파이썬 가상환경 env/ 규칙의 예외)
+!training/RL/env/
