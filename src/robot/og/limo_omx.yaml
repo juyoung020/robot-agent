@@ -1,0 +1,32 @@
+# LIMO + OMX-F 의 OmniGibson RobotDefinition 초안(아직 시뮬에서 불러 시험하지 않음).
+# 설치: import_to_omnigibson.sh 가 <DATA>/omnigibson-robot-assets/models/limo_omx/limo_omx.yaml 로 복사한다.
+raw_controller_order: ["base", "arm_0", "gripper_0"]
+linear_velocity_gain_for_primitives: 0.5
+angular_velocity_gain_for_primitives: 0.5
+default_controllers:
+  base: HolonomicBaseJointController     # 가져올 때 (x,y,yaw) 가상 관절로 만든 베이스(정책 출력 vx, wz)
+  arm_0: JointController
+  gripper_0: MultiFingerGripperController
+disabled_collision_pairs:
+  - ["omx_link6", "omx_link7"]
+  - ["base_link", "front_left_wheel_link"]
+  - ["base_link", "front_right_wheel_link"]
+  - ["base_link", "rear_left_wheel_link"]
+  - ["base_link", "rear_right_wheel_link"]
+base_footprint_link_name: "base_link"
+holonomic_base:
+  force_sphere_wheel_approximation: true
+locomotion:
+  base_joint_names: ["base_footprint_x_joint", "base_footprint_y_joint", "base_footprint_rz_joint"]
+  floor_touching_base_link_names: ["front_left_wheel_link", "front_right_wheel_link", "rear_left_wheel_link", "rear_right_wheel_link"]
+mobile_manipulation:
+  untucked_default_joint_pos: [0, 0, 0, 0, 0, 0, 0, 1.3, -1.9, 0.7, 0.0, 0.0, 0.0]   # 가상 6 + 팔 5 + 그리퍼 2(순서는 시험 때 확인)
+  tucked_default_joint_pos: [0, 0, 0, 0, 0, 0, 0, 1.3, -1.9, 0.7, 0.0, 0.0, 0.0]
+manipulation:
+  n_arms: 1
+  arm_names: ["0"]
+  arm_link_names: {"0": ["omx_link1", "omx_link2", "omx_link3", "omx_link4", "omx_link5"]}
+  arm_joint_names: {"0": ["omx_joint1", "omx_joint2", "omx_joint3", "omx_joint4", "omx_joint5"]}
+  eef_link_names: {"0": "eef_link"}
+  finger_link_names: {"0": ["omx_link6", "omx_link7"]}
+  finger_joint_names: {"0": ["omx_gripper_joint_1", "omx_gripper_joint_2"]}

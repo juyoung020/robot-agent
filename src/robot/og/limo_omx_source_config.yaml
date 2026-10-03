@@ -1,0 +1,46 @@
+# LIMO + OMX-F 를 OmniGibson 로봇으로 가져오는 소스 설정(import_custom_robot.py 입력).
+# urdf_path 는 import_to_omnigibson.sh 가 package:// 를 절대 경로로 바꿔 채운다.
+urdf_path: __URDF__
+name: limo_omx
+headless: true
+overwrite: true
+merge_fixed_joints: false
+base_motion:
+  wheel_links: [front_left_wheel_link, front_right_wheel_link, rear_left_wheel_link, rear_right_wheel_link]
+  wheel_joints: [front_left_wheel, front_right_wheel, rear_left_wheel, rear_right_wheel]
+  use_sphere_wheels: true
+  use_holonomic_joints: true      # (x, y, yaw) 가상 관절로 베이스를 움직인다 — 정책은 vx, wz 를 낸다
+collision:
+  decompose_method: convex
+  hull_count: 8
+  coacd_links: []
+  convex_links: [base_link, front_left_wheel_link, front_right_wheel_link, rear_left_wheel_link, rear_right_wheel_link,
+                 omx_link1, omx_link2, omx_link3, omx_link4, omx_link5, omx_link6, omx_link7]
+  no_decompose_links: []
+  no_collision_links: [base_footprint, inertial_link, laser_link, depth_camera_link, depth_link, imu_link, wrist_cam_link, wrist_cam_optical_frame]
+eef_vis_links:
+  - link: eef_link
+    parent_link: omx_end_effector_link
+    offset: {position: [0, 0, 0], orientation: [0, 0.7071068, 0, 0.7071068]}   # z = 손끝 쪽(URDF x), y = 손가락 간격(OG 규약)
+camera_links:
+  - link: eyes                    # 몸통 앞 Orbbec Dabai 컬러 카메라(URDF depth_camera_link 위치)
+    parent_link: depth_camera_link
+    offset: {position: [0, 0, 0], orientation: [0.5, -0.5, -0.5, 0.5]}   # ROS(x 앞, z 위) → OG 카메라(-z 앞, y 위)
+  - link: wrist_eye
+    parent_link: wrist_cam_link
+    offset: {position: [0, 0, 0], orientation: [0.5, -0.5, -0.5, 0.5]}
+lidar_links: []
+curobo:
+  eef_to_gripper_info:
+    eef_link: {links: [omx_link6, omx_link7], joints: [omx_gripper_joint_1, omx_gripper_joint_2]}
+  flip_joint_limits: []
+  lock_joints: {}
+  self_collision_ignore:
+    base_link: [omx_link0, omx_link1, front_left_wheel_link, front_right_wheel_link, rear_left_wheel_link, rear_right_wheel_link]
+    omx_link1: [omx_link2]
+    omx_link2: [omx_link3]
+    omx_link3: [omx_link4]
+    omx_link4: [omx_link5]
+    omx_link5: [omx_link6, omx_link7]
+    omx_link6: [omx_link7]
+  collision_spheres: {}
