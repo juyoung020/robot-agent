@@ -14,7 +14,7 @@
 
 <img src="docs/assets/scene_graph_cover.png" width="760" alt="물체 기억 뷰어">
 
-<sub>로봇의 물체 기억(Spark-DSG) 뷰어 — 2D 지도 위에 물체를 세그먼트 점구름으로 등록하고, 누르면 위치·상태와 그 물체를 본 순간의 RGB·깊이 조각을 보여 준다 (BEHAVIOR 시뮬레이션)</sub>
+<sub>로봇의 물체 기억(Spark-DSG를 수정해 사용 — 층은 물체·장소·방 3개, 물체 간 전치사 관계와 building·mesh 제거) 뷰어 — 2D 지도 위에 물체를 세그먼트 점구름으로 등록하고, 누르면 위치·상태와 그 물체를 본 순간의 RGB·깊이 조각을 보여 준다 (BEHAVIOR 시뮬레이션)</sub>
 
 <br><br>
 
@@ -76,7 +76,7 @@ robot-agent/
 │   ├── app/         # 휴대폰 앱 (iOS·Android, 채팅으로 명령)
 │   └── behavior-2026/ # 서브모듈: BEHAVIOR Challenge 2026 (시뮬레이터에서 같은 구조를 시험)
 │       ├── src/scene_graph/ # scenemap·ovdet·clip(물체 영상 임베딩)·runtime(sgrt)·viewer
-│       ├── third_party/spark_dsg/ # Spark-DSG 우리 사본 (BSD-3)
+│       ├── third_party/spark_dsg/ # Spark-DSG 우리 수정본 (BSD-3, 층 3개로 줄임 · mesh/zmq 제거)
 │       ├── tools/   #   실행·측정·검증 스크립트
 │       └── archive/ #   지금 안 쓰는 모듈 (지우지 않고 옮겨 둠)
 ├── training/        # 로봇에 올릴 작은 모델 학습 (embed/: 영상–글 임베딩 증류)
