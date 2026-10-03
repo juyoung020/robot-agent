@@ -12,12 +12,7 @@
 
 <br><br>
 
-<table>
-<tr>
-<td align="center" width="50%"><img src="docs/assets/scene_graph_view_3d.png" width="380" alt="물체 기억 뷰어 (3D)"></td>
-<td align="center" width="50%"><img src="docs/assets/scene_graph_view_top.png" width="380" alt="물체 기억 뷰어 (위에서)"></td>
-</tr>
-</table>
+<img src="docs/assets/scene_graph_view.png" width="760" alt="물체 기억 뷰어">
 
 <sub>로봇의 물체 기억(Spark-DSG를 수정해 사용 — 뷰어는 물체·방 2층, 물체 간 전치사 관계·building·mesh 제거, 장소는 백엔드에서만 계산) 뷰어 — 2D 지도 위에 물체를 세그먼트 점구름으로 등록하고, 누르면 위치·상태와 그 물체를 본 순간의 RGB·깊이 조각을 보여 준다. 파란 선은 로봇이 지나간 길 (BEHAVIOR 시뮬레이션)</sub>
 
