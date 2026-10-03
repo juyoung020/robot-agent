@@ -4,6 +4,8 @@
 
 | 폴더 | 내용 |
 |---|---|
+| `env/` | LIMO + OMX GPU 환경 커널(G1), CPU 참조판과 비트 동일 |
+| `map/` | GPU 안 자라는 지도(scenemap 근사, G2 앞부분), CPU 참조판과 비트 동일 |
 | `observation/` | 관측: 로봇 state + 지도 토큰(물체 슬롯·벽 벡터·방 id) + 목표(물체 id·단계 종류) |
 | `reward/` | 단계별 보상 |
 | `network/` | 정책·가치 신경망 |

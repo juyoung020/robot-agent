@@ -18,6 +18,8 @@ class DeviceEnv {
   // act[k*N+i] (장치), obs[k*N+i], rew[i], done[i] (장치). 비동기 — 기다리지 않는다. bug != 0 은 검증의 음성 대조용
   void step(const float* act, float* obs, float* rew, int* done, int bug = 0);
   void download(std::vector<float>& f, std::vector<int>& iv, std::vector<uint64_t>& rng) const;
+  // 장치 상태 보기(읽기 전용으로 쓸 것) — 지도 단계(training/RL/map)가 스텝 뒤에 이어서 읽는다
+  Soa soa() const { return Soa{f_, iv_, rng_, N_}; }
 
  private:
   int N_, stage_;
