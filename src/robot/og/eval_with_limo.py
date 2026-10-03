@@ -49,5 +49,30 @@ def _load_policy(self):
 
 
 _ev.BatchedEvaluator.load_policy = _load_policy
+
+# 사람 시연 통계(human_stats)는 R1 의 두 팔(left/right) 키만 있어 우리 팔 이름 "0" 으로 정규화하면 에피소드 끝에서
+# KeyError '0' 이 난다. 사람 기록이 없는 팔은 정규화 거리(normalized_agent_distance)에서만 빼고, 원 거리(agent_distance)는 그대로 남긴다.
+import omnigibson.metrics.agent_metric as _am
+
+_orig_episode_metrics = _am.AgentMetric._compute_episode_metrics
+
+
+def _episode_metrics(self, env, episode_info):
+    hs = self.human_stats
+    if hs is None:
+        all_d = episode_info.get("delta_agent_distance", self.delta_agent_distance)
+        return {"agent_distance": {k: sum(v) for k, v in all_d.items()}}
+    all_d = episode_info.get("delta_agent_distance", self.delta_agent_distance)
+    missing = [k for k in all_d if k not in hs]
+    if not missing:
+        return _orig_episode_metrics(self, env, episode_info)
+    kept = {k: v for k, v in all_d.items() if k in hs}
+    r = _orig_episode_metrics(self, env, {**episode_info, "delta_agent_distance": kept})
+    r["agent_distance"] = {k: sum(v) for k, v in all_d.items()}
+    r["normalized_agent_distance_skipped"] = missing   # 사람 통계에 없는 팔(예: "0")
+    return r
+
+
+_am.AgentMetric._compute_episode_metrics = _episode_metrics
 sys.argv = ["omnigibson.eval.eval"] + sys.argv[1:]
 runpy.run_module("omnigibson.eval.eval", run_name="__main__")
