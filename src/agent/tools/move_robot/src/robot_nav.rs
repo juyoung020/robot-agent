@@ -756,6 +756,17 @@ impl Robot {
             let id = format!("R{}", ri.id);
             let visited = self.nav.visited.contains(&ri.id);
             let mut o = json!({"id": id, "visited": visited});
+            // 두 번 실패한 방 목표는 id 를 주지 않는다(같은 실패 되풀이 막기)
+            let failed = ri.goal_idx.map_or(false, |gi| {
+                let (gx, gy) = m.grid.center(gi);
+                self.nav.failed_goals.iter().any(|(g, n)| *n >= 2 && (g[0] - gx).hypot(g[1] - gy) < 0.8)
+            });
+            if failed {
+                o["path_m"] = Value::Null;
+                o["note"] = json!("go_to failed twice");
+                rl.push(o);
+                continue;
+            }
             match (ri.goal_idx, ri.path_m) {
                 (Some(gi), Some(pm)) => {
                     o["path_m"] = json!(r1(pm));
