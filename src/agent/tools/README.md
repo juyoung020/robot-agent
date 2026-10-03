@@ -20,27 +20,29 @@ LLM 이 골라 부르는 도구를 둔다. 설계는 [`../plan.md`](../plan.md) 
 π0.5 를 거치지 않고 LLM 이 로봇을 직접 움직이는 도구 하나. 하는 일은 이것뿐이다: 한 부분을 목표까지 안전하게 움직이고 결과를 짧게 돌려준다.
 (plan.md 3.3 은 "이동·스킬 실행 도구는 LLM 에 주지 않는다"가 기본이다. 이 도구는 시연·디버깅·π0.5 가 못 하는 작은 보정용이고, 본 경로에 넣을지는 결정 필요.)
 
-### 스키마 (9B 모델용으로 작게, 정의 JSON 약 1 KB)
+### 스키마 (9B 모델용으로 작게, 정의 JSON 약 2 KB — `move_robot::definition()`, `move-robot schema`)
 
 ```json
 {"part": "base | torso | left_arm | right_arm | left_gripper | right_gripper",
- "mode": "delta | absolute",
- "values": [number, ...],
- "duration_s": number (선택)}
+ "mode": "go_to | probe | delta | absolute",
+ "target": string (선택, go_to 만: 지난 지도 요약의 id "F1"·"R2"),
+ "values": [number, ...] (1..7 개),
+ "duration_s": number (선택, 0 보다 큼)}
 ```
-필수: `part`, `mode`, `values`. 부분마다 값 개수가 정해져 있다.
+필수: `part`, `mode`. `values` 는 go_to 에 `target` 을 줄 때 말고는 있어야 하고, 개수는 모드·부분마다 정해져 있다(probe 2, target 없는 go_to 2, base delta 3, torso 4, 팔 7, 그리퍼 1).
+`go_to`·`probe` 는 베이스 전용, 베이스에 `absolute` 는 없다(`error`).
 
 | part | values (순서·단위) | 행동 벡터 칸 (R1Pro 23) | 제어기 (`omnigibson/eval/r1pro.yaml`) |
 |---|---|---|---|
-| `base` | `[앞 m, 왼쪽 m, 왼쪽으로 돌기 °]` — 호출할 때의 로봇 기준, **delta 만** | 0..3 `vx, vy, wz` | 속도, [-1,1] → ±0.75 m/s, ±0.75 m/s, ±1 rad/s |
-| `torso` | `[j1..j4]` ° | 3..7 | 절대 관절 위치 (rad) |
+| `base` | delta `[앞 m, 왼쪽 m, 왼쪽으로 돌기 °]` — 호출할 때의 로봇 기준 / probe `[왼쪽으로 돌기 °, 앞 m]` / go_to `target` 또는 `[앞 m, 왼쪽 m]` (아래 2026-10-03 절) | 0..3 `vx, vy, wz` | 속도, [-1,1] → ±0.75 m/s, ±0.75 m/s, ±1 rad/s |
+| `torso` | `[j1..j4]` ° (delta·absolute) | 3..7 | 절대 관절 위치 (rad) |
 | `left_arm` | `[j1..j7]` ° (어깨 → 손목) | 7..14 | 절대 관절 위치 |
 | `left_gripper` | `[벌림]` 0 = 닫힘 … 1 = 열림 (absolute 권장) | 14 | smooth, [-1,1] → 손가락 0…0.05 m |
 | `right_arm` | `[j1..j7]` ° | 15..22 | 절대 관절 위치 |
 | `right_gripper` | `[벌림]` | 22 | smooth |
 
 - 행동·관측 칸은 BEHAVIOR-1K `eval_utils.py` 의 `ACTION_QPOS_INDICES` / `PROPRIOCEPTION_INDICES` 그대로. 머리(카메라)는 평가 설정에서 `NullJointController` 라 움직일 수 없어 enum 에 없다.
-- `delta` 는 지금 측정값에 더하기, `absolute` 는 그 값으로 가기. **`delta` 에 0 만 주면 움직이지 않고 상태만 읽는다**(도구를 늘리지 않으려고).
+- `delta` 는 지금 측정값에 더하기(베이스는 지금 자리에서 그만큼), `absolute` 는 그 값으로 가기(관절·그리퍼만). **`delta` 에 0 만 주면 움직이지 않고 상태만 읽는다**(도구를 늘리지 않으려고).
 - 한 번에 한 부분. 그동안 나머지 부분은 마지막 목표를 유지하고 베이스는 0 속도.
 
 ### 결과 (짧은 JSON)
@@ -52,7 +54,9 @@ LLM 이 골라 부르는 도구를 둔다. 설계는 [`../plan.md`](../plan.md) 
 ```
 - `status`: `reached`(허용 오차 안) / `blocked`(멈췄는데 목표 못 감: 접촉·물체·장애물) / `timeout`(아직 가는 중) / `error`(인자 틀림 — 예외가 아니라 관찰값).
 - `clamped`: 한계 밖이라 잘린 칸 번호, 관절이면 `limits`(그 칸의 허용 범위 °)도 — 부호를 고칠 수 있게. `slowed`: 요청한 `duration_s` 가 안전 속도보다 빨라서 늘렸다.
-- 베이스 `state` 는 이번 호출 동안 움직인 양(base_qvel 적분 오도메트리, 시뮬 정답 자세는 안 씀), `error` 는 `[남은 m, 남은 °]`.
+- `error`: 관절·그리퍼는 가장 큰 남은 차이 하나(°·비율). 베이스 delta `state` 는 이번 호출 동안 움직인 양(base_qvel 적분 오도메트리), `error` 는 `[남은 m, 남은 °]`.
+- 베이스 go_to·probe 결과는 `state` 대신 `mode`, `target`(id 나 `[앞, 왼쪽]`·`probe [..]`), `moved_m`, `turned_deg`, `time_s`, go_to 면 `planned_m`·`replans`(있을 때). 안전 정지면 `stopped_by`, `clear_m`.
+  지도를 받은 뒤의 베이스 결과(delta 포함)에는 `map`(LLM 관측)과 `_m`(측정) — 아래 2026-10-03 절.
 
 ### 안전 한계 (`Safety::default`, `src/lib.rs`)
 
@@ -61,10 +65,10 @@ LLM 이 골라 부르는 도구를 둔다. 설계는 [`../plan.md`](../plan.md) 
 | 관절 한계 | URDF `r1pro.urdf` 한계 안쪽 2° 로 자름 |
 | 팔 / 몸통 속도 | 45 °/s / 20 °/s (최소 저크 보간 최고 속도 기준) |
 | 그리퍼 | 1 초에 끝까지 (비율 1.0/s) |
-| 베이스 | 0.3 m/s, 35 °/s, 가속 0.6 m/s²·90 °/s², 한 번에 축마다 2 m·180° 까지 |
+| 베이스 | delta 0.3 m/s, 35 °/s, 한 번에 축마다 2 m·180° 까지 / go_to 0.5 m/s, 50 °/s / probe 앞으로 0.25 m/s, 한 번에 1.5 m·돌기 ±360° 까지. 가속 0.6 m/s²·90 °/s² |
 | 막힘 판정 | 관절: 지령과 실제 차이 20° 넘게 0.2 s → 멈추고 그 자리 유지 / 보간 끝난 뒤 정지 0.27 s. 베이스: 지령의 20 % 미만으로 1 s |
-| 도착 허용 | 관절 1.5°, 그리퍼 0.05, 베이스 1 cm·1° |
-| 시간 초과 | 관절: 보간 + 1.5 s, 베이스: 예상 시간 × 1.5 + 3 s |
+| 도착 허용 | 관절 1.5°, 그리퍼 0.05, 베이스 1 cm·1° (멈춘 뒤 2 배 안이면 `reached`, 밖이면 다시 접근 최대 2 번) |
+| 시간 초과 | 관절: 보간 + 1.5 s, 베이스 delta: 예상 시간 × 1.5 + 3 s (+ `duration_s`), go_to: 경로 길이 / 0.3 m/s + 12 s, probe: 돌기 / 50 °/s × 1.5 + 앞 / 0.25 m/s × 2 + 4 s |
 
 그리퍼가 닫다가 막히면(물체를 쥠) 지령은 그대로 둔다(계속 쥔다). 팔이 막히면 측정 위치로 지령을 바꿔 더 밀지 않는다.
 
@@ -78,7 +82,11 @@ LLM (Qwen3.5-9B, raw tool loop) ── tool_call ──▶ move_robot::link::run
      │                                                   매 스텝: proprio 61 → mr_tick (libmove_robot.so, 같은 Rust 실행기) → 행동 23
      ◀──────────────────── 결과 JSON 한 줄 ◀─────────────────┘
 ```
-- 닫힌 고리 실행기(검증·자르기·보간·판정)는 Rust 한 곳(`move_robot/src/lib.rs`). 시뮬 쪽 파이썬은 바이트만 옮긴다(numpy·torch 없어도 됨).
+- 닫힌 고리 실행기(검증·자르기·보간·판정)는 Rust 한 곳(`move_robot/src/lib.rs`, 주행은 `nav.rs`·`robot_nav.rs`·`map.rs`). 시뮬 쪽 파이썬은 바이트만 옮긴다(numpy·torch 없어도 됨).
+- C ABI(`move_robot/include/move_robot.h`, `src/ffi.rs`): `mr_new`, `mr_free`, `mr_tick`(0 대기 / 1 움직이는 중 / 2 이번에 끝남 / -1 proprio 이상 / -2 인자 이상), `mr_command`(0 시작 / 1 바로 끝남 / -2),
+  `mr_busy`, `mr_reset`, `mr_take_result`(쓴 길이 / 0 없음 / -필요 길이), `mr_tool_definition`, 지도용 `mr_set_map`·`mr_set_reference`·`mr_set_contacts`·`mr_overlay_json`,
+  `mr_set_gt_pose(r, x, y, yaw)`(map 틀 정답 자세, rad. 다음 `mr_tick` 한 번에서 base_qvel 적분 대신 지도·go_to·probe 자세와 이동 거리에 쓰임, 0 / -2).
+  `SGRT_POSE=gt` 일 때 behavior-2026 `src/sim/move_robot/move_robot_sim.py`·`src/sim/explore/run_explore.py` 가 매 스텝 `mr_tick` 앞에 부른다. 베이스 delta 의 `state` 는 그래도 base_qvel 적분.
 - 에이전트 쪽 의존성: `serde_json` 하나. `--features llm` 일 때만 기존 계획기 `llm.rs`(KAU HTTPS, curl)를 경로 의존성으로 쓴다.
 
 ### 쓰는 법
