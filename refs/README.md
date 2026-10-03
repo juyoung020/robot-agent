@@ -13,6 +13,10 @@ bash refs/download.sh
 |---|---|---|---|
 | π0.5: a Vision-Language-Action Model with Open-World Generalization (CoRL 2025) | [arXiv 2504.16054](https://arxiv.org/abs/2504.16054) | [Physical-Intelligence/openpi](https://github.com/Physical-Intelligence/openpi) | 우리가 쓸 VLA. 단계(subtask) 지시 + 카메라 → 행동 |
 | π0: A Vision-Language-Action Flow Model for General Robot Control | [arXiv 2410.24164](https://arxiv.org/abs/2410.24164) | [Physical-Intelligence/openpi](https://github.com/Physical-Intelligence/openpi) | π0.5의 전신 |
+| FAST: Efficient Action Tokenization for Vision-Language-Action Models | [arXiv 2501.09747](https://arxiv.org/abs/2501.09747) | [Physical-Intelligence/openpi](https://github.com/Physical-Intelligence/openpi) | 행동 묶음을 DCT + BPE 로 이산 토큰화. π0.5 사전학습의 행동 토큰 |
+| Knowledge Insulating Vision-Language-Action Models: Train Fast, Run Fast, Generalize Better | [arXiv 2505.23705](https://arxiv.org/abs/2505.23705) | (openpi `pi05_droid` 가 이 방식) | 행동 전문가 기울기를 몸통에 안 흘리고 FAST 토큰으로 몸통 학습. π0.5 두 단계 학습을 한 단계로 |
+
+π0.5 학습 방법 정리(데이터 MM·ME·CE·HL·WD·VI, 사전학습 28만 + 후학습 8만 스텝, 제거 실험, 우리 VLA 에 가져올 것): [docs/map_vla/PI05_TRAINING.md](../docs/map_vla/PI05_TRAINING.md)
 
 ## Scene Graph (로봇의 기억)
 
