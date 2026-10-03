@@ -4,6 +4,7 @@ Map_Vla 프로젝트에서 쓴 조사·설계 문서다. 작성 시점의 판단
 
 | 문서 | 내용 | 비고 |
 |---|---|---|
+| [TRAIN_VIEWER.md](TRAIN_VIEWER.md) | **학습 뷰어 설계(Rust)**: sgview 방식 Rust 서버 + canvas 차트·three.js 재생, 학습·재생·비교 탭, 실행 종류(teacher·bc·dagger·rlft·eval·lab), 학습 고리가 쓰는 파일 규약(run.json·progress·episodes·이진 재생), 전투기 뷰어에서 가져온 규칙 20개, 단계 | 2026-10-03 설계 |
 | [GPU_TRAINING.md](GPU_TRAINING.md) | **GPU 만으로 학습하는 설계**(C++/CUDA/Rust): 5070 Ti(sm_120)에서 되는 FP8 명령, CUDA graph 로 CPU 없는 학습 고리, JSBSim GPU 포팅 방식의 환경 커널, 자라는 지도(GPU scenemap 근사), 커널 합치기, 정밀도, 16 GB 메모리, 검증 사다리, 예상 속도, 단계 | 2026-10-03 설계 |
 | [POLICY.md](POLICY.md) | **정책 설계**: LLM → VLA·`move_robot` 역할 나누기, 교사 RL(스킬·보상·비대칭 actor-critic·자라는 지도·커리큘럼), 학생 VLA(몸통 두 안·행동 묶음·지연), 학습 순서(RL 교사 → BC + DAgger → VLA RL 다듬기 → 실제 리모), 안전·평가·정할 것 | 2026-10-03 설계 |
 | [VLA_INPUT.md](VLA_INPUT.md) | **우리 VLA 입력·출력 설계**: 카메라 2장 + 몸 상태 56 + 물체 칸 ≤ 16 × 289(상대 좌표, 이름 뜻·생김새 벡터, 손과의 거리, 출처·불확실도) + 벽·방 토큰, 일반화·외우지 않기 규칙과 평가 | 2026-10-03 설계 |
