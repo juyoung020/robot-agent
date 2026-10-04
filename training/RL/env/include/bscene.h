@@ -13,6 +13,8 @@ using namespace dm;
 
 constexpr int MAXSC = 8;           // 장면 수 상한(BEHAVIOR 2026 은 7)
 constexpr float CELL = 0.1f;       // 장면 격자(RASC) = 지도 칸
+constexpr float INV_CELL = 10.0f;
+constexpr int NAV_P = 32;          // 지도 거리장 조각 한 변(칸) — gmap::NAV_P
 constexpr float BIN = 1.0f;        // 상자 찾기 칸 묶음 m
 constexpr float INV_BIN = 1.0f;
 constexpr int WIN = 128;           // 창 한 변 칸 수 = gmap::GW
@@ -90,7 +92,8 @@ constexpr BCurr kBCurrDefault = {0.34f, 0.33f, 0xffu, 0, 0.f, 0, {0, 0}};
 
 // 지도 → 환경(앞 스텝의 지도 값): 정책이 아는 지도(자라는 지도)의 거리장과 목표 확정 여부
 struct NavFb {
-  const uint8_t* lev;     // [N][WIN·WIN] 거리장 단계(0.1 m 칸, 4·8 이웃 번갈아 BFS = 팔각 거리 ≈ 단계 × 0.1 m), 255 = 못 감
+  const uint8_t* lev;     // [N][NAV_P·NAV_P] 거리장 단계 조각(계산 때 로봇 칸 둘레, 0.1 m 칸, 4·8 이웃 번갈아 BFS = 팔각 거리 ≈ 단계 × 0.1 m), 255 = 못 감/멈춤 뒤
+  const int* org;         // [N] 조각 원점 창 칸(열 & 0xffff | 행 << 16, 16 비트 부호)
   const int* tag;         // [N] 거리장을 만든 판 번호(env ep), 다르면 쓰지 않음
   const int* conf;        // [N] 목표 물체가 지도에 확정(B2 성공 조건)
 };
@@ -232,15 +235,15 @@ DEV bool seg_blocked_scene(const SceneDev& d, const float p[3], const float q[3]
 }
 
 // ---- 창 거리장(지도 → 환경): 칸 (x, y) 둘레 5 × 5 칸 중 닿은 칸의 (단계 × 0.1 m + 칸 가운데까지 거리) 최소. 없으면 −1 ----
-DEV float field_dist(const uint8_t* lev, float x, float y) {
-  const float fx = (x + WIN_HALF) / CELL, fy = (y + WIN_HALF) / CELL;
-  const int cx = (int)floorf(fx), cy = (int)floorf(fy);
+DEV float field_dist(const uint8_t* lev, int org, float x, float y) {
+  const int pc0 = (int)(int16_t)(org & 0xffff), pr0 = org >> 16;
+  const int cx = (int)floorf(x * INV_CELL) + WIN / 2, cy = (int)floorf(y * INV_CELL) + WIN / 2;   // gmap::nav_cell 과 같은 식
   float best = 1e30f;
   for (int dy = -2; dy <= 2; ++dy)
     for (int dx = -2; dx <= 2; ++dx) {
-      const int ix = cx + dx, iy = cy + dy;
-      if (ix < 0 || iy < 0 || ix >= WIN || iy >= WIN) continue;
-      const int L = lev[iy * WIN + ix];
+      const int ix = cx + dx, iy = cy + dy, px = ix - pc0, py = iy - pr0;
+      if (ix < 0 || iy < 0 || ix >= WIN || iy >= WIN || px < 0 || py < 0 || px >= NAV_P || py >= NAV_P) continue;
+      const int L = lev[py * NAV_P + px];
       if (L == 255) continue;
       const float ccx = ((float)ix + 0.5f) * CELL - WIN_HALF, ccy = ((float)iy + 0.5f) * CELL - WIN_HALF;
       const float ex = x - ccx, ey = y - ccy;

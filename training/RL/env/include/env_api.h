@@ -38,7 +38,7 @@ class DeviceEnv {
   const bsc::SceneSet* ss_ = nullptr;
   bsc::BCurr* bcurr_ = nullptr;
   const bsc::BCurr* bcurr_src_ = nullptr;
-  bsc::NavFb nav_{nullptr, nullptr, nullptr};
+  bsc::NavFb nav_{nullptr, nullptr, nullptr, nullptr};
   float* f_ = nullptr;
   int* iv_ = nullptr;
   uint64_t* rng_ = nullptr;
@@ -50,7 +50,7 @@ struct CpuEnv {
   bool arm_free;
   const bsc::SceneSet* ss = nullptr;   // BEHAVIOR 판: 호스트 장면 묶음(bscene_host.h SceneUpload::host)
   bsc::BCurr curr;
-  bsc::NavFb nav{nullptr, nullptr, nullptr};   // 호스트 배열(CpuMap 의 nav_fb())
+  bsc::NavFb nav{nullptr, nullptr, nullptr, nullptr};   // 호스트 배열(CpuMap 의 nav_fb())
   std::vector<float> f;
   std::vector<int> iv;
   std::vector<uint64_t> rng;

@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <vector>
 
 #include <cuda_fp16.h>
@@ -38,7 +39,7 @@ int main(int argc, char** argv) {
   gmap::MapCurr cu = gmap::kCurrEmpty;
   bsc::BuildOpt bo;
   bsc::BCurr bcu = bsc::kBCurrDefault;
-  int pos = 0;
+  int pos = 0, nav_k = 0;
   for (int a = 1; a < argc; ++a) {
     if (!std::strcmp(argv[a], "--curr") && a + 1 < argc) {
       float v[5] = {0.f, 0.f, (float)cu.kmin, (float)cu.kmax, cu.reveal_r};
@@ -49,6 +50,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--negative-way")) { negative = true; neg_bug = 2; }
     else if (!std::strcmp(argv[a], "--negative-live")) { negative = true; neg_bug = 3; }
     else if (!std::strcmp(argv[a], "--negative-room")) { negative = true; neg_bug = 4; }
+    else if (!std::strcmp(argv[a], "--negative-nav")) { negative = true; neg_bug = 5; }
+    else if (!std::strcmp(argv[a], "--nav-k") && a + 1 < argc) nav_k = std::atoi(argv[++a]);
     else if (!std::strcmp(argv[a], "--scenes") && a + 1 < argc) bo.dir = argv[++a];
     else if (!std::strcmp(argv[a], "--mix") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &bcu.p1, &bcu.p2);
     else if (!std::strcmp(argv[a], "--strict")) bcu.strict = 1;
@@ -90,6 +93,13 @@ int main(int argc, char** argv) {
   CpuEnv cenv(N, stage, seed, arm, beh ? &sb.host : nullptr, bcu);
   gmap::DeviceMap gmapd(N, mseed, sb.dev);
   gmap::CpuMap cmap(N, mseed, beh ? &sb.host : nullptr);
+  cu.nav_k = nav_k;
+  if (beh) { genv.set_nav(gmapd.nav_fb()); cenv.nav = cmap.nav_fb(); }   // 다가가기 거리 = 앞 스텝 지도의 거리장(정책이 아는 지도)
+  long nav_fresh = 0, nav_steps = 0, nav_valid = 0;
+  double nav_err = 0, nav_rel = 0;
+  long nav_cmp = 0;
+  std::vector<int> gf_ep(N, -1);
+  std::vector<std::vector<float>> gf(N);
   long room_chk = 0, room_bad = 0, room_known = 0, door_tok = 0;
   // 방 토큰 독립 확인: RASC 방 이름 → 종류(같은 규칙을 여기서 따로 씀)
   auto rtype_rasc = [](const std::string& n) {
@@ -183,6 +193,10 @@ int main(int argc, char** argv) {
       for (size_t k = 0; k < gh.segs.size(); ++k) if (gh.segs[k] != ch.segs[k]) { note("wall segments (env)", (long)(k / gmap::SEGW)); break; }
     }
     if (std::memcmp(gh.tprev.data(), ch.tprev.data(), sizeof(gmap::TPrev) * gh.tprev.size())) note("token prev positions", 0);
+    if (beh && (std::memcmp(gh.lev.data(), ch.lev.data(), gh.lev.size()) || gh.navtag != ch.navtag || gh.navconf != ch.navconf || gh.navorg != ch.navorg)) {
+      for (size_t k = 0; k < gh.lev.size(); ++k) if (gh.lev[k] != ch.lev[k]) { note("BEHAVIOR approach distance field", (long)(k / (gmap::NAV_P * gmap::NAV_P))); break; }
+      if (gh.navtag != ch.navtag || gh.navconf != ch.navconf || gh.navorg != ch.navorg) note("BEHAVIOR field tag / origin / target confirmed", 0);
+    }
     if (beh && std::memcmp(gh.bm.data(), ch.bm.data(), sizeof(gmap::BMapEnv) * gh.bm.size())) {
       for (int i = 0; i < N; ++i) if (std::memcmp(&gh.bm[i], &ch.bm[i], sizeof(gmap::BMapEnv))) { note("BEHAVIOR map extras (BMapEnv)", i); break; }
     }
@@ -226,6 +240,32 @@ int main(int argc, char** argv) {
       n_wallseg += c.nseg_h + c.nseg_v;
       maxseg_h = std::max<long>(maxseg_h, c.nseg_h); maxseg_v = std::max<long>(maxseg_v, c.nseg_v);
       const gmap::MapTok& tk = ch.tok[i];
+      if (beh && ch.bm[i].on) {   // 거리장: 이 판 것인가, 참 장면 최단 경로(호스트 다익스트라, 목표 쪽에서)와의 차
+        ++nav_steps;
+        const int ep_i = cenv.iv[(size_t)I_EP * N + i];
+        if (ch.navtag[i] == ep_i) {
+          ++nav_fresh;
+          const float x = cenv.f[(size_t)F_X * N + i], y = cenv.f[(size_t)F_Y * N + i];
+          const float fd = bsc::field_dist(ch.lev.data() + (size_t)i * gmap::NAV_P * gmap::NAV_P, ch.navorg[i], x, y);
+          if (fd >= 0.f) {
+            ++nav_valid;
+            const int ent = cenv.iv[(size_t)I_B_ENT * N + i];
+            const bsc::Entry& en = sb.ent[ent];
+            if (gf_ep[i] != ep_i) {   // 같은 씨앗(목표 둘레 seed_r)으로 참 장면(로봇 중심 칸 0.13 m 여유) 다익스트라
+              bsc::disk_field(sb.sc[en.scene], en, cenv.f[(size_t)F_TX * N + i], cenv.f[(size_t)F_TY * N + i],
+                              env::seed_r_of(cenv.iv[(size_t)I_B_KIND * N + i]), gf[i]);
+              gf_ep[i] = ep_i;
+            }
+            const int ci = (int)std::floor((x + bsc::WIN_HALF) / bsc::CELL), cj = (int)std::floor((y + bsc::WIN_HALF) / bsc::CELL);
+            if (ci >= 0 && cj >= 0 && ci < bsc::WIN && cj < bsc::WIN && gf[i][(size_t)cj * bsc::WIN + ci] >= 0.f && (t % 10) == 0) {
+              const float td = gf[i][(size_t)cj * bsc::WIN + ci];
+              nav_err += fd - td;
+              nav_rel += std::fabs(fd - td);
+              ++nav_cmp;
+            }
+          }
+        }
+      }
       if (beh && ch.bm[i].on) {   // 방 토큰 = RASC 방 격자에서 믿는 자세의 방, 드러났을 때만 그 종류, 아니면 모름(5)
         const gmap::BMapEnv& B = ch.bm[i];
         const rasc::Scene& R = rscenes[B.scene];
@@ -315,10 +355,14 @@ int main(int argc, char** argv) {
     std::printf("  BEHAVIOR room token vs RASC room grid at the slam pose (independent loader): %ld env-steps checked, robot in a revealed room %ld, door in token %ld, mismatches %ld\n",
                 room_chk, room_known, door_tok, room_bad);
     if (room_bad) ++mismatches;
+    std::printf("  BEHAVIOR approach field (known map, period %d): fresh for this episode %.3f of env-steps, robot cell reached %.3f; vs true-scene path (host Dijkstra from the same seed disk,"
+                " every 10th step, %ld samples): mean (field − true) %.3f m, mean |diff| %.3f m\n",
+                gmap::nav_period(cu), nav_fresh / std::max(1.0, (double)nav_steps), nav_valid / std::max(1.0, (double)nav_fresh), nav_cmp, nav_err / std::max(1L, nav_cmp),
+                nav_rel / std::max(1L, nav_cmp));
   }
   if (negative) {
     std::printf("negative control (%s on GPU): %ld mismatching items (must be > 0)\n",
-                neg_bug == 1 ? "confirm rule off" : neg_bug == 2 ? "waypoint descent tie order flipped" : neg_bug == 3 ? "live slots use map position" : "BEHAVIOR room token shifted 1.5 m", mismatches);
+                neg_bug == 1 ? "confirm rule off" : neg_bug == 2 ? "waypoint descent tie order flipped" : neg_bug == 3 ? "live slots use map position" : neg_bug == 4 ? "BEHAVIOR room token shifted 1.5 m" : "BEHAVIOR distance field always 4-neighbour", mismatches);
     if (first_step >= 0) std::printf("  first mismatch: step %ld, %s\n", first_step, first_what);
     return mismatches > 0 ? 0 : 1;
   }

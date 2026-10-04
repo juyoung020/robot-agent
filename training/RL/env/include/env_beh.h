@@ -176,9 +176,9 @@ DEV bool grasp_reach_box(const float ctr[3], const float ext[3], float px, float
   return false;
 }
 // 거리(보상·관측): 지도 거리장이 이 판 것이면 그것 + 씨앗 반경, 아니면 직선. 거리장에서 못 찾으면 −1
-DEV float beh_dist(const Core& c, const BState& b, const uint8_t* lev, float x, float y) {
+DEV float beh_dist(const Core& c, const BState& b, const uint8_t* lev, int org, float x, float y) {
   if (lev) {
-    const float f = bsc::field_dist(lev, x, y);
+    const float f = bsc::field_dist(lev, org, x, y);
     return f < 0.f ? -1.f : f + seed_r_of(b.kind);
   }
   const float dx = c.tx - x, dy = c.ty - y;
@@ -187,7 +187,7 @@ DEV float beh_dist(const Core& c, const BState& b, const uint8_t* lev, float x, 
 
 // 한 제어 스텝(BEHAVIOR 판). lev: 이 판의 지도 거리장(앞 스텝 지도, 판 번호가 맞을 때만, 아니면 nullptr), conf: 목표 확정(−1 = 지도 없음 → B2 는 보임만)
 template <class Hook>
-DEV void step_core_beh(Core& c, BState& b, const bsc::SceneSet& ss, const uint8_t* lev, int conf, const float act_in[N_ACT], StepOut& o, bool arm_free,
+DEV void step_core_beh(Core& c, BState& b, const bsc::SceneSet& ss, const uint8_t* lev, int org, int conf, const float act_in[N_ACT], StepOut& o, bool arm_free,
                        const Hook& hook) {
   float act[N_ACT], jerk, v_cmd, w_cmd, q_cmd[N_Q];
   act_prepare(c, act_in, act, jerk, v_cmd, w_cmd, q_cmd, arm_free);
@@ -207,7 +207,7 @@ DEV void step_core_beh(Core& c, BState& b, const bsc::SceneSet& ss, const uint8_
   }
   const bool visible = aim < 0.5f * K::cam_hfov && !occluded_beh(c, b, ss, cam_wx, cam_wy);
   // 거리: 같은 거리장(또는 직선)으로 지난 자리·지금 자리
-  const float dn = beh_dist(c, b, lev, c.x, c.y), dp = beh_dist(c, b, lev, b.px, b.py);
+  const float dn = beh_dist(c, b, lev, org, c.x, c.y), dp = beh_dist(c, b, lev, org, b.px, b.py);
   const float prog = (dn >= 0.f && dp >= 0.f) ? dp - dn : 0.f;
   const float dist = dn >= 0.f ? dn : b.dist;
 
@@ -280,11 +280,12 @@ DEV void step_env_beh(const Soa& s, int i, const float* act, float* obs, float* 
   for (int k = 0; k < N_ACT; ++k) a[k] = act[k * s.N + i];
   if (bug == 1) a[1] = -a[1];   // 음성 대조
   const bool fresh = fb.lev != nullptr && fb.tag[i] == c.ep;
-  const uint8_t* lev = fresh ? fb.lev + (size_t)i * (bsc::WIN * bsc::WIN) : nullptr;
+  const uint8_t* lev = fresh ? fb.lev + (size_t)i * (bsc::NAV_P * bsc::NAV_P) : nullptr;
+  const int org = fresh ? fb.org[i] : 0;
   const int conf = fb.conf == nullptr ? -1 : (fresh ? fb.conf[i] : 0);
   if (bug == 2) b.room = -2;   // 음성 대조(장면): B1 목표 방을 지움
   StepOut o;
-  step_core_beh(c, b, ss, lev, conf, a, o, arm_free, NoHook{});
+  step_core_beh(c, b, ss, lev, org, conf, a, o, arm_free, NoHook{});
   for (int k = 0; k < N_OBS; ++k) obs[k * s.N + i] = o.obs[k];
   rew[i] = o.reward;
   done[i] = o.done;

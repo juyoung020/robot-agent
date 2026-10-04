@@ -192,7 +192,7 @@ struct MapCurr {
   float p0, p1;     // C0·C1 비율(나머지 C2)
   int kmin, kmax;   // C1 미리 확정할 참 물체 수(N_PRIM 개 중). 계획서 30–70 % → 9 개 중 3–6 개
   float reveal_r;   // C1 격자 공개 반경 m (가정)
-  int pad;
+  int nav_k;        // BEHAVIOR 다가가기 거리장 다시 계산 주기(스텝, 판마다 m.t % nav_k == 0 과 판 리셋 때). 0 = 기본 NAV_K_DEF (예전 pad 자리)
 };
 // 기본 = 모두 C2(빈 지도): G2·G3 와 같은 지도
 constexpr MapCurr kCurrEmpty = {0.f, 0.f, 3, 6, 1.5f, 0};
@@ -290,7 +290,7 @@ DEV uint32_t* scr_occ(Scratch& sh) { return reinterpret_cast<uint32_t*>(&sh); } 
 // furn: A2 가구 상자(환경 SoA 의 이 판 자리, 줄 간격 N). 판 리셋 때만 읽는다. nullptr(손으로 만든 EnvView) 이면 가구 없음
 struct EnvView { float x, y, yaw, v, w, tx, ty, rhx, rhy; float q[env::N_Q]; int ep; const float* fb; const int* fi; int fs;
                  int bkind, bscene, bent; float bwx, bwy; };   // BEHAVIOR 판(E2): 단계(0 = 상자 방), 장면, 시작 조건 번호, 창 가운데(세계)
-DEV EnvView read_env(const env::Soa& s, int i) {
+DEV EnvView read_env(const env::Soa& s, int i, bool beh = false) {   // beh: BEHAVIOR 판 값도 읽음(장면 묶음이 있는 지도만)
   const int N = s.N;
   EnvView e;
   e.x = s.f[env::F_X * N + i]; e.y = s.f[env::F_Y * N + i]; e.yaw = s.f[env::F_YAW * N + i];
@@ -302,11 +302,11 @@ DEV EnvView read_env(const env::Soa& s, int i) {
   e.fb = s.f + (size_t)env::F_FB0 * N + i;
   e.fi = s.iv + (size_t)env::I_NF * N + i;
   e.fs = N;
-  e.bkind = s.iv[env::I_B_KIND * N + i];
-  e.bscene = s.iv[env::I_B_SCENE * N + i];
-  e.bent = s.iv[env::I_B_ENT * N + i];
-  e.bwx = s.f[env::F_B_WX * N + i];
-  e.bwy = s.f[env::F_B_WY * N + i];
+  e.bkind = beh ? s.iv[env::I_B_KIND * N + i] : 0;
+  e.bscene = beh ? s.iv[env::I_B_SCENE * N + i] : 0;
+  e.bent = beh ? s.iv[env::I_B_ENT * N + i] : 0;
+  e.bwx = beh ? s.f[env::F_B_WX * N + i] : 0.f;
+  e.bwy = beh ? s.f[env::F_B_WY * N + i] : 0.f;
   return e;
 }
 
@@ -2224,6 +2224,117 @@ DEV void map_block(MapCore& m, KfShared& u, const EnvView& e, const MapGrid& g, 
                    int tid, int nt, int bug, int force_kf, const MapCurr& cu, const Sync& sync, const bsc::SceneSet* ss = nullptr, BMapEnv* bm = nullptr) {
   const int flags = phase_begin(m, e, force_kf, ss, bm);
   map_rest(m, u, e, g, met, N, i, tid, nt, bug, flags, cu, sync, ss, bm);
+}
+
+// ---- 8. 다가가기 거리장(E2, BEHAVIOR 판만): **정책이 아는 지도**(믿는 점유 비트)로 목표에서 거꾸로 BFS ------------------------------
+// 계획서 CURRICULUM_BEHAVIOR2026 2절: 다가가기 보상의 경로 거리는 그 순간 자란 지도로 잰다. 막힘 = 점유 칸을 8 이웃 1 칸 부풀림(몸통 반 폭 0.11 m ≈
+// 1 칸 — 문이 0.8 m 면 0.6 m 길이 남음), 안 본 칸은 지나감. 씨앗 = 참 목표 둘레 반경(env_beh.h seed_r_of: B1 점 0.15, 물체 0.45 m) 안 칸 + 목표 칸(막힘에서 뺌).
+// 단계는 4 이웃·8 이웃을 번갈아(홀수 단계 8, 짝수 4) 넓혀 팔각 거리 ≈ 단계 × 0.1 m. 판마다 nav_k 스텝에 한 번(판 리셋 때 바로).
+// 저장은 그때 로봇 칸 둘레 NAV_P × NAV_P 조각(u8, 255 = 못 감/조각 밖)만: 로봇은 nav_k 스텝에 v_max·dt·nav_k 넘게 못 움직이므로(nav_k ≤ NAV_KMAX)
+// 다음 계산까지 읽을 칸(로봇 둘레 5 × 5)이 조각 안에 있다. 같은 까닭으로 BFS 는 로봇 칸 둘레에 처음 닿은 단계 L_r + 여유(NAV_MARGIN) 에서 멈춘다.
+// GPU 는 판 하나 = 워프 하나(레인마다 행 4 개, 행 = 128 비트), CPU 는 같은 집합 연산을 행마다. 단계 집합·멈춤은 차례와 무관
+constexpr int NAV_K_DEF = 10;   // (가정) 측정은 README E2(nav_tradeoff, map_bench MAP_NAVK)
+constexpr int NAV_KMAX = 20;
+constexpr int NAV_LMAX = 254;
+constexpr int NAV_P = 32;       // 조각 한 변(3.2 m)
+constexpr int NAV_PH = NAV_P / 2;
+static_assert(NAV_P == bsc::NAV_P, "patch size shared with env (bscene.h field_dist)");
+DEV int nav_period(const MapCurr& cu) { const int k = cu.nav_k > 0 ? cu.nav_k : NAV_K_DEF; return k > NAV_KMAX ? NAV_KMAX : k; }
+DEV bool nav_due(const MapCore& m, int tag, const MapCurr& cu) { return tag != m.ep || m.t % nav_period(cu) == 0; }
+// 여유 단계: 로봇이 K 스텝에 갈 수 있는 거리(v_max·dt·K, 대각 1.1 배) + 5 × 5 읽기 반 폭 2 + 2
+DEV int nav_margin(int K) { return (int)ceilf((float)K * env::K::v_max * 0.1f * 1.1f * INV_RES) + 4; }
+struct R128 { uint64_t lo, hi; };   // 창 한 행 128 칸(열 c = 비트 c)
+DEV R128 r_or(R128 a, R128 b) { return R128{a.lo | b.lo, a.hi | b.hi}; }
+DEV R128 r_and(R128 a, R128 b) { return R128{a.lo & b.lo, a.hi & b.hi}; }
+DEV R128 r_andn(R128 a, R128 b) { return R128{a.lo & ~b.lo, a.hi & ~b.hi}; }
+DEV R128 r_up(R128 a) { return R128{a.lo << 1, (a.hi << 1) | (a.lo >> 63)}; }     // 열 + 1 쪽으로
+DEV R128 r_dn(R128 a) { return R128{(a.lo >> 1) | (a.hi << 63), a.hi >> 1}; }     // 열 − 1 쪽으로
+DEV R128 r_h3(R128 a) { return r_or(a, r_or(r_up(a), r_dn(a))); }
+DEV bool r_any(R128 a) { return (a.lo | a.hi) != 0ull; }
+DEV R128 r_cols_fast(int c0, int n);
+DEV R128 r_cols(int c0, int c1) { return c1 < c0 ? R128{0ull, 0ull} : r_cols_fast(c0, c1 - c0 + 1); }   // 열 c0..c1 (창 안으로 자름)
+DEV R128 occ_row128(const uint32_t* occ, int r) {
+  return R128{(uint64_t)occ[r * 4] | ((uint64_t)occ[r * 4 + 1] << 32), (uint64_t)occ[r * 4 + 2] | ((uint64_t)occ[r * 4 + 3] << 32)};
+}
+// 행 r 의 씨앗: 칸 가운데가 (tx, ty) 에서 rad 안, + 목표가 든 칸
+DEV R128 nav_seed_row(int r, float tx, float ty, float rad) {
+  R128 o{0ull, 0ull};
+  const float cy = ((float)r + 0.5f) * RES - (float)GW * 0.5f * RES, dy = cy - ty;
+  if (dy * dy <= rad * rad) {
+    const float hw = sqrtf(rad * rad - dy * dy);
+    o = r_cols((int)ceilf((tx - hw) * INV_RES + (float)(GW / 2) - 0.5f), (int)floorf((tx + hw) * INV_RES + (float)(GW / 2) - 0.5f));
+  }
+  const int tc = (int)floorf(tx * INV_RES) + GW / 2, trow = (int)floorf(ty * INV_RES) + GW / 2;
+  if (trow == r && tc >= 0 && tc < GW) { if (tc < 64) o.lo |= 1ull << tc; else o.hi |= 1ull << (tc - 64); }
+  return o;
+}
+DEV int nav_cell(float v) { return (int)floorf(v * INV_RES) + GW / 2; }   // 창 좌표 → 창 칸(bsc::field_dist 와 같은 식)
+DEV int ctz64(uint64_t v) {   // v != 0
+#ifdef __CUDA_ARCH__
+  return __ffsll((long long)v) - 1;
+#else
+  return __builtin_ctzll(v);
+#endif
+}
+// 조각(원점 칸 pc0, pr0)에 행 r 의 비트 b 를 단계 L 로
+DEV R128 r_cols_fast(int c0, int n) {   // 열 c0..c0+n−1 (n ≤ 64, 창 안으로 자름) — 고리 없이
+  R128 o{0ull, 0ull};
+  int a = c0 < 0 ? 0 : c0, b = c0 + n - 1 > GW - 1 ? GW - 1 : c0 + n - 1;
+  if (a > b) return o;
+  auto span = [](int lo, int hi) -> uint64_t {   // 비트 lo..hi (0 ≤ lo ≤ hi ≤ 63)
+    const uint64_t up = hi >= 63 ? ~0ull : ((1ull << (hi + 1)) - 1ull);
+    return up & ~((1ull << lo) - 1ull);
+  };
+  if (a < 64) o.lo = span(a, b < 64 ? b : 63);
+  if (b >= 64) o.hi = span(a < 64 ? 0 : a - 64, b - 64);
+  return o;
+}
+DEV void nav_write_row(uint8_t* lev, int pc0, int pr0, int r, R128 b, int L) {
+  const int pr = r - pr0;
+  if (pr < 0 || pr >= NAV_P) return;
+  b = r_and(b, r_cols_fast(pc0, NAV_P));
+  for (uint64_t x = b.lo; x; x &= x - 1ull) lev[pr * NAV_P + ctz64(x) - pc0] = (uint8_t)L;
+  for (uint64_t x = b.hi; x; x &= x - 1ull) lev[pr * NAV_P + 64 + ctz64(x) - pc0] = (uint8_t)L;
+}
+// CPU 참조판(행마다 차례로). (rx, ry): 지금 로봇(참) 자리, 조각 원점은 돌려줌(org = 열 | 행 << 16, 음수면 16 비트 2 의 보수)
+DEV int nav_org(int pc0, int pr0) { return (pc0 & 0xffff) | (pr0 << 16); }
+DEV void nav_bfs_ref(const uint32_t* occ, float tx, float ty, float rad, float rx, float ry, int K, uint8_t* lev, int& org) {
+  R128 blk[GW], fr[GW], vis[GW], h[GW], rob[GW];
+  const int rc = nav_cell(rx), rr = nav_cell(ry), pc0 = rc - NAV_PH, pr0 = rr - NAV_PH, M = nav_margin(K);
+  org = nav_org(pc0, pr0);
+  for (int k = 0; k < NAV_P * NAV_P; ++k) lev[k] = 255;
+  for (int r = 0; r < GW; ++r) {
+    h[r] = r_h3(occ_row128(occ, r));
+    rob[r] = (r >= rr - 2 && r <= rr + 2) ? r_cols(rc - 2, rc + 2) : R128{0ull, 0ull};   // 로봇 칸 둘레 5 × 5(읽는 칸)
+  }
+  int Lr = -1;
+  for (int r = 0; r < GW; ++r) {
+    R128 b = h[r];
+    if (r > 0) b = r_or(b, h[r - 1]);
+    if (r < GW - 1) b = r_or(b, h[r + 1]);
+    const R128 sd = nav_seed_row(r, tx, ty, rad);
+    blk[r] = r_andn(b, sd);
+    fr[r] = sd;
+    vis[r] = sd;
+    nav_write_row(lev, pc0, pr0, r, sd, 0);
+    if (r_any(r_and(sd, rob[r]))) Lr = 0;
+  }
+  for (int L = 1; L <= NAV_LMAX && !(Lr >= 0 && L > Lr + M); ++L) {
+    R128 nw[GW];
+    bool any = false, hitr = false;
+    for (int r = 0; r < GW; ++r) h[r] = (L & 1) ? r_h3(fr[r]) : fr[r];
+    for (int r = 0; r < GW; ++r) {
+      R128 x = (L & 1) ? h[r] : r_or(r_up(fr[r]), r_dn(fr[r]));
+      if (r > 0) x = r_or(x, h[r - 1]);
+      if (r < GW - 1) x = r_or(x, h[r + 1]);
+      nw[r] = r_andn(r_andn(x, blk[r]), vis[r]);
+      any = any || r_any(nw[r]);
+      hitr = hitr || r_any(r_and(nw[r], rob[r]));
+    }
+    if (!any) break;
+    if (hitr && Lr < 0) Lr = L;
+    for (int r = 0; r < GW; ++r) { vis[r] = r_or(vis[r], nw[r]); fr[r] = nw[r]; nav_write_row(lev, pc0, pr0, r, nw[r], L); }
+  }
 }
 
 }  // namespace gmap

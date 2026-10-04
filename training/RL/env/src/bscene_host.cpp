@@ -263,6 +263,16 @@ void window_dijkstra(const SceneBuild::Sc& s, float wx, float wy, float sx, floa
   dijkstra_win(s, c0, r0, seeds, dist);
 }
 
+void disk_field(const SceneBuild::Sc& s, const Entry& e, float tx, float ty, float rad, std::vector<float>& dist) {
+  const int c0 = (int)std::lround((e.wx - WIN_HALF - s.d.ox) / CELL), r0 = (int)std::lround((e.wy - WIN_HALF - s.d.oy) / CELL);
+  std::vector<std::pair<int, float>> seeds;
+  for (int c = 0; c < WIN * WIN; ++c) {
+    const float cx = ((float)(c % WIN) + 0.5f) * CELL - WIN_HALF, cy = ((float)(c / WIN) + 0.5f) * CELL - WIN_HALF;
+    if ((cx - tx) * (cx - tx) + (cy - ty) * (cy - ty) <= rad * rad) seeds.push_back({c, 0.f});
+  }
+  dijkstra_win(s, c0, r0, seeds, dist);
+}
+
 // B3 서는 자리: 창 칸 가운데에 로봇 가운데를 두고 목표 가운데를 바라볼 때(카메라 에임 ≈ 0) 몸통이 안 닿고 잡는 점 작업 공간에 물체 상자가 걸림
 bool stance_ok(const SceneBuild::Sc& s, const Entry& e, float cx, float cy) {
   const float yaw = std::atan2(e.gy - cy, e.gx - cx);

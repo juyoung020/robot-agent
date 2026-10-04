@@ -1,6 +1,7 @@
 // 처리량: 판 수를 늘려 가며 지도 단계의 keyframe 갱신/초를 잰다(G1 환경 + 장치 안 접근 제어로 몬다).
 //   map_bench [steps=200] [maxN=32768] [minN=0]
 // 줄마다: 움직임 거르기 그대로(자연) / 매 스텝 keyframe(force). 지도 커널 시간만 이벤트로 재고, keyframe 수는 장치 카운터로 센다.
+// MAP_STAGE=3: BEHAVIOR 집(E2, ~/ra_b1k, B1–B3 섞음, 환경 ← 지도 거리장 되먹임). MAP_NAVK=K: 거리장 주기(기본 10), MAP_NAVK=0 이면 거리장 커널 끔(측정용)
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -8,6 +9,7 @@
 #include "env_api.h"
 #include "env_policy.h"
 #include "map_api.h"
+#include "bscene_host.h"
 
 using namespace env;
 
@@ -37,16 +39,33 @@ int main(int argc, char** argv) {
   std::printf("GPU %s (sm_%d%d, %d SMs). map per env: %zu B (grid %d x %d @ %.2f m)\n", p.name, p.major, p.minor, p.multiProcessorCount,
               gmap::DeviceMap(1, 1).bytes(), gmap::GW, gmap::GW, gmap::RES);
   std::vector<int> Ns = {1024, 4096, 16384, 32768, 65536};
+  const int stage = std::getenv("MAP_STAGE") ? std::atoi(std::getenv("MAP_STAGE")) : 1;
+  const int navk = std::getenv("MAP_NAVK") ? std::atoi(std::getenv("MAP_NAVK")) : 10;
+  bsc::SceneBuild sb;
+  if (stage >= kStageBeh) {
+    std::string err;
+    bsc::BuildOpt bo;
+    if (!bsc::build_scenes(bo, sb, &err) || !bsc::upload(sb, &err)) { std::printf("scene build failed: %s\n", err.c_str()); return 1; }
+    std::printf("BEHAVIOR scenes %d, entries %d, scene data on GPU %.1f MB, nav period %d\n", sb.host.nsc, sb.host.nent, sb.dev_bytes / 1e6, navk);
+  }
   if (minN > 0 && minN == maxN) Ns = {minN};   // 판 수 하나만(아무 값)
   for (int N : Ns) {
     if (N > maxN) break;
     if (N < minN) continue;
     for (int force = 0; force < 2; ++force) {
-      DeviceEnv e(N, 1, 1);
-      gmap::DeviceMap m(N, 7);
+      DeviceEnv e(N, stage, 1, false, sb.dev);
+      gmap::DeviceMap m(N, 7, sb.dev);
       if (std::getenv("MAP_BENCH_NOTOK")) m.set_tokens(false);   // 측정용: 토큰 커널 빼고
+      if (stage >= kStageBeh) {
+        e.set_nav(m.nav_fb());
+        if (navk == 0) m.set_nav(false);
+        gmap::MapCurr cu0 = gmap::kCurrEmpty;
+        cu0.nav_k = navk;
+        cudaMemcpy(m.curr_dev(), &cu0, sizeof cu0, cudaMemcpyHostToDevice);
+      }
       if (const char* cs = std::getenv("MAP_CURR")) {   // 커리큘럼 처음 지도(5.5) 비율 "p0,p1[,kmin,kmax,reveal_r]" — 판 리셋 때 미리 채우는 비용 재기
         gmap::MapCurr cu = gmap::kCurrEmpty;
+        cu.nav_k = navk;
         float kk[3] = {(float)cu.kmin, (float)cu.kmax, cu.reveal_r};
         std::sscanf(cs, "%f,%f,%f,%f,%f", &cu.p0, &cu.p1, &kk[0], &kk[1], &kk[2]);
         cu.kmin = (int)kk[0]; cu.kmax = (int)kk[1]; cu.reveal_r = kk[2];

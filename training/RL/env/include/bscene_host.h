@@ -96,6 +96,8 @@ bool body_free_host(const SceneBuild::Sc& s, const Entry& e, float x, float y, f
 void window_dijkstra(const SceneBuild::Sc& s, float wx, float wy, float sx, float sy, std::vector<float>& dist);
 // 목표에서 거꾸로(참 장면): B1 = 목표 점 칸, 물체 표 = 물체 바닥 자국에서 0.38 m 안 칸이 씨앗(0). 대본 정책·SPL 용
 void goal_field(const SceneBuild::Sc& s, const Entry& e, std::vector<float>& dist);
+// 참 장면 다익스트라, 씨앗 = (tx, ty) 에서 rad 안 칸(빈 칸이 아니어도) — 지도 거리장(map.h 8 절)과 같은 씨앗으로 견주기용
+void disk_field(const SceneBuild::Sc& s, const Entry& e, float tx, float ty, float rad, std::vector<float>& dist);
 bool stance_ok(const SceneBuild::Sc& s, const Entry& e, float cx, float cy);   // B3 서는 자리(목표를 봄, 몸통 안 닿음, 잡는 점 작업 공간에 물체)
 
 }  // namespace bsc

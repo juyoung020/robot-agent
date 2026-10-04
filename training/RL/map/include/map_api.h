@@ -20,6 +20,8 @@ struct MapHost {   // 내려받은 한 벌(검증용)
   std::vector<TPrev> tprev;     // 토큰 물체 속도용 [N][KSLOT]
   std::vector<MapTok> tok;      // 이번 스텝 지도 토큰 [N]
   std::vector<BMapEnv> bm;      // BEHAVIOR 판 덧붙임 [N](장면 묶음이 있을 때만)
+  std::vector<uint8_t> lev;     // BEHAVIOR 다가가기 거리장 조각 [N][NAV_P²] (map.h 8 절)
+  std::vector<int> navorg, navtag, navconf;   // [N] 조각 원점, 거리장을 만든 판 번호(−1 없음), 목표 확정
 };
 
 class DeviceMap {
@@ -38,6 +40,9 @@ class DeviceMap {
   const float* metrics() const { return met_; }   // 장치 [k*N + i], k = Met
   const MapTok* tokens() const { return tok_; }   // 장치 [N], 마지막 step 이 안쪽 버퍼에 쓴 토큰
   void set_tokens(bool on) { tok_on_ = on; }      // 측정용: 토큰 커널 끄기
+  void set_nav(bool on) { nav_on_ = on; }          // 측정용: 거리장 커널 끄기(BEHAVIOR)
+  // 환경 되먹임(BEHAVIOR): env DeviceEnv::set_nav 에 넣는다. 장면 묶음이 없으면 모두 nullptr
+  bsc::NavFb nav_fb() const { return bsc::NavFb{lev_, navorg_, navtag_, navconf_}; }
   void download(MapHost& h, const MapTok* tok = nullptr) const;   // tok: 토큰을 읽을 장치 자리(기본 안쪽 버퍼)
   size_t bytes() const;
 
@@ -54,6 +59,11 @@ class DeviceMap {
   bool tok_on_ = true;
   const bsc::SceneSet* ss_ = nullptr;
   BMapEnv* bm_ = nullptr;
+  uint8_t* lev_ = nullptr;
+  int* navorg_ = nullptr;
+  int* navtag_ = nullptr;
+  int* navconf_ = nullptr;
+  bool nav_on_ = true;
   uint32_t* list_ = nullptr;   // 이번 스텝 keyframe·리셋·벽 판 번호(+ 시작 결과 3 비트), 장치 안에서 채움
   int* count_ = nullptr;       // 목록 길이
   MapCurr* curr_ = nullptr;    // 커리큘럼 처음 지도(장치 값, 기본 kCurrEmpty)
@@ -90,6 +100,7 @@ struct CpuMap {
   MapHost h;
   const bsc::SceneSet* ss = nullptr;
   CpuMap(int N_, uint64_t seed, const bsc::SceneSet* ss_host = nullptr);
+  bsc::NavFb nav_fb() const { return ss ? bsc::NavFb{h.lev.data(), h.navorg.data(), h.navtag.data(), h.navconf.data()} : bsc::NavFb{nullptr, nullptr, nullptr, nullptr}; }
   void step(const env::Soa& s, int force_kf = 0, const MapCurr& cu = kCurrEmpty);
 };
 

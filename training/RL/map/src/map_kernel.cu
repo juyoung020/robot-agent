@@ -17,13 +17,16 @@ __global__ void __launch_bounds__(NT) map_init_kernel(MapCore* core, int N, uint
 // 1 단계(판마다 한 스레드): 시작(리셋·오도메트리·움직임 거르기). keyframe·리셋인 판은 목록(장치 안, 원자 덧셈)에 넣고,
 // 아닌 판은 여기서 완성도만 쓰고 끝난다. 목록 순서는 실행마다 달라도 판끼리 독립이라 결과는 같다.
 constexpr int BEGIN_NT = 128;
+// BEH: BEHAVIOR 장면 묶음이 있는 판(장면 코드 포함). 상자 방 지도는 BEH = false 로 띄워 장면 갈래가 컴파일에서 빠진다(레지스터·스택이 예전과 같게)
+template <bool BEH>
 __global__ void __launch_bounds__(BEGIN_NT) map_begin_kernel(env::Soa s, MapCore* core, float* met, uint32_t* list, int* count, int force_kf,
-                                                             const bsc::SceneSet* ss, BMapEnv* bm) {
+                                                             const bsc::SceneSet* ss_in, BMapEnv* bm) {
   const int i = blockIdx.x * BEGIN_NT + threadIdx.x, N = s.N;
   if (i >= N) return;
-  const EnvView e = read_env(s, i);
+  const EnvView e = read_env(s, i, BEH);
   MapCore& m = core[i];
-  BMapEnv* bmi = bm ? bm + i : nullptr;
+  const bsc::SceneSet* ss = BEH ? ss_in : nullptr;
+  BMapEnv* bmi = BEH ? bm + i : nullptr;
   const int f = phase_begin(m, e, force_kf, ss, bmi);
 #ifdef MAP_PROF
   atomicAdd(&g_prof[P_NSEC + ((f & B_KF) ? 1 : 0)], 1ull);
@@ -44,6 +47,7 @@ __device__ __forceinline__ const void* env_pf_addr(const env::Soa& s, int i, int
   if (k < 9 + env::N_Q) return s.f + (size_t)(env::F_Q0 + k - 9) * N + i;
   return s.iv + (size_t)env::I_EP * N + i;
 }
+template <bool BEH>
 __global__ void __launch_bounds__(NT, 10) map_kf_kernel(env::Soa s, MapCore* core, int16_t* L, uint32_t* seen, uint32_t* occ,
                                                         int16_t* segs, float* met, const uint32_t* list, const int* count, int bug,
                                                         const MapCurr* curr, const bsc::SceneSet* ss, BMapEnv* bm) {
@@ -69,12 +73,12 @@ __global__ void __launch_bounds__(NT, 10) map_kf_kernel(env::Soa s, MapCore* cor
   const uint4* src = reinterpret_cast<const uint4*>(&core[i]);
   uint4* dst = reinterpret_cast<uint4*>(&m);
   for (int k = tid; k < (int)(sizeof(MapCore) / 16); k += NT) dst[k] = src[k];
-  const EnvView e = read_env(s, i);   // 코어 읽기와 겹침
+  const EnvView e = read_env(s, i, BEH);   // 코어 읽기와 겹침
   __syncthreads();
   PROF_MARK(P_LOAD);
   const MapGrid g{L + (size_t)i * NCELL, seen + (size_t)i * NWORD, occ + (size_t)i * NWORD, segs + (size_t)i * SEGW};
   const MapCurr cu = *curr;   // 장치 값(바퀴 사이에 바뀔 수 있음 — 다시 잡기 없이)
-  map_rest(m, u, e, g, met, N, i, tid, NT, bug, flags, cu, BlockSync{}, ss, bm ? bm + i : nullptr);
+  map_rest(m, u, e, g, met, N, i, tid, NT, bug, flags, cu, BlockSync{}, BEH ? ss : nullptr, BEH ? bm + i : nullptr);
   __syncthreads();
   uint4* out = reinterpret_cast<uint4*>(&core[i]);
   for (int k = tid; k < (int)(sizeof(MapCore) / 16); k += NT) out[k] = dst[k];
@@ -88,6 +92,7 @@ struct HalfSync {
   __device__ void operator()() const { __syncwarp(mask); }
   __device__ bool any(bool v) const { return __any_sync(mask, v); }   // 같은 판 레인끼리 하나라도(경유 지점 BFS 끝 판정)
 };
+template <bool BEH>
 __global__ void __launch_bounds__(TOK_NL * TOK_EPB) map_tok_kernel(int N, const MapCore* core, const uint32_t* occ, const uint32_t* seen, const int16_t* segs,
                                                                    TPrev* tprev, MapTok* out, int tbug, const bsc::SceneSet* ss, BMapEnv* bm) {
   __shared__ TokScratch ts[TOK_EPB];
@@ -97,7 +102,7 @@ __global__ void __launch_bounds__(TOK_NL * TOK_EPB) map_tok_kernel(int N, const 
   const int i = live ? i0 : N - 1;   // 남는 레인도 같은 동기를 지나도록 마지막 판을 읽기만 함
   const HalfSync hs{0xffffu << (16 * (sub & 1))};
   PROF_START();
-  const BCtx bx = bctx(ss, bm ? bm + i : nullptr);
+  const BCtx bx = bctx(BEH ? ss : nullptr, BEH ? bm + i : nullptr);
   make_tokens_n<TOK_NL>(core[i], occ + (size_t)i * NWORD, seen + (size_t)i * NWORD, segs + (size_t)i * SEGW, tprev + (size_t)i * KSLOT, ts[sub], lane, TOK_NL, live, hs, tbug,
                         &bx);
   hs();
@@ -108,12 +113,97 @@ __global__ void __launch_bounds__(TOK_NL * TOK_EPB) map_tok_kernel(int N, const 
   for (int k = lane; k < (int)(sizeof(MapTok) / 16); k += TOK_NL) dst[k] = src[k];
 }
 
+// 4 단계(BEHAVIOR 판만, 판 하나 = 워프 하나): 다가가기 거리장(map.h 8 절). 레인 l 이 행 4l..4l+3 을 레지스터에 두고, 위·아래 이웃 행은 셔플로.
+// 단계 집합은 nav_bfs_ref(CPU, 행 차례)와 같다(집합 연산이라 차례와 무관). 목표 확정(conf)은 매 스텝 쓴다
+constexpr int NAV_WPB = 4;   // 블록 = 워프 4 = 판 4
+__global__ void __launch_bounds__(32 * NAV_WPB) map_nav_kernel(env::Soa s, const MapCore* core, const uint32_t* occ, const BMapEnv* bm, uint8_t* lev, int* org,
+                                                               int* tag, int* conf, const MapCurr* curr, int bug) {
+  const int lane = threadIdx.x & 31, i = blockIdx.x * NAV_WPB + (threadIdx.x >> 5), N = s.N;
+  if (i >= N || !bm[i].on) return;   // 워프 전체 같은 판
+  const MapCore& m = core[i];
+  const int ep = m.ep, t = m.t, tg = tag[i];
+  if (lane == 0) conf[i] = m.n_task_conf;
+  const MapCurr cu = *curr;
+  if (!(tg != ep || t % nav_period(cu) == 0)) return;
+  const float tx = s.f[env::F_TX * N + i], ty = s.f[env::F_TY * N + i];
+  const float rx = s.f[env::F_X * N + i], ry = s.f[env::F_Y * N + i];
+  const float rad = env::seed_r_of(s.iv[env::I_B_KIND * N + i]);
+  const int K = nav_period(cu), M = nav_margin(K);
+  const int rc = nav_cell(rx), rr = nav_cell(ry), pc0 = rc - NAV_PH, pr0 = rr - NAV_PH;
+  const uint32_t* oc = occ + (size_t)i * NWORD;
+  uint8_t* lv = lev + (size_t)i * (NAV_P * NAV_P);
+  constexpr unsigned F = 0xffffffffu;
+  auto sh_up = [&](R128 a) -> R128 {   // 위 레인(l−1)의 행 3 = 내 행 −1
+    R128 o{__shfl_up_sync(F, a.lo, 1), __shfl_up_sync(F, a.hi, 1)};
+    if (lane == 0) { o.lo = 0ull; o.hi = 0ull; }
+    return o;
+  };
+  auto sh_dn = [&](R128 a) -> R128 {   // 아래 레인(l+1)의 행 0 = 내 행 +4
+    R128 o{__shfl_down_sync(F, a.lo, 1), __shfl_down_sync(F, a.hi, 1)};
+    if (lane == 31) { o.lo = 0ull; o.hi = 0ull; }
+    return o;
+  };
+  reinterpret_cast<uint4*>(lv)[lane * 2] = make_uint4(~0u, ~0u, ~0u, ~0u);       // 조각 1 KB = 레인마다 32 B
+  reinterpret_cast<uint4*>(lv)[lane * 2 + 1] = make_uint4(~0u, ~0u, ~0u, ~0u);
+  __syncwarp();
+  R128 blk[4], fr[4], vis[4], h[4], rob[4];
+  for (int q = 0; q < 4; ++q) {
+    const int r = 4 * lane + q;
+    h[q] = r_h3(occ_row128(oc, r));
+    rob[q] = (r >= rr - 2 && r <= rr + 2) ? r_cols(rc - 2, rc + 2) : R128{0ull, 0ull};
+  }
+  bool hit0 = false;
+  {
+    const R128 a = sh_up(h[3]), b = sh_dn(h[0]);
+    for (int q = 0; q < 4; ++q) {
+      R128 x = h[q];
+      x = r_or(x, q > 0 ? h[q - 1] : a);
+      x = r_or(x, q < 3 ? h[q + 1] : b);
+      const R128 sd = nav_seed_row(4 * lane + q, tx, ty, rad);
+      blk[q] = r_andn(x, sd);
+      fr[q] = sd;
+      vis[q] = sd;
+      nav_write_row(lv, pc0, pr0, 4 * lane + q, sd, 0);
+      hit0 = hit0 || r_any(r_and(sd, rob[q]));
+    }
+  }
+  int Lr = __any_sync(F, hit0) ? 0 : -1;
+  for (int L = 1; L <= NAV_LMAX && !(Lr >= 0 && L > Lr + M); ++L) {
+    const bool eight = (L & 1) && bug != 5;   // bug 5: 음성 대조(늘 4 이웃)
+    for (int q = 0; q < 4; ++q) h[q] = eight ? r_h3(fr[q]) : fr[q];
+    const R128 a = sh_up(h[3]), b = sh_dn(h[0]);
+    R128 nw[4];
+    bool any = false, hitr = false;
+    for (int q = 0; q < 4; ++q) {
+      R128 x = eight ? h[q] : r_or(r_up(fr[q]), r_dn(fr[q]));
+      x = r_or(x, q > 0 ? h[q - 1] : a);
+      x = r_or(x, q < 3 ? h[q + 1] : b);
+      nw[q] = r_andn(r_andn(x, blk[q]), vis[q]);
+      any = any || r_any(nw[q]);
+      hitr = hitr || r_any(r_and(nw[q], rob[q]));
+    }
+    if (!__any_sync(F, any)) break;
+    if (Lr < 0 && __any_sync(F, hitr)) Lr = L;
+    for (int q = 0; q < 4; ++q) { vis[q] = r_or(vis[q], nw[q]); fr[q] = nw[q]; nav_write_row(lv, pc0, pr0, 4 * lane + q, nw[q], L); }
+  }
+  __syncwarp();
+  if (lane == 0) { tag[i] = ep; org[i] = nav_org(pc0, pr0); }
+}
+
 #define CK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) { std::fprintf(stderr, "CUDA error %s at %s:%d\n", cudaGetErrorString(e_), __FILE__, __LINE__); std::abort(); } } while (0)
 
 DeviceMap::DeviceMap(int N, uint64_t seed, const bsc::SceneSet* ss_dev) : N_(N), ss_(ss_dev) {
   if (ss_dev) {
     CK(cudaMalloc(&bm_, sizeof(BMapEnv) * (size_t)N));
     CK(cudaMemset(bm_, 0, sizeof(BMapEnv) * (size_t)N));
+    CK(cudaMalloc(&lev_, (size_t)NAV_P * NAV_P * N));
+    CK(cudaMemset(lev_, 0xff, (size_t)NAV_P * NAV_P * N));
+    CK(cudaMalloc(&navorg_, sizeof(int) * (size_t)N));
+    CK(cudaMemset(navorg_, 0, sizeof(int) * (size_t)N));
+    CK(cudaMalloc(&navtag_, sizeof(int) * (size_t)N));
+    CK(cudaMemset(navtag_, 0xff, sizeof(int) * (size_t)N));   // −1 = 거리장 없음
+    CK(cudaMalloc(&navconf_, sizeof(int) * (size_t)N));
+    CK(cudaMemset(navconf_, 0, sizeof(int) * (size_t)N));
   }
   CK(cudaMalloc(&core_, sizeof(MapCore) * (size_t)N));
   CK(cudaMalloc(&L_, sizeof(int16_t) * NCELL * (size_t)N));
@@ -138,19 +228,29 @@ DeviceMap::DeviceMap(int N, uint64_t seed, const bsc::SceneSet* ss_dev) : N_(N),
   CK(cudaGetLastError());
 }
 DeviceMap::~DeviceMap() { cudaFree(core_); cudaFree(L_); cudaFree(seen_); cudaFree(met_); cudaFree(list_); cudaFree(count_);
-                         cudaFree(occ_); cudaFree(segs_); cudaFree(tprev_); cudaFree(tok_); cudaFree(curr_); if (bm_) cudaFree(bm_); }
+                         cudaFree(occ_); cudaFree(segs_); cudaFree(tprev_); cudaFree(tok_); cudaFree(curr_); if (bm_) { cudaFree(bm_); cudaFree(lev_); cudaFree(navorg_); cudaFree(navtag_); cudaFree(navconf_); } }
 
 size_t DeviceMap::bytes() const {
   return (size_t)N_ * (sizeof(MapCore) + sizeof(int16_t) * NCELL + 2 * sizeof(uint32_t) * NWORD + sizeof(float) * N_MET + sizeof(int16_t) * SEGW +
-                       sizeof(TPrev) * KSLOT + sizeof(MapTok) + sizeof(uint32_t));
+                       sizeof(TPrev) * KSLOT + sizeof(MapTok) + sizeof(uint32_t) + (ss_ ? sizeof(BMapEnv) + NAV_P * NAV_P + 3 * sizeof(int) : 0));
 }
 
 void DeviceMap::step(const env::Soa& s, int force_kf, int bug, cudaStream_t st, MapTok* tok, const MapCurr* curr) {
   // 목록 길이를 0 으로(비동기, 그래프로 잡힘) → 시작 커널(판마다 스레드) → keyframe 커널(목록의 판만 일함)
   CK(cudaMemsetAsync(count_, 0, sizeof(int), st));
-  map_begin_kernel<<<(N_ + BEGIN_NT - 1) / BEGIN_NT, BEGIN_NT, 0, st>>>(s, core_, met_, list_, count_, force_kf, ss_, bm_);
-  map_kf_kernel<<<N_, NT, 0, st>>>(s, core_, L_, seen_, occ_, segs_, met_, list_, count_, bug == 1 ? 1 : 0, curr ? curr : curr_, ss_, bm_);
-  if (tok_on_) map_tok_kernel<<<(N_ + TOK_EPB - 1) / TOK_EPB, TOK_NL * TOK_EPB, 0, st>>>(N_, core_, occ_, seen_, segs_, tprev_, tok ? tok : tok_, bug >= 2 ? bug : 0, ss_, bm_);
+  if (ss_) {
+    map_begin_kernel<true><<<(N_ + BEGIN_NT - 1) / BEGIN_NT, BEGIN_NT, 0, st>>>(s, core_, met_, list_, count_, force_kf, ss_, bm_);
+    map_kf_kernel<true><<<N_, NT, 0, st>>>(s, core_, L_, seen_, occ_, segs_, met_, list_, count_, bug == 1 ? 1 : 0, curr ? curr : curr_, ss_, bm_);
+  } else {
+    map_begin_kernel<false><<<(N_ + BEGIN_NT - 1) / BEGIN_NT, BEGIN_NT, 0, st>>>(s, core_, met_, list_, count_, force_kf, nullptr, nullptr);
+    map_kf_kernel<false><<<N_, NT, 0, st>>>(s, core_, L_, seen_, occ_, segs_, met_, list_, count_, bug == 1 ? 1 : 0, curr ? curr : curr_, nullptr, nullptr);
+  }
+  if (ss_ && nav_on_)
+    map_nav_kernel<<<(N_ + NAV_WPB - 1) / NAV_WPB, 32 * NAV_WPB, 0, st>>>(s, core_, occ_, bm_, lev_, navorg_, navtag_, navconf_, curr ? curr : curr_, bug == 5 ? 5 : 0);
+  if (tok_on_) {
+    if (ss_) map_tok_kernel<true><<<(N_ + TOK_EPB - 1) / TOK_EPB, TOK_NL * TOK_EPB, 0, st>>>(N_, core_, occ_, seen_, segs_, tprev_, tok ? tok : tok_, bug >= 2 ? bug : 0, ss_, bm_);
+    else map_tok_kernel<false><<<(N_ + TOK_EPB - 1) / TOK_EPB, TOK_NL * TOK_EPB, 0, st>>>(N_, core_, occ_, seen_, segs_, tprev_, tok ? tok : tok_, bug >= 2 ? bug : 0, nullptr, nullptr);
+  }
 }
 
 void prof_reset() {
@@ -180,6 +280,11 @@ void DeviceMap::download(MapHost& h, const MapTok* tok) const {
   if (bm_) {
     h.bm.resize(N_);
     CK(cudaMemcpy(h.bm.data(), bm_, sizeof(BMapEnv) * h.bm.size(), cudaMemcpyDeviceToHost));
+    h.lev.resize((size_t)NAV_P * NAV_P * N_); h.navorg.resize(N_); h.navtag.resize(N_); h.navconf.resize(N_);
+    CK(cudaMemcpy(h.lev.data(), lev_, h.lev.size(), cudaMemcpyDeviceToHost));
+    CK(cudaMemcpy(h.navorg.data(), navorg_, sizeof(int) * N_, cudaMemcpyDeviceToHost));
+    CK(cudaMemcpy(h.navtag.data(), navtag_, sizeof(int) * N_, cudaMemcpyDeviceToHost));
+    CK(cudaMemcpy(h.navconf.data(), navconf_, sizeof(int) * N_, cudaMemcpyDeviceToHost));
   }
 }
 

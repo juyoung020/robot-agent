@@ -8,7 +8,13 @@ namespace gmap {
 struct NoSync { void operator()() const {} bool any(bool v) const { return v; } };
 
 CpuMap::CpuMap(int N_, uint64_t seed, const bsc::SceneSet* ss_host) : N(N_), ss(ss_host) {
-  if (ss) h.bm.assign((size_t)N, BMapEnv{});
+  if (ss) {
+    h.bm.assign((size_t)N, BMapEnv{});
+    h.lev.assign((size_t)NAV_P * NAV_P * N, 255);
+    h.navorg.assign(N, 0);
+    h.navtag.assign(N, -1);
+    h.navconf.assign(N, 0);
+  }
   h.core.resize(N);
   h.L.assign((size_t)NCELL * N, 0);
   h.seen.assign((size_t)NWORD * N, 0u);
@@ -24,7 +30,7 @@ void CpuMap::step(const env::Soa& s, int force_kf, const MapCurr& cu) {
 #pragma omp parallel for schedule(dynamic, 16)
   for (int i = 0; i < N; ++i) {
     KfShared u;
-    const EnvView e = read_env(s, i);
+    const EnvView e = read_env(s, i, ss != nullptr);
     const MapGrid g{h.L.data() + (size_t)i * NCELL, h.seen.data() + (size_t)i * NWORD, h.occ.data() + (size_t)i * NWORD, h.segs.data() + (size_t)i * SEGW};
     BMapEnv* bm = ss ? &h.bm[i] : nullptr;
     map_block(h.core[i], u, e, g, h.met.data(), N, i, 0, 1, 0, force_kf, cu, NoSync{}, ss, bm);
@@ -32,6 +38,15 @@ void CpuMap::step(const env::Soa& s, int force_kf, const MapCurr& cu) {
     const BCtx bx = bctx(ss, bm);
     make_tokens_n<1>(h.core[i], g.occ, g.seen, g.segs, h.tprev.data() + (size_t)i * KSLOT, ts, 0, 1, true, NoSync{}, 0, &bx);
     h.tok[i] = ts.out;
+    if (bx.on) {   // 다가가기 거리장(GPU map_nav_kernel 과 같은 조건·같은 단계 집합)
+      const MapCore& m = h.core[i];
+      h.navconf[i] = m.n_task_conf;
+      if (nav_due(m, h.navtag[i], cu)) {
+        nav_bfs_ref(g.occ, s.f[env::F_TX * N + i], s.f[env::F_TY * N + i], env::seed_r_of(s.iv[env::I_B_KIND * N + i]), s.f[env::F_X * N + i], s.f[env::F_Y * N + i],
+                    nav_period(cu), h.lev.data() + (size_t)i * NAV_P * NAV_P, h.navorg[i]);
+        h.navtag[i] = m.ep;
+      }
+    }
   }
 }
 
