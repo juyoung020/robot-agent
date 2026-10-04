@@ -50,7 +50,7 @@ __device__ __forceinline__ const void* env_pf_addr(const env::Soa& s, int i, int
 template <bool BEH>
 __global__ void __launch_bounds__(NT, 10) map_kf_kernel(env::Soa s, MapCore* core, int16_t* L, uint32_t* seen, uint32_t* occ,
                                                         int16_t* segs, float* met, const uint32_t* list, const int* count, int bug,
-                                                        const MapCurr* curr, const bsc::SceneSet* ss, BMapEnv* bm) {
+                                                        const MapCurr* curr, const bsc::SceneSet* ss, BMapEnv* bm, uint8_t* view) {
   __shared__ __align__(16) MapCore m;
   __shared__ KfShared u;
   const int j = blockIdx.x, tid = threadIdx.x, N = s.N;
@@ -76,7 +76,7 @@ __global__ void __launch_bounds__(NT, 10) map_kf_kernel(env::Soa s, MapCore* cor
   const EnvView e = read_env(s, i, BEH);   // 코어 읽기와 겹침
   __syncthreads();
   PROF_MARK(P_LOAD);
-  const MapGrid g{L + (size_t)i * NCELL, seen + (size_t)i * NWORD, occ + (size_t)i * NWORD, segs + (size_t)i * SEGW};
+  const MapGrid g{L + (size_t)i * NCELL, seen + (size_t)i * NWORD, occ + (size_t)i * NWORD, segs + (size_t)i * SEGW, view + (size_t)i * VIEW_BYTES};
   const MapCurr cu = *curr;   // 장치 값(바퀴 사이에 바뀔 수 있음 — 다시 잡기 없이)
   map_rest(m, u, e, g, met, N, i, tid, NT, bug, flags, cu, BlockSync{}, BEH ? ss : nullptr, BEH ? bm + i : nullptr);
   __syncthreads();
@@ -191,7 +191,7 @@ __global__ void __launch_bounds__(32 * NAV_WPB) map_nav_kernel(env::Soa s, const
 }
 
 // 다시 시작(apply): 판 하나 = 블록 하나. 요청이 있으면 생성자와 같은 상태(배열 0, 거리장 0xff·판 번호 −1, init_core). 없으면 바로 끝남
-struct MapBufs { MapCore* core; int16_t* L; uint32_t* seen; float* met; uint32_t* occ; int16_t* segs; TPrev* tprev; MapTok* tok; BMapEnv* bm; uint8_t* lev; int* navorg; int* navtag; int* navconf; };
+struct MapBufs { MapCore* core; int16_t* L; uint32_t* seen; float* met; uint32_t* occ; int16_t* segs; TPrev* tprev; MapTok* tok; BMapEnv* bm; uint8_t* lev; int* navorg; int* navtag; int* navconf; uint8_t* view; };
 __global__ void __launch_bounds__(256) map_apply_k(MapBufs b, int N, const MapCtl* ctl) {
   if (ctl->pend == 0) return;
   const int i = blockIdx.x, t = threadIdx.x;
@@ -206,6 +206,7 @@ __global__ void __launch_bounds__(256) map_apply_k(MapBufs b, int N, const MapCt
   z32(b.segs + (size_t)i * SEGW, sizeof(int16_t) * SEGW);
   z32(b.tprev + (size_t)i * KSLOT, sizeof(TPrev) * KSLOT);
   z32(b.tok + i, sizeof(MapTok));
+  z32(b.view + (size_t)i * VIEW_BYTES, VIEW_BYTES);   // 본 곳 칸(나타남 판정)
   for (int k = t; k < N_MET; k += 256) b.met[(size_t)k * N + i] = 0.f;
   if (b.bm) {
     z32(b.bm + i, sizeof(BMapEnv));
@@ -216,7 +217,7 @@ __global__ void __launch_bounds__(256) map_apply_k(MapBufs b, int N, const MapCt
   if (t == 0) init_core(b.core[i], ctl->seed, i);
 }
 static_assert(sizeof(int16_t) * NCELL % 4 == 0 && sizeof(int16_t) * SEGW % 4 == 0 && sizeof(TPrev) % 4 == 0 && sizeof(MapTok) % 4 == 0 && sizeof(BMapEnv) % 4 == 0 &&
-                  NAV_P * NAV_P % 4 == 0, "map_apply_k clears 4-byte words");
+                  NAV_P * NAV_P % 4 == 0 && VIEW_BYTES % 4 == 0, "map_apply_k clears 4-byte words");
 __global__ void map_commit_k(MapCtl* ctl) { ctl->pend = 0; }
 
 #define CK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) { std::fprintf(stderr, "CUDA error %s at %s:%d\n", cudaGetErrorString(e_), __FILE__, __LINE__); std::abort(); } } while (0)
@@ -235,6 +236,8 @@ DeviceMap::DeviceMap(int N, uint64_t seed, const bsc::SceneSet* ss_dev) : N_(N),
     CK(cudaMemset(navconf_, 0, sizeof(int) * (size_t)N));
   }
   CK(cudaMalloc(&core_, sizeof(MapCore) * (size_t)N));
+  CK(cudaMalloc(&view_, (size_t)VIEW_BYTES * N));
+  CK(cudaMemset(view_, 0, (size_t)VIEW_BYTES * N));
   CK(cudaMalloc(&L_, sizeof(int16_t) * NCELL * (size_t)N));
   CK(cudaMalloc(&seen_, sizeof(uint32_t) * NWORD * (size_t)N));
   CK(cudaMalloc(&met_, sizeof(float) * N_MET * (size_t)N));
@@ -271,29 +274,30 @@ void DeviceMap::request_reset(uint64_t seed) {
   CK(cudaEventRecord(ev, 0));
 }
 void DeviceMap::apply() {
-  const MapBufs b{core_, L_, seen_, met_, occ_, segs_, tprev_, tok_, bm_, lev_, navorg_, navtag_, navconf_};
+  const MapBufs b{core_, L_, seen_, met_, occ_, segs_, tprev_, tok_, bm_, lev_, navorg_, navtag_, navconf_, view_};
   map_apply_k<<<N_, 256>>>(b, N_, ctl_);
   map_commit_k<<<1, 1>>>(ctl_);
 }
 
 DeviceMap::~DeviceMap() { cudaFree(ctl_); if (ctl_h_) { for (void* e : ctl_ev_) if (e) cudaEventDestroy(static_cast<cudaEvent_t>(e)); cudaFreeHost(ctl_h_); }
                          cudaFree(core_); cudaFree(L_); cudaFree(seen_); cudaFree(met_); cudaFree(list_); cudaFree(count_);
-                         cudaFree(occ_); cudaFree(segs_); cudaFree(tprev_); cudaFree(tok_); cudaFree(curr_); if (bm_) { cudaFree(bm_); cudaFree(lev_); cudaFree(navorg_); cudaFree(navtag_); cudaFree(navconf_); } }
+                         cudaFree(occ_); cudaFree(segs_); cudaFree(tprev_); cudaFree(tok_); cudaFree(curr_); cudaFree(view_); if (bm_) { cudaFree(bm_); cudaFree(lev_); cudaFree(navorg_); cudaFree(navtag_); cudaFree(navconf_); } }
 
 size_t DeviceMap::bytes() const {
   return (size_t)N_ * (sizeof(MapCore) + sizeof(int16_t) * NCELL + 2 * sizeof(uint32_t) * NWORD + sizeof(float) * N_MET + sizeof(int16_t) * SEGW +
-                       sizeof(TPrev) * KSLOT + sizeof(MapTok) + sizeof(uint32_t) + (ss_ ? sizeof(BMapEnv) + NAV_P * NAV_P + 3 * sizeof(int) : 0));
+                       sizeof(TPrev) * KSLOT + sizeof(MapTok) + sizeof(uint32_t) + VIEW_BYTES + (ss_ ? sizeof(BMapEnv) + NAV_P * NAV_P + 3 * sizeof(int) : 0));
 }
 
 void DeviceMap::step(const env::Soa& s, int force_kf, int bug, cudaStream_t st, MapTok* tok, const MapCurr* curr) {
   // 목록 길이를 0 으로(비동기, 그래프로 잡힘) → 시작 커널(판마다 스레드) → keyframe 커널(목록의 판만 일함)
   CK(cudaMemsetAsync(count_, 0, sizeof(int), st));
+  const int kbug = (bug == 1 || bug >= 6) ? bug : 0;   // 지도 갱신 음성 대조(1 확정 규칙, 6–10 바뀜 판정 규칙). 2–4 토큰, 5 거리장
   if (ss_) {
     map_begin_kernel<true><<<(N_ + BEGIN_NT - 1) / BEGIN_NT, BEGIN_NT, 0, st>>>(s, core_, met_, list_, count_, force_kf, ss_, bm_);
-    map_kf_kernel<true><<<N_, NT, 0, st>>>(s, core_, L_, seen_, occ_, segs_, met_, list_, count_, bug == 1 ? 1 : 0, curr ? curr : curr_, ss_, bm_);
+    map_kf_kernel<true><<<N_, NT, 0, st>>>(s, core_, L_, seen_, occ_, segs_, met_, list_, count_, kbug, curr ? curr : curr_, ss_, bm_, view_);
   } else {
     map_begin_kernel<false><<<(N_ + BEGIN_NT - 1) / BEGIN_NT, BEGIN_NT, 0, st>>>(s, core_, met_, list_, count_, force_kf, nullptr, nullptr);
-    map_kf_kernel<false><<<N_, NT, 0, st>>>(s, core_, L_, seen_, occ_, segs_, met_, list_, count_, bug == 1 ? 1 : 0, curr ? curr : curr_, nullptr, nullptr);
+    map_kf_kernel<false><<<N_, NT, 0, st>>>(s, core_, L_, seen_, occ_, segs_, met_, list_, count_, kbug, curr ? curr : curr_, nullptr, nullptr, view_);
   }
   if (ss_ && nav_on_)
     map_nav_kernel<<<(N_ + NAV_WPB - 1) / NAV_WPB, 32 * NAV_WPB, 0, st>>>(s, core_, occ_, bm_, lev_, navorg_, navtag_, navconf_, curr ? curr : curr_, bug == 5 ? 5 : 0);
@@ -327,6 +331,8 @@ void DeviceMap::download(MapHost& h, const MapTok* tok) const {
   CK(cudaMemcpy(h.L.data(), L_, sizeof(int16_t) * h.L.size(), cudaMemcpyDeviceToHost));
   CK(cudaMemcpy(h.seen.data(), seen_, sizeof(uint32_t) * h.seen.size(), cudaMemcpyDeviceToHost));
   CK(cudaMemcpy(h.met.data(), met_, sizeof(float) * h.met.size(), cudaMemcpyDeviceToHost));
+  h.view.resize((size_t)VIEW_BYTES * N_);
+  CK(cudaMemcpy(h.view.data(), view_, h.view.size(), cudaMemcpyDeviceToHost));
   if (bm_) {
     h.bm.resize(N_);
     CK(cudaMemcpy(h.bm.data(), bm_, sizeof(BMapEnv) * h.bm.size(), cudaMemcpyDeviceToHost));

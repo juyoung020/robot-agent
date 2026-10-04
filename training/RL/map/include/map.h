@@ -11,12 +11,15 @@
 //   objmap.hpp ObjParams / objmap.cpp update(짝짓기·확정·옮겨짐·사라짐·버림), scenemap.h sm_object(SM_SEEN..).
 // (가정) 표시 값은 실제 기록·사양으로 맞출 값이다. 한 곳(MP)에만 둔다.
 #pragma once
+#include <cstring>
 #include "env.h"
 #include "env_soa.h"
 // 잡음·맞춤 값의 기본(MP 가 씀). 기본은 LIMO 탐색 기록 보정(../map_calib/limo, calib_limo.json) + 이 모형에 다시 맞춘 값(README "LIMO 보정").
+// odo_t·kf_corr_xy 는 새 LIMO SLAM(behavior-2026 84b373c, 오도메트리 가중 맞추기)의 기록 넷(~/datasets/limo_rec r1–r3·r4live)에 다시 맞춤
+// (2026-10-04, map_drift kind 5 — ../map_calib/limo/README.md "새 SLAM"). 옛 값(옛 SLAM 둘째 판에 맞춤): odo_t 0.10, kf_corr_xy 0.001.
 // map_drift 로 다시 맞출 때만 -D 로 바꾼다. R1 값(예전 기본)은 ../map_calib/README.md 에 기록으로 남김
 #ifndef ODO_T_V
-#define ODO_T_V 0.10f
+#define ODO_T_V 0.015f
 #endif
 #ifndef ODO_RR_V
 #define ODO_RR_V 0.04f
@@ -34,7 +37,7 @@
 #define ODO_BW_V 0.0f
 #endif
 #ifndef KF_CORR_XY_V
-#define KF_CORR_XY_V 0.001f
+#define KF_CORR_XY_V 0.003f
 #endif
 #ifndef KF_CORR_YAW_V
 #define KF_CORR_YAW_V 0.15f
@@ -132,6 +135,26 @@ struct MP {
   static constexpr float ozmin = 0.15f, ozmax = 3.0f, da_min = 0.30f, da_k = 0.5f, da_gap = 0.10f, big = 0.5f;
   static constexpr float moved_d = 0.15f, occl = 0.10f, grow_max = 0.25f, max_ext = 4.0f;
   static constexpr int prune_steps = 100, gone_min_steps = 20;   // prune_s 10 s, gone_min_s 2 s (제어 10 Hz, 영상 = 제어 스텝 (가정))
+  // ---- 바뀜 판정(scenemap 3ed710f objmap.hpp ObjParams 기본값 — R1·LIMO 같은 값. 시각은 제어 스텝 0.1 s) ----
+  static constexpr float floor_h = 0.05f;                        // 바닥 조각: 관측 상자(10–90 백분위) 윗면 < 0.05 m 면 버림(러그·카펫 이름은 우리 이름 표에 없음)
+  static constexpr float name_share = 0.2f, name_switch = 1.25f, name_key = 0.02f;   // 이름 표 몫 ≥ 0.2 면 짝 후보, 다른 이름이면 열쇠 +0.02, 1.25 배 넘어야 이름 바뀜
+  static constexpr float name_merge_iou = 0.5f;                  // 병합(da): 이름이 달라도 3D IoU ≥ 0.5
+  static constexpr float merge_overlap = 0.35f, merge_min_ext = 0.05f;   // da/merge.hpp MergeParams
+  static constexpr float absent_vis = 0.5f, absent_min_px = 12.f, absent_det_k = 1.15f;   // 사라짐 근거(표본 27 = 상자 3×3×3 격자 — 근사판은 점 구름 없음)
+  static constexpr int gone_misses_big = 6, gone_min_steps_big = 40, spurious_obs = 5;   // 큰 것 놓침 6·4 s, 관측 < 5 사라짐은 지움
+  static constexpr float gone_view_d = 0.5f, gone_step_d = 0.10f, gone_step_rad = 0.087266463f /*5도*/;
+  static constexpr float ln_gone_eps = -3.912023f;               // ln(gone_eps 0.02): (1 − p)^k < 0.02 인 k
+  static constexpr float link_v = 1.0f, link_d0 = 1.0f, link_max_d = 8.0f;   // 옮겨짐 잇기 거리 ≤ min(8, 1 + 1 m/s · 시간 차)
+  static constexpr int link_min_obs = 3, link_wait_steps = 300, link_window_steps = 1800, link_view_gap_steps = 50;   // 30 s, 180 s, 5 s
+  static constexpr float view_cell = 0.5f;                       // 본 곳 칸(나타남 판정): 0.5 m × 거리 띠 1..5 m
+  static constexpr int move_n = 3, move_dt_steps = 6, moving_steps = 10;   // 움직임 따라가기: 3 번 잇달아, 관측 간격 ≤ 0.6 s, 마지막 따라감 뒤 1 s 안 = 움직이는 중
+  static constexpr float move_v = 0.3f, move_min_d = 0.25f, move_max_cam_w = 0.6f;
+  // ---- 잡기 확인(scenemap d58c978 capi.cpp robotParams LIMO) ----
+  static constexpr float grasp_max_w = 0.06f, grasp_min_gap = 0.005f, grasp_w_tol = 0.025f;   // 가운데 변 ≤ 6 cm, 빈손 틈 < 5 mm, 틈 ± 2.5 cm
+  static constexpr int grip_settle_steps = 2;                    // 그리퍼 값이 0.2 s 동안 0.01 rad 안이면 쥠 끝
+  static constexpr float grip_settle_eps = 0.01f;
+  static constexpr float grasp_off = -0.0119f;                   // 잡는 점 = omx_end_effector_link 에서 링크 x 로 −0.0119 m(E0, URDF grasp_point)
+  static constexpr float self_r = 0.05f, self_pad = 0.01f;       // 팔 캡슐 반경(OMX 링크, capi robotBody 0.05) + 거르기 여유
   // ---- 오도메트리·slam ---- (LIMO 탐색 기록 보정 — ../map_calib/limo. 단서: 기록 하나(탐색 판 094010 + limo3), 카메라 FK 1 cm 오차가 든 판)
   // 걸음마다 랜덤워크: 이동 σ = odo_t·거리, 회전 σ = odo_rr·|dθ| + odo_rt·거리. 원 오도메트리에는 걸음 잡음이 없어 SLAM 잔차에 맞춘 유효 값
   static constexpr float odo_t = ODO_T_V, odo_rr = ODO_RR_V, odo_rt = ODO_RT_V;
@@ -165,7 +188,7 @@ struct MP {
   static constexpr float wall_ign_m = 0.1f, wall_ign_z = 0.4f, wall_ign_max = 5.0f;   // capi.cpp refreshWalls: 바닥 위 확정 물체 상자 + 0.1 m
   static constexpr float wall_valid = 6.0f;                      // wallStateVector: 선분 거리 ≤ kMaxRange · 1.5
   // ---- 들기(objmap.cpp updateHands, LIMO 값 capi.cpp robotParams) ----
-  static constexpr float grasp_r = 0.12f, grip_closed = 0.35f, hand_r = 0.10f;   // omx_gripper_joint_1 < 0.35 rad 면 닫힘
+  static constexpr float grasp_r = 0.12f, grip_closed = 0.6f, hand_r = 0.10f;   // omx_gripper_joint_1 < 0.6 rad 면 닫힘(d58c978: 옛 0.35 는 4 cm 를 쥔 0.41 rad 를 못 봄)
   static constexpr float base_z = 0.15f;                         // base_footprint → base_link (URDF base_joint)
   // ---- 방(계획서 5.1 의 5 번: 참 방 표 + 본 비율로 드러냄) ----
   static constexpr float min_room_m2 = 2.0f;                     // rooms.hpp RoomParams min_room_m2 (scenemap)
@@ -173,7 +196,7 @@ struct MP {
   static constexpr float room_l2 = 4.5f, room_l3 = 6.0f;         // 긴 변이 이 이상이면 방 2·3 개 (가정)
   static constexpr float room_wmin = 1.2f;                       // 방 최소 폭 (가정)
   // ---- 지도 토큰(VLA_INPUT 3절) ----
-  // 팔이 닿는지: omx_workspace.h (URDF 순기구학 + 관절 한계로 미리 계산한 (r, z) 작업 공간, tools/omx_ws) — 예전 0.40 m 구는 뺐다
+  // 팔이 닿는지: omx_workspace_grasp.h (URDF 순기구학 + 관절 한계로 미리 계산한 잡는 점 (r, z) 작업 공간, tools/omx_ws --grasp) — 예전 0.40 m 구·팔 끝 표는 뺐다
   static constexpr float tok_dt = 0.1f;                          // 제어 스텝 s(물체 속도·마지막 본 뒤 시간)
   // 다음 경유 지점(VLA_INPUT 4절, sm_snap_place_path 대신): 믿는 점유 격자를 2×2 로 묶은 0.2 m 거친 격자(점유 = 2×2 중 하나라도 점유,
   // 1 칸 부풀림 — 몸통 외접원 0.194 m), 안 본 칸은 지나갈 수 있음. 목표 칸에서 8 이웃 BFS → 로봇 칸에서 내리막으로 way_look 칸 간 자리 (가정: 칸·앞보기)
@@ -200,19 +223,36 @@ DEV bool is_static(int cls) { return cls == C_TABLE || cls == C_CABINET; }   // 
 // BEHAVIOR 판(MapCore::init_pad = 1)은 종류 = 이름 표 행이라 고정 종류 목록을 쓰지 않는다(큰 것 > big 규칙만)
 #define is_static_m(m, cls) ((m).init_pad == 0 && is_static(cls))
 
+// 본 곳 칸(나타남 판정, objmap markView): 창 0.5 m 칸 VC × VC, 거리 띠 VB(1..5 m)
+constexpr int VC = (int)(GW * RES / MP::view_cell + 0.5f) + 2;   // 26 + 2(창 가장자리 칸이 반 칸 걸침)
+constexpr int VB = 5;
 // ---- 판마다 지도 상태 -------------------------------------------------------------------------------------------------
 struct Prim {   // 정적 장면 상자(축 정렬), 바닥에 놓임
   int cls;
   float lo[3], hi[3];
 };
-struct Slot {   // 물체 기억 한 칸 (scenemap.h sm_object / objmap.hpp MapObject 에서)
-  int valid, id, cls, n_obs, last_seen, last_kf, state, confirmed, moved, misses, first_miss;   // 시각 = 판 시작 뒤 제어 스텝
-  int held;                // 팔 끝이 들고 있음(objmap held_by ≥ 0). 짝짓기·옮겨짐 잇기·부재 확인·벽 무시 영역에서 뺀다
-  int src;                 // 마지막 관측의 출처: 참 물체 prim 번호, 유령 g 는 −1−g (토큰의 생김새 표 번호)
+struct Slot {   // 물체 기억 한 칸 (scenemap.h sm_object / objmap.hpp MapObject 에서). 공유 메모리에 올리므로 작은 값은 좁은 정수로
+  int id, n_obs, last_seen, last_kf, first_miss;   // 시각 = 판 시작 뒤 제어 스텝
+  int first_seen;             // 처음 본 스텝(옮겨짐 잇기: n 처음 > m 마지막)
+  int trk_t, moving_t;        // 움직임: 마지막 관측 스텝(−1 없음), 마지막으로 따라간 스텝
+  int16_t cls;                // 이름(상자 방 Cls 0..5, BEHAVIOR 이름 표 행)
+  int16_t src;                // 마지막 관측의 출처: 참 물체 prim 번호, 유령 g 는 −1−g (토큰의 생김새 표 번호)
+  int16_t misses, n_vis_miss; // 연속 놓침, 보일 만한데 놓친 keyframe 수(검출률)
+  int16_t vcls[4];            // 이름 표(이름 번호, −1 빈 칸) — scenemap votes(제한 없음)를 4 칸으로(가정: 넘치면 가장 작은 몫을 바꿈)
+  int8_t valid, state, confirmed, moved;
+  int8_t held;                // 잡는 점이 들고 있음(objmap held_by ≥ 0). 짝짓기·옮겨짐 잇기·부재 확인·벽 무시 영역에서 뺀다
+  int8_t appeared;            // 전에 본 자리(처음 검출 거리 이하에서 5 s 넘게 전)에 새로 나타남 — 잇기 후보
+  int8_t mv_cnt, pad8;        // 잇달아 빠르게 같은 쪽으로 간 관측 수
   float pos[3], ext[3], first_pos[3], score;
   float seen_len, seen_rot;   // 마지막으로 본 때의 믿는 오도메트리 누적 이동·회전(토큰의 위치 불확실도)
   float meas[3];              // 마지막 관측 자리(그 keyframe 의 검출 그대로, map 좌표) — 토큰의 "지금 보는 중" 칸 위치(VLA_INPUT 3절: 보이면 이번 프레임 깊이)
+  float max_det_z;            // 검출한 가장 먼 카메라 깊이(사라짐 판정은 이 안에서만)
+  float miss_cam[2];          // 연속 놓침 시작 때 (믿는) 카메라 xy
+  float lmiss_cam[2], lmiss_yaw;   // 마지막으로 센 놓침의 카메라 xy·광축 yaw
+  float trk_pos[2], trk_step[2];   // 마지막 관측 중심 xy(날 것)·한 걸음
+  float vw[4];                // 이름별 점수 합
 };
+constexpr int NVOTE = 4;
 struct Ghost {  // 판마다 정해진 가짜 물체 자리(유령): 시야에 들면 keyframe 마다 p_ghost 로 검출된다
   int cls;
   float pos[3], sz;
@@ -231,6 +271,18 @@ struct MapCore {
   int closed, held_slot, n_grasp_total;   // n_grasp_total: 들기 누적(리셋에 안 지움)
   float eef_b[3], eef_m[3], held_rel[3], grasp_pos[3];
   float fk_q[5];           // eef_b 를 구한 팔 관절(같으면 순기구학을 다시 하지 않음 — 결과 같음)
+  // 잡기 확인(d58c978, LIMO): 잡는 점(map), 그리퍼 멈춤 기준 값·스텝, 이번 닫힘에 골랐나. 팔 뼈대(base_footprint, 거르기 캡슐)
+  float gp_b[3];           // 잡는 점 base_link(eef_b 와 같은 때 다시 계산)
+  float gp_m[3];           // 잡는 점(URDF grasp_point = 팔 끝 − 0.0119 m 링크 x) — 잡기·손에 든 것 거르기·손 둘레 판단(scenemap T_eef)
+  float gref;              // 멈춤 판정 기준 그리퍼 값
+  int gref_t, tried;       // 기준을 잡은 스텝(−1 없음), 이번 닫힘에 이미 골랐나
+  float arm[7][3];         // omx_link0(mount), 관절 1..5 원점, 팔 끝 — base_footprint(scenemap LimoFk pts). 캡슐 반경 self_r + self_pad
+  float arm_xmax;          // 팔 뼈대 x 최댓값(카메라 앞에 없으면 거르기 건너뜀 — 결과 같음)
+  float arm_zmin;          // 카메라 앞으로 나온 캡슐(끝점 x + 반경 > cam_x)의 끝점 z 최솟값 — 시선이 이보다 반경 넘게 아래면 건너뜀(결과 같음)
+  float cam_yaw_kf;        // 지난 keyframe 의 믿는 카메라 yaw(움직임 근거: 카메라가 0.6 rad/s 넘게 돌면 안 씀)
+  int cam_t_kf;            // 그 스텝(−1 없음)
+  int n_relink_total, n_merge_total;   // 옮겨짐 잇기·중복 병합 누적(리셋에 안 지움, 통계)
+  int pad_core[1];         // 16 B 배수(장치 복사)
   float plen, prot;        // 믿는 오도메트리 누적 이동 m·회전 rad(판 안)
   // 벽 선분: 가로·세로 개수(선분은 따로 장치 배열), 넘침 누적
   int nseg_h, nseg_v, n_wall_ovf, n_wall_runs;   // n_wall_runs: 벽 선분을 다시 계산한 횟수(누적, 통계)
@@ -250,9 +302,9 @@ struct MapCore {
 static_assert(sizeof(MapCore) % 8 == 0, "MapCore must be whole 8-byte words (no tail padding)");
 constexpr int CORE_WORDS = (int)(sizeof(MapCore) / 4);
 
-struct Det { int cls, src; float pos[3], ext[3], score, bc[3]; };   // keyframe 한 번의 검출 하나(src: Slot.src 와 같음)
+struct Det { int cls; int16_t src, trunc; float pos[3], ext[3], score, bc[3]; };   // trunc: 상자가 영상 가장자리에 닿음(움직임 근거로 안 씀)   // keyframe 한 번의 검출 하나(src: Slot.src 와 같음)
 // 검출 기하(참 카메라 기준). med·bc: 보이는 면 점의 축별 중앙값·10–90 백분위 상자 중심(카메라 기준 앞·왼쪽·위), pe: 백분위 폭
-struct DetGeo { float ctr[3], ext[3], rx, ry, fwd, left, up, rh, af; float med[3], bc[3], pe[3]; float xr[2], yr[2]; int inr; };   // inr: 일부라도 깊이 범위 안(진단용)
+struct DetGeo { float ctr[3], ext[3], rx, ry, fwd, left, up, rh, af; float med[3], bc[3], pe[3]; float xr[2], yr[2]; int inr; };   // inr 비트 0: 일부라도 깊이 범위 안, 비트 1: 상자가 영상 가장자리에 닿음(trunc)   // inr: 일부라도 깊이 범위 안(진단용)
 constexpr int NPART = (NT + 31) / 32;
 
 // 블록 안 작업 공간(GPU 공유 메모리, CPU 지역 변수)
@@ -261,7 +313,10 @@ struct Scratch {
   //      격자 갱신이 바뀐 낱말을 고쳐 쓴다 — 벽 단계(WallScratch::occ, 같은 자리 = 0)가 전역에서 다시 읽지 않게
   alignas(16) DetGeo geo[N_PRIM];   // 보임 점과 무관한 판정의 기하(검출이 다시 씀)
   Det det[MAXDET];
-  float key[MAXDET * KSLOT];        // 짝 열쇠(관측 × 칸), 짝 아님 = -1
+  union {
+    float key[MAXDET * KSLOT];      // 짝 열쇠(관측 × 칸), 짝 아님 = -1 (짝짓기까지)
+    struct { int ab_ok[KSLOT], ab_vis[KSLOT], ab_thru[KSLOT], ab_u0[KSLOT], ab_u1[KSLOT], ab_v0[KSLOT], ab_v1[KSLOT]; };   // 사라짐 근거(부재 확인 동안)
+  };
   int obs_to[MAXDET], hit[KSLOT];
   // ---- 뒤 부분은 격자 갱신·끝까지 쓴다
   union {
@@ -283,6 +338,7 @@ struct Scratch {
   int flags;                        // phase_begin 결과(B_KF, B_RESET)
   int occ_chg;                      // 이번 keyframe 에 점유 비트가 바뀐 낱말이 있나(벽 선분 다시 할지)
   float ec, es;                     // 믿는 yaw 의 cos·sin
+  int steady;                       // 이번 keyframe 카메라가 move_max_cam_w 보다 천천히 돎(움직임 근거로 씀)
 };
 static_assert(offsetof(Scratch, hitb) >= sizeof(uint32_t) * NWORD, "occupancy copy (offset 0) must fit in the dead object-phase region");
 DEV uint32_t* scr_occ(Scratch& sh) { return reinterpret_cast<uint32_t*>(&sh); }   // 점유 비트 사본(GPU, 격자 표시 뒤) = WallScratch::occ
@@ -686,6 +742,7 @@ DEV void reset_core(MapCore& m, const EnvView& e, const bsc::SceneSet* ss = null
   m.room_cells = nx * ny;
   // 들기·벽·방(새 판)
   m.closed = 0; m.held_slot = -1;
+  m.gref = 0.f; m.gref_t = -1; m.tried = 0; m.cam_yaw_kf = 0.f; m.cam_t_kf = -1;
   for (int a = 0; a < 3; ++a) { m.eef_b[a] = 0.f; m.eef_m[a] = 0.f; m.held_rel[a] = 0.f; m.grasp_pos[a] = 0.f; }
   m.plen = 0.f; m.prot = 0.f;
   m.nseg_h = 0; m.nseg_v = 0; m.wnrect = -1; m.conf_mask = 0;
@@ -698,6 +755,130 @@ DEV void reset_core(MapCore& m, const EnvView& e, const bsc::SceneSet* ss = null
   }
 }
 
+// ---- 물체 기억 도움 함수(scenemap 3ed710f·d58c978 규칙, CPU·GPU 같은 소스) --------------------------------------------------
+// 이름 표(objmap vote·nameShare): 칸마다 NVOTE 칸. 표가 차면 가장 작은 칸(지금 이름 칸은 빼고)을 새 이름이 더 클 때만 바꾼다(가정 — scenemap 은 제한 없음)
+DEV float name_share(const Slot& S, int cls) {
+  float tot = 0.f, mine = 0.f;
+  for (int k = 0; k < NVOTE; ++k) {
+    if (S.vcls[k] < 0) continue;
+    tot = tot + S.vw[k];
+    if (S.vcls[k] == cls) mine = S.vw[k];
+  }
+  return tot > 0.f ? mine / tot : (cls == S.cls ? 1.f : 0.f);
+}
+DEV void vote_add(Slot& S, int cls, float w) {   // 표에 더하기만(이름 바꾸기 없음)
+  int f = -1, e = -1, lo = -1;
+  for (int k = 0; k < NVOTE; ++k) {
+    if (S.vcls[k] == cls) f = k;
+    if (S.vcls[k] < 0 && e < 0) e = k;
+    if (S.vcls[k] >= 0 && S.vcls[k] != S.cls && (lo < 0 || S.vw[k] < S.vw[lo])) lo = k;
+  }
+  if (f >= 0) { S.vw[f] = S.vw[f] + w; return; }
+  if (e >= 0) { S.vcls[e] = (int16_t)cls; S.vw[e] = w; return; }
+  if (lo >= 0 && w > S.vw[lo]) { S.vcls[lo] = (int16_t)cls; S.vw[lo] = w; }
+}
+DEV void vote(Slot& S, int cls, float w) {   // objmap vote: 더하고 이름 = 최댓값(지금 이름보다 name_switch 배 넘어야 바뀜)
+  vote_add(S, cls, maxf(w, 1e-3f));
+  float cur = 0.f, best = 0.f;
+  int bc = S.cls;
+  for (int k = 0; k < NVOTE; ++k) {
+    if (S.vcls[k] < 0) continue;
+    if (S.vcls[k] == S.cls) cur = S.vw[k];
+    if (S.vw[k] > best) { best = S.vw[k]; bc = S.vcls[k]; }
+  }
+  if (bc != S.cls && best > MP::name_switch * cur) S.cls = bc;
+}
+DEV void vote_init(Slot& S, int cls, float w) {
+  for (int k = 0; k < NVOTE; ++k) { S.vcls[k] = -1; S.vw[k] = 0.f; }
+  S.vcls[0] = (int16_t)cls;
+  S.vw[0] = maxf(w, 1e-3f);
+}
+DEV bool name_ok(const Slot& S, int cls) { return S.cls == cls || name_share(S, cls) >= MP::name_share; }
+// 두 상자(가운데 ± 크기/2)의 축별 겹침 비율 곱(da boxOverlap)·3D IoU(da boxIou) — 얇은 변은 min_ext 로 부풀림
+DEV float box_ov(const float ac[3], const float ae[3], const float bc[3], const float be[3], float mn) {
+  float r = 1.f;
+  for (int k = 0; k < 3; ++k) {
+    const float ha = 0.5f * maxf(ae[k], mn), hb = 0.5f * maxf(be[k], mn);
+    const float ov = minf(ac[k] + ha, bc[k] + hb) - maxf(ac[k] - ha, bc[k] - hb);
+    const float f = ov <= 0.f ? 0.f : minf(1.f, ov / (2.f * minf(ha, hb)));
+    r = r * f;
+    if (r <= 0.f) return 0.f;
+  }
+  return r;
+}
+DEV float box_iou(const float ac[3], const float ae[3], const float bc[3], const float be[3], float mn) {
+  float ia = 1.f, va = 1.f, vb = 1.f;
+  for (int k = 0; k < 3; ++k) {
+    const float ea = maxf(ae[k], mn), eb = maxf(be[k], mn);
+    const float ov = minf(ac[k] + 0.5f * ea, bc[k] + 0.5f * eb) - maxf(ac[k] - 0.5f * ea, bc[k] - 0.5f * eb);
+    if (ov <= 0.f) return 0.f;
+    ia = ia * ov; va = va * ea; vb = vb * eb;
+  }
+  return ia / (va + vb - ia);
+}
+// 그리퍼 각 → 잡는 점 손끝 틈 m(capi.cpp robotParams grip_gap: E0 쥔 각 1·2·3·4 cm, 그 위 finger_gap_hull), 사이는 선형, 밖은 끝값
+DEV float grip_gap(float g) {
+  constexpr int NG = 7;
+  const float ga[NG] = {0.f, 0.095f, 0.231f, 0.347f, 0.408f, 0.5236f, 0.7854f};
+  const float gw[NG] = {0.f, 0.01f, 0.02f, 0.03f, 0.04f, 0.0551f, 0.0933f};
+  if (g <= ga[0]) return gw[0];
+  for (int i = 1; i < NG; ++i)
+    if (g <= ga[i]) return gw[i - 1] + (g - ga[i - 1]) / maxf(1e-12f, ga[i] - ga[i - 1]) * (gw[i] - gw[i - 1]);
+  return gw[NG - 1];
+}
+DEV bool slot_big(const MapCore& m, const Slot& S) { return is_static_m(m, S.cls) || maxf(S.ext[0], maxf(S.ext[1], S.ext[2])) > MP::big; }   // objmap isBig
+// 틈 gap 으로 쥔 그리퍼 사이에 S 가 있을 수 있나(objmap holdable): 큰 것·고정 종류 아님, 가운데 변 ≤ grasp_max_w, 빈손 아님, 틈이 폭과 맞음
+DEV bool holdable(const MapCore& m, const Slot& S, float gap) {
+  if (slot_big(m, S)) return false;
+  float e0 = maxf(0.f, S.ext[0]), e1 = maxf(0.f, S.ext[1]), e2 = maxf(0.f, S.ext[2]), q;
+  if (e0 > e1) { q = e0; e0 = e1; e1 = q; }
+  if (e1 > e2) { q = e1; e1 = e2; e2 = q; }
+  if (e0 > e1) { q = e0; e0 = e1; e1 = q; }
+  if (e1 > MP::grasp_max_w) return false;
+  if (gap < MP::grasp_min_gap) return false;
+  return gap >= e0 - MP::grasp_w_tol && gap <= e2 + MP::grasp_w_tol;
+}
+// 선분 p0–p1 과 선분 q0–q1 의 거리² (Ericson 5.1.9, 겹치는 차례 고정 — CPU·GPU 같은 연산)
+DEV float seg_seg_d2(const float p0[3], const float p1[3], const float q0[3], const float q1[3]) {
+  float d1[3], d2[3], r[3];
+  for (int k = 0; k < 3; ++k) { d1[k] = p1[k] - p0[k]; d2[k] = q1[k] - q0[k]; r[k] = p0[k] - q0[k]; }
+  const float a = d1[0] * d1[0] + d1[1] * d1[1] + d1[2] * d1[2], e = d2[0] * d2[0] + d2[1] * d2[1] + d2[2] * d2[2];
+  const float f = d2[0] * r[0] + d2[1] * r[1] + d2[2] * r[2];
+  float sv = 0.f, tv = 0.f;
+  if (a <= 1e-12f && e <= 1e-12f) { sv = 0.f; tv = 0.f; }
+  else if (a <= 1e-12f) { sv = 0.f; tv = clampf(f / e, 0.f, 1.f); }
+  else {
+    const float c = d1[0] * r[0] + d1[1] * r[1] + d1[2] * r[2];
+    if (e <= 1e-12f) { tv = 0.f; sv = clampf(-c / a, 0.f, 1.f); }
+    else {
+      const float b = d1[0] * d2[0] + d1[1] * d2[1] + d1[2] * d2[2];
+      const float den = a * e - b * b;
+      sv = den > 1e-12f ? clampf((b * f - c * e) / den, 0.f, 1.f) : 0.f;
+      tv = (b * sv + f) / e;
+      if (tv < 0.f) { tv = 0.f; sv = clampf(-c / a, 0.f, 1.f); }
+      else if (tv > 1.f) { tv = 1.f; sv = clampf((b - c) / a, 0.f, 1.f); }
+    }
+  }
+  float d2s = 0.f;
+  for (int k = 0; k < 3; ++k) { const float x = (p0[k] + d1[k] * sv) - (q0[k] + d2[k] * tv); d2s = d2s + x * x; }
+  return d2s;
+}
+// 카메라(base_footprint 앞 cam_x, 높이 cam_z) → 점 b(base_footprint) 선분이 팔 캡슐을 지나나(scenemap objmap self_mask: 팔 캡슐 안 깊이 점은 버림 —
+// 근사판은 팔을 그리지 않으므로, 팔이 가리는 시선을 보이지 않는 점·가림으로 셈)
+DEV bool arm_blocks(const MapCore& m, const float b[3]) {
+  if (!(m.arm_xmax + MP::self_r + MP::self_pad > env::K::cam_x)) return false;   // 팔이 카메라 앞에 없음
+  if (m.arm_zmin - (MP::self_r + MP::self_pad) > maxf(env::K::cam_z, b[2])) return false;   // 카메라 앞 팔이 시선 선분보다 다 위(홈 자세 등)
+  const float c[3] = {env::K::cam_x, 0.f, env::K::cam_z};
+  const float rr = (MP::self_r + MP::self_pad) * (MP::self_r + MP::self_pad);
+  for (int k = 0; k < 6; ++k) {
+    const float* p = m.arm[k];
+    const float* q = m.arm[k + 1];
+    if (p[0] == q[0] && p[1] == q[1] && p[2] == q[2]) continue;
+    if (seg_seg_d2(c, b, p, q) < rr) return true;
+  }
+  return false;
+}
+
 // ---- 1. 시작(판마다 한 스레드): 리셋, 오도메트리 표류, 움직임 거르기 -------------------------------------------------------------
 // 돌려주는 값: B_KF(이번 스텝 keyframe) | B_RESET(판 리셋). MapCore 의 머리(prim 앞)만 바꾸고, 리셋이면 MapCore 전체를 새로 쓴다.
 enum BeginFlag { B_KF = 1, B_RESET = 2, B_WALL = 4 };   // B_WALL: 들기·놓기로 벽 무시 영역이 바뀜 → 벽 선분 다시
@@ -707,10 +888,21 @@ DEV float dist3(const float a[3], const float b[3]) {
   const float d0 = a[0] - b[0], d1 = a[1] - b[1], d2 = a[2] - b[2];
   return sqrtf(d0 * d0 + d1 * d1 + d2 * d2);
 }
-// 들기·놓기(objmap.cpp updateHands, 손 하나 = LIMO). 팔 끝 = G1 순기구학 omx_end_effector_link(base_link) → base_footprint → map(믿는 자세).
-// 그리퍼 omx_gripper_joint_1 < grip_closed 가 되는 순간 팔 끝 grasp_r 안 가장 가까운 확정·안 든·사라짐 아닌 물체를 들고(팔 끝 기준 자리를
-// 베이스 축으로 기억), 열리는 순간 놓는다(잡은 자리에서 moved_d 넘게 옮겼으면 옮겨짐). 든 동안 매 스텝 팔 끝을 따라간다.
-// 놓을 때 받침에 붙이기(parent)는 하지 않는다. 돌려주는 값: 들기·놓기가 있었으면 1(벽 무시 영역이 바뀜)
+// 들기·놓기(objmap.cpp updateHands, 손 하나 = LIMO, grasp_check — scenemap d58c978). 잡는 점 = G1 순기구학 omx_end_effector_link 에서 링크 x 로
+// −0.0119 m(URDF grasp_point, E0) → base_footprint → map(믿는 자세). 그리퍼 omx_gripper_joint_1 < grip_closed 인 채 grip_settle 동안 멈추면 한 번만
+// 고른다: 잡는 점 grasp_r 안 가장 가까운 확정·안 든·사라짐 아닌 물체 중 들 수 있는 것(holdable: 큰 것·고정 종류·가운데 변 > 6 cm 아님,
+// 손끝 틈(grip_gap 표) ≥ 5 mm 이고 폭 ± 2.5 cm). 든 뒤 끝까지 닫히면(틈 < 5 mm) 놓침, 열리면 놓는다(잡은 자리에서 moved_d 넘게 옮겼으면 옮겨짐).
+// 든 동안 매 스텝 잡는 점을 따라간다. 받침 붙이기(parent)는 하지 않는다. 팔 뼈대(캡슐)도 여기서 base_footprint 로 둔다.
+// 돌려주는 값: 들기·놓기가 있었으면 1(벽 무시 영역이 바뀜)
+DEV void hand_release(MapCore& m) {
+  Slot& S = m.slot[m.held_slot];
+  S.held = 0;
+  const bool mv = dist3(S.pos, m.grasp_pos) > MP::moved_d;
+  S.moved = (S.moved || mv) ? 1 : 0;
+  S.state = S.moved ? S_MOVED : S_SEEN;
+  S.misses = 0;
+  m.held_slot = -1;
+}
 DEV int hands_step(MapCore& m, const EnvView& e) {
   bool same_q = m.t > 0;   // 판 첫 스텝은 늘 계산
   for (int k = 0; k < 5; ++k) same_q = same_q && m.fk_q[k] == e.q[k];
@@ -719,31 +911,60 @@ DEV int hands_step(MapCore& m, const EnvView& e) {
     for (int k = 0; k < env::N_Q; ++k) qd[k] = 0.f;
     env::Fk f;
     env::fk(e.q, qd, f);
-    for (int a = 0; a < 3; ++a) m.eef_b[a] = f.ee_p[a];
+    for (int a = 0; a < 3; ++a) {
+      m.eef_b[a] = f.ee_p[a];
+      m.gp_b[a] = f.ee_p[a] + MP::grasp_off * f.ee_R[3 * a];   // 링크 x 축 = ee_R 첫 열(tools/omx_ws --grasp 와 같은 식)
+    }
+    const limo_omx::JointConst& J = limo_omx::joint(limo_omx::J_OMX_MOUNT_JOINT);
+    for (int a = 0; a < 3; ++a) {
+      m.arm[0][a] = J.t[a] + (a == 2 ? MP::base_z : 0.f);
+      for (int k = 0; k < 5; ++k) m.arm[1 + k][a] = f.p[k][a] + (a == 2 ? MP::base_z : 0.f);
+      m.arm[6][a] = f.ee_p[a] + (a == 2 ? MP::base_z : 0.f);
+    }
+    float xm = m.arm[0][0], zm = 1e30f;
+    for (int k = 1; k < 7; ++k) xm = maxf(xm, m.arm[k][0]);
+    for (int k = 0; k < 6; ++k)
+      if (maxf(m.arm[k][0], m.arm[k + 1][0]) + MP::self_r + MP::self_pad > env::K::cam_x) zm = minf(zm, minf(m.arm[k][2], m.arm[k + 1][2]));
+    m.arm_xmax = xm;
+    m.arm_zmin = zm;
     for (int k = 0; k < 5; ++k) m.fk_q[k] = e.q[k];
   }
   float s, c;
   sincosf_d(m.eyaw, &s, &c);
-  const float bx = m.eef_b[0], by = m.eef_b[1], bz = m.eef_b[2] + MP::base_z;
-  m.eef_m[0] = m.ex + (c * bx - s * by);
-  m.eef_m[1] = m.ey + (s * bx + c * by);
-  m.eef_m[2] = bz;
-  const int closed = e.q[5] < MP::grip_closed ? 1 : 0;
+  {
+    const float bx = m.eef_b[0], by = m.eef_b[1], bz = m.eef_b[2] + MP::base_z;
+    m.eef_m[0] = m.ex + (c * bx - s * by);
+    m.eef_m[1] = m.ey + (s * bx + c * by);
+    m.eef_m[2] = bz;
+  }
+  {
+    const float bx = m.gp_b[0], by = m.gp_b[1], bz = m.gp_b[2] + MP::base_z;
+    m.gp_m[0] = m.ex + (c * bx - s * by);
+    m.gp_m[1] = m.ey + (s * bx + c * by);
+    m.gp_m[2] = bz;
+  }
+  const float g = e.q[5];
+  const int closed = g < MP::grip_closed ? 1 : 0;
+  if (m.gref_t < 0 || absf(g - m.gref) > MP::grip_settle_eps) { m.gref = g; m.gref_t = m.t; }   // 쥠이 끝났나: grip_settle 동안 eps 안
+  const bool settled = m.t - m.gref_t >= MP::grip_settle_steps;
+  if (closed && !m.closed) m.tried = 0;   // 새로 닫힘
+  const float gap = grip_gap(g);
   int ev = 0;
-  if (closed && !m.closed) {   // 잡기
+  if (closed && settled && !m.tried) {   // 잡기: 닫힌 채 멈춘 뒤 한 번
+    m.tried = 1;
     int best = -1;
     float bd = MP::grasp_r;
     for (int b = 0; b < KSLOT; ++b) {
       const Slot& S = m.slot[b];
       if (!S.valid || !S.confirmed || S.held || S.state == S_GONE) continue;
-      const float d = dist3(S.pos, m.eef_m);
-      if (d < bd) { bd = d; best = b; }
+      const float d = dist3(S.pos, m.gp_m);
+      if (d < bd && holdable(m, S, gap)) { bd = d; best = b; }
     }
-    if (best >= 0) {
+    if (best >= 0 && m.held_slot < 0) {
       Slot& S = m.slot[best];
       S.held = 1;
       m.held_slot = best;
-      const float d0 = S.pos[0] - m.eef_m[0], d1 = S.pos[1] - m.eef_m[1], d2 = S.pos[2] - m.eef_m[2];
+      const float d0 = S.pos[0] - m.gp_m[0], d1 = S.pos[1] - m.gp_m[1], d2 = S.pos[2] - m.gp_m[2];
       m.held_rel[0] = c * d0 + s * d1;
       m.held_rel[1] = -s * d0 + c * d1;
       m.held_rel[2] = d2;
@@ -752,23 +973,21 @@ DEV int hands_step(MapCore& m, const EnvView& e) {
       m.n_grasp_total += 1;
       ev = 1;
     }
-  } else if (!closed && m.closed && m.held_slot >= 0) {   // 놓기
-    Slot& S = m.slot[m.held_slot];
-    S.held = 0;
-    const bool mv = dist3(S.pos, m.grasp_pos) > MP::moved_d;
-    S.moved = (S.moved || mv) ? 1 : 0;
-    S.state = S.moved ? S_MOVED : S_SEEN;
-    S.misses = 0;
-    m.held_slot = -1;
+  } else if (closed && settled && gap < MP::grasp_min_gap && m.held_slot >= 0) {   // 든 뒤 끝까지 닫힘: 놓침
+    hand_release(m);
+    ev = 1;
+  }
+  if (!closed && m.closed && m.held_slot >= 0) {   // 놓기
+    hand_release(m);
     ev = 1;
   }
   m.closed = closed;
-  if (m.held_slot >= 0) {   // 든 물체는 팔 끝을 따라간다(팔 끝 기준 자리를 지금 yaw 로 돌림)
+  if (m.held_slot >= 0) {   // 든 물체는 잡는 점을 따라간다(잡는 점 기준 자리를 지금 yaw 로 돌림)
     Slot& S = m.slot[m.held_slot];
     const float* r = m.held_rel;
-    S.pos[0] = m.eef_m[0] + (c * r[0] - s * r[1]);
-    S.pos[1] = m.eef_m[1] + (s * r[0] + c * r[1]);
-    S.pos[2] = m.eef_m[2] + r[2];
+    S.pos[0] = m.gp_m[0] + (c * r[0] - s * r[1]);
+    S.pos[1] = m.gp_m[1] + (s * r[0] + c * r[1]);
+    S.pos[2] = m.gp_m[2] + r[2];
   }
   return ev;
 }
@@ -798,6 +1017,17 @@ DEV int phase_begin(MapCore& m, const EnvView& e, int force_kf, const bsc::Scene
     m.plen = m.plen + sqrtf(nxb * nxb + nyb * nyb);
     m.prot = m.prot + absf(nth);
     m.t += 1;
+  }
+  // 검증용 물체 옮기기(force_kf 의 8 비트 위 = 시작 스텝 S, 0 = 끔): 스텝 [S, S + 20) 동안 과제 물체(prim 0, BEHAVIOR 는 움직이는 상자일 때만)를
+  // 방 가운데 쪽으로 0.04 m/스텝(0.4 m/s) 민다 — 지도만의 장면이라 동역학과 무관. 움직임 따라가기·사라짐·옮겨짐 잇기를 지나게(map_verify --shuffle)
+  {
+    const int S0 = force_kf >> 8;
+    if (S0 > 0 && m.t >= S0 && m.t < S0 + 20 && (!bm || !bm->on || bm->sbox[0] < 0)) {
+      Prim& P = m.prim[0];
+      const float dx = 0.5f * (P.lo[0] + P.hi[0]) > 0.f ? -0.04f : 0.04f;
+      P.lo[0] = P.lo[0] + dx; P.hi[0] = P.hi[0] + dx;
+    }
+    force_kf &= 0xff;
   }
   const int wall = hands_step(m, e) ? B_WALL : 0;   // scenemap integrate: 자세 적분 뒤 updateHands
   m.px = e.x; m.py = e.y; m.pyaw = e.yaw;
@@ -837,6 +1067,7 @@ DEV int vis_point(const MapCore& m, const float o[3], float c, float s, const De
     const int own = bx.bm->sbox[pi];
     const float t = own >= 0 ? ray_obb_inv(ow, d, sd.box[own]) : ray_box_inv(o, d, inv, m.prim[pi]);
     if (!(t >= MP::ozmin && t <= MP::ozmax)) return 0;
+    { const float pb[3] = {env::K::cam_x + t, -xn * t, env::K::cam_z - yn * t}; if (arm_blocks(m, pb)) return 0; }   // 팔이 가린 화소(self_mask)
     bool occ = false;
     bsc::bin_walk(sd, ow[0], ow[1], d[0], d[1], [&](int j, float) { if (!occ && j != own && ray_obb_inv(ow, d, sd.box[j]) < t) occ = true; },
                   [&]() { return occ ? -1.f : t; });
@@ -847,6 +1078,7 @@ DEV int vis_point(const MapCore& m, const float o[3], float c, float s, const De
   }
   const float t = ray_box_inv(o, d, inv, m.prim[pi]);   // 광학 깊이(d 의 앞 성분 = 1)
   if (!(t >= MP::ozmin && t <= MP::ozmax)) return 0;
+  { const float pb[3] = {env::K::cam_x + t, -xn * t, env::K::cam_z - yn * t}; if (arm_blocks(m, pb)) return 0; }   // 팔이 가린 화소(self_mask)
   for (int j = 0; j < N_PRIM; ++j)
     if (j != pi && ray_box_inv(o, d, inv, m.prim[j]) < t) return 0;   // 다른 상자가 사이를 가림
   return 1;
@@ -924,6 +1156,7 @@ DEV bool det_prefilter(const MapCore& m, const float o[3], float c, float s, con
       x0 = minf(x0, xq); x1 = maxf(x1, xq); y0 = minf(y0, yq); y1 = maxf(y1, yq);
     }
     if (behind) { x0 = -kInf; x1 = kInf; y0 = minf(y0, -k.tanv); y1 = maxf(y1, k.tanv); }
+    if (x0 < -k.tanh || x1 > k.tanh || y0 < -k.tanv || y1 > k.tanv) g.inr |= 2;   // 상자가 영상 가장자리에 닿음(objmap Obs::trunc)
     g.xr[0] = maxf(x0, -k.tanh); g.xr[1] = minf(x1, k.tanh);
     g.yr[0] = maxf(y0, -k.tanv); g.yr[1] = minf(y1, k.tanv);
     if (!(g.xr[0] < g.xr[1] && g.yr[0] < g.yr[1])) return false;   // 시야 밖
@@ -1116,6 +1349,12 @@ DEV void obj_detect(MapCore& m, Scratch& sh, const EnvView& e, int nt, const BCt
   float es, ec;
   sincosf_d(m.eyaw, &es, &ec);
   sh.ec = ec; sh.es = es;
+  {   // 카메라가 빨리 돌 때는 움직임 근거를 안 씀(objmap move_max_cam_w): 지난 keyframe 뒤 믿는 광축 yaw 변화 / 시간
+    const float cw = m.cam_t_kf >= 0 && m.t > m.cam_t_kf ? absf(wrap_pi(m.eyaw - m.cam_yaw_kf)) / ((float)(m.t - m.cam_t_kf) * MP::tok_dt) : 0.f;
+    sh.steady = cw <= MP::move_max_cam_w;
+    m.cam_yaw_kf = m.eyaw;
+    m.cam_t_kf = m.t;
+  }
   const float o2 = sh.to[2];
   const float ex = m.ex, ey = m.ey;
   uint64_t rng = m.rng;   // 레지스터에(공유 메모리 sh.det 쓰기와 겹칠까 봐 매번 다시 읽지 않게)
@@ -1143,9 +1382,11 @@ DEV void obj_detect(MapCore& m, Scratch& sh, const EnvView& e, int nt, const BCt
       }
     }
     D.cls = cls;
-    D.src = p;
+    D.src = (int16_t)p;
     D.score = 0.9f;
-    if (dist3(D.pos, m.eef_m) < MP::hand_r) --nd;   // 손에 든 것 거르기(objmap: 점의 절반 이상이 팔 끝 hand_r 안 — 여기서는 중심으로)
+    D.trunc = (int16_t)((g.inr >> 1) & 1);
+    // 손에 든 것 거르기(objmap: 점의 절반 이상이 잡는 점 hand_r 안 — 여기서는 중심으로), 바닥 조각(점 90 백분위 높이 < floor_h — 백분위 상자 윗면)
+    if (dist3(D.pos, m.gp_m) < MP::hand_r || D.bc[2] + 0.5f * D.ext[2] < MP::floor_h) --nd;
   }
   // 유령 자리(가짜 물체): 중심이 깊이 범위·시야 안이면 p_ghost 로 검출된다. 가림은 보지 않는다(비침·잘못 분할 흉내)
   const Cam k = cam_consts();
@@ -1163,9 +1404,10 @@ DEV void obj_detect(MapCore& m, Scratch& sh, const EnvView& e, int nt, const BCt
     const float rel[3] = {fwd, left, up};
     put_det(D, rng, rel, rel, ext, o2, ex, ey, ec, es);
     D.cls = G.cls;
-    D.src = -1 - gi;
+    D.src = (int16_t)(-1 - gi);
     D.score = 0.4f;
-    if (dist3(D.pos, m.eef_m) < MP::hand_r) { --nd; continue; }
+    D.trunc = 0;
+    if (dist3(D.pos, m.gp_m) < MP::hand_r || D.bc[2] + 0.5f * D.ext[2] < MP::floor_h) { --nd; continue; }
     ++nfp;
   }
   m.n_fp_total += nfp;
@@ -1174,7 +1416,7 @@ DEV void obj_detect(MapCore& m, Scratch& sh, const EnvView& e, int nt, const BCt
   m.rng = rng;
 }
 
-// 3c. 같은 물체(objmap.cpp 2): 같은 이름끼리, 중심 거리 < max(da_min, da_k·큰 쪽 크기) 또는 상자 틈 < da_gap. (틈 + 1e-3·거리) 순 1:1 탐욕
+// 3c. 같은 물체(objmap.cpp 2): 같은 이름(이름 표 몫 ≥ 0.2 포함, 다른 이름이면 열쇠 +0.02)끼리, 중심 거리 < max(da_min, da_k·큰 쪽 크기) 또는 상자 틈 < da_gap. (틈 + 1e-3·거리) 순 1:1 탐욕
 // 짝 열쇠(모든 스레드, 쌍마다)
 DEV void obj_keys(const MapCore& m, Scratch& sh, int tid, int nt) {
   const int nd = sh.nd;
@@ -1185,7 +1427,7 @@ DEV void obj_keys(const MapCore& m, Scratch& sh, int tid, int nt) {
     float key = -1.f;
     const Slot& S = m.slot[b];
     const Det& D = sh.det[a];
-    if (S.valid && !S.held && S.cls == D.cls) {   // 든 물체는 짝짓지 않음(objmap: held_by ≥ 0 건너뜀)
+    if (S.valid && !S.held && name_ok(S, D.cls)) {   // 든 물체는 짝짓지 않음(objmap: held_by ≥ 0 건너뜀). 이름 = 같거나 이름 표 몫 ≥ name_share
       const float ee = maxf(max3(D.ext), max3(S.ext));
       const float thr = maxf(MP::da_min, MP::da_k * ee);
       float d2 = 0.f, g2 = 0.f;
@@ -1198,7 +1440,7 @@ DEV void obj_keys(const MapCore& m, Scratch& sh, int tid, int nt) {
         g2 = g2 + gk * gk;
       }
       const float d = sqrtf(d2), gap = sqrtf(g2);
-      if (d < thr || gap < MP::da_gap) key = gap + 1e-3f * d;
+      if (d < thr || gap < MP::da_gap) key = gap + 1e-3f * d + (S.cls != D.cls ? MP::name_key : 0.f);
     }
     sh.key[idx] = key;
   }
@@ -1255,6 +1497,10 @@ __device__ __forceinline__ void obj_greedy_warp(Scratch& sh, int lane) {
 }
 #endif
 
+// 검출의 카메라 깊이(objmap Obs::zmed ≈ 관측 자리의 믿는 카메라 광축 거리, 잡음 포함)
+DEV float det_zcam(const MapCore& m, const Scratch& sh, const Det& D) {
+  return sh.ec * (D.pos[0] - (m.ex + sh.ec * env::K::cam_x)) + sh.es * (D.pos[1] - (m.ey + sh.es * env::K::cam_x));
+}
 // 3d. 갱신(objmap.cpp 3). 짝지은 관측(모든 스레드, 관측마다 다른 칸)
 DEV void obj_update_matched(MapCore& m, Scratch& sh, int tid, int nt, int bug) {
   const int confirm_n = bug == 1 ? 1 : MP::confirm;   // 음성 대조: 확정 규칙 끔(한 번 보이면 확정)
@@ -1267,21 +1513,48 @@ DEV void obj_update_matched(MapCore& m, Scratch& sh, int tid, int nt, int bug) {
     S.last_kf = t;
     const float w = (float)(S.n_obs < 20 ? S.n_obs : 20);
     const bool bigo = is_static_m(m, S.cls) || maxf(maxf(S.ext[0], S.ext[1]), maxf(D.ext[0], D.ext[1])) > MP::big;
-    for (int q = 0; q < 3; ++q) {
-      if (bigo) {   // 합집합, keyframe 마다 면마다 grow_max·한 변 max_ext 까지
-        float mlo = S.pos[q] - 0.5f * S.ext[q], mhi = S.pos[q] + 0.5f * S.ext[q];
-        const float olo = D.bc[q] - 0.5f * D.ext[q], ohi = D.bc[q] + 0.5f * D.ext[q];   // 관측 상자 = 백분위 상자
-        const float lo = maxf(minf(mlo, olo), mlo - MP::grow_max);
-        const float hi = minf(maxf(mhi, ohi), mhi + MP::grow_max);
-        if (hi - lo <= MP::max_ext) { mlo = lo; mhi = hi; }
-        S.pos[q] = 0.5f * (mlo + mhi);
-        S.ext[q] = mhi - mlo;
-      } else {
-        S.pos[q] = (S.pos[q] * (w - 1.f) + D.pos[q]) / w;
-        S.ext[q] = (S.ext[q] * (w - 1.f) + D.ext[q]) / w;
+    // 움직이는 중(objmap move_*): 관측 중심(날 것)이 move_n 번 잇달아 move_v 넘게 같은 쪽으로 가고 쉬던 상자를 벗어나면(거의 안 겹침)
+    // 평균·합집합 대신 관측 자리로 바로 따라감. 잘린 관측·빨리 도는 카메라는 근거로 안 씀
+    bool snap = false;
+    if (bug != 7 && S.trk_t >= 0 && !S.held && !D.trunc && sh.steady) {
+      const int dts = t - S.trk_t;
+      const float sx = D.pos[0] - S.trk_pos[0], sy = D.pos[1] - S.trk_pos[1];
+      const float sp = (dts >= 1 && dts <= MP::move_dt_steps) ? sqrtf(sx * sx + sy * sy) / ((float)dts * MP::tok_dt) : 0.f;
+      const bool same_dir = sx * S.trk_step[0] + sy * S.trk_step[1] > 0.f;
+      S.mv_cnt = (sp > MP::move_v && (same_dir || S.mv_cnt == 0)) ? S.mv_cnt + 1 : 0;
+      S.trk_step[0] = sx; S.trk_step[1] = sy;
+      const float rx = D.pos[0] - S.pos[0], ry = D.pos[1] - S.pos[1];
+      const float away = sqrtf(rx * rx + ry * ry);
+      const bool moving = t - S.moving_t < MP::moving_steps;
+      const bool left = away > maxf(MP::move_min_d, 0.5f * maxf(D.ext[0], D.ext[1])) && box_ov(D.bc, D.ext, S.pos, S.ext, MP::merge_min_ext) < 0.1f;
+      if (S.mv_cnt >= MP::move_n && (moving || left)) { S.moving_t = t; snap = true; }
+      else if (moving && sp > 0.5f * MP::move_v) { S.moving_t = t; snap = true; }   // 움직이는 중에는 조금 느려져도 따라감
+    }
+    if (!D.trunc) { S.trk_pos[0] = D.pos[0]; S.trk_pos[1] = D.pos[1]; S.trk_t = t; }
+    if (snap) {
+      for (int q = 0; q < 3; ++q) { S.pos[q] = bigo ? D.bc[q] : D.pos[q]; S.ext[q] = D.ext[q]; }
+      if (dist3(S.pos, S.first_pos) > MP::moved_d) S.moved = 1;
+      if (S.moved && S.state == S_SEEN) S.state = S_MOVED;
+    } else {
+      for (int q = 0; q < 3; ++q) {
+        if (bigo) {   // 합집합, keyframe 마다 면마다 grow_max·한 변 max_ext 까지
+          float mlo = S.pos[q] - 0.5f * S.ext[q], mhi = S.pos[q] + 0.5f * S.ext[q];
+          const float olo = D.bc[q] - 0.5f * D.ext[q], ohi = D.bc[q] + 0.5f * D.ext[q];   // 관측 상자 = 백분위 상자
+          const float lo = maxf(minf(mlo, olo), mlo - MP::grow_max);
+          const float hi = minf(maxf(mhi, ohi), mhi + MP::grow_max);
+          if (hi - lo <= MP::max_ext) { mlo = lo; mhi = hi; }
+          S.pos[q] = 0.5f * (mlo + mhi);
+          S.ext[q] = mhi - mlo;
+        } else {
+          S.pos[q] = (S.pos[q] * (w - 1.f) + D.pos[q]) / w;
+          S.ext[q] = (S.ext[q] * (w - 1.f) + D.ext[q]) / w;
+        }
       }
     }
     S.score = maxf(S.score, D.score);
+    if (bug == 6) { if (S.cls == D.cls) vote(S, D.cls, D.score); }   // 음성 대조: 이름 표에 다른 이름을 안 모음
+    else vote(S, D.cls, D.score);
+    S.max_det_z = maxf(S.max_det_z, det_zcam(m, sh, D));
     S.last_seen = t;
     S.src = D.src;
     S.seen_len = m.plen; S.seen_rot = m.prot;
@@ -1291,38 +1564,31 @@ DEV void obj_update_matched(MapCore& m, Scratch& sh, int tid, int nt, int bug) {
     if (!S.confirmed && S.n_obs >= confirm_n) S.confirmed = 1;
   }
 }
-// 안 맞은 관측(스레드 0, 관측 순서대로). 짝지은 칸은 hit 이라 여기서 보지 않으므로 위와 나눠 해도 원래 순서와 같다
-DEV void obj_update_new(MapCore& m, Scratch& sh, int bug) {
+// 본 곳 칸(objmap markView·firstView): 창 0.5 m 칸 × 거리 띠 1..5 m 마다 처음 본 시각(0 = 아직, 아니면 min(255, 스텝/5 + 1) — 0.5 s 단위, 127 s 넘으면 255)
+constexpr int VIEW_BYTES = ((VC * VC * VB + 15) / 16) * 16;
+constexpr int VNS = 20;   // 열마다 표본 수 − 1 의 최댓값 = 띠 끝 5 m / 반 칸 0.25 m
+static_assert(VNS * 0.5f * MP::view_cell == (float)VB, "view samples per column");
+DEV int view_cell(float v) { return (int)floorf(v * (1.f / MP::view_cell)) + VC / 2; }
+DEV int view_code(int t) { const int q = t / 5 + 1; return q > 255 ? 255 : q; }
+// (x, y) 칸을 range(수평 m) 이하에서 처음 본 스텝(아래로 어림), 없으면 큰 값
+DEV int first_view(const uint8_t* view, float x, float y, float range) {
+  if (!view) return 1 << 30;
+  const int cx = view_cell(x), cy = view_cell(y);
+  if (cx < 0 || cy < 0 || cx >= VC || cy >= VC) return 1 << 30;
+  int b = (int)ceilf(range) - 1;
+  b = b < 0 ? 0 : (b > VB - 1 ? VB - 1 : b);
+  const int q = view[(cy * VC + cx) * VB + b];
+  return q == 0 ? (1 << 30) : (q - 1) * 5;
+}
+// 안 맞은 관측(스레드 0, 관측 순서대로): 새 후보. 전에 본 자리(처음 검출 거리 이하, 5 s 넘게 전)에 나타났으면 옮겨짐 잇기 후보(relink, keyframe 끝).
+// (예전: 같은 이름의 사라짐 물체와 바로 이음 — scenemap 3ed710f 가 없앰)
+DEV void obj_update_new(MapCore& m, Scratch& sh, int bug, const uint8_t* view) {
   const int confirm_n = bug == 1 ? 1 : MP::confirm;
   const int t = m.t;
+  const float cxw = m.ex + sh.ec * env::K::cam_x, cyw = m.ey + sh.es * env::K::cam_x;   // 믿는 카메라
   for (int a = 0; a < sh.nd; ++a) {
     if (sh.obs_to[a] >= 0) continue;
     const Det& D = sh.det[a];
-    // 같은 이름의 확정·사라짐 물체가 있으면 옮겨진 것으로 잇는다
-    int mf = -1;
-    float best = 1e9f;
-    for (int b = 0; b < KSLOT; ++b) {
-      const Slot& S = m.slot[b];
-      if (!S.valid || S.cls != D.cls || !S.confirmed || sh.hit[b] || S.state != S_GONE) continue;
-      float d2 = 0.f;
-      for (int q = 0; q < 3; ++q) { const float dd = D.pos[q] - S.pos[q]; d2 = d2 + dd * dd; }
-      if (d2 < best) { best = d2; mf = b; }
-    }
-    if (mf >= 0) {
-      Slot& S = m.slot[mf];
-      const bool bigd = is_static_m(m, D.cls) || maxf(D.ext[0], D.ext[1]) > MP::big;   // 큰 것: 자리 = 상자 중심(근사판 칸은 상자를 자리 ± 크기/2 로 둠)
-      for (int q = 0; q < 3; ++q) { S.pos[q] = bigd ? D.bc[q] : D.pos[q]; S.meas[q] = S.pos[q]; S.ext[q] = D.ext[q]; }
-      S.moved = best > MP::moved_d * MP::moved_d ? 1 : S.moved;   // 짝 문턱(≥ 0.30 m) 밖이라 사실상 항상 옮겨짐
-      S.state = S.moved ? S_MOVED : S_SEEN;
-      S.misses = 0;
-      S.last_seen = t;
-      S.last_kf = t;
-      S.n_obs += 1;
-      S.src = D.src;
-      S.seen_len = m.plen; S.seen_rot = m.prot;
-      sh.hit[mf] = 1;
-      continue;
-    }
     int fs = -1;
     for (int b = 0; b < KSLOT && fs < 0; ++b) if (!m.slot[b].valid) fs = b;
     if (fs < 0) { m.n_dropped += 1; continue; }   // 칸이 다 참(가정: 버림)
@@ -1334,41 +1600,368 @@ DEV void obj_update_new(MapCore& m, Scratch& sh, int bug) {
     S.held = 0; S.src = D.src; S.seen_len = m.plen; S.seen_rot = m.prot;
     S.confirmed = confirm_n <= 1 ? 1 : 0;
     S.state = S_SEEN; S.moved = 0; S.misses = 0; S.first_miss = 0;
+    S.first_seen = t; S.n_vis_miss = 0; S.mv_cnt = 0; S.moving_t = -100000;
+    S.trk_pos[0] = D.pos[0]; S.trk_pos[1] = D.pos[1]; S.trk_step[0] = 0.f; S.trk_step[1] = 0.f; S.trk_t = t;
+    S.max_det_z = det_zcam(m, sh, D);
+    vote_init(S, D.cls, D.score);
+    {
+      const float hx = D.pos[0] - cxw, hy = D.pos[1] - cyw;
+      S.appeared = first_view(view, D.pos[0], D.pos[1], sqrtf(hx * hx + hy * hy) + MP::view_cell) < t - MP::link_view_gap_steps ? 1 : 0;
+    }
     sh.hit[fs] = 1;
   }
 }
 
-// 3e. 부재 확인(objmap.cpp 4) + 3f. 오래된 후보 버리기. 칸마다 따로(모든 스레드, 칸마다 한 스레드)
-//     확정·이번에 안 맞음·사라짐 아님·고정 종류 아님·작은 것. 믿는 자세로 화소에 투영하고
-//     그 화소의 깊이(참 장면)가 물체보다 occl 넘게 가까우면 가려짐. 아니면 놓침 +1
-DEV void obj_absence(MapCore& m, const Scratch& sh, const EnvView& e, int tid, int nt, const BCtx& bx) {
+// 3e. 부재 확인(objmap.cpp 4 + absentEvidence, scenemap 3ed710f). 칸마다 따로(모든 스레드, 칸마다 한 스레드).
+//     확정·안 든·이번에 안 맞음·사라짐 아님(큰 것·고정 종류 포함), 잡는 점 hand_r + 0.1 밖. 근거: 상자 3×3×3 격자 27 점(근사판은 점 구름 없음)을
+//     믿는 자세로 화소에 투영 → 그 화소의 참 깊이(참 카메라·참 장면, 팔이 가린 시선은 가림)로 시야 안·안 가림 ≥ 50 %, 보이는 부분 ≥ 12 px,
+//     물체 카메라 깊이 ∈ [0.3, ozmax] 이고 검출한 가장 먼 깊이 × 1.15 + 0.2 안. 보이는 점의 30 % 이상에서 너머가 보이면 "자리 비었음"(2).
+//     다른 이름(이름 표에 있던)으로 상자 안에 검출되면 안 셈. 새 근거만(지난 놓침 뒤 카메라 0.1 m·5° 넘게 바뀜 또는 2).
+//     필요한 놓침 = min(60, max(gone_misses(큰 것 6), 검출률 p 로 (1−p)^k < 0.02 인 k)), 첫 놓침에서 2 s(큰 것 4 s) 또는 카메라 0.5 m 이동
+DEV int fbits(float x) {   // 양수 float 의 비트(정수 순서 = 크기 순서) — 공유 메모리 최소·최댓값용
+#ifdef __CUDA_ARCH__
+  return __float_as_int(x);
+#else
+  int i; std::memcpy(&i, &x, 4); return i;
+#endif
+}
+DEV float bitsf(int i) {
+#ifdef __CUDA_ARCH__
+  return __int_as_float(i);
+#else
+  float x; std::memcpy(&x, &i, 4); return x;
+#endif
+}
+DEV void sh_add(int* p, int v) {
+#ifdef __CUDA_ARCH__
+  atomicAdd(p, v);
+#else
+  *p += v;
+#endif
+}
+DEV void sh_min(int* p, int v) {
+#ifdef __CUDA_ARCH__
+  atomicMin(p, v);
+#else
+  *p = v < *p ? v : *p;
+#endif
+}
+DEV void sh_max(int* p, int v) {
+#ifdef __CUDA_ARCH__
+  atomicMax(p, v);
+#else
+  *p = v > *p ? v : *p;
+#endif
+}
+constexpr int AB_NS = 27;   // 상자 3 × 3 × 3 격자 표본
+// (모든 스레드, 칸마다) 판단할 칸인가 + 가운데 깊이 문턱 → ab_ok, 모으기 칸 비움
+DEV void absence_gate(const MapCore& m, Scratch& sh, int tid, int nt, int bug) {
+  const float ec = sh.ec, es = sh.es;
+  const float cxw = m.ex + ec * env::K::cam_x, cyw = m.ey + es * env::K::cam_x;
+  for (int b = tid; b < KSLOT; b += nt) {
+    const Slot& S = m.slot[b];
+    int ok = S.valid && S.confirmed && !S.held && !sh.hit[b] && S.state != S_GONE && !(dist3(S.pos, m.gp_m) < MP::hand_r + 0.1f);
+    if (ok) {
+      const float rx = S.pos[0] - cxw, ry = S.pos[1] - cyw;
+      const float zc = ec * rx + es * ry;
+      if (zc < 0.3f || zc > MP::ozmax) ok = 0;
+      else if (bug != 8 && S.max_det_z > 0.f && zc > MP::absent_det_k * S.max_det_z + 0.2f) ok = 0;   // 검출한 가장 먼 거리 밖
+      else {   // 상자를 감싸는 구가 시야 밖이면 표본 27 개 모두 화면 밖(보이는 점 0 → 근거 없음과 같은 결과) — 투영을 건너뜀
+        const Cam k = cam_consts();
+        const float rho = 0.5f * sqrtf(S.ext[0] * S.ext[0] + S.ext[1] * S.ext[1] + S.ext[2] * S.ext[2]);
+        const float left = -es * rx + ec * ry, up = S.pos[2] - env::K::cam_z;
+        if (absf(left) - rho > (zc + rho) * k.tanh || absf(up) - rho > (zc + rho) * k.tanv) ok = 0;
+      }
+    }
+    sh.ab_ok[b] = ok;
+    sh.ab_vis[b] = 0; sh.ab_thru[b] = 0;
+    sh.ab_u0[b] = fbits(3e38f); sh.ab_u1[b] = 0; sh.ab_v0[b] = fbits(3e38f); sh.ab_v1[b] = 0;
+  }
+}
+// (모든 스레드, (칸, 표본) 쌍마다) 표본 하나를 믿는 자세로 화소에 투영 → 그 화소의 참 깊이(참 카메라·참 장면). 모으기는 정수 원자 덧셈·최소·최대(순서 무관)
+DEV void absence_samples(const MapCore& m, Scratch& sh, int tid, int nt, const BCtx& bx) {
   const Cam k = cam_consts();
   const float ec = sh.ec, es = sh.es;
   const float c = sh.tc, s = sh.ts, o[3] = {sh.to[0], sh.to[1], sh.to[2]};
+  const float cxw = m.ex + ec * env::K::cam_x, cyw = m.ey + es * env::K::cam_x;
+  for (int w = tid; w < KSLOT * AB_NS; w += nt) {
+    const int b = w / AB_NS, q = w % AB_NS;
+    if (!sh.ab_ok[b]) continue;
+    const Slot& S = m.slot[b];
+    const int ia = q / 9, ib = (q / 3) % 3, ic = q % 3;
+    const float px = S.pos[0] - 0.5f * S.ext[0] + 0.5f * (float)ia * S.ext[0];
+    const float py = S.pos[1] - 0.5f * S.ext[1] + 0.5f * (float)ib * S.ext[1];
+    const float pz = S.pos[2] - 0.5f * S.ext[2] + 0.5f * (float)ic * S.ext[2];
+    const float rx = px - cxw, ry = py - cyw;
+    const float zc = ec * rx + es * ry, left = -es * rx + ec * ry, up = pz - env::K::cam_z;
+    if (zc < 0.2f) continue;
+    const float xn = -left / zc, yn = -up / zc;
+    const float uf = k.fx * xn + k.cxp, vf = k.fx * yn + k.cyp;
+    const int u = (int)uf, v = (int)vf;
+    if (u < 2 || v < 2 || u >= MP::img_w - 2 || v >= MP::img_h - 2) continue;
+    float d[3];
+    pix_dir(c, s, xn, yn, d);
+    const float tz = bx.on ? cast_beh(bx, m, o, d) : cast(m, o, d);
+    if (!(tz >= MP::zmin && tz <= MP::zmax)) continue;   // 깊이 없음
+    if (tz < zc - MP::occl) continue;                    // 앞에 다른 것(가림)
+    { const float pb[3] = {env::K::cam_x + tz, -xn * tz, env::K::cam_z - yn * tz}; if (arm_blocks(m, pb)) continue; }   // 팔이 가림(팔 화소는 더 가까움)
+    sh_add(&sh.ab_vis[b], 1);
+    if (tz > zc + maxf(MP::occl, 0.1f)) sh_add(&sh.ab_thru[b], 1);   // 물체 자리 너머가 보임
+    sh_min(&sh.ab_u0[b], fbits(uf)); sh_max(&sh.ab_u1[b], fbits(uf));
+    sh_min(&sh.ab_v0[b], fbits(vf)); sh_max(&sh.ab_v1[b], fbits(vf));
+  }
+}
+// (모든 스레드, 칸마다) 근거 → 놓침·사라짐
+DEV void obj_absence(MapCore& m, const Scratch& sh, int tid, int nt, int bug) {
   const int t = m.t;
+  const float cxw = m.ex + sh.ec * env::K::cam_x, cyw = m.ey + sh.es * env::K::cam_x;
   for (int b = tid; b < KSLOT; b += nt) {
+    if (!sh.ab_ok[b]) continue;
     Slot& S = m.slot[b];
-    // 든 것·팔 끝 hand_r + 0.1 안은 판단하지 않음(objmap.cpp 4)
-    if (S.valid && S.confirmed && !S.held && !sh.hit[b] && S.state != S_GONE && !is_static_m(m, S.cls) && !(max3(S.ext) > MP::big) &&
-        !(dist3(S.pos, m.eef_m) < MP::hand_r + 0.1f)) {
-      const float rx = S.pos[0] - (m.ex + ec * env::K::cam_x), ry = S.pos[1] - (m.ey + es * env::K::cam_x);
-      const float zc = ec * rx + es * ry, left = -es * rx + ec * ry, up = S.pos[2] - env::K::cam_z;
-      if (!(zc < 0.3f || zc > MP::ozmax)) {
-        const float xn = -left / zc, yn = -up / zc;
-        const float u = k.fx * xn + k.cxp, v = k.fx * yn + k.cyp;
-        const float size_px = k.fx * max3(S.ext) / zc;
-        if (!(size_px < (float)MP::min_px || u < 2.f || v < 2.f || u >= (float)(MP::img_w - 2) || v >= (float)(MP::img_h - 2))) {
-          float d[3];
-          pix_dir(c, s, xn, yn, d);
-          const float tz = bx.on ? cast_beh(bx, m, o, d) : cast(m, o, d);
-          if (tz >= MP::zmin && tz <= MP::zmax && !(tz < zc - MP::occl)) {   // 깊이 있음, 가려지지 않음
-            if (S.misses++ == 0) S.first_miss = t;
-            if (S.misses >= MP::gone_misses && t - S.first_miss >= MP::gone_min_steps) S.state = S_GONE;
+    const int vis = sh.ab_vis[b], thru = sh.ab_thru[b];
+    const int need_vis = (int)(MP::absent_vis * (float)AB_NS + 0.5f);
+    if (vis < (need_vis > 3 ? need_vis : 3)) continue;
+    const float du = bitsf(sh.ab_u1[b]) - bitsf(sh.ab_u0[b]), dv = bitsf(sh.ab_v1[b]) - bitsf(sh.ab_v0[b]);
+    if (sqrtf(maxf(0.f, du) * maxf(0.f, dv)) < MP::absent_min_px) continue;
+    const int ev = thru * 10 >= vis * 3 ? 2 : 1;   // 2: 보이는 점의 30 % 이상에서 너머가 보임(자리가 비었음)
+    bool renamed = false;   // 다른 이름으로 검출됨(이 물체 이름 표에 있던 이름, 중심이 상자 ± 0.1 m 안) = 이름 흔들림
+    for (int a = 0; a < sh.nd && !renamed; ++a) {
+      const Det& D = sh.det[a];
+      if (D.cls == S.cls || !(name_share(S, D.cls) > 0.f)) continue;
+      bool in = true;
+      for (int q = 0; q < 3; ++q) in = in && D.pos[q] >= S.pos[q] - 0.5f * S.ext[q] - 0.1f && D.pos[q] <= S.pos[q] + 0.5f * S.ext[q] + 0.1f;
+      renamed = in;
+    }
+    if (renamed) continue;
+    if (bug != 8 && S.misses > 0 && ev != 2) {   // 새 근거만: 지난 놓침 뒤 카메라가 옮기거나 돌았을 때
+      const float dx = cxw - S.lmiss_cam[0], dy = cyw - S.lmiss_cam[1];
+      if (dx * dx + dy * dy < MP::gone_step_d * MP::gone_step_d && absf(wrap_pi(m.eyaw - S.lmiss_yaw)) < MP::gone_step_rad) continue;
+    }
+    S.lmiss_cam[0] = cxw; S.lmiss_cam[1] = cyw; S.lmiss_yaw = m.eyaw;
+    const bool big = slot_big(m, S);
+    S.n_vis_miss += 1;
+    if (S.misses++ == 0) { S.first_miss = t; S.miss_cam[0] = cxw; S.miss_cam[1] = cyw; }
+    // 검출률 p = (관측 + 1) / (관측 + 보이는데 놓침 + 2): (1 − p)^k < gone_eps 인 k 이상 놓쳐야
+    const float pr = ((float)S.n_obs + 1.f) / ((float)S.n_obs + (float)S.n_vis_miss + 2.f);
+    const int k_rate = pr >= 1.f ? 0 : (int)ceilf(MP::ln_gone_eps / lnf_d(1.f - pr));
+    int need = big ? MP::gone_misses_big : MP::gone_misses;
+    need = k_rate > need ? k_rate : need;
+    need = need > 60 ? 60 : need;
+    const int need_t = big ? MP::gone_min_steps_big : MP::gone_min_steps;
+    const float mx = cxw - S.miss_cam[0], my = cyw - S.miss_cam[1];
+    const bool indep = t - S.first_miss >= need_t || mx * mx + my * my >= MP::gone_view_d * MP::gone_view_d;
+    if (S.misses >= need && indep) {
+      S.state = S_GONE;
+      S.n_vis_miss -= S.misses < S.n_vis_miss ? S.misses : S.n_vis_miss;   // 이 연속 놓침은 진짜 없음이었다(검출률에서 뺌)
+    }
+  }
+}
+// 3f(스레드 0): 옮겨짐 잇기(objmap relink) → 오래된 후보·헛검출 지우기 → 중복 병합(da mergeDuplicates, 이름 달라도 IoU ≥ 0.5)
+DEV void slot_free(MapCore& m, int b) {
+  m.slot[b].valid = 0;
+  m.slot[b].confirmed = 0;
+}
+DEV void obj_relink(MapCore& m, int bug) {
+  if (bug == 9) return;   // 음성 대조: 잇기 끔
+  const int t = m.t;
+  int usedm = 0, usedn = 0;
+  for (;;) {   // 가까운 쌍부터 1:1 (거리, m id, n id 순 — scenemap 의 정렬과 같은 차례)
+    int bm = -1, bn = -1;
+    float bd = 0.f;
+    for (int ni = 0; ni < KSLOT; ++ni) {
+      const Slot& N = m.slot[ni];
+      if (((usedn >> ni) & 1) || !N.valid || !N.appeared || !N.confirmed || N.held || N.state == S_GONE || N.n_obs < MP::link_min_obs) continue;
+      if (t - N.first_seen > MP::link_window_steps) continue;
+      for (int mi = 0; mi < KSLOT; ++mi) {
+        const Slot& M = m.slot[mi];
+        if (mi == ni || ((usedm >> mi) & 1) || !M.valid || M.state != S_GONE || !M.confirmed || M.held || (!M.moved && M.n_obs < MP::spurious_obs)) continue;
+        if (M.cls != N.cls && !(name_share(M, N.cls) >= MP::name_share || name_share(N, M.cls) >= MP::name_share)) continue;
+        if (!(N.first_seen > M.last_seen)) continue;
+        const float d = dist3(N.pos, M.pos);
+        if (d > minf(MP::link_max_d, MP::link_d0 + MP::link_v * (float)(N.first_seen - M.last_seen) * MP::tok_dt)) continue;
+        bool wait = false;   // n 에 더 가까운 같은 이름 물체가 n 이 나타난 뒤 아직 안 보였으면 기다림
+        if (t - N.first_seen < MP::link_wait_steps)
+          for (int qi = 0; qi < KSLOT && !wait; ++qi) {
+            const Slot& Q = m.slot[qi];
+            if (qi == ni || qi == mi || !Q.valid || !Q.confirmed || Q.held || Q.state == S_GONE || Q.cls != N.cls) continue;
+            wait = Q.last_seen < N.first_seen && dist3(Q.pos, N.pos) < d;
           }
-        }
+        if (wait) continue;
+        const bool better = bm < 0 || d < bd || (d == bd && (M.id < m.slot[bm].id || (M.id == m.slot[bm].id && N.id < m.slot[bn].id)));
+        if (better) { bm = mi; bn = ni; bd = d; }
       }
     }
-    if (S.valid && !S.confirmed && t - S.last_seen > MP::prune_steps) S.valid = 0;
+    if (bm < 0) break;
+    usedm |= 1 << bm;
+    usedn |= 1 << bn;
+    Slot& M = m.slot[bm];
+    const Slot& N = m.slot[bn];
+    for (int q = 0; q < 3; ++q) { M.pos[q] = N.pos[q]; M.ext[q] = N.ext[q]; M.meas[q] = N.meas[q]; }
+    M.n_obs += N.n_obs;
+    M.last_seen = N.last_seen;
+    M.last_kf = N.last_kf;
+    M.score = maxf(M.score, N.score);
+    for (int k = 0; k < NVOTE; ++k) if (N.vcls[k] >= 0) vote(M, N.vcls[k], N.vw[k]);
+    M.max_det_z = maxf(M.max_det_z, N.max_det_z);
+    M.trk_pos[0] = N.trk_pos[0]; M.trk_pos[1] = N.trk_pos[1]; M.trk_t = N.trk_t;
+    M.mv_cnt = 0;
+    M.appeared = 0;
+    M.moved = 1;
+    M.state = S_MOVED;
+    M.misses = 0;
+    M.src = N.src; M.seen_len = N.seen_len; M.seen_rot = N.seen_rot;
+    slot_free(m, bn);
+    m.n_relink_total += 1;
+  }
+}
+DEV void obj_prune(MapCore& m) {
+  const int t = m.t;
+  for (int b = 0; b < KSLOT; ++b) {
+    const Slot& S = m.slot[b];
+    if (!S.valid) continue;
+    if (!S.confirmed ? t - S.last_seen > MP::prune_steps : (S.state == S_GONE && !S.moved && S.n_obs < MP::spurious_obs)) slot_free(m, b);
+  }
+}
+// 병합 쌍 (i < j) 의 겹침(못 합치면 −1)
+DEV float merge_pair_ov(const MapCore& m, int i, int j, int bug) {
+  const Slot& A = m.slot[i];
+  const Slot& B = m.slot[j];
+  if (!A.valid || !A.confirmed || A.held || A.state == S_GONE) return -1.f;
+  if (!B.valid || !B.confirmed || B.held || B.state == S_GONE) return -1.f;
+  if (A.cls != B.cls && !(bug != 10 && box_iou(A.pos, A.ext, B.pos, B.ext, 0.05f) >= MP::name_merge_iou)) return -1.f;
+  const bool bigp = is_static_m(m, A.cls) || maxf(maxf(A.ext[0], A.ext[1]), maxf(B.ext[0], B.ext[1])) > MP::big;
+  if (bigp)
+    for (int q = 0; q < 3; ++q)
+      if (maxf(A.pos[q] + 0.5f * A.ext[q], B.pos[q] + 0.5f * B.ext[q]) - minf(A.pos[q] - 0.5f * A.ext[q], B.pos[q] - 0.5f * B.ext[q]) > MP::max_ext) return -1.f;
+  return box_ov(A.pos, A.ext, B.pos, B.ext, MP::merge_min_ext);
+}
+constexpr int NPAIR = KSLOT * (KSLOT - 1) / 2;
+DEV void pair_ij(int k, int& i, int& j) {   // 쌍 번호(i 먼저, j > i 차례) → (i, j)
+  i = 0;
+  int left = KSLOT - 1;
+  while (k >= left) { k -= left; ++i; --left; }
+  j = i + 1 + k;
+}
+// drop 을 keep 에 합침(da absorb)
+DEV void merge_apply(MapCore& m, int bi, int bj) {
+  int keep = bi, drop = bj;   // 관측이 많은 쪽, 같으면 먼저 본(id 작은) 쪽
+  if (m.slot[bj].n_obs > m.slot[bi].n_obs || (m.slot[bj].n_obs == m.slot[bi].n_obs && m.slot[bj].id < m.slot[bi].id)) { keep = bj; drop = bi; }
+  Slot& A = m.slot[keep];
+  const Slot& B = m.slot[drop];
+  const bool big = is_static_m(m, A.cls) || maxf(maxf(A.ext[0], A.ext[1]), maxf(B.ext[0], B.ext[1])) > MP::big;
+  const float wa = (float)(A.n_obs > 1 ? A.n_obs : 1), wb = (float)(B.n_obs > 1 ? B.n_obs : 1);
+  for (int q = 0; q < 3; ++q) {
+    if (big) {
+      const float lo = minf(A.pos[q] - 0.5f * A.ext[q], B.pos[q] - 0.5f * B.ext[q]), hi = maxf(A.pos[q] + 0.5f * A.ext[q], B.pos[q] + 0.5f * B.ext[q]);
+      A.pos[q] = 0.5f * (lo + hi);
+      A.ext[q] = hi - lo;
+    } else {
+      A.pos[q] = (A.pos[q] * wa + B.pos[q] * wb) / (wa + wb);
+      A.ext[q] = (A.ext[q] * wa + B.ext[q] * wb) / (wa + wb);
+    }
+  }
+  if (B.first_seen < A.first_seen) {
+    A.first_seen = B.first_seen;
+    for (int q = 0; q < 3; ++q) A.first_pos[q] = B.first_pos[q];
+  }
+  A.n_obs += B.n_obs;
+  A.last_seen = A.last_seen > B.last_seen ? A.last_seen : B.last_seen;
+  A.last_kf = A.last_kf > B.last_kf ? A.last_kf : B.last_kf;
+  A.score = maxf(A.score, B.score);
+  for (int k = 0; k < NVOTE; ++k) if (B.vcls[k] >= 0) vote_add(A, B.vcls[k], B.vw[k]);
+  {   // 이름 = 표 최댓값(병합은 바꿈 문턱 없음 — da absorb)
+    float bw = -1.f;
+    for (int k = 0; k < NVOTE; ++k) if (A.vcls[k] >= 0 && A.vw[k] > bw) { bw = A.vw[k]; A.cls = A.vcls[k]; }
+  }
+  A.max_det_z = maxf(A.max_det_z, B.max_det_z);
+  A.moved = A.moved || B.moved;
+  A.misses = A.misses < B.misses ? A.misses : B.misses;
+  A.n_vis_miss += B.n_vis_miss;
+  if (A.state != S_SEEN && B.state == S_SEEN) A.state = S_SEEN;
+  slot_free(m, drop);
+  m.n_merge_total += 1;
+}
+// 중복 병합(da mergeDuplicates): 가장 많이 겹치는 쌍(같으면 앞 쌍)부터 하나씩, 합치면 다시 셈
+DEV void obj_merge(MapCore& m, int bug) {
+  for (;;) {
+    float best = 0.f;
+    int bk = -1;
+    for (int k = 0; k < NPAIR; ++k) {
+      int i, j;
+      pair_ij(k, i, j);
+      const float ov = merge_pair_ov(m, i, j, bug);
+      if (ov >= MP::merge_overlap && ov > best) { best = ov; bk = k; }
+    }
+    if (bk < 0) break;
+    int i, j;
+    pair_ij(bk, i, j);
+    merge_apply(m, i, j);
+  }
+}
+#ifdef __CUDA_ARCH__
+// GPU 판(워프 하나): 쌍 120 개를 레인 32 개가 나눠 보고 (겹침 큰 것, 같으면 앞 쌍) 셔플로 → 레인 0 이 합침. 고르는 규칙은 위와 같음
+__device__ __forceinline__ void obj_merge_warp(MapCore& m, int bug, int lane) {
+  for (;;) {
+    float best = 0.f;
+    int bk = -1;
+    for (int k = lane; k < NPAIR; k += 32) {
+      int i, j;
+      pair_ij(k, i, j);
+      const float ov = merge_pair_ov(m, i, j, bug);
+      if (ov >= MP::merge_overlap && ov > best) { best = ov; bk = k; }
+    }
+#pragma unroll
+    for (int off = 16; off > 0; off >>= 1) {
+      const float ob = __shfl_xor_sync(0xffffffffu, best, off);
+      const int ok = __shfl_xor_sync(0xffffffffu, bk, off);
+      if (ok >= 0 && (bk < 0 || ob > best || (ob == best && ok < bk))) { best = ob; bk = ok; }
+    }
+    if (bk < 0) break;   // 워프 안 모두 같은 값
+    if (lane == 0) { int i, j; pair_ij(bk, i, j); merge_apply(m, i, j); }
+    __syncwarp();
+  }
+}
+#endif
+// 3h(모든 스레드, 열마다): 본 곳 칸 표시(objmap markView). 열의 가장 먼 깊이 점까지(수평 ≤ 5 m) 믿는 카메라에서 반 칸 간격으로 칸을 지나며
+// 거리 띠마다 처음 본 시각을 쓴다(이미 있으면 그대로 — 같은 스텝의 쓰기는 모두 같은 값이라 스레드 순서와 무관)
+DEV void obj_view(const MapCore& m, const Scratch& sh, uint8_t* view, int tid, int nt) {
+  if (!view) return;
+  const Cam k = cam_consts();
+  const float ec = sh.ec, es = sh.es;
+  const float cxw = m.ex + ec * env::K::cam_x, cyw = m.ey + es * env::K::cam_x;
+  const uint8_t code = (uint8_t)view_code(m.t);
+  // 가로 32 점(scenemap markView: 깊이 영상 가로 32 간격) = 거친 열 64 중 하나 걸러. GPU 는 스레드 32.. 이 맡음(스레드 0 은 잇기·병합 중 — 결과 같음)
+  constexpr int NVC = NCOL / 2;
+  const int c0 = nt > NVC ? tid - (nt - NVC) : tid, cs = nt > NVC ? NVC : nt;
+  for (int vc = c0; vc >= 0 && vc < NVC; vc += cs) {
+    const int col = 2 * vc + 1;
+    const float xn = ((float)(2 * col + 1 - NCOL) / (float)NCOL) * k.tanh;
+    float tm = sh.colt[col] ? sh.colt_t[col] : 0.f;
+    tm = maxf(tm, sh.cold1[col]);
+    if (!(tm > 0.f)) continue;
+    const float L = tm * sqrtf(1.f + xn * xn), Lm = minf(L, (float)VB);
+    const float ux = (ec + es * xn) / sqrtf(1.f + xn * xn), uy = (es - ec * xn) / sqrtf(1.f + xn * xn);   // 믿는 자세의 수평 방향(단위)
+    const int ns = (int)ceilf(Lm / (0.5f * MP::view_cell));   // ≤ 20 (Lm ≤ 5 m, 반 칸 0.25 m)
+    // 1) 읽기만(서로 무관한 전역 읽기를 먼저 다 냄): 띠 b0 칸이 비었나 → 비트. 2) 빈 것만 씀. 같은 칸을 두 번 지나도 쓰는 값이 같아 결과 같음
+    uint32_t need = 0u;
+    for (int q = 0; q <= ns; ++q) {
+      const float r = Lm * (float)q / (float)(ns > 1 ? ns : 1);
+      const int cx = view_cell(cxw + r * ux), cy = view_cell(cyw + r * uy);
+      if (cx < 0 || cy < 0 || cx >= VC || cy >= VC) continue;
+      int b0 = (int)ceilf(r) - 1;
+      b0 = b0 < 0 ? 0 : b0;
+      if (view[(cy * VC + cx) * VB + b0] == 0) need |= 1u << q;   // 띠 b 를 쓰면 더 넓은 띠도 늘 같이(또는 먼저) 써짐 — 있으면 위도 다 있음
+    }
+    while (need) {
+      const int q = ctz32(need);
+      need &= need - 1u;
+      const float r = Lm * (float)q / (float)(ns > 1 ? ns : 1);
+      const int cx = view_cell(cxw + r * ux), cy = view_cell(cyw + r * uy);
+      int b0 = (int)ceilf(r) - 1;
+      b0 = b0 < 0 ? 0 : b0;
+      uint8_t* e = view + (cy * VC + cx) * VB;
+      for (int b = b0; b < VB; ++b) if (e[b] == 0) e[b] = code;
+    }
   }
 }
 
@@ -1962,7 +2555,7 @@ DEV void phase_walls(MapCore& m, WallScratch& ws, const uint32_t* occ_g, int16_t
 // keyframe 갱신 본체(시작 단계 뒤, B_KF 일 때만). 블록(GPU) 또는 스레드 하나(CPU)
 template <class Sync>
 DEV void map_keyframe(MapCore& m, Scratch& sh, const EnvView& e, int16_t* L, uint32_t* seen, uint32_t* occ, int tid, int nt, int bug, const Sync& sync,
-                      const BCtx& bx) {
+                      const BCtx& bx, uint8_t* view = nullptr) {
   phase_cast(m, sh, e, tid, nt, bx);
   sync();
   PROF_MARK(P_CAST);
@@ -1988,12 +2581,29 @@ DEV void map_keyframe(MapCore& m, Scratch& sh, const EnvView& e, int16_t* L, uin
 #endif
   obj_update_matched(m, sh, tid, nt, bug);
   sync();
-  if (tid == 0) obj_update_new(m, sh, bug);
+  if (tid == 0) obj_update_new(m, sh, bug, view);
   sync();
   PROF_MARK(P_ASSOC);
-  obj_absence(m, sh, e, tid, nt, bx);
+  absence_gate(m, sh, tid, nt, bug);
+  sync();
+  absence_samples(m, sh, tid, nt, bx);
+  sync();
+  obj_absence(m, sh, tid, nt, bug);
   sync();
   PROF_MARK(P_ABSENCE);
+  // 순서: 사라짐 → 잇기 → 지우기(scenemap) → 병합(da). GPU 는 병합 쌍을 워프 0 이 나눠 봄(같은 결과)
+#ifdef __CUDA_ARCH__
+  if (tid < 32) {
+    if (tid == 0) { obj_relink(m, bug); obj_prune(m); }
+    __syncwarp();
+    obj_merge_warp(m, bug, tid);
+  }
+#else
+  if (tid == 0) { obj_relink(m, bug); obj_prune(m); obj_merge(m, bug); }
+#endif
+  obj_view(m, sh, view, tid, nt);   // 칸 기억은 안 건드림(믿는 자세·시각만 읽음)
+  sync();
+  PROF_MARK(P_BEGIN);
   obj_complete(m, sh, tid, nt);
   phase_mark(m, sh, L, seen, occ, tid, nt, sync);
   sync();
@@ -2041,6 +2651,8 @@ DEV void curr_slots(MapCore& m, const MapCurr& cu, int np = N_PRIM) {   // np: �
     S.n_obs = MP::confirm; S.last_seen = 0; S.last_kf = -1; S.score = 0.9f;
     S.state = S_SEEN; S.confirmed = 1; S.moved = 0; S.misses = 0; S.first_miss = 0; S.held = 0; S.src = p;
     S.seen_len = 0.f; S.seen_rot = 0.f;
+    S.first_seen = 0; S.appeared = 0; S.n_vis_miss = 0; S.mv_cnt = 0; S.trk_t = -1; S.moving_t = -100000; S.max_det_z = 0.f;
+    vote_init(S, P.cls, 0.9f);
   }
   m.init_conf = k;
   m.init_goal = (int)(pick & 1u);
@@ -2141,7 +2753,7 @@ DEV void curr_grid_finish(MapCore& m, const Scratch& sh, int nt, const BCtx& bx)
 // 시작 단계 뒤의 나머지(flags = phase_begin 결과): 리셋이면 격자 비움, keyframe 이면 갱신, keyframe·들기/놓기면 벽 선분, 마지막에 완성도 쓰기.
 // GPU 는 목록(keyframe·리셋·벽)의 판만 블록으로 이 함수를 부르고(map_kf_kernel), 나머지 판은 시작 커널이 완성도만 쓴다.
 // sh 와 ws 는 같은 자리(공용체): 벽 단계는 keyframe 단계가 끝난 뒤 Scratch 를 덮어쓴다.
-struct MapGrid { int16_t* L; uint32_t* seen; uint32_t* occ; int16_t* segs; };   // 한 판의 장치(또는 CPU) 배열
+struct MapGrid { int16_t* L; uint32_t* seen; uint32_t* occ; int16_t* segs; uint8_t* view = nullptr; };   // 한 판의 장치(또는 CPU) 배열. view: 본 곳 칸(VIEW_BYTES, 없으면 나타남 판정 끔)
 
 // BEHAVIOR 판 리셋(블록): 창 칸의 장면 방을 세어 창 방 목록(≤ MAXBR, 장면 방 번호 순)·방 칸 수, 창 안 문(양쪽 창 방)을 만든다
 template <class Sync>
@@ -2198,6 +2810,7 @@ DEV void map_rest(MapCore& m, KfShared& u, const EnvView& e, const MapGrid& g, f
   const BCtx bx = bctx(ss, bm);
   if (flags & B_RESET) {
     clear_grid(g.L, g.seen, g.occ, tid, nt);
+    if (g.view) for (int k = tid; k < VIEW_BYTES / 4; k += nt) reinterpret_cast<uint32_t*>(g.view)[k] = 0u;
     if (bx.on) room_setup_beh(m, bx, tid, nt, sync);
     if (tid == 0) curr_slots(m, cu, bx.on ? bx.bm->nprim : N_PRIM);   // 처음 지도 단계(5.5)
     sync();
@@ -2209,7 +2822,7 @@ DEV void map_rest(MapCore& m, KfShared& u, const EnvView& e, const MapGrid& g, f
     }
     PROF_MARK(P_RESET);
   }
-  if (flags & B_KF) map_keyframe(m, u.sh, e, g.L, g.seen, g.occ, tid, nt, bug, sync, bx);
+  if (flags & B_KF) map_keyframe(m, u.sh, e, g.L, g.seen, g.occ, tid, nt, bug, sync, bx, g.view);
   if (flags & (B_KF | B_WALL)) {
     const int chg = (flags & B_KF) ? u.sh.occ_chg : 0;   // ws 가 sh 를 덮기 전에 읽음
     sync();

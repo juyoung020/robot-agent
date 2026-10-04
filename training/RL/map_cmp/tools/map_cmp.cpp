@@ -118,6 +118,8 @@ struct Lane {
   int firstA[NP], confA[NP], firstB[NP], confB[NP], firstR[NP], confR[NP];
   gmap::Prim prim[NP];
   float rhx = 0, rhy = 0;
+  double cup0[2] = {0, 0};   // 판 시작 컵 자리(--shuffle)
+  int sh_after = 0, sh_a_found = 0, sh_a_moved = 0, sh_r_found = 0, sh_r_moved = 0, sh_a_stale = 0, sh_r_stale = 0;
   // 작업 버퍼
   std::vector<float> depth;
   std::vector<int8_t> idb;
@@ -207,6 +209,7 @@ double median_i(const std::vector<int>& v) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  int shuffle = 0;   // > 0: 바뀜 규칙 비교(옮겨짐·사라짐·움직임 따라가기)
   int N = 50, policy = 0, pose_mode = SM_POSE_SLAM, trace = -1, stage = 1, T = 2000;
   uint64_t seed = 20261004, mseed = 99;
   int pos = 0;
@@ -216,6 +219,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--seed") && a + 1 < argc) { seed = std::strtoull(argv[++a], nullptr, 10); mseed = seed * 7 + 1; }
     else if (!std::strcmp(argv[a], "--trace") && a + 1 < argc) trace = std::atoi(argv[++a]);
     else if (!std::strcmp(argv[a], "--stage") && a + 1 < argc) stage = std::atoi(argv[++a]);
+    else if (!std::strcmp(argv[a], "--shuffle") && a + 1 < argc) shuffle = std::atoi(argv[++a]);   // 스텝 S..S+19 동안 컵(prim 0)을 0.4 m/s 로 밈(양쪽 같은 장면)
     else if (pos == 0) { N = std::atoi(argv[a]); ++pos; }
   }
   const gmap::Cam K = gmap::cam_consts();
@@ -257,8 +261,8 @@ int main(int argc, char** argv) {
     if (t > 0) for (int i = 0; i < N; i += 2) { float a[N_ACT]; approach_action(obs.data(), N, i, a); act[0 * N + i] = a[0]; act[1 * N + i] = a[1]; }
     cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
     genv.step(d_act, d_obs, d_rew, d_done);
-    amap.step(genv.soa(), 0, 0);
-    bmap.step(genv.soa(), 0, 1);   // 음성 대조: 확정 규칙 끔
+    amap.step(genv.soa(), shuffle << 8, 0);
+    bmap.step(genv.soa(), shuffle << 8, 1);   // 음성 대조: 확정 규칙 끔
     cudaDeviceSynchronize();
     cudaMemcpy(obs.data(), d_obs, sizeof(float) * obs.size(), cudaMemcpyDeviceToHost);
     genv.download(fg, ig, rg);
@@ -279,6 +283,7 @@ int main(int argc, char** argv) {
       load(hs, i, c);
       if (!L.started) {
         std::memcpy(L.prim, A.prim, sizeof(L.prim));
+        L.cup0[0] = 0.5 * (A.prim[0].lo[0] + A.prim[0].hi[0]); L.cup0[1] = 0.5 * (A.prim[0].lo[1] + A.prim[0].hi[1]);
         L.rhx = A.rhx; L.rhy = A.rhy;
         L.ox = A.ex; L.oy = A.ey; L.oyaw = A.eyaw;
         L.started = true;
@@ -295,6 +300,7 @@ int main(int argc, char** argv) {
       sm_push_proprio(L.ctx, &pp);
       if (!A.kf_flag) continue;
       if (!B.kf_flag) ++prim_mismatch;   // keyframe 은 확정 규칙과 무관해야 함
+      if (shuffle > 0) std::memcpy(L.prim, A.prim, sizeof(L.prim));   // 참 장면이 움직임(--shuffle): 짝짓기도 지금 자리로
       L.kf += 1;
       const int kf = L.kf;
       L.r.n_kf += 1;
@@ -414,6 +420,15 @@ int main(int argc, char** argv) {
       std::vector<Obj> OA, OB;
       approx_objs(A, OA, obsA, &L.a.n_gone, L.firstA);
       approx_objs(B, OB, nullptr, &L.b.n_gone, L.firstB);
+      if (shuffle > 0) {   // 바뀜 비교: 옮긴 컵(prim 0)이 지도에 지금 자리로 있나·옮겨짐 상태인가(마지막 keyframe 값)
+        L.sh_after = A.t >= shuffle + 20;
+        L.sh_a_found = L.sh_a_moved = L.sh_r_found = L.sh_r_moved = 0;
+        for (const Obj& o : OA) if (o.prim == 0) { L.sh_a_found = 1; L.sh_a_moved |= o.state == gmap::S_MOVED; }
+        for (const Obj& o : R) if (o.prim == 0) { L.sh_r_found = 1; L.sh_r_moved |= o.state == SM_MOVED; }
+        L.sh_a_stale = L.sh_r_stale = 0;   // 옛 자리(밀기 전 컵 자리)에 남은 확정 컵 칸
+        for (const Obj& o : OA) if (o.cls == gmap::C_CUP && o.prim != 0 && std::hypot(o.pos[0] - L.cup0[0], o.pos[1] - L.cup0[1]) < 0.3) L.sh_a_stale = 1;
+        for (const Obj& o : R) if (o.cls == gmap::C_CUP && o.prim != 0 && std::hypot(o.pos[0] - L.cup0[0], o.pos[1] - L.cup0[1]) < 0.3) L.sh_r_stale = 1;
+      }
       for (int p = 0; p < NP; ++p) if (obsR[p] && L.firstR[p] < 0) L.firstR[p] = kf;
       // 관측 일치(검출 규칙 차이 진단): 이번 keyframe 에 물체 기억에 들어간 참 물체
       for (int p = 0; p < NP; ++p) {
@@ -435,7 +450,7 @@ int main(int argc, char** argv) {
             else if (!pre) why = 1;
             else {
               int nv = 0;
-              for (int qq = 0; qq < gmap::NPT; ++qq) nv += gmap::vis_point(A, o3, cyw, sy, g, p, qq);
+              for (int qq = 0; qq < gmap::NPT; ++qq) nv += gmap::vis_point(A, o3, cyw, sy, g, p, qq, gmap::bctx(nullptr, nullptr));
               if (nv == 0) why = 2;
               else if (g.af * ((float)nv / (float)gmap::NPT) < (float)gmap::MP::min_points) why = 3;
             }
@@ -591,6 +606,18 @@ int main(int argc, char** argv) {
     sm_destroy(L.ctx);
   }
   if (prim_mismatch) std::printf("WARNING: A/B scene or keyframe mismatch %ld\n", prim_mismatch);
+  if (shuffle > 0) {   // 바뀜 비교: 컵을 민 뒤(마지막 keyframe ≥ S + 20) 판 끝 상태
+    long n = 0, af = 0, rf = 0, am = 0, rm = 0, both_f = 0, both_m = 0, as = 0, rs = 0, agree_f = 0, agree_m = 0;
+    for (const Lane& L : lanes) {
+      if (!L.sh_after) continue;
+      ++n; af += L.sh_a_found; rf += L.sh_r_found; am += L.sh_a_moved; rm += L.sh_r_moved; as += L.sh_a_stale; rs += L.sh_r_stale;
+      both_f += L.sh_a_found && L.sh_r_found; both_m += L.sh_a_moved && L.sh_r_moved;
+      agree_f += L.sh_a_found == L.sh_r_found; agree_m += L.sh_a_moved == L.sh_r_moved;
+    }
+    std::printf("\nchange rules (--shuffle %d: cup pushed 0.8 m at 0.4 m/s, episodes past the push %ld): cup at new place approx %ld / real %ld (both %ld, agree %ld), "
+                "state MOVED approx %ld / real %ld (both %ld, agree %ld), stale cup at old place approx %ld / real %ld\n",
+                shuffle, n, af, rf, both_f, agree_f, am, rm, both_m, agree_m, as, rs);
+  }
 
   std::printf("\nkeyframes %ld, detections pushed %ld, accepted by real objmap %ld\n", R.n_kf, R.n_det, R.n_det_acc);
   std::printf("camera extrinsics sm_robot_fk cam0 vs approx (base+(%.3f,0,%.3f), level): max |dt| %.3g m, max |dR| %.3g over %ld keyframes\n",

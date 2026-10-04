@@ -1,6 +1,8 @@
 // V1 식 검증(지도): G1 환경(GPU·CPU 각각)을 같은 행동 열로 돌리고, 스텝마다 지도 단계를 GPU 커널과 CPU 참조판으로 돌려
 // **매 스텝 환경 상태 + 지도 전체(물체 기억·slam 자세·격자 로그 오즈·본 칸·완성도)**를 비트 단위로 비교한다.
-//   map_verify [N=2048] [steps=600] [--negative] [--force-kf] [--arm] [--stage 0|1|2] [--curr p0,p1[,kmin,kmax[,reveal_r]]]
+//   map_verify [N=2048] [steps=600] [--negative] [--force-kf] [--arm] [--stage 0|1|2] [--curr p0,p1[,kmin,kmax[,reveal_r]]] [--shuffle S]
+// --shuffle S: 판마다 스텝 S..S+19 동안 지도 장면의 과제 물체(prim 0)를 0.4 m/s 로 밈(지도만 — 움직임 따라가기·사라짐·옮겨짐 잇기를 지나게).
+// --negative-name / -move / -absent / -relink / -merge: GPU 만 바뀜 판정 규칙 하나를 끔(scenemap 3ed710f 규칙 음성 대조)
 // --curr: 커리큘럼 처음 지도(5.5) 비율. 예 --curr 1,0 = 모두 C0(전체), --curr 0,1 = 모두 C1(부분), --curr 0.34,0.33 = 섞음. 기본 0,0 = 모두 C2(예전 그대로)
 // --negative: GPU 쪽만 확정 규칙을 끈다(confirm 1, 계획서 5.2 의 음성 대조). 반드시 실패해야 한다 — 실패하면 종료 코드 0.
 // --negative-way / --negative-live: GPU 토큰 커널만 경유 지점 내리막 차례를 뒤집음 / 지금 보는 중 칸 위치를 지도 자리로(v2 토큰 음성 대조)
@@ -51,6 +53,11 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--negative-live")) { negative = true; neg_bug = 3; }
     else if (!std::strcmp(argv[a], "--negative-room")) { negative = true; neg_bug = 4; }
     else if (!std::strcmp(argv[a], "--negative-nav")) { negative = true; neg_bug = 5; }
+    else if (!std::strcmp(argv[a], "--negative-name")) { negative = true; neg_bug = 6; }     // 이름 표 끔(같은 이름만 모음)
+    else if (!std::strcmp(argv[a], "--negative-move")) { negative = true; neg_bug = 7; }     // 움직임 따라가기 끔
+    else if (!std::strcmp(argv[a], "--negative-absent")) { negative = true; neg_bug = 8; }   // 사라짐 근거의 검출 거리·새 시점 조건 끔
+    else if (!std::strcmp(argv[a], "--negative-relink")) { negative = true; neg_bug = 9; }   // 옮겨짐 잇기 끔
+    else if (!std::strcmp(argv[a], "--negative-merge")) { negative = true; neg_bug = 10; }   // 이름 다른 병합(IoU) 끔
     else if (!std::strcmp(argv[a], "--nav-k") && a + 1 < argc) nav_k = std::atoi(argv[++a]);
     else if (!std::strcmp(argv[a], "--scenes") && a + 1 < argc) bo.dir = argv[++a];
     else if (!std::strcmp(argv[a], "--mix") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &bcu.p1, &bcu.p2);
@@ -60,7 +67,8 @@ int main(int argc, char** argv) {
       size_t p = 0;
       while (p <= v.size()) { size_t q = v.find(',', p); if (q == std::string::npos) q = v.size(); bo.only.push_back(v.substr(p, q - p)); p = q + 1; }
     }
-    else if (!std::strcmp(argv[a], "--force-kf")) force_kf = 1;
+    else if (!std::strcmp(argv[a], "--force-kf")) force_kf |= 1;
+    else if (!std::strcmp(argv[a], "--shuffle") && a + 1 < argc) force_kf |= std::atoi(argv[++a]) << 8;   // 스텝 S 부터 20 스텝 동안 과제 물체를 밈(검증용)
     else if (!std::strcmp(argv[a], "--arm")) arm = true;
     else if (!std::strcmp(argv[a], "--stage") && a + 1 < argc) stage = std::atoi(argv[++a]);
     else if (pos == 0) { N = std::atoi(argv[a]); ++pos; }
@@ -127,7 +135,7 @@ int main(int argc, char** argv) {
   long mismatches = 0, first_step = -1, n_kf = 0;
   char first_what[128] = "";
   double sum_task_end = 0, sum_obj_end = 0, sum_seen_end = 0, max_err = 0, max_err_yaw = 0;
-  long n_end = 0, n_confirmed = 0, n_gone = 0, n_moved = 0, n_cand = 0;
+  long n_end = 0, n_confirmed = 0, n_gone = 0, n_moved = 0, n_cand = 0, n_relink = 0, n_merge = 0, n_appeared = 0, n_moving = 0;
   double tok_front = 0;
   long tok_front_open = 0;
   long tok_live = 0, tok_reach = 0, tok_hyper = 0, way_valid = 0, way_tgt = 0, way_far = 0;   // v2 칸·경유 지점 통계
@@ -193,6 +201,9 @@ int main(int argc, char** argv) {
       for (size_t k = 0; k < gh.segs.size(); ++k) if (gh.segs[k] != ch.segs[k]) { note("wall segments (env)", (long)(k / gmap::SEGW)); break; }
     }
     if (std::memcmp(gh.tprev.data(), ch.tprev.data(), sizeof(gmap::TPrev) * gh.tprev.size())) note("token prev positions", 0);
+    if (std::memcmp(gh.view.data(), ch.view.data(), gh.view.size())) {
+      for (size_t k = 0; k < gh.view.size(); ++k) if (gh.view[k] != ch.view[k]) { note("view cells (env)", (long)(k / gmap::VIEW_BYTES)); break; }
+    }
     if (beh && (std::memcmp(gh.lev.data(), ch.lev.data(), gh.lev.size()) || gh.navtag != ch.navtag || gh.navconf != ch.navconf || gh.navorg != ch.navorg)) {
       for (size_t k = 0; k < gh.lev.size(); ++k) if (gh.lev[k] != ch.lev[k]) { note("BEHAVIOR approach distance field", (long)(k / (gmap::NAV_P * gmap::NAV_P))); break; }
       if (gh.navtag != ch.navtag || gh.navconf != ch.navconf || gh.navorg != ch.navorg) note("BEHAVIOR field tag / origin / target confirmed", 0);
@@ -303,6 +314,7 @@ int main(int argc, char** argv) {
     }
     last_met = ch.met;
   }
+  for (int i = 0; i < N; ++i) { n_relink += cmap.h.core[i].n_relink_total; n_merge += cmap.h.core[i].n_merge_total; }
   for (int i = 0; i < N; ++i)
     for (int b = 0; b < gmap::KSLOT; ++b) {
       const auto& S = cmap.h.core[i].slot[b];
@@ -310,6 +322,8 @@ int main(int argc, char** argv) {
       if (S.confirmed) ++n_confirmed; else ++n_cand;
       n_gone += S.state == gmap::S_GONE;
       n_moved += S.state == gmap::S_MOVED;
+      n_appeared += S.valid && S.appeared;
+      n_moving += S.valid && cmap.h.core[i].t - S.moving_t < gmap::MP::moving_steps;
     }
   long fp = 0, kf_tot = 0, grasps = 0, wovf = 0, wruns = 0;
   for (int i = 0; i < N; ++i) {
@@ -326,7 +340,8 @@ int main(int argc, char** argv) {
   std::printf("  keyframes %ld of %ld env-steps (%.1f %%), false-positive dets %ld\n", n_kf, (long)N * T, 100.0 * n_kf / ((double)N * T), fp);
   std::printf("  finished episodes %ld: mean at end  task-object confirmed %.3f, scene objects confirmed %.3f, room cells seen %.3f\n",
               n_end, n_end ? sum_task_end / n_end : 0.0, n_end ? sum_obj_end / n_end : 0.0, n_end ? sum_seen_end / n_end : 0.0);
-  std::printf("  slam pose error max %.3f m / %.3f rad;  slots now: confirmed %ld, candidates %ld, gone %ld, moved %ld\n", max_err, max_err_yaw, n_confirmed, n_cand, n_gone, n_moved);
+  std::printf("  slam pose error max %.3f m / %.3f rad;  slots now: confirmed %ld, candidates %ld, gone %ld, moved %ld, appeared %ld, moving %ld;  relinks %ld, merges %ld (all episodes)\n",
+              max_err, max_err_yaw, n_confirmed, n_cand, n_gone, n_moved, n_appeared, n_moving, n_relink, n_merge);
   const double ES = (double)N * T;
   std::printf("  grasps %ld, env-steps holding %ld;  rooms revealed at episode end %.3f;  wall segments per env-step %.2f (max h %ld v %ld, overflow %ld)\n",
               grasps, held_steps, n_end ? sum_room_end / n_end : 0.0, n_wallseg / ES, maxseg_h, maxseg_v, wovf);
@@ -345,6 +360,7 @@ int main(int argc, char** argv) {
     mix(cmap.h.L.data(), sizeof(int16_t) * cmap.h.L.size());
     mix(cmap.h.seen.data(), sizeof(uint32_t) * cmap.h.seen.size());
     mix(cmap.h.met.data(), sizeof(float) * cmap.h.met.size());
+    mix(cmap.h.view.data(), cmap.h.view.size());
     mix(cmap.h.occ.data(), sizeof(uint32_t) * cmap.h.occ.size());
     mix(cmap.h.segs.data(), sizeof(int16_t) * cmap.h.segs.size());
     mix(cmap.h.tprev.data(), sizeof(gmap::TPrev) * cmap.h.tprev.size());
@@ -362,7 +378,9 @@ int main(int argc, char** argv) {
   }
   if (negative) {
     std::printf("negative control (%s on GPU): %ld mismatching items (must be > 0)\n",
-                neg_bug == 1 ? "confirm rule off" : neg_bug == 2 ? "waypoint descent tie order flipped" : neg_bug == 3 ? "live slots use map position" : neg_bug == 4 ? "BEHAVIOR room token shifted 1.5 m" : "BEHAVIOR distance field always 4-neighbour", mismatches);
+                neg_bug == 1 ? "confirm rule off" : neg_bug == 2 ? "waypoint descent tie order flipped" : neg_bug == 3 ? "live slots use map position" : neg_bug == 4 ? "BEHAVIOR room token shifted 1.5 m" : neg_bug == 5 ? "BEHAVIOR distance field always 4-neighbour" :
+                neg_bug == 6 ? "name table off" : neg_bug == 7 ? "moving tracking off" : neg_bug == 8 ? "absence detect-range/new-view gates off" :
+                neg_bug == 9 ? "relink off" : "different-name IoU merge off", mismatches);
     if (first_step >= 0) std::printf("  first mismatch: step %ld, %s\n", first_step, first_what);
     return mismatches > 0 ? 0 : 1;
   }

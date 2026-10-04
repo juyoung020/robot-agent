@@ -105,7 +105,7 @@ inline void make_sm_tokens(const SmTokIn& in, MapTok* o, SmTokPrev* prev = nullp
       g2 += gk * gk;
     }
     v[T_EEF_S] = f2h_soft(std::sqrt(g2));
-    {  // 학습 쪽과 같은 OMX 작업 공간 표(omx_workspace.h, map_tok.h omx_reach_box)
+    {  // 학습 쪽과 같은 OMX 잡는 점 작업 공간 표(omx_workspace_grasp.h, map_tok.h omx_reach_box)
       v[T_REACH] = omx_reach_box(S.pos, S.ext, px, py, c, s) ? (uint16_t)0x3c00u : (uint16_t)0u;
     }
     const float fdx = S.pos[0] - S.first_pos[0], fdy = S.pos[1] - S.first_pos[1];

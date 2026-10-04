@@ -19,6 +19,7 @@ struct MapHost {   // 내려받은 한 벌(검증용)
   std::vector<int16_t> segs;    // 벽 선분 [N][SEGW]
   std::vector<TPrev> tprev;     // 토큰 물체 속도용 [N][KSLOT]
   std::vector<MapTok> tok;      // 이번 스텝 지도 토큰 [N]
+  std::vector<uint8_t> view;    // 본 곳 칸(나타남 판정) [N][VIEW_BYTES]
   std::vector<BMapEnv> bm;      // BEHAVIOR 판 덧붙임 [N](장면 묶음이 있을 때만)
   std::vector<uint8_t> lev;     // BEHAVIOR 다가가기 거리장 조각 [N][NAV_P²] (map.h 8 절)
   std::vector<int> navorg, navtag, navconf;   // [N] 조각 원점, 거리장을 만든 판 번호(−1 없음), 목표 확정
@@ -67,6 +68,7 @@ class DeviceMap {
   int16_t* segs_ = nullptr;
   TPrev* tprev_ = nullptr;
   MapTok* tok_ = nullptr;
+  uint8_t* view_ = nullptr;    // 본 곳 칸 [N][VIEW_BYTES](objmap markView — 옮겨짐 잇기의 나타남 판정)
   bool tok_on_ = true;
   const bsc::SceneSet* ss_ = nullptr;
   BMapEnv* bm_ = nullptr;

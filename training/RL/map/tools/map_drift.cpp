@@ -5,6 +5,7 @@
 //         (../map_calib/limo/tools/map_drift_limo.patch 의 궤적)
 // kind 3: limo4 비슷 — 제자리 한 바퀴(0.6 rad/s) 뒤 3.9 m
 // kind 4: LIMO 탐색 비슷 둘째 판(100358: 38.15 m, 3,100°) — kind 2 와 같은 동작, 길이 합 38.2 m
+// kind 5: 새 LIMO SLAM 기록 넷(behavior-2026 84b373c, ~/datasets/limo_rec r1–r3·r4live: 25.0–37.9 m, 1,788–2,663°, 103–146 s) 비슷 — kind 2 와 같은 동작, 길이 합 30.1 m
 // kind 1: G1 방(반치수 2–3.5 m) 안에서 무작위 목표로 돌고(최대 0.8 rad/s) 곧게 가기(0.45 m/s)를 길이 합 16.5 m 까지
 //         (../map_calib/tools/mpdrift.cpp 의 탐색 궤적과 같은 동작이되, 방 밖으로 나가지 않게 목표를 방 안에서 뽑고 굽음은 뺐다)
 // kind 0: gt_move 대본(90°×4, 1 m, 180°, 1 m, −90°, 0.8 m, 180°, 0.8 m, 90°; 0.6 rad/s, 0.27 m/s), 방 가운데에서.
@@ -77,7 +78,7 @@ static Traj make(int kind, float rhx, float rhy, uint64_t& r) {
     return S.T;
   }
   const float m = 0.6f;
-  const float Lmax = kind == 1 ? 16.5f : kind == 2 ? 13.2f : kind == 4 ? 38.2f : 3.9f, vmax = kind == 1 ? 0.45f : 0.40f, wmax = 0.8f;
+  const float Lmax = kind == 1 ? 16.5f : kind == 2 ? 13.2f : kind == 4 ? 38.2f : kind == 5 ? 30.1f : 3.9f, vmax = kind == 1 ? 0.45f : 0.40f, wmax = 0.8f;
   if (kind == 3) {   // limo4 비슷: 제자리 한 바퀴(0.6 rad/s) 뒤 돌기·가기
     S.x = 0.f; S.y = 0.f; S.th = 0.f;
     for (int i = 0; i < 10; ++i) S.ctrl(0.f, 0.f);
@@ -124,7 +125,7 @@ int main(int argc, char** argv) {
   std::vector<float> met((size_t)gmap::N_MET * N);
   const char* where = "GPU";
 #endif
-  std::vector<double> s2(N, 0), s2y(N, 0), mx(N, 0), my(N, 0), Lp(N, 0), tu(N, 0);
+  std::vector<double> s2(N, 0), s2y(N, 0), mx(N, 0), my(N, 0), Lp(N, 0), tu(N, 0), jx(N, 0), pex(N, 0), pey(N, 0);
   std::vector<int> n(N, 0);
   for (size_t t = 0; t < T; ++t) {
     for (int i = 0; i < N; ++i) {
@@ -152,13 +153,20 @@ int main(int argc, char** argv) {
       if (t >= q.x.size()) continue;
       const double exy = M[gmap::M_ERR_XY * N + i], eyw = M[gmap::M_ERR_YAW * N + i];
       s2[i] += exy * exy; s2y[i] += eyw * eyw; mx[i] = fmax(mx[i], exy); my[i] = fmax(my[i], eyw); ++n[i];
+#ifdef DRIFT_CPU_ONLY
+      {   // 걸음마다 오차 벡터 변화(튐) 최대 — CPU 판만(믿는 자세를 바로 읽음)
+        const double vx = map.h.core[i].ex - q.x[t], vy = map.h.core[i].ey - q.y[t];
+        if (t > 0) jx[i] = fmax(jx[i], hypot(vx - pex[i], vy - pey[i]));
+        pex[i] = vx; pey[i] = vy;
+      }
+#endif
       if (t > 0) { Lp[i] += hypot(q.x[t] - q.x[t - 1], q.y[t] - q.y[t - 1]); tu[i] += fabs(wrapf(q.yaw[t] - q.yaw[t - 1])); }
     }
   }
-  double a[4] = {0, 0, 0, 0}, L = 0, TU = 0, TT = 0, wmx = 0, wmy = 0;
+  double a[4] = {0, 0, 0, 0}, L = 0, TU = 0, TT = 0, wmx = 0, wmy = 0, JX = 0;
   for (int i = 0; i < N; ++i) {
     a[0] += sqrt(s2[i] / n[i]); a[1] += mx[i]; a[2] += sqrt(s2y[i] / n[i]); a[3] += my[i];
-    L += Lp[i]; TU += tu[i]; TT += n[i] * 0.1; wmx = fmax(wmx, mx[i]); wmy = fmax(wmy, my[i]);
+    L += Lp[i]; TU += tu[i]; TT += n[i] * 0.1; wmx = fmax(wmx, mx[i]); wmy = fmax(wmy, my[i]); JX += jx[i];
   }
   gmap::MapHost h;
 #ifdef DRIFT_CPU_ONLY
@@ -185,8 +193,8 @@ int main(int argc, char** argv) {
   }
   const double R = 57.29578;
   std::printf("map_drift %s kind %d, %d episodes: path %.2f m, turn %.0f deg, %.1f s | pose error (episode mean) rms %.2f cm / %.3f deg, max %.2f cm / %.3f deg"
-              " | worst episode max %.1f cm / %.2f deg | keyframes %.1f %% of steps, with fake det %.3f, fake dets per keyframe %.3f | confirmed at end %.1f per episode: correct %.2f, mislabel %.2f, false %.2f\n",
-              where, kind, N, L / N, TU / N * R, TT / N, a[0] / N * 100, a[2] / N * R, a[1] / N * 100, a[3] / N * R, wmx * 100, wmy * R,
+              " | worst episode max %.1f cm / %.2f deg | step jump (episode max, mean; CPU only) %.2f cm | keyframes %.1f %% of steps, with fake det %.3f, fake dets per keyframe %.3f | confirmed at end %.1f per episode: correct %.2f, mislabel %.2f, false %.2f\n",
+              where, kind, N, L / N, TU / N * R, TT / N, a[0] / N * 100, a[2] / N * R, a[1] / N * 100, a[3] / N * R, wmx * 100, wmy * R, JX / N * 100,
               100.0 * kf / TT * 0.1, kf ? (double)kffp / kf : 0.0, kf ? (double)fp / kf : 0.0, (double)nconf / N,
               nconf ? (double)nok / nconf : 0.0, nconf ? (double)nmis / nconf : 0.0, nconf ? (double)(nconf - nok - nmis) / nconf : 0.0);
   return 0;

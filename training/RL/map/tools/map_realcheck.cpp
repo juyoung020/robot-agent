@@ -161,7 +161,7 @@ static void check_grid_walls(int N, int T) {
       // 같은 가상 스캔(참 카메라에서 쏜 열 끝, 베이스 기준) → 진짜 insert, 자세 = 이 keyframe 에 근사가 쓴 믿는 자세
       gmap::Scratch sh;
       const gmap::EnvView e = gmap::read_env(cs, i);
-      gmap::phase_cast(m, sh, e, 0, 1);
+      gmap::phase_cast(m, sh, e, 0, 1, gmap::bctx(nullptr, nullptr));
       sm::Scan2 sc;
       sc.ox = env::K::cam_x; sc.oy = 0.f;
       const gmap::Cam ck = gmap::cam_consts();
@@ -284,15 +284,18 @@ static void check_grasp() {
     float qq[N_Q] = {a[0], a[1], a[2], a[3], a[4], 0.f}, qd[N_Q] = {};
     env::Fk ef;
     env::fk(qq, qd, ef);
-    const double me[3] = {ef.ee_p[0], ef.ee_p[1], ef.ee_p[2] + gmap::MP::base_z};
+    // 잡는 점(scenemap d58c978: T_eef = URDF grasp_point) = 팔 끝 + grasp_off · 링크 x(map.h hands_step 과 같은 식)
+    const double me[3] = {ef.ee_p[0] + gmap::MP::grasp_off * ef.ee_R[0], ef.ee_p[1] + gmap::MP::grasp_off * ef.ee_R[3],
+                          ef.ee_p[2] + gmap::MP::grasp_off * ef.ee_R[6] + gmap::MP::base_z};
     for (int k = 0; k < 3; ++k) fk_max = std::max(fk_max, std::fabs(me[k] - f.T_eef[0][k * 4 + 3]));
   }
-  CHECK(fk_max < 1e-5, "end effector: approx env::fk + base_z vs real sm_robot_fk, max diff %.2e m", fk_max);
+  CHECK(fk_max < 1e-5, "grasp point: approx env::fk + grasp_off + base_z vs real sm_robot_fk T_eef, max diff %.2e m", fk_max);
   // 컵 둘: 앞으로 뻗은 팔 끝 바로 아래(컵 A, 8 cm) 와 옆 7 cm(컵 B) — A 가 더 가까움
   sm_body_fk fr;
   { std::vector<float> q = proprio({0, 0, 0}, reach, 0.f); sm_robot_fk(SM_ROBOT_LIMO_OMX, q.data(), 12, &fr); }
   const double ex = fr.T_eef[0][3], ey = fr.T_eef[0][7];
-  cups = {{{ex - 0.04, ey - 0.04, 0.0}, {ex + 0.04, ey + 0.04, 0.10}}, {{ex - 0.03, ey + 0.11, 0.0}, {ex + 0.05, ey + 0.19, 0.10}}};
+  // 컵 4 cm(잡기 확인: 가운데 변 ≤ 6 cm, 0.41 rad 로 쥐면 틈 4 cm)
+  cups = {{{ex - 0.02, ey - 0.02, 0.0}, {ex + 0.02, ey + 0.02, 0.10}}, {{ex - 0.01, ey + 0.13, 0.0}, {ex + 0.03, ey + 0.17, 0.10}}};
   double t = 0;
   std::vector<float> depth;
   std::vector<std::vector<uint8_t>> mask;
@@ -350,7 +353,10 @@ static void check_grasp() {
         for (int a = 0; a < 3; ++a) { S.pos[a] = float(o[k].pos[a]); S.ext[a] = float(o[k].extent[a]); }
       }
       m.closed = grip < gmap::MP::grip_closed;
+      m.tried = 1;                 // 진짜는 앞 스텝(홈, 닫힘)에서 이미 한 번 골랐음(잡을 것 없음)
+      m.gref = grip; m.gref_t = m.t - 10;
     }
+    m.t += 1;
     // 들지 않은 물체는 지난 스냅숏 자리·상태로 맞춤(진짜도 이 스텝 들기 규칙은 지난 영상까지의 자리로 판단: integrate → updateHands → 영상)
     for (const auto& q : last) for (int b = 0; b < gmap::KSLOT; ++b) {
       gmap::Slot& S = m.slot[b];
@@ -392,24 +398,27 @@ static void check_grasp() {
   for (int k = 0; k <= 6; ++k) step({-0.6 + 0.1 * k, 0, 0}, home, 0.f, false);   // 뒤(깊이 0.3 m 밖)에서 다가가며 확정(서로 다른 keyframe)
   step(A, home, 0.f, true);
   for (int k = 0; k < 3; ++k) step(A, reach, 1.2f, true);   // 열기(놓을 것 없음)
-  for (int k = 0; k < 3; ++k) step(A, reach, 0.2f, true);   // 닫기 → 가까운 컵 A 를 듦
+  for (int k = 0; k < 4; ++k) step(A, reach, 0.41f, true);   // 닫기(4 cm 쥠) → 멈춘 뒤 가까운 컵 A 를 듦
   for (int k = 1; k <= 10; ++k) {                             // 들고 0.3 m 앞·0.2 rad 돌기(렌더 컵도 손과 함께)
     const Pose p{0.03 * k, 0, 0.02 * k};
     sm_body_fk fk;
-    { std::vector<float> q = proprio(p, reach, 0.2f); sm_robot_fk(SM_ROBOT_LIMO_OMX, q.data(), 12, &fk); }
+    { std::vector<float> q = proprio(p, reach, 0.41f); sm_robot_fk(SM_ROBOT_LIMO_OMX, q.data(), 12, &fk); }
     const double cs = std::cos(p.th), sn = std::sin(p.th);
     const double wx = p.x + cs * fk.T_eef[0][3] - sn * fk.T_eef[0][7], wy = p.y + sn * fk.T_eef[0][3] + cs * fk.T_eef[0][7];
-    cups[0] = {{wx - 0.04, wy - 0.04, 0.0}, {wx + 0.04, wy + 0.04, 0.10}};
-    step(p, reach, 0.2f, true);
+    cups[0] = {{wx - 0.02, wy - 0.02, 0.0}, {wx + 0.02, wy + 0.02, 0.10}};
+    step(p, reach, 0.41f, true);
   }
   const Pose C{0.30, 0, 0.20};
   for (int k = 0; k < 2; ++k) step(C, reach, 1.2f, true);   // 놓기 → 옮겨짐
-  for (int k = 0; k < 2; ++k) step(C, home, 0.f, true);     // 닫기: 팔 끝 0.12 m 안 물체 없음 → 들지 않음
+  for (int k = 0; k < 3; ++k) step(C, reach, 0.41f, true);  // 다시 쥠(같은 컵, 잡는 점 바로 아래) → 듦
+  for (int k = 0; k < 4; ++k) step(C, reach, 0.f, true);    // 끝까지 닫힘(틈 < 5 mm) → 놓침
+  for (int k = 0; k < 2; ++k) step(C, reach, 1.2f, true);   // 열기
+  for (int k = 0; k < 4; ++k) step(C, home, 0.f, true);     // 빈손으로 닫힘: 잡는 점 0.12 m 안 물체 없음 → 들지 않음
   sm_destroy(c);
   std::printf("grasp: %ld compared steps, grasps real %ld / approx %ld; held object differs %ld steps, object state differs %ld, max position diff %.2e m\n",
               steps, grasps_real, grasps_me, bad_held, bad_state, pos_max);
   // 자리 차이는 든 물체를 돌며 옮길 때만 생긴다: 진짜는 proprio 적분 시점·keyframe 시점의 자세로 따라가고, 여기는 스냅숏 자세를 넣는다(규칙 차이 아님)
-  CHECK(bad_held == 0 && bad_state == 0 && pos_max < 2e-3 && grasps_real > 0, "grasp rule equals real objmap updateHands (LIMO grasp_r 0.12, close < 0.35 rad)");
+  CHECK(bad_held == 0 && bad_state == 0 && pos_max < 2e-3 && grasps_real > 0, "grasp rule equals real objmap updateHands (LIMO grasp_check: grasp point, settle 0.2 s, holdable, release on full close)");
 }
 
 int main(int argc, char** argv) {

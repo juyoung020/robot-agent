@@ -7,7 +7,7 @@
 #ifdef __CUDACC__
 #include <cuda_fp16.h>
 #endif
-#include "omx_workspace.h"   // 팔이 닿는지: URDF 로 미리 계산한 OMX 작업 공간(tools/omx_ws)
+#include "omx_workspace_grasp.h"   // 팔이 닿는지: URDF 로 미리 계산한 OMX 잡는 점 작업 공간(tools/omx_ws --grasp, env 헤더)
 #include "vla_vocab.h"       // 이름 표 행·상위어·이름 확신도(training/data/vla_v1 에서 생성)
 
 namespace gmap {
@@ -27,7 +27,7 @@ enum TokSlot {
   T_EXT = 8,        // 3 크기
   T_EEF_C = 11,     // 팔 끝 ↔ 중심 거리
   T_EEF_S = 12,     // 팔 끝 ↔ 상자 겉면 거리(안이면 0)
-  T_REACH = 13,     // 팔이 닿는지(0/1): 물체 상자의 (r, z) 범위가 OMX 작업 공간과 겹치나(omx_workspace.h)
+  T_REACH = 13,     // 팔이 닿는지(0/1): 물체 상자의 (r, z) 범위가 OMX 잡는 점 작업 공간과 겹치나(omx_workspace_grasp.h)
   T_DISP = 14,      // 3 처음 자리에서 옮겨진 양(base_link 축)
   T_VEL = 17,       // 3 물체 속도 m/s (지난 스텝 지도 자리와의 차, base_link 축)
   T_STATE = 20,     // 4 보임·사라짐·옮겨짐·들고 있음
@@ -211,23 +211,25 @@ struct TokScratch {   // 판 하나의 작업 공간(GPU 공유 메모리). 광�
 };
 
 // ---- 팔이 닿는지(VLA_INPUT 3절): 물체를 joint1 축 기준 (r, z) 범위로 바꿔 작업 공간 표와 겹치는지 ------------------------------------
+// 표 = **잡는 점** 작업 공간(omx_workspace_grasp.h, E0 −0.0119 m — env_beh.h grasp_reach_box·B3 성공 판정과 같은 표, 2026-10-04 바꿈.
+// 예전 omx_end_effector_link 표 omx_workspace.h 는 B0 비트 동일 때문에 남겨 두었었음)
 // r 범위 = joint1 축(믿는 자세의 base_link 에서 (AX, AY))에서 물체 중심까지 수평 거리 ∓ 바닥 자국 외접원 반지름(map 축 정렬 상자라도 회전에 불변이게 —
 // 강체 불변 시험 sm_tok_test), z 범위 = 상자 높이(base_link). 표는 joint1 이 360° 를 돌 수 있어 방위와 무관하다. 범위 안 칸 중 하나라도 작업 공간이면 1
 DEV bool omx_reach_box(const float ctr[3], const float ext[3], float px, float py, float c, float s) {
-  const float axw = px + (c * omxws::AX - s * omxws::AY), ayw = py + (s * omxws::AX + c * omxws::AY);
+  const float axw = px + (c * omxwsg::AX - s * omxwsg::AY), ayw = py + (s * omxwsg::AX + c * omxwsg::AY);
   const float dx = ctr[0] - axw, dy = ctr[1] - ayw, d = sqrtf(dx * dx + dy * dy);
   const float rho = 0.5f * sqrtf(ext[0] * ext[0] + ext[1] * ext[1]);
   const float rmin = maxf(0.f, d - rho), rmax = d + rho;
   const float zlo = ctr[2] - 0.5f * ext[2] - MP::base_z, zhi = ctr[2] + 0.5f * ext[2] - MP::base_z;
-  int r0 = (int)floorf(rmin / omxws::RES), r1 = (int)floorf(rmax / omxws::RES);
-  int z0 = (int)floorf((zlo - omxws::Z_LO) / omxws::RES), z1 = (int)floorf((zhi - omxws::Z_LO) / omxws::RES);
-  if (r0 >= omxws::NR || z1 < 0 || z0 >= omxws::NZ) return false;
-  r1 = r1 >= omxws::NR ? omxws::NR - 1 : r1;
+  int r0 = (int)floorf(rmin / omxwsg::RES), r1 = (int)floorf(rmax / omxwsg::RES);
+  int z0 = (int)floorf((zlo - omxwsg::Z_LO) / omxwsg::RES), z1 = (int)floorf((zhi - omxwsg::Z_LO) / omxwsg::RES);
+  if (r0 >= omxwsg::NR || z1 < 0 || z0 >= omxwsg::NZ) return false;
+  r1 = r1 >= omxwsg::NR ? omxwsg::NR - 1 : r1;
   z0 = z0 < 0 ? 0 : z0;
-  z1 = z1 >= omxws::NZ ? omxws::NZ - 1 : z1;
+  z1 = z1 >= omxwsg::NZ ? omxwsg::NZ - 1 : z1;
   const uint64_t hiw = r1 >= 63 ? ~0ull : ((1ull << (r1 + 1)) - 1ull), mask = hiw & ~((1ull << r0) - 1ull);
   for (int z = z0; z <= z1; ++z)
-    if (omxws::row(z) & mask) return true;
+    if (omxwsg::row(z) & mask) return true;
   return false;
 }
 

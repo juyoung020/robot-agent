@@ -23,6 +23,7 @@ CpuMap::CpuMap(int N_, uint64_t seed, const bsc::SceneSet* ss_host) : N(N_), ss(
   h.segs.assign((size_t)SEGW * N, 0);
   h.tprev.assign((size_t)KSLOT * N, TPrev{{0.f, 0.f, 0.f}, 0});
   h.tok.assign((size_t)N, MapTok{});
+  h.view.assign((size_t)VIEW_BYTES * N, 0);
   for (int i = 0; i < N; ++i) init_core(h.core[i], seed, i);
 }
 
@@ -31,7 +32,8 @@ void CpuMap::step(const env::Soa& s, int force_kf, const MapCurr& cu) {
   for (int i = 0; i < N; ++i) {
     KfShared u;
     const EnvView e = read_env(s, i, ss != nullptr);
-    const MapGrid g{h.L.data() + (size_t)i * NCELL, h.seen.data() + (size_t)i * NWORD, h.occ.data() + (size_t)i * NWORD, h.segs.data() + (size_t)i * SEGW};
+    const MapGrid g{h.L.data() + (size_t)i * NCELL, h.seen.data() + (size_t)i * NWORD, h.occ.data() + (size_t)i * NWORD, h.segs.data() + (size_t)i * SEGW,
+                      h.view.data() + (size_t)i * VIEW_BYTES};
     BMapEnv* bm = ss ? &h.bm[i] : nullptr;
     map_block(h.core[i], u, e, g, h.met.data(), N, i, 0, 1, 0, force_kf, cu, NoSync{}, ss, bm);
     TokScratch ts;
