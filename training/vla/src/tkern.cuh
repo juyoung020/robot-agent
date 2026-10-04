@@ -25,7 +25,7 @@ void mm_dx(const uint16_t* dZ, int ldz, int M, const uint16_t* W, int N, int K, 
 void mm_dw(const uint16_t* dZ, int ldz, const uint16_t* X, int ldx, int M, int N, int K, float* ws, int chunk, uint16_t* G, float* gacc, cudaStream_t st);
 
 // ---- 끝단 붙인 GEMM(vgemm.cu): 본 계산은 mm·mm_dx 와 비트까지 같고 끝단만 다르다 ----
-enum EpiKind { EK_RES = 0, EK_BIAS = 1, EK_SWI = 2, EK_DSWI = 3, EK_DW = 4, EK_CESTAT = 5, EK_CEGRAD = 6 };
+enum EpiKind { EK_RES = 0, EK_BIAS = 1, EK_SWI = 2, EK_DSWI = 3, EK_DW = 4, EK_CESTAT = 5, EK_CEGRAD = 6, EK_DGELU = 7 };
 struct Epi {
   int kind = EK_RES;
   float* C = nullptr; long long ldc = 0;          // F32 출력
@@ -33,7 +33,7 @@ struct Epi {
   const float* bias = nullptr;                    // [N]
   uint16_t* Cb = nullptr; long long ldcb = 0;     // bf16 출력
   int gelu = 0;                                   // EK_BIAS: Cb = bf16(gelu(acc + b))
-  const float* GU = nullptr; long long ldgu = 0;  // EK_DSWI: 끼운 꼴 GU [R][2I]
+  const float* GU = nullptr; long long ldgu = 0;  // EK_DSWI: 끼운 꼴 GU [R][2I]. EK_DGELU: GELU 입력 X [R][ldgu] — Cb = bf16(acc·gelu'(X)), C(선택) = F32
   int I = 0, bug = 0;
   float* gacc = nullptr;                          // EK_DW: FP32 += (nullptr 이면 Cb bf16 =)
   // LM 머리 + CE(G): 어휘 조각 v0.. 의 로짓 acc. EK_CESTAT: 워프 조각(행, WN 열)마다 (최댓값, Σ e^(x−최댓값)) → part[(행·nslot + 조각)·2], 정답 로짓 → tl.

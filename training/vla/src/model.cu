@@ -37,6 +37,12 @@ static void mm_dswiglu(const uint16_t* dZ, int ldz, int M, const uint16_t* Wdn, 
   e.kind = tk::EK_DSWI; e.GU = gu; e.ldgu = 2 * I; e.Cb = dgu; e.ldcb = 2 * I; e.I = I; e.bug = bug;
   tk::mme_dx(dZ, ldz, M, Wdn, N, I, e, st);
 }
+// GELU 뒤를 dX 끝단으로: dXb = bf16(dZ·W ∘ gelu'(Xg)), dXf(선택) = F32 같은 값
+static void mm_dgelu(const uint16_t* dZ, int ldz, int M, const uint16_t* W, int N, int K, const float* Xg, uint16_t* dXb, float* dXf, cudaStream_t st) {
+  tk::Epi e;
+  e.kind = tk::EK_DGELU; e.GU = Xg; e.ldgu = K; e.Cb = dXb; e.ldcb = K; e.C = dXf; e.ldc = K;
+  tk::mme_dx(dZ, ldz, M, W, N, K, e, st);
+}
 // 치우침(+ GELU bf16) 끝단: out = A·Wᵀ + b, outb = bf16(gelu(out)) (A4)
 static void mm_bias(const uint16_t* A, int lda, int M, const uint16_t* W, int N, int K, float* out, int ld, const float* bias, uint16_t* outb, bool gelu,
                     cudaStream_t st) {
@@ -84,7 +90,7 @@ struct Model::WS {
   float* gOut[N_VG];
   float* dgOut[N_VG];
   float *gH1, *dgH;
-  uint16_t *gH, *gdb;
+  uint16_t *gH, *gdb, *gdb2 = nullptr, *vdb2 = nullptr;   // gdb2·vdb2: GELU 뒤 끝단 출력(A 와 겹치지 않게)
   // 글
   uint16_t *hnT, *dLg;
   float *lg, *dHnT, *rm, *rs, *tl, *dEc, *lpart;
@@ -99,6 +105,7 @@ struct Model::WS {
   float *mI = nullptr, *nullb, *drl, *rpart, *mdz, *mda, *mdO, *mdQKV, *mdQ, *mDd, *mdHh, *mdKV, *mdmk, *mdnull, *mdI, *mwt, *mpart;
   uint16_t *mdzb, *mdGU, *mdKVb, *mdIb;
   float *dexl, *epart;
+  int *elst = nullptr, *ecnt = nullptr;   // 입력 글 토큰 행의 어휘 조각별 목록
   float* cep = nullptr;     // LM 머리 CE 워프 조각 통계(융합 G)
   float* npart = nullptr;   // 정규화 w 기울기 조각(커널 안 합, 융합 D)
   float* cpart = nullptr;   // 합성곱 가중치 기울기 판 조각 [B][lin_in·K](융합 E)
@@ -155,6 +162,10 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
   }
   v_lnfg = ap.vec(c.vD); v_lnfb = ap.vec(c.vD);
   v_proj = MTo(H, c.vD); v_projb = ap.vec(H);
+  if ((q.c.vocab + c.vocab_chunk - 1) / c.vocab_chunk > 16) {
+    if (err) *err = "vocab_chunk too small (> 16 chunks)";
+    return false;
+  }
   if (c.mem && (c.mem_nmax > 256 || c.n_prec > 16 || H % c.mem_heads || c.mem_lat < 3)) {
     if (err) *err = "mem config: nmax <= 256, n_prec <= 16, H % heads == 0, lat >= 3";
     return false;
@@ -353,7 +364,7 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
   s.vdO = alloc<float>((size_t)Rv * c.vD); s.vdH = alloc<float>((size_t)Rv * c.vMLP); s.vDd = alloc<float>((size_t)Rv * c.vHeads); s.vdOut = alloc<float>((size_t)Rv * H);
   s.vA1 = alloc<uint16_t>((size_t)Rv * c.vD); s.vAo = alloc<uint16_t>((size_t)Rv * c.vD); s.vA2 = alloc<uint16_t>((size_t)Rv * c.vD);
   s.vAg = alloc<uint16_t>((size_t)Rv * c.vMLP); s.vTok = alloc<uint16_t>((size_t)Rv * c.vD);
-  s.vdb = alloc<uint16_t>((size_t)Rv * std::max(std::max(3 * c.vD, c.vMLP), H));
+  s.vdb = alloc<uint16_t>((size_t)Rv * std::max(std::max(3 * c.vD, c.vMLP), H)); s.vdb2 = alloc<uint16_t>((size_t)Rv * c.vMLP);
   // 묶음
   for (int g = 0; g < N_VG; ++g) {
     s.gOut[g] = s.dgOut[g] = nullptr;
@@ -363,7 +374,7 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
     s.dgOut[g] = alloc<float>(rows * H);
   }
   s.gH1 = alloc<float>((size_t)s.rows_all * c.obj_hid); s.dgH = alloc<float>((size_t)s.rows_all * c.obj_hid);
-  s.gH = alloc<uint16_t>((size_t)s.rows_all * c.obj_hid); s.gdb = alloc<uint16_t>((size_t)s.rows_all * std::max(c.obj_hid, H));
+  s.gH = alloc<uint16_t>((size_t)s.rows_all * c.obj_hid); s.gdb = alloc<uint16_t>((size_t)s.rows_all * std::max(c.obj_hid, H)); s.gdb2 = alloc<uint16_t>((size_t)s.rows_all * c.obj_hid);
   if (c.mem) {
     const int I = c.mem_I, nh = c.mem_heads;
     phin = alloc<uint16_t>((size_t)s.rows_all * MEM_K);
@@ -397,6 +408,7 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
   s.hnT = alloc<uint16_t>((size_t)c.Mtmax * H); s.dLg = alloc<uint16_t>((size_t)c.Mtmax * Q.vocab);
   s.lg = nullptr; s.cep = alloc<float>((size_t)c.Mtmax * tk::ce_nslot(c.Mtmax, c.vocab_chunk) * 2 + 64); s.dHnT = alloc<float>((size_t)c.Mtmax * H);
   s.rm = alloc<float>(c.Mtmax); s.rs = alloc<float>(c.Mtmax); s.tl = alloc<float>(c.Mtmax);
+  s.elst = alloc<int>((size_t)((Q.vocab + c.vocab_chunk - 1) / c.vocab_chunk) * R + 16); s.ecnt = alloc<int>(16);
   s.dEc = alloc<float>((size_t)c.vocab_chunk * H); s.lpart = alloc<float>(c.Mtmax + RA + 64);
   // 전문가
   const int eW0 = Q.qg() + 2 * Q.kvw();
@@ -453,12 +465,42 @@ __global__ void scatter_k(const int* src, long long R, int H, const float* dX, f
   else if (kind >= SK_GRP) g.p[kind - SK_GRP][(long long)idx * H + c] = dX[q];
 }
 // 임베딩 행 기울기(입력 쪽): 스레드 = 열, 자리를 차례로(같은 토큰 여러 번이어도 고정 순서)
-__global__ void emb_sparse_k(const int* src, long long R, int H, const float* dX, int v0, int vc, float* dEc) {
+// 입력 글 토큰 행을 어휘 조각별로 나눔(행 순서 그대로, 블록 하나): lst[k·R + i] = 조각 k 의 i 번째 행, cnt[k]
+__global__ void emb_bucket_k(const int* src, int R, int VC, int nk, int* lst, int* cnt) {
+  __shared__ int wc[32], base[16];
+  const int tid = threadIdx.x, lane = tid & 31, w = tid >> 5, nw = blockDim.x >> 5;
+  if (tid < nk) base[tid] = 0;
+  __syncthreads();
+  for (int r0 = 0; r0 < R; r0 += blockDim.x) {
+    const int r = r0 + tid;
+    int k = -1;
+    if (r < R) {
+      const int code = src[r], kind = (code >> 28) & 15;
+      if (kind == SK_TXT) k = (code & 0x0fffffff) / VC;
+    }
+    for (int kk = 0; kk < nk; ++kk) {
+      const unsigned bal = __ballot_sync(0xffffffffu, k == kk);
+      if (lane == 0) wc[w] = __popc(bal);
+      __syncthreads();
+      int off = base[kk];
+      for (int q = 0; q < w; ++q) off += wc[q];
+      if (k == kk) lst[(long long)kk * R + off + __popc(bal & ((1u << lane) - 1u))] = r;
+      __syncthreads();
+      if (tid == 0) { int t = 0; for (int q = 0; q < nw; ++q) t += wc[q]; base[kk] += t; }
+      __syncthreads();
+    }
+  }
+  if (tid < nk) cnt[tid] = base[tid];
+}
+// 조각 k 의 행만(행 순서 = 예전 전체 훑기와 같은 더하기 순서 → 비트 같음)
+__global__ void emb_sparse_k(const int* src, const int* lst, const int* cnt, int k, long long R, int H, const float* dX, int v0, float* dEc) {
   const int c = blockIdx.x * blockDim.x + threadIdx.x;
   if (c >= H) return;
-  for (long long r = 0; r < R; ++r) {
-    const int code = src[r], kind = (code >> 28) & 15, id = code & 0x0fffffff;
-    if (kind == SK_TXT && id >= v0 && id < v0 + vc) dEc[(long long)(id - v0) * H + c] += dX[r * H + c];
+  const int n = cnt[k];
+  const int* l = lst + (long long)k * R;
+  for (int i = 0; i < n; ++i) {
+    const int r = l[i], id = src[r] & 0x0fffffff;
+    dEc[(long long)(id - v0) * H + c] += dX[(long long)r * H + c];
   }
 }
 __global__ void gather_rows_k(const float* X, const int* rows, int M, int H, uint16_t* out) {
@@ -894,11 +936,10 @@ static void v_block_bwd(Model& m, int l, int Rv, cudaStream_t st) {
   v_block_fwd(m, l, Rv, s.vX[l], s.vdA, st, true);   // 다시 계산(출력은 버림). vdb = 위 블록 ln1 / 끝 LN 의 뒤가 씀(B)
   tk::mm_dw(s.vdb, D, s.vAg, M, Rv, D, M, s.ws, DWCH, GW + b.fc2.off, nullptr, st);
   tk::colsum(s.vdR, Rv, D, D, s.part, GV + b.fc2b, false, st);
-  tk::mm_dx(s.vdb, D, Rv, W + b.fc2.off, D, M, s.vdH, M, false, st);
-  tk::gelu_bwd(s.vdH, s.vH1, (long long)Rv * M, s.vdb, s.vdH, st);
+  mm_dgelu(s.vdb, D, Rv, W + b.fc2.off, D, M, s.vH1, s.vdb2, s.vdH, st);
   tk::colsum(s.vdH, Rv, M, M, s.part, GV + b.fc1b, false, st);
-  tk::mm_dw(s.vdb, M, s.vA2, D, Rv, M, D, s.ws, DWCH, GW + b.fc1.off, nullptr, st);
-  tk::mm_dx(s.vdb, M, Rv, W + b.fc1.off, M, D, s.vdA, D, false, st);
+  tk::mm_dw(s.vdb2, M, s.vA2, D, Rv, M, D, s.ws, DWCH, GW + b.fc1.off, nullptr, st);
+  tk::mm_dx(s.vdb2, M, Rv, W + b.fc1.off, M, D, s.vdA, D, false, st);
   tk::ln_bwd(s.vdA, s.vXm, Rv, D, P + b.ln2g, c.vEps, s.vdR, s.npart, GV + b.ln2g, GV + b.ln2b, st, s.vdb);
   tk::mm_dw(s.vdb, D, s.vAo, D, Rv, D, D, s.ws, DWCH, GW + b.proj.off, nullptr, st);
   tk::colsum(s.vdR, Rv, D, D, s.part, GV + b.projb, false, st);
@@ -1253,11 +1294,14 @@ void Model::step_grads(const VBatch& bt, cudaStream_t st) {
   // 임베딩(= LM 머리): 어휘 조각마다 dlogitsᵀ·hnT + 입력 자리 기울기
   const int V = Q.vocab, VC = c.vocab_chunk;
   if (c.emb_train) {
+    const int nk = (V + VC - 1) / VC;
+    emb_bucket_k<<<1, 1024, 0, st>>>(bt.src, R, VC, nk, s.elst, s.ecnt);
+    MKC();
     for (int v0 = 0; v0 < V; v0 += VC) {
       const int vc = std::min(VC, V - v0);
       MCK(cudaMemsetAsync(s.dEc, 0, sizeof(float) * (size_t)vc * H, st));
       if (bt.Mt > 0) tk::mm_dw(s.dLg + v0, V, s.hnT, H, bt.Mt, vc, H, s.ws, DWCH, nullptr, s.dEc, st);
-      emb_sparse_k<<<nb(H, 128), 128, 0, st>>>(bt.src, R, H, s.dR, v0, vc, s.dEc);
+      emb_sparse_k<<<nb(H, 128), 128, 0, st>>>(bt.src, s.elst, s.ecnt, v0 / VC, R, H, s.dR, v0, s.dEc);
       tk::f2bf(s.dEc, (long long)vc * H, qp.GW + q.lay.emb.off + (long long)v0 * H, st);
       MKC();
     }
@@ -1282,9 +1326,8 @@ void Model::step_grads(const VBatch& bt, cudaStream_t st) {
     if (g == VG_OBJ) {
       tk::colsum(s.dgOut[g], rows, H, H, s.part, ap.GV + g_b2, false, st);
       tk::mm_dw(s.gdb, H, s.gH, c.obj_hid, rows, H, c.obj_hid, s.ws, DWCH, ap.GW + g_w2.off, nullptr, st);
-      tk::mm_dx(s.gdb, H, rows, ap.W + g_w2.off, H, c.obj_hid, s.dgH, c.obj_hid, false, st);
-      tk::gelu_bwd(s.dgH, s.gH1, (long long)rows * c.obj_hid, s.gdb, nullptr, st);
-      tk::mm_dw(s.gdb, c.obj_hid, bt.grp[g], kVGrp[g].K, rows, c.obj_hid, kVGrp[g].K, s.ws, DWCH, ap.GW + g_w1[g].off, nullptr, st);
+      mm_dgelu(s.gdb, H, rows, ap.W + g_w2.off, H, c.obj_hid, s.gH1, s.gdb2, nullptr, st);
+      tk::mm_dw(s.gdb2, c.obj_hid, bt.grp[g], kVGrp[g].K, rows, c.obj_hid, kVGrp[g].K, s.ws, DWCH, ap.GW + g_w1[g].off, nullptr, st);
     } else {
       tk::mm_dw(s.gdb, H, bt.grp[g], kVGrp[g].K, rows, H, kVGrp[g].K, s.ws, DWCH, ap.GW + g_w1[g].off, nullptr, st);
     }
@@ -1295,9 +1338,8 @@ void Model::step_grads(const VBatch& bt, cudaStream_t st) {
     tk::colsum(s.dgOut[VG_OBJ], rows, H, H, s.mpart, ap.GV + g_b2, false, st);
     tk::f2bf(s.dgOut[VG_OBJ], (long long)rows * H, s.gdb, st);
     tk::mm_dw(s.gdb, H, s.gH, c.obj_hid, rows, H, c.obj_hid, s.ws, DWCH, ap.GW + g_w2.off, nullptr, st);
-    tk::mm_dx(s.gdb, H, rows, ap.W + g_w2.off, H, c.obj_hid, s.dgH, c.obj_hid, false, st);
-    tk::gelu_bwd(s.dgH, s.gH1, (long long)rows * c.obj_hid, s.gdb, nullptr, st);
-    tk::mm_dw(s.gdb, c.obj_hid, phin, MEM_K, rows, c.obj_hid, MEM_K, s.ws, DWCH, ap.GW + g_w1[VG_OBJ].off, nullptr, st);
+    mm_dgelu(s.gdb, H, rows, ap.W + g_w2.off, H, c.obj_hid, s.gH1, s.gdb2, nullptr, st);
+    tk::mm_dw(s.gdb2, c.obj_hid, phin, MEM_K, rows, c.obj_hid, MEM_K, s.ws, DWCH, ap.GW + g_w1[VG_OBJ].off, nullptr, st);
   }
   // 영상 사영·탑
   tk::colsum(s.vdOut, Rv, H, H, s.part, ap.GV + v_projb, false, st);

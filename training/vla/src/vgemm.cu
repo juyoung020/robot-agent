@@ -16,6 +16,10 @@ using namespace net;
 __device__ __forceinline__ float vsilu(float x) { return x / (1.f + expf(-x)); }
 __device__ __forceinline__ float vsigm(float x) { return 1.f / (1.f + expf(-x)); }
 __device__ __forceinline__ float vdsilu(float x) { const float s = vsigm(x); return s * (1.f + x * (1.f - s)); }
+__device__ __forceinline__ float vdgelu(float x) {   // tkern dgelu_t 와 같은 식
+  const float u = 0.7978845608028654f * (x + 0.044715f * x * x * x), t = tanhf(u);
+  return 0.5f * (1.f + t) + 0.5f * x * (1.f - t * t) * 0.7978845608028654f * (1.f + 3.f * 0.044715f * x * x);
+}
 __device__ __forceinline__ float vgelu(float x) {
   const float u = 0.7978845608028654f * (x + 0.044715f * x * x * x);
   return 0.5f * x * (1.f + tanhf(u));
@@ -77,6 +81,11 @@ __device__ __forceinline__ void vg_epi(const Epi& e, int r, int c, float x0, flo
       e.Cb[(long long)r * e.ldcb + c + j] = net::f2bf(xs[j] * us[j] * (e.bug == 1 ? 1.f : vdsilu(gs[j])));
       e.Cb[(long long)r * e.ldcb + e.I + c + j] = net::f2bf(xs[j] * vsilu(gs[j]));
     }
+  } else if (KIND == EK_DGELU) {   // dgelu_k 와 같은 식: v = dY·gelu'(X)
+    const float2 xx = *reinterpret_cast<const float2*>(e.GU + (long long)r * e.ldgu + c);
+    const float y0 = x0 * vdgelu(xx.x), y1 = x1 * vdgelu(xx.y);
+    reinterpret_cast<uint32_t*>(e.Cb)[((long long)r * e.ldcb + c) >> 1] = (uint32_t)net::f2bf(y0) | ((uint32_t)net::f2bf(y1) << 16);
+    if (e.C) *reinterpret_cast<float2*>(e.C + (long long)r * e.ldc + c) = make_float2(y0, y1);
   } else if (KIND == EK_CEGRAD) {
     const int m = r, t = e.tid[m];
     const float rmm = e.rm[m], rsm = e.rs[m], lw = e.lam * e.wrow[m];
@@ -249,6 +258,7 @@ void mme_dx(const uint16_t* dZ, int ldz, int M, const uint16_t* W, int N, int K,
   switch (e.kind) {
     case EK_DSWI: chk(K == e.I, "dswiglu shape"); vgl<false, true, EK_DSWI>(p, st); break;
     case EK_RES: vgl<false, true, EK_RES>(p, st); break;
+    case EK_DGELU: vgl<false, true, EK_DGELU>(p, st); break;
     default: chk(false, "mme_dx kind");
   }
 }
