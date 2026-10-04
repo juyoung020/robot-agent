@@ -1,0 +1,104 @@
+{
+ "episodes": 20000,
+ "missing_annotations": 0,
+ "hours": 1952.9330925925922,
+ "hours_by_tag": {
+  "action_full": 28.53863888888895,
+  "action_base_only": 749.4756851851845,
+  "highlevel_only": 1087.2622962962978,
+  "drop": 90.64442592592567
+ },
+ "demos_with_full": 2116,
+ "pick_place_segments": 182881,
+ "pick_place_full": 4563,
+ "pick_place_full_strict": 931,
+ "picks": 93085,
+ "picks_full": 3098,
+ "picks_pass_w008": 7679,
+ "full_seg_hours": 28.5386944444444,
+ "bimanual_segments": 29136,
+ "highlevel_reason_hours": {
+  "width": 310.78693333330637,
+  "held": 286.40664999997955,
+  "pick_z": 206.30853611110612,
+  "side grasp": 176.37938611110712,
+  "mass": 172.06553888888797,
+  "bimanual": 64.41515000000015,
+  "object": 17.96654444444441,
+  "place_top": 4.496627777777785
+ },
+ "usable_download_gb": {
+  "raw": 267.9672081549999,
+  "lerobot_head": 319.0256839887438,
+  "lerobot_all": 451.26589338136256
+ },
+ "all_download_gb": {
+  "raw": 1440.08606127,
+  "lerobot_head": 2094.5119951600036
+ },
+ "scenes": {
+  "restaurant_diner": {
+   "demos": 1600.0,
+   "demos_with_full": 257.0,
+   "hours": 151.08899999999997,
+   "h_action_full": 7.96,
+   "h_action_base_only": 62.467999999999996,
+   "h_highlevel_only": 76.08399999999999,
+   "h_drop": 4.678
+  },
+  "house_single_floor": {
+   "demos": 6800.0,
+   "demos_with_full": 1130.0,
+   "hours": 783.294,
+   "h_action_full": 13.547999999999998,
+   "h_action_base_only": 268.725,
+   "h_highlevel_only": 477.806,
+   "h_drop": 23.453999999999997
+  },
+  "house_double_floor_lower": {
+   "demos": 6400.0,
+   "demos_with_full": 662.0,
+   "hours": 595.6649999999998,
+   "h_action_full": 6.263000000000001,
+   "h_action_base_only": 248.059,
+   "h_highlevel_only": 302.313,
+   "h_drop": 41.31399999999999
+  },
+  "hotel_suite_large": {
+   "demos": 1000.0,
+   "demos_with_full": 64.0,
+   "hours": 103.69200000000001,
+   "h_action_full": 0.751,
+   "h_action_base_only": 40.05200000000001,
+   "h_highlevel_only": 58.964999999999996,
+   "h_drop": 3.9499999999999997
+  },
+  "house_double_floor_upper": {
+   "demos": 2000.0,
+   "demos_with_full": 3.0,
+   "hours": 181.024,
+   "h_action_full": 0.018000000000000002,
+   "h_action_base_only": 60.995000000000005,
+   "h_highlevel_only": 106.57199999999999,
+   "h_drop": 13.702
+  },
+  "office_cubicles_right": {
+   "demos": 1000.0,
+   "demos_with_full": 0.0,
+   "hours": 75.90899999999999,
+   "h_action_full": 0.0,
+   "h_action_base_only": 43.532000000000004,
+   "h_highlevel_only": 30.218000000000004,
+   "h_drop": 2.2239999999999998
+  },
+  "Rs_int": {
+   "demos": 1200.0,
+   "demos_with_full": 0.0,
+   "hours": 62.251000000000005,
+   "h_action_full": 0.0,
+   "h_action_base_only": 25.642999999999997,
+   "h_highlevel_only": 35.305,
+   "h_drop": 1.322
+  }
+ }
+}
