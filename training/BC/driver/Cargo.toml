@@ -1,0 +1,8 @@
+[package]
+name = "bc_run"
+version = "0.1.0"
+edition = "2021"
+description = "BC 학생(G5) 실행기: 설정 읽기, 실행 순서(교사 기록 → BC → 평가 → DAgger), 비동기 기록. 계산은 전부 libbc(C++/CUDA)."
+
+[dependencies]
+serde_json = "1"
