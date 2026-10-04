@@ -12,9 +12,9 @@ proprio_obs: [base_qvel, arm_0_qpos, arm_0_qvel, eef_0_pos, eef_0_quat, gripper_
 grasping_mode: physical   # assisted 는 손가락 점 정의가 더 필요(KeyError) — 보기용에선 물리 잡기
 sensor_config:
   VisionSensor:
-    # 가까운 자르기 0.05 m: 몸통 카메라(eyes)는 렌즈를 껍데기 앞면(+0.010 m, limo_omx_source_config.yaml)에 두었지만
-    # 평가기가 머리 카메라 조리개를 R1 값(40, 화각 ~99°)으로 넓혀 실제 Dabai 보다 넓게 보므로 아래쪽 ~16% 에 앞 범퍼
-    # (렌즈에서 1~3 cm)가 찍힌다 → 5 cm 안은 자른다. Dabai 깊이 유효 범위는 0.3~3 m 라 5 cm 안 값은 실제로도 없다.
+    # 가까운 자르기 0.05 m: 몸통 카메라(eyes)는 렌즈를 껍데기 앞면(+0.010 m, limo_omx_source_config.yaml)에 두었다.
+    # 평가기는 머리 카메라 조리개를 R1 값(40, 화각 ~99°)으로 넓히는데 그러면 아래쪽 ~16% 에 앞 범퍼(렌즈에서 1~3 cm)가
+    # 찍힌다 → 5 cm 안은 자른다. eval_with_limo.py 가 화각을 Dabai 깊이 H-FOV 67.9° 로 되돌린다(조리개만, 해상도 그대로). Dabai 깊이 유효 범위는 0.3~3 m 라 5 cm 안 값은 실제로도 없다.
     # 손목 카메라는 이 거리 안에 보이는 것이 없다(시험). 평가기는 eyes 의 sensor_kwargs 를 해상도로 덮어쓰므로
     # eval_with_limo.py 가 로드 뒤 이 값을 모든 카메라에 다시 넣는다.
     sensor_kwargs: {image_height: 480, image_width: 640, clipping_range: [0.05, 10000000.0]}

@@ -16,7 +16,7 @@ source install/setup.bash
 ros2 launch map_vla_description view.launch.py    # RViz 에서 TF 확인
 ```
 
-- 카메라: 리모 깊이 카메라와 라이다는 원본, 손목 카메라(`wrist_cam_link`)만 추가. OMX 메시에 이미 들어 있는 카메라 위치를 측정해 맞췄다(별도 상자 없음).
+- 카메라: 리모 깊이 카메라와 라이다는 원본, 손목 카메라(`wrist_cam_link`)와 몸통 카메라 렌즈 프레임(`depth_camera_lens_link` = `depth_camera_link` +x 0.010 m = base_link (0.094, 0, 0.03), 광학 `depth_camera_lens_optical_frame`)만 추가. `depth_camera_link` 는 센서 몸체 중심이고 렌즈는 앞면이다 — OmniGibson 의 `eyes`·scenemap cam 0 은 렌즈 프레임을 쓴다. OMX 메시에 이미 들어 있는 카메라 위치를 측정해 맞췄다(별도 상자 없음).
 - `xacro` 는 `pip install --user xacro`, colcon 은 시스템 python 으로 돌린다(miniconda python 이면 `catkin_pkg` 가 없어 실패).
 
 ## 뷰어용 모델 자산 (`src/scene_graph/sgview/assets/robot/`)

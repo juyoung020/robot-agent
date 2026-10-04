@@ -12,6 +12,25 @@
 
   <xacro:omx_f prefix="omx_" />
 
+  <!-- ===== Body camera lens (Orbbec Dabai): depth_camera_link is the sensor BODY centre (collision box 0.02 m deep,
+       base_link x 0.074..0.094 = the camera panel of the limo_base mesh). The lens / optical centre is on the panel's
+       front face: +0.010 m along depth_camera_link x -> base_link (0.094, 0, 0.03). This is where the OmniGibson body
+       camera `eyes` sits (src/robot/og/limo_omx_source_config.yaml, robot-agent 391c04b) and what scenemap cam 0 /
+       FK tables must use (depth_link stays the upstream body-centre optical frame). -->
+  <joint name="depth_camera_lens_joint" type="fixed">
+    <parent link="depth_camera_link"/>
+    <child link="depth_camera_lens_link"/>
+    <origin xyz="0.010 0 0" rpy="0 0 0"/>
+  </joint>
+  <link name="depth_camera_lens_link"/>
+  <!-- optical frame: z forward, x right, y down (REP-103) -->
+  <joint name="depth_camera_lens_optical_joint" type="fixed">
+    <parent link="depth_camera_lens_link"/>
+    <child link="depth_camera_lens_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+  <link name="depth_camera_lens_optical_frame"/>
+
   <joint name="omx_mount_joint" type="fixed">
     <parent link="base_link"/>
     <child link="omx_link0"/>

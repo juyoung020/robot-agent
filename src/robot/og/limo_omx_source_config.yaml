@@ -17,7 +17,7 @@ collision:
   convex_links: [base_link, front_left_wheel_link, front_right_wheel_link, rear_left_wheel_link, rear_right_wheel_link,
                  omx_link1, omx_link2, omx_link3, omx_link4, omx_link5, omx_link6, omx_link7]
   no_decompose_links: []
-  no_collision_links: [base_footprint, inertial_link, laser_link, depth_camera_link, depth_link, imu_link, wrist_cam_link, wrist_cam_optical_frame]
+  no_collision_links: [base_footprint, inertial_link, laser_link, depth_camera_link, depth_link, depth_camera_lens_link, depth_camera_lens_optical_frame, imu_link, wrist_cam_link, wrist_cam_optical_frame]
 eef_vis_links:
   - link: eef_link
     parent_link: omx_end_effector_link
@@ -28,6 +28,7 @@ camera_links:
     # depth_camera_link 는 센서 몸체 중심이다(URDF 충돌 상자 0.02 m 깊이, x 0.074..0.094 = limo_base 메시의 카메라 패널).
     # 렌즈 = 패널 앞면(base_link x 0.0936, depth_camera_link 에서 +0.0096 m) → 앞으로 0.010 m(면 0.4 mm 밖)에 둔다.
     # 0 이면 카메라가 껍데기 안에 있어 깊이가 어디서나 ~0.0096 m, RGB 는 검정이었다. (위치는 회전 전, depth_camera_link 축: x 앞)
+    # URDF 에도 같은 자리를 depth_camera_lens_link / depth_camera_lens_optical_frame 으로 둔다(map_vla.urdf.xacro) — scenemap cam 0 이 이것.
     offset: {position: [0.010, 0, 0], orientation: [0.5, -0.5, -0.5, 0.5]}   # ROS(x 앞, z 위) → OG 카메라(-z 앞, y 위)
   - link: wrist_eye
     parent_link: wrist_cam_link
