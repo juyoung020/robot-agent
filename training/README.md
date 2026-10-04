@@ -8,6 +8,7 @@
   - `embed/`: 물체 이름 붙이기·검색용 영상–글 임베딩(증류). 설계와 결과는 [embed/README.md](embed/README.md).
   - `RL/`: 시뮬에서 RL 전문가(교사) 정책 학습 — 관측·보상·신경망·설정. [RL/README.md](RL/README.md)
   - `BC/`: 전문가 궤적 + 자연어 단계 지시로 우리 작은 VLA 모방학습(증류) — 얼린 SigLIP 2 영상 탑 + 지도·글 토큰 + flow matching 행동. 얼린 Qwen 을 쓰는 큰 VLA 는 G7(아직 안 함). G5: 교사 기록·BF16 BC 학습기·DAgger 를 GPU 그래프로. 영상 학생 = 학습 때 다시 렌더(팀 RenderBatch 그래프) → 얼린 SigLIP 2 패치 토큰(C++/CUDA) + 지도·글 토큰 → flow matching 청크, DAgger 8 번 0.946(교사 0.944). [BC/README.md](BC/README.md)
+  - `fastsam/`: 물체 분할 FastSAM-s 416 다시 학습(벽·천장·바닥은 배경, 문·창·계단은 물체, 조각 대신 통째) — 원래 FastSAM 마스크 자기 증류 + BEHAVIOR 시뮬 정답 + COCO·LVIS·ADE20K, 같은 라벨로 Jetson Nano 용 YOLO26n-seg 학생. **이 폴더만 AGPL-3.0**(Ultralytics). 공개판은 별도 저장소 [ObjectSAM](https://github.com/juyoung020/ObjectSAM). [fastsam/README.md](fastsam/README.md)
   - `viewer/`: 학습 뷰어(Rust 서버 + 브라우저, 실행 폴더를 읽기만). [viewer/README.md](viewer/README.md)
   - `model/`: 베이스 모델 가중치(저장소에 없음, 받는 방법은 [model/README.md](model/README.md)).
 - 폴더마다 `README.md` 를 둔다(한국어). 내용은 목표, 데이터와 라이선스, 실행 순서, 결과 표, 남은 일.
