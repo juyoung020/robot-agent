@@ -17,9 +17,13 @@ fn schemas_are_small_and_strict() {
     let c = confirm_definition();
     assert_eq!(c["function"]["parameters"]["required"], json!(["id", "name", "source"]));
     assert_eq!(c["function"]["parameters"]["properties"]["source"]["enum"], json!(["user", "close_look"]));
-    // 9B 맥락 16k: 둘 합쳐 작게
-    let n = s.to_string().len() + c.to_string().len();
-    assert!(n < 2600, "definitions are {n} bytes");
+    let l = list_definition();
+    assert_eq!(l["function"]["parameters"]["required"], json!(["place"]));
+    assert!(s["function"]["parameters"]["properties"]["max_age_s"].is_object() && s["function"]["parameters"]["properties"]["seen_after_s"].is_object());
+    // 9B 맥락 16k: 셋 합쳐 작게
+    let n = s.to_string().len() + c.to_string().len() + l.to_string().len();
+    assert!(n < 3600, "definitions are {n} bytes");
+    assert_eq!(definitions().len(), 3);
 }
 
 #[test]
@@ -33,6 +37,13 @@ fn parse_tolerant_and_errors_fixable() {
     assert_eq!(c, ConfirmArgs { id: 27, name: "radio".into(), source: "close_look".into() });
     assert!(parse_confirm(&args(r#"{"id":27,"name":"radio","source":"me"}"#)).unwrap_err().contains("user or close_look"));
     assert!(parse_confirm(&args(r#"{"name":"radio","source":"user"}"#)).unwrap_err().contains("id is required"));
+    let a = parse_search(&args(r#"{"query":"cup","max_age_s":"30 s","seen_after_s":12.5}"#)).unwrap();
+    assert_eq!((a.max_age_s, a.seen_after_s), (Some(30.0), Some(12.5)));
+    assert!(parse_search(&args(r#"{"query":"cup","max_age_s":-1}"#)).unwrap_err().contains("max_age_s"));
+    assert_eq!(parse_list(&args(r#"{"place":"o12"}"#)).unwrap(), Place::Object(12));
+    assert_eq!(parse_list(&args(r#"{"place":"kitchen"}"#)).unwrap(), Place::Room("kitchen".into()));
+    assert_eq!(parse_list(&args(r#"{"place":"R2"}"#)).unwrap(), Place::Room("R2".into()));
+    assert!(parse_list(&args(r#"{}"#)).unwrap_err().contains("place is required"));
 }
 
 /// 가짜 기억: 거실(R1) 선반 O33(고정), 그 위 O27, 부엌(R2) O40
@@ -64,7 +75,7 @@ impl Memory for Fake {
 }
 
 fn obj(id: u32, name: &str, pos: [f64; 3], ext: [f64; 3], movable: bool, room: i64) -> ObjInfo {
-    ObjInfo { id, name: name.into(), pos, extent: ext, state: "seen".into(), last_seen: 40.0, room: Some(room), movable, structural: !movable, n_obs: 5 }
+    ObjInfo { id, name: name.into(), pos, extent: ext, state: "seen".into(), last_seen: 40.0, room: Some(room), movable, structural: false, n_obs: 5, pos_sd: None }
 }
 
 fn fake() -> Fake {
@@ -99,7 +110,7 @@ fn appearance_hit_asks_user_and_reads_compactly() {
     assert!(m.get("relation").is_none() && m.get("on").is_none(), "no inter-object relation words (10-05)");
     assert!(r["ask_user"].as_str().unwrap().contains("O27 is registered as 'fire extinguisher' but looks like 'radio'"));
     assert_eq!(r["searched"], "name+appearance");
-    assert!(r.to_string().len() < 700, "one hit is {} bytes", r.to_string().len());
+    assert!(r.to_string().len() < 820, "one hit is {} bytes", r.to_string().len());
 }
 
 #[test]
@@ -120,6 +131,145 @@ fn name_hit_no_question_filters_and_ties() {
     let a = parse_search(&args(r#"{"query":"radio","state":"gone"}"#)).unwrap();
     let r = format_search(&core, &fk, &a, &|_| None);
     assert!(r["matches"].as_array().unwrap().is_empty() && r["ask_user"].as_str().unwrap().contains("nothing in memory"));
+}
+
+/// 로봇이 (1, 1) 에서 왼쪽(+y)을 봄
+struct Turned(Fake);
+impl Memory for Turned {
+    fn objects(&self) -> &[ObjInfo] {
+        self.0.objects()
+    }
+    fn now(&self) -> f64 {
+        100.0
+    }
+    fn pose(&self) -> Option<[f64; 3]> {
+        Some([1.0, 1.0, std::f64::consts::FRAC_PI_2])
+    }
+    fn room_name(&self, r: i64) -> Option<String> {
+        self.0.room_name(r)
+    }
+    fn find_rooms(&self, s: &str) -> Vec<i64> {
+        self.0.find_rooms(s)
+    }
+}
+
+#[test]
+fn coordinates_map_and_robot_relative() {
+    let mut f = fake();
+    f.0[1].pos_sd = Some([0.012, 0.018, 0.004]);
+    let mem = Turned(f);
+    let core = json!({"step2": false, "hits": [hit(27, "radio", "name", 0.9)]});
+    let a = parse_search(&args(r#"{"query":"radio"}"#)).unwrap();
+    let r = format_search(&core, &mem, &a, &|_| None);
+    let m = &r["matches"][0];
+    assert_eq!(m["pos"], json!([3.1, 4.0, 1.12]));
+    assert_eq!(m["size"], json!([0.25, 0.1, 0.15]));
+    assert_eq!(m["pos_sd"], json!([0.01, 0.02, 0.0]), "cm rounding");
+    // 로봇 (1,1) 이 +y 를 봄: 물체 (3.1, 4.0) → 앞 3.0, 왼쪽 −2.1(오른쪽)
+    assert_eq!((m["rel"]["x"].as_f64(), m["rel"]["y"].as_f64(), m["rel"]["z"].as_f64()), (Some(3.0), Some(-2.1), Some(1.12)));
+    assert_eq!(m["rel"]["dist_m"].as_f64(), Some(3.66));
+    assert_eq!(m["rel"]["bearing_deg"].as_f64(), Some(-35.0));
+    assert!(m.get("dist_m").is_none(), "robot distance lives in rel now");
+    assert_eq!(r["now_s"].as_f64(), Some(100.0));
+}
+
+#[test]
+fn time_filters() {
+    let mut f = fake();
+    f.0[2].last_seen = 95.0; // O40 5 s 전, O27 60 s 전
+    let core = json!({"step2": false, "hits": [hit(40, "radio", "name", 0.9), hit(27, "radio", "name", 0.85)]});
+    let ids = |q: &str| -> Vec<String> {
+        let a = parse_search(&args(q)).unwrap();
+        format_search(&core, &f, &a, &|_| None)["matches"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap().to_string()).collect()
+    };
+    assert_eq!(ids(r#"{"query":"radio"}"#), ["O40", "O27"]);
+    assert_eq!(ids(r#"{"query":"radio","max_age_s":10}"#), ["O40"]);
+    assert_eq!(ids(r#"{"query":"radio","seen_after_s":50}"#), ["O40"]);
+    assert_eq!(ids(r#"{"query":"radio","seen_after_s":40}"#), ["O40", "O27"], "inclusive");
+    assert!(ids(r#"{"query":"radio","max_age_s":1}"#).is_empty());
+}
+
+#[test]
+fn list_place_room_and_furniture() {
+    let mut f = fake();
+    f.0.push(obj(41, "mug", [8.3, 1.0, 0.9], [0.1, 0.1, 0.1], true, 2));
+    f.0.push(ObjInfo { structural: true, ..obj(42, "wall", [8.0, 2.0, 1.0], [3.0, 0.1, 2.0], false, 2) });
+    f.0.push(obj(43, "counter", [8.0, 1.2, 0.45], [2.0, 0.6, 0.9], false, 2));
+    let info = |id: u32| (id == 40).then(|| json!({"name": "radio", "name_p": 0.81, "attrs": ["black"]}));
+    let r = format_list(&Place::Room("kitchen".into()), &f, &info);
+    let ids: Vec<&str> = r["objects"].as_array().unwrap().iter().map(|o| o["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["O40", "O41", "O43"], "movable first by robot distance, then fixed; structural left out: {r}");
+    assert_eq!(r["place"], json!({"room": "kitchen", "id": "R2"}));
+    let o40 = &r["objects"][0];
+    assert_eq!((o40["name_p"].as_f64(), o40["attrs"].clone()), (Some(0.81), json!(["black", "small"])));
+    assert!(o40["pos"].is_array() && o40["rel"]["dist_m"].is_number());
+    assert_eq!(r["objects"][2]["fixed"], true);
+    // 가구 id: 상자에서 1.5 m 안, dist_m·dz_m 숫자만
+    let r = format_list(&Place::Object(33), &f, &|_| None);
+    assert_eq!(r["place"]["id"], "O33");
+    assert!(r["place"]["pos"].is_array());
+    let o = &r["objects"][0];
+    assert_eq!((o["id"].as_str(), o["dist_m"].as_f64(), o["dz_m"].as_f64()), (Some("O27"), Some(0.0), Some(0.12)));
+    assert_eq!(r["n"], 1);
+    for k in ["on", "in", "relation", "next_to", "near"] {
+        assert!(!r.to_string().contains(&format!("\"{k}\"")), "no relation words: {k}");
+    }
+    assert_eq!(format_list(&Place::Room("garage".into()), &f, &|_| None)["status"], "error");
+    assert_eq!(format_list(&Place::Object(999), &f, &|_| None)["status"], "error");
+    // 15 개까지
+    let mut big = fake();
+    for i in 0..20 {
+        big.0.push(obj(100 + i, "block", [8.0 + 0.01 * i as f64, 1.0, 0.1], [0.05; 3], true, 2));
+    }
+    let r = format_list(&Place::Room("R2".into()), &big, &|_| None);
+    assert_eq!((r["objects"].as_array().unwrap().len(), r["n"].as_u64()), (PLACE_MAX, Some(21)));
+    assert!(r["hint"].as_str().unwrap().contains("6 more"));
+}
+
+/// 가짜 scenemap: take 마다 다음 상태(자세·자리 바뀜), 이름 관측 기록
+struct FakeSnap {
+    k: u32,
+    observed: std::sync::Arc<std::sync::Mutex<Vec<(u32, String, f32)>>>,
+}
+impl live::SnapApi for FakeSnap {
+    fn take(&mut self) -> Result<live::SnapData, String> {
+        self.k += 1;
+        let x = 1.0 + 0.5 * self.k as f64;
+        Ok(live::SnapData {
+            objs: vec![ObjInfo { id: 7, name: "cup".into(), pos: [x, 0.0, 0.4], extent: [0.08; 3], state: "seen".into(), last_seen: self.k as f64, room: Some(3), movable: true, ..Default::default() }],
+            pose: Some([0.0, 0.0, 0.0]),
+            now: self.k as f64,
+            rooms: vec![(3, "kitchen".into())],
+        })
+    }
+    fn observe_name(&mut self, id: u32, label: &str, log_lr: f32) -> i32 {
+        self.observed.lock().unwrap().push((id, label.into(), log_lr));
+        if label == "cup" { 0 } else { -2 }
+    }
+}
+
+#[test]
+fn live_memory_is_fresh_every_call_and_reads_side_pos_sd() {
+    let dir = std::env::temp_dir().join(format!("so_live_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("view.json"), json!({"objects": [{"id": 7, "pos_sd": [0.03, 0.02, 0.01]}]}).to_string()).unwrap();
+    let obs = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
+    let mut m = live::LiveMem::new(Box::new(FakeSnap { k: 0, observed: obs.clone() }), Some(dir.join("view.json"))).unwrap();
+    assert_eq!(m.objects()[0].pos[0], 1.5);
+    assert_eq!(m.objects()[0].pos_sd, Some([0.03, 0.02, 0.01]));
+    assert!(MemSource::refresh(&mut m).unwrap());
+    assert_eq!((m.objects()[0].pos[0], m.now()), (2.0, 2.0), "new snapshot each refresh");
+    assert_eq!(m.find_rooms("kitchen"), vec![3]);
+    assert_eq!(m.find_rooms("R3"), vec![3]);
+    assert_eq!(MemSource::observe_name(&mut m, 7, "cup", 3.9), Some(0));
+    assert_eq!(obs.lock().unwrap()[0], (7, "cup".to_string(), 3.9));
+    assert_eq!(MemSource::kind(&m), "live");
+    let core = json!({"step2": false, "hits": [hit(7, "cup", "name", 0.9)]});
+    let a = parse_search(&args(r#"{"query":"cup"}"#)).unwrap();
+    let r = format_search(&core, &m, &a, &|_| None);
+    assert_eq!(r["matches"][0]["pos"], json!([2.0, 0.0, 0.4]));
+    assert_eq!(r["matches"][0]["room"], "kitchen");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // ---- 끝까지: 라벨 표 + 공용 색인(GPU 없이: 글 인코더·영상 인코더 끔) ----
@@ -175,7 +325,7 @@ fn end_to_end_radio_registered_as_fire_extinguisher() {
     std::fs::write(mem.join("view.json"), json!({"stamp": 100.0, "pose": [0.0, 0.0, 0.0],
         "rooms": [{"id": 1, "name": "living room"}],
         "objects": [{"id": 27, "name": "fire extinguisher", "state": "seen", "pos": [3.1, 4.0, 1.12], "extent": [0.25, 0.1, 0.15], "last_seen": 40.0, "room": 1, "movable": true},
-                    {"id": 33, "name": "shelf", "state": "seen", "pos": [3.0, 4.0, 0.5], "extent": [1.2, 0.4, 1.0], "last_seen": 90.0, "room": 1, "movable": false}]}).to_string()).unwrap();
+                    {"id": 33, "name": "shelf", "state": "seen", "pos": [3.0, 4.0, 0.5], "extent": [1.2, 0.4, 1.0], "last_seen": 90.0, "room": 1, "movable": false, "pos_sd": [0.05, 0.05, 0.02]}]}).to_string()).unwrap();
     let p = sys::Paths { labels: Some(ld), no_text: true, no_image: true, ..Default::default() };
     let mut s = ObjectSearch::open(&mem, &p).unwrap();
     // ①② "라디오": 이름 없음 → 생김새로 O27, 물어봐야 함
@@ -198,6 +348,14 @@ fn end_to_end_radio_registered_as_fire_extinguisher() {
     let log = std::fs::read_to_string(mem.join("confirmations.jsonl")).unwrap();
     let line: Value = serde_json::from_str(log.lines().next().unwrap()).unwrap();
     assert_eq!((line["id"].as_u64(), line["source"].as_str(), line["query"].as_str()), (Some(27), Some("user"), Some("라디오")), "the query that led to the confirmation is logged");
+    // list_place: 선반 둘레(관계말 없이 거리·높이 숫자)
+    let l = s.run_tool(LIST, &args(r#"{"place":"O33"}"#));
+    eprintln!("{l}");
+    assert_eq!((l["objects"][0]["id"].as_str(), l["objects"][0]["name"].as_str()), (Some("O27"), Some("radio")));
+    assert_eq!(l["place"]["pos_sd"], json!([0.05, 0.05, 0.02]));
+    assert_eq!(s.run_tool(LIST, &args(r#"{"place":"living room"}"#))["n"], 2);
+    // 오프라인 기억엔 지도가 없으므로 확인 결과에 map 칸 없음
+    assert!(c.get("map").is_none());
     // 틀린 인자는 관찰값
     assert_eq!(s.run_tool(CONFIRM, &args(r#"{"id":"O99","name":"radio","source":"user"}"#))["status"], "error");
     assert_eq!(s.run_tool(SEARCH, &args(r#"{"query":"radio","room":"garage"}"#))["status"], "error");

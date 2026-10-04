@@ -1,7 +1,8 @@
 //! `search-objects` — 도구를 손으로 / 각본으로 / LLM 으로 불러 보는 명령.
 //!
 //! ```text
-//! search-objects schema                            도구 정의 두 개(OpenAI tools 배열)
+//! search-objects schema                            도구 정의 세 개(OpenAI tools 배열)
+//! search-objects live-check SM_LIB MEM             진짜 scenemap(SM_LIB = libsgrt.so 등)에 합성 스트림 → 실시간 기억 도구 끝까지(livecheck.rs)
 //! search-objects call MEM TOOL '<args>' […]        기억 폴더 MEM 에 도구 호출(TOOL '<args>' 쌍을 차례로, 한 색인으로)
 //! search-objects demo MEM [QUERY]                  "라디오 가져와" 각본(LLM 없이): 찾기 → 되묻는 말 → 확인 → 다시 찾기
 //! search-objects llm MEM "<지시>" [--turns 6]      (--features llm) KAU Qwen 원형 도구 호출 루프(도구 두 개)
@@ -14,7 +15,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 fn usage() -> ! {
-    eprintln!("usage: search-objects schema | call MEM TOOL '<json>' [TOOL '<json>' …] | demo MEM [QUERY] | llm MEM \"<instruction>\" [--turns N]");
+    eprintln!("usage: search-objects schema | live-check SM_LIB MEM | call MEM TOOL '<json>' [TOOL '<json>' …] | demo MEM [QUERY] | llm MEM \"<instruction>\" [--turns N]");
     std::process::exit(2)
 }
 
@@ -39,6 +40,10 @@ fn main() {
         }
         "demo" => demo(args.get(1).unwrap_or_else(|| usage()), args.get(2).map(String::as_str).unwrap_or("라디오")),
         "llm" => llm(&args),
+        "live-check" => std::process::exit(search_objects::livecheck::run(
+            args.get(1).unwrap_or_else(|| usage()),
+            args.get(2).unwrap_or_else(|| usage()),
+        )),
         _ => usage(),
     }
 }
@@ -109,7 +114,7 @@ When you need the user's answer, reply with your question and no tool call.",
         ),
         Msg::user(instruction),
     ];
-    let tools = search_objects::definitions();
+    let tools = search_objects::definitions();   // 세 개(list_place 포함)
     for turn in 0..turns {
         let req = ChatRequest { messages: msgs.clone(), tools: Some(tools.clone()), sampling: Sampling::default(), max_tokens: Some(512), thinking: false, purpose: "search_objects".into() };
         let res = match llm.chat(&req) {

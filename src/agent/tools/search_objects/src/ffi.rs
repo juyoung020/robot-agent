@@ -31,15 +31,40 @@ pub extern "C" fn so_open(mem_dir: *const c_char, err: *mut c_char, err_len: i32
     match ObjectSearch::open(Path::new(&dir), &Paths::default()) {
         Ok(s) => Box::into_raw(Box::new(s)),
         Err(e) => {
-            if !err.is_null() && err_len > 0 {
-                let b = e.as_bytes();
-                let n = b.len().min(err_len as usize - 1);
-                unsafe {
-                    std::ptr::copy_nonoverlapping(b.as_ptr(), err as *mut u8, n);
-                    *err.add(n) = 0;
-                }
-            }
+            put_err(&e, err, err_len);
             std::ptr::null_mut()
+        }
+    }
+}
+
+/// 실시간 기억으로 연다: `sm_ctx` = scenemap 문맥(sgrt 면 `sgrt_scenemap(s)`), `sm_lib` = scenemap 이 든 라이브러리 경로
+/// (NULL = 프로세스 전체에서 dlsym — 파이썬 ctypes 처럼 RTLD_LOCAL 로 올렸으면 그 경로), `mem_dir` = 지도 저장 폴더(sgrt out_dir:
+/// 색인 벡터·확인 기록·pos_sd, view.json 이 있어야 함). 실패면 NULL + err
+#[no_mangle]
+pub extern "C" fn so_open_live(sm_ctx: *mut std::ffi::c_void, sm_lib: *const c_char, mem_dir: *const c_char, err: *mut c_char, err_len: i32) -> *mut ObjectSearch {
+    if mem_dir.is_null() {
+        return std::ptr::null_mut();
+    }
+    let dir = unsafe { CStr::from_ptr(mem_dir) }.to_string_lossy().into_owned();
+    let lib = (!sm_lib.is_null()).then(|| unsafe { CStr::from_ptr(sm_lib) }.to_string_lossy().into_owned());
+    let r = crate::live::SmCtx::new(sm_ctx, lib.as_deref())
+        .and_then(|api| ObjectSearch::open_live(Box::new(api), Path::new(&dir), &Paths::default()));
+    match r {
+        Ok(s) => Box::into_raw(Box::new(s)),
+        Err(e) => {
+            put_err(&e, err, err_len);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+fn put_err(e: &str, err: *mut c_char, err_len: i32) {
+    if !err.is_null() && err_len > 0 {
+        let b = e.as_bytes();
+        let n = b.len().min(err_len as usize - 1);
+        unsafe {
+            std::ptr::copy_nonoverlapping(b.as_ptr(), err as *mut u8, n);
+            *err.add(n) = 0;
         }
     }
 }
@@ -51,7 +76,7 @@ pub extern "C" fn so_close(h: *mut ObjectSearch) {
     }
 }
 
-/// 도구 호출 하나. tool = "search_objects" | "confirm_object", args = 인자 JSON(UTF-8)
+/// 도구 호출 하나. tool = "search_objects" | "confirm_object" | "list_place", args = 인자 JSON(UTF-8)
 #[no_mangle]
 pub extern "C" fn so_call(h: *mut ObjectSearch, tool: *const c_char, args: *const c_char, out: *mut c_char, cap: i32) -> i32 {
     if h.is_null() || tool.is_null() || args.is_null() {
@@ -64,7 +89,7 @@ pub extern "C" fn so_call(h: *mut ObjectSearch, tool: *const c_char, args: *cons
     emit(&r.to_string(), out, cap)
 }
 
-/// 도구 정의 두 개(OpenAI tools 배열 JSON)
+/// 도구 정의 세 개(OpenAI tools 배열 JSON)
 #[no_mangle]
 pub extern "C" fn so_definitions(out: *mut c_char, cap: i32) -> i32 {
     emit(&Value::Array(crate::definitions()).to_string(), out, cap)

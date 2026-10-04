@@ -202,6 +202,33 @@ impl Index {
         call_json(|out, cap| unsafe { sgs_confirm(idx, id, n.as_ptr(), s.as_ptr(), q.as_ptr(), out, cap) })
     }
 
+    /// 확인 + 기록 한 줄에 덧붙일 칸(`extra` JSON 객체). 새 색인(`sgs_confirm_ex`, behavior-2026 objsearch-live)이 없으면
+    /// 옛 `sgs_confirm`(덧붙임 없이) — 이때 지도가 받은 확인도 색인이 한 번 더 셀 수 있다(README "실시간 기억").
+    pub fn confirm_ex(&mut self, id: u32, name: &str, source: &str, query: &str, extra: &str) -> Result<String, String> {
+        type F = unsafe extern "C" fn(*mut c_void, u32, *const c_char, *const c_char, *const c_char, *const c_char, *mut c_char, i32) -> i32;
+        let p = clip_sym("sgs_confirm_ex");
+        if p.is_null() {
+            return self.confirm(id, name, source, query);
+        }
+        let f: F = unsafe { std::mem::transmute::<*mut c_void, F>(p) };
+        let (n, s, q, e) = (cstr(name), cstr(source), cstr(query), cstr(extra));
+        let idx = self.idx;
+        call_json(|out, cap| unsafe { f(idx, id, n.as_ptr(), s.as_ptr(), q.as_ptr(), e.as_ptr(), out, cap) })
+    }
+
+    /// 이름 → 라벨 표 영어 이름(지도 라벨과 맞추기). 새 색인이 없으면 소문자 그대로
+    pub fn label_of(&self, name: &str) -> String {
+        type F = unsafe extern "C" fn(*const c_void, *const c_char, *mut c_char, i32) -> i32;
+        let p = clip_sym("sgs_label_of");
+        if p.is_null() {
+            return name.trim().to_lowercase();
+        }
+        let f: F = unsafe { std::mem::transmute::<*mut c_void, F>(p) };
+        let n = cstr(name);
+        let idx = self.idx;
+        call_json(|out, cap| unsafe { f(idx, n.as_ptr(), out, cap) }).unwrap_or_else(|_| name.trim().to_lowercase())
+    }
+
     pub fn stats(&self) -> Result<String, String> {
         let idx = self.idx;
         call_json(|out, cap| unsafe { sgs_stats_json(idx, out, cap) })
@@ -236,4 +263,17 @@ impl Drop for Index {
             }
         }
     }
+}
+
+/// 색인 라이브러리의 (새) 함수: 링크한 libsgclip_c.so 핸들에서 찾음(없으면 NULL)
+fn clip_sym(name: &str) -> *mut c_void {
+    let h = crate::live::loaded_handle(Some("libsgclip_c.so")).unwrap_or(std::ptr::null_mut());
+    crate::live::sym(h, name)
+}
+
+/// 확인 우도비(sgs_default_config): (user, close_look)
+pub fn confirm_lrs() -> (f32, f32) {
+    let mut c: SgsConfig = unsafe { std::mem::zeroed() };
+    unsafe { sgs_default_config(&mut c) };
+    (c.user_lr, c.look_lr)
 }

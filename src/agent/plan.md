@@ -150,16 +150,19 @@ skillspec (Rust, 순수 함수, 의존성 0)
 | `trace.rs` | JSONL 기록 + HTML 재생기 | 기존 `trace.rs` `replay.rs` |
 | `eval/` | 골든 세트 실행·채점·게이트(5절) | |
 
-### 3.3 도구 (LLM 에 보이는 것은 8개 이하)
+### 3.3 도구 (LLM 에 보이는 것은 8개 이하 — 지금 10 개, 아래 메모)
 
-원칙: **id 로 말하고 좌표로 말하지 않는다**, 인자는 enum·필수로 좁힌다, 결과는 짧은 JSON + `hint`, 실패는 오류 관찰값(예외로 루프를 죽이지 않음).
+원칙: **계획·실행 호출은 id 로 말한다. 좌표는 보여 주되 VLA 로는 보내지 않는다**(10-05 바꿈). 찾기 결과에 map 좌표 `pos`·크기 `size`·A′ 위치
+불확실도 `pos_sd`·지금 로봇 기준 `rel{x 앞, y 왼쪽, z, dist_m, bearing_deg}` 가 있어 LLM 이 숫자로 추론(어느 쪽이 가까운지, 높이 차 등)한다.
+그래도 `set_plan`·VLA 호출의 물체는 id 로만 넘기고, map 좌표는 VLA 입력에 들어가지 않는다 — 실행기가 매 스텝 실시간 지도에서 id 를 풀어
+로봇 기준 값으로 바꾼다(VLA_INPUT 0절 "어떤 집에서도 같은 뜻"). 인자는 enum·필수로 좁힌다, 결과는 짧은 JSON + `hint`, 실패는 오류 관찰값(예외로 루프를 죽이지 않음).
 
 | 도구 | 인자 | 결과(요약) | 끝냄 |
 |---|---|---|---|
-| `search_objects` (10-05, 옛 `find_object`) | `query: string`(한국어 가능), `k: int=5`, `room?`, `state?` | 3 단계 중 ①② 를 도구 안에서: ① 이름·동의어·상위어 검색 → 없거나 약하면 ② **이름 무시 생김새 재검색**(물체별 시점 벡터로 P(질의어 \| 모습)). 결과는 글만: `{query, searched, ask_user?, hint?, matches:[{id, name, name_p, alt:[{name,p}], match_type: name/appearance, registered?, p_query·p_registered(appearance 일 때), attrs:[색·재질·크기], room, landmark{id,name,dist_m,dz_m}, state, last_seen_ago_s, dist_m, match}]}` — `ask_user` 는 후보마다가 아니라 결과 맨 위 하나(만든 것: [`tools/search_objects`](tools/search_objects/)), 없으면 `matches:[]` + `ask_user` + `hint` | |
+| `search_objects` (10-05, 옛 `find_object`) | `query: string`(한국어 가능), `k: int=5`, `room?`, `state?`, `near?`, `max_age_s?`, `seen_after_s?` | 3 단계 중 ①② 를 도구 안에서: ① 이름·동의어·상위어 검색 → 없거나 약하면 ② **이름 무시 생김새 재검색**(물체별 시점 벡터로 P(질의어 \| 모습)). 결과는 글만: `{query, searched, ask_user?, hint?, matches:[{id, name, name_p, alt:[{name,p}], match_type: name/appearance, registered?, p_query·p_registered(appearance 일 때), attrs:[색·재질·크기], room, landmark{id,name,dist_m,dz_m}, state, last_seen_ago_s, pos, size, pos_sd?, rel{x,y,z,dist_m,bearing_deg}, match}], now_s}` — `ask_user` 는 후보마다가 아니라 결과 맨 위 하나(만든 것: [`tools/search_objects`](tools/search_objects/)), 없으면 `matches:[]` + `ask_user` + `hint` | |
 | `confirm_object` (10-05) | `id`, `name`, `source: enum(user, close_look)` | ③ 이름 고치기 — 물체 이름 사후에 강한 관측으로 반영, 다음부터 ① 에서 바로 찾음. 확인 기록은 보정 데이터 | |
 | `describe_object` | `id`, `with_image: bool=false` | 크기·높이·관측 수·처음 자리에서 움직인 거리 + (선택) best view RGB 256 px(`sm_snap_view`) | |
-| `list_place` | `place: string`(방 또는 가구 id) | 그 방/가구 위·안의 물체 표(최대 15) | |
+| `list_place` (10-05) | `place: string`(방 이름·`R2` 또는 가구 id `O12`) | 그 방 물체, 또는 그 가구 상자에서 수평 1.5 m 안 물체(최대 15, 옮길 수 있는 것 먼저). 줄은 찾기와 같은 칸 + 가구면 `dist_m`·`dz_m` — **관계말 없음**(만든 것: [`tools/search_objects`](tools/search_objects/)) | |
 | `set_plan` | `goal: string`, `steps: [{skill: enum(35), objects: [id], spatial?: enum, memory?: enum}]` | 검증 결과 + 렌더한 문장 목록 → 승인 필요하면 `needs_approval` | |
 | `check` | `kind: enum(visible, held, placed, at)`, `id`, `target?` | `{result: yes/no/unclear, evidence}` | |
 | `ask_user` | `question`, `options?: [string]` | 사용자 답(다음 턴) | ✔ |
@@ -167,6 +170,12 @@ skillspec (Rust, 순수 함수, 의존성 0)
 | `remember` | `fact` | 대화 기억에 저장(물체 기억과 별도) | |
 
 - **물체 검색(10-05)**: 검색은 도구 안에서 벡터(SigLIP 2, 공용 물체 색인)로 하고 LLM 에는 **색인된 이름·속성 글만** 준다(LLM 은 API 라 벡터를 못 받음). 같은 색인을 RecallVLA 도 자기 질의 벡터로 검색하므로, `set_plan` 의 물체 id 는 VLA 에 **힌트**다. 예: "라디오 가져와" → ① 라디오 없음 → ② 소화기로 등록된 O27 이 라디오일 확률 2 등 → LLM 이 되묻거나 O27 을 힌트로 넘김 → 확인되면 `confirm_object`. 도구가 9 개가 되어 "8 개 이하" 원칙을 넘는다 — `confirm_object` 를 `check` 결과에서 자동으로 부르는 쪽도 후보. 설계 [model_selection 물체 찾기](../../docs/model_selection.md), [MAPVLA_SPEC 결정 기록](../../docs/map_vla/MAPVLA_SPEC.md).
+- **실시간 기억(10-05)**: 같은 도구가 오프라인 `view.json` 과 실시간 scenemap 스냅숏(`so_open_live`, sgrt 는 `sgrt_scenemap`) 둘 다에서 돈다 — 3.2 `memview.rs` 의 `Memory` trait. 실시간 확인은 `sm_observe_object_name` 으로 지도 A′ 이름 사후에도 넣는다.
+- **도구 수 메모(10-05)**: LLM 에 보이는 것 = `search_objects`·`confirm_object`·`list_place`·`describe_object`·`set_plan`·`check`·`ask_user`·`report`·`remember` 9 + 시연용 `move_robot` 1 = **10 개**(원칙 8 개). 합치는 안(아직 안 합침 — 결정 필요):
+  1. `list_place` → `search_objects` 의 `place` 인자(있으면 `query` 생략 가능, 결과는 지금 list_place 형식) — 줄 형식이 이미 같아 쉬움. −1.
+  2. `describe_object` → 접기: 크기·자리·불확실도는 이미 찾기·목록 줄에 있음. 남는 것(관측 수·처음 자리에서 움직인 거리·best view 사진)은 `search_objects` 에 `detail: true`(k = 1)로. −1.
+  3. (선택) `confirm_object` 의 `close_look` 은 `check` 결과에서 자동으로 부르고, LLM 은 사용자 확인 때만 부름 — 도구 수는 그대로지만 호출이 줆.
+  1 + 2 면 8 개.
 - 이동·스킬 실행 도구는 **LLM 에 주지 않는다**. `set_plan` 으로 계획을 넘기면 `TaskMachine` 이 실행한다. 복구 한도를 넘었을 때만 LLM 이 다시 불려 `set_plan`(남은 단계 교체) / `ask_user` / `report(failed)` 중 하나를 고른다.
 - `set_plan` 예(컵 → 쓰레기통):
 

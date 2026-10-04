@@ -2,7 +2,7 @@
 //!
 //! 도구가 기억에서 읽는 것은 이것뿐이다: 물체(id·등록 이름·자리·크기·상태·마지막으로 본 시각·방·고정 여부), 방 이름,
 //! 기억 시각(`stamp`), 로봇 자세(`pose`). 이름 사후·벡터는 공용 색인(sys.rs)이 따로 읽는다.
-//! 실시간 판(`sm_snapshot` FFI)은 같은 trait 를 구현하면 도구 쪽 코드는 그대로 쓴다.
+//! 실시간 판은 [`crate::live::LiveMem`](scenemap `sm_snapshot`) — 같은 trait 라 도구 쪽 코드는 그대로.
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -22,6 +22,8 @@ pub struct ObjInfo {
     pub movable: bool,
     pub structural: bool,
     pub n_obs: u32,
+    /// A′ 위치 불확실도 [σx, σy, σz] m(view.json `pos_sd`, 없으면 None)
+    pub pos_sd: Option<[f64; 3]>,
 }
 
 impl ObjInfo {
@@ -67,6 +69,31 @@ pub trait Memory {
     }
 }
 
+/// 도구가 쓰는 기억: 보기([`Memory`]) + 새로 읽기 + (실시간이면) 지도에 이름 관측 넣기.
+pub trait MemSource: Send {
+    fn mem(&self) -> &dyn Memory;
+    /// 새로 읽음(바뀌었으면 true). 실시간은 늘 새 스냅숏
+    fn refresh(&mut self) -> Result<bool, String>;
+    /// 지도(scenemap A′)에 바깥 이름 관측: `sm_observe_object_name` 반환값(0 성공, -2 라벨 없음, -3 물체 없음·A′ 아님). 오프라인은 None
+    fn observe_name(&mut self, _id: u32, _label: &str, _log_lr: f32) -> Option<i32> {
+        None
+    }
+    /// "view_json" | "live"
+    fn kind(&self) -> &'static str;
+}
+
+impl MemSource for ViewJson {
+    fn mem(&self) -> &dyn Memory {
+        self
+    }
+    fn refresh(&mut self) -> Result<bool, String> {
+        ViewJson::refresh(self)
+    }
+    fn kind(&self) -> &'static str {
+        "view_json"
+    }
+}
+
 /// `view.json`(scenemap 저장 / sgrt 기억 폴더) 읽기. 파일이 바뀌면 [`ViewJson::refresh`] 가 다시 읽는다.
 #[derive(Clone, Debug, Default)]
 pub struct ViewJson {
@@ -82,7 +109,7 @@ fn f(v: &Value) -> f64 {
     v.as_f64().unwrap_or(0.0)
 }
 
-fn arr3(v: &Value) -> [f64; 3] {
+pub(crate) fn arr3(v: &Value) -> [f64; 3] {
     let a = v.as_array().cloned().unwrap_or_default();
     [a.first().map(f).unwrap_or(0.0), a.get(1).map(f).unwrap_or(0.0), a.get(2).map(f).unwrap_or(0.0)]
 }
@@ -119,6 +146,7 @@ impl ViewJson {
                         movable: o["movable"].as_bool().unwrap_or(true),
                         structural: o["structural"].as_bool().unwrap_or(false),
                         n_obs: o["n_obs"].as_u64().unwrap_or(0) as u32,
+                        pos_sd: o["pos_sd"].as_array().filter(|a| a.len() == 3).map(|_| arr3(&o["pos_sd"])),
                     })
                     .collect()
             })

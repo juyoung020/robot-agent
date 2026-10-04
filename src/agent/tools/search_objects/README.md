@@ -1,8 +1,9 @@
-# search_objects · confirm_object — 물체 기억 찾기와 이름 고치기
+# search_objects · confirm_object · list_place — 물체 기억 찾기, 이름 고치기, 자리 목록
 
 LLM(Qwen3.5-9B, KAU API)은 글만 주고받으므로 **벡터는 도구 안에서만** 쓴다. 찾기·이름 확률·속성 낱말은 공용 물체 색인
 (behavior-2026 [`src/scene_graph/clip`](../../../behavior-2026/src/scene_graph/clip/README.md) `sgsearch.h`, C++)이 하고,
-이 크레이트는 그 결과에 기억의 자리 정보(방·기준물·상태·마지막으로 본 때·로봇까지 거리)를 붙여 짧은 JSON 글로 돌려준다.
+이 크레이트는 그 결과에 기억의 자리 정보(방·기준물·상태·마지막으로 본 때·map 좌표·크기·위치 불확실도·로봇 기준 좌표)를 붙여 짧은 JSON 글로 돌려준다.
+기억은 오프라인 `view.json`(`ViewJson`) 또는 **실시간 scenemap 스냅숏**(`LiveMem`, 10-05) — 같은 `Memory` trait.
 같은 색인을 RecallVLA 실행기는 자기 질의 벡터로 쓴다(`sgs_search_vec`) — 에이전트가 넘기는 물체 id 는 VLA 에 **힌트**다.
 설계 기록: [plan.md 3.3](../../plan.md), [MAPVLA_SPEC 공용 물체 찾기](../../../../docs/map_vla/MAPVLA_SPEC.md#공용-물체-찾기-10-05).
 
@@ -17,13 +18,15 @@ LLM(Qwen3.5-9B, KAU API)은 글만 주고받으므로 **벡터는 도구 안에�
     → 이름 사후에 강한 관측(베이즈 갱신) → 다음 "라디오" 는 ① 에서 바로. 확인은 모두 기록(보정 데이터)
 ```
 
-## 스키마 (두 개 합쳐 약 2 KB — `search_objects::definitions()`, `search-objects schema`)
+## 스키마 (세 개 합쳐 2.8 KB — `search_objects::definitions()`, `search-objects schema`)
 
 ```json
 search_objects {"query": string (필수, 짧은 낱말 — 영어가 가장 낫고 한국어도 됨),
                 "k": int 1..10 (기본 5), "room": string (방 이름 또는 "R2"), "state": "seen|moved|held|gone",
-                "near": string (물체 id — 그 물체 1.5 m 안만)}
+                "near": string (물체 id — 그 물체 1.5 m 안만),
+                "max_age_s": number (마지막으로 본 뒤 이 초 안만), "seen_after_s": number (기억 시각 now_s 이 값 이후에 본 것만)}
 confirm_object {"id": "O27" (필수), "name": string (필수, 실제로 무엇인지), "source": "user|close_look" (필수)}
+list_place     {"place": string (필수 — 방 이름·"R2" 또는 가구 id "O12")}
 ```
 
 ## 결과
@@ -34,7 +37,9 @@ confirm_object {"id": "O27" (필수), "name": string (필수, 실제로 무엇�
  "hint":"ask the user, or pass O234 as a hint and verify by a close look; then call confirm_object",
  "matches":[{"id":"O234","name":"fire extinguisher","name_p":0.17,"alt":[{"name":"radio","p":0.13},{"name":"fuel can","p":0.07}],
              "match_type":"appearance","p_query":0.15,"p_registered":0.06,"attrs":["red","small"],"room":"office",
-             "landmark":{"id":"O191","name":"sofa","dist_m":0.0,"dz_m":-1.65},"state":"gone","last_seen_ago_s":89,"dist_m":1.49,"match":0.15}]}
+             "landmark":{"id":"O191","name":"sofa","dist_m":0.0,"dz_m":-1.65},"state":"gone","last_seen_ago_s":89,
+             "pos":[-2.63,0.98,0.74],"size":[0.06,0.16,0.11],"pos_sd":[0.01,0.02,0.02],
+             "rel":{"x":-0.2,"y":0.53,"z":0.74,"dist_m":0.56,"bearing_deg":111},"match":0.15}],"now_s":255}
 ```
 
 | 칸 | 뜻 |
@@ -49,13 +54,52 @@ confirm_object {"id": "O27" (필수), "name": string (필수, 실제로 무엇�
 | `room` | 방 이름(기억의 방 분할) |
 | `landmark` | 1.5 m 안에서 가장 가까운 고정 가구: `id`, `name`, `dist_m`(상자까지 수평 거리), `dz_m`(물체 중심 − 가구 윗면 높이). **on / in 같은 관계말은 계산하지 않는다**(10-05) — LLM 이 숫자로 고름 |
 | `state`, `last_seen_ago_s` | seen / moved / held / gone, 기억 시계 기준 경과 초 |
-| `dist_m` | 로봇(view.json `pose`)까지 수평 거리 |
+| `pos`, `size` | map 좌표 중심 [x, y, z]·축 맞춤 상자 크기 [x, y, z] (m, cm 반올림) |
+| `pos_sd` | A′ 위치 불확실도 [σx, σy, σz] m — A′ 기억(view.json `pos_sd`)일 때만. 실시간은 저장 폴더 view.json 에서(저장 주기만큼 늦음) |
+| `rel` | **지금 로봇 기준**: `x` 앞, `y` 왼쪽, `z` 높이(바닥 = 베이스 원점), `dist_m` 수평 거리, `bearing_deg` 방위(왼쪽 +). 오프라인은 view.json `pose`, 실시간은 스냅숏 자세 |
+| `unindexed` | 실시간에서만: 지도에 막 생겨 색인(지도 저장 주기)에 아직 없음 — 검출 이름 라벨이 질의 라벨과 같아 붙임(`name_p` 0.5 는 자리표시) |
 | `match` | 합친 점수 1 − (1 − p_name)(1 − p_query)(1 − p_img) |
 | `ask_user`(맨 위) | 있으면 **행동 전에 묻거나 가까이 보고 확인**: 생김새로만 찾음 / 점수 비슷한 후보 둘이 1 m 넘게 떨어짐 / 1 위 match < 0.5 / 아무것도 없음 |
 | `hint`(맨 위) | 다음에 할 일 한 줄(사라진 물체면 "was seen there but is gone now") |
+| `now_s`(맨 위) | 기억 시계 지금 시각(s) — 다음 찾기의 `seen_after_s` 에 그대로 넣으면 "그 뒤에 본 것만" |
+
+좌표 규칙(plan.md 3.3, 10-05): LLM 은 좌표를 보고 숫자로 추론해도 되지만 **계획·실행 호출에는 id 로** 말한다. map 좌표는 VLA 에 들어가지 않는다 —
+실행기(move_robot `vla`)가 매 스텝 지도에서 id 를 풀어 로봇 기준 값으로 바꾼다(VLA_INPUT 0절).
 
 틀린 인자·없는 id·없는 방은 `{"status":"error","message",…,"hint"}` 관찰값(예외로 루프를 죽이지 않음).
-`confirm_object` 결과: `{"status":"ok","id":"O234","name":"radio","p_before":0.13,"p_after":0.88,"registered":"fire extinguisher"}`.
+`confirm_object` 결과: `{"status":"ok","id":"O234","name":"radio","p_before":0.13,"p_after":0.88,"registered":"fire extinguisher"}`,
+실시간이면 + `"map": "applied" | "not_aprime" | "unknown_label" | "error"`(아래 "실시간 기억").
+
+## list_place
+
+방(이름·`R2`) → 그 방 물체, 가구(물체) id → 그 상자에서 수평 1.5 m 안 물체. 구조물은 빼고 **옮길 수 있는 것 먼저**, 그다음 거리 순(방: 로봇에서,
+가구: 그 상자에서), 최대 15(`n` = 전부, 넘치면 `hint`). 줄은 찾기 결과와 같은 칸(`id, name, name_p, registered?, attrs, fixed?, state,
+last_seen_ago_s, pos, size, pos_sd?, rel`) + 가구일 때 `dist_m`(그 상자까지 수평 거리)·`dz_m`(물체 중심 − 그 윗면). 관계말(on/in/next to)은 없다.
+
+```json
+list_place {"place":"O1"} → {"place":{"id":"O1","name":"table","pos":[0.8,0.0,0.12],"size":[...],"rel":{...}},"n":2,"now_s":1,
+  "objects":[{"id":"O2","name":"cup","name_p":0.75,"attrs":["tiny"],"dist_m":0.2,"dz_m":0.09,"state":"seen","last_seen_ago_s":0,
+              "pos":[1.0,0.0,0.31],"size":[0.0,0.06,0.06],"rel":{"x":1.0,"y":0.0,"z":0.31,"dist_m":1.0,"bearing_deg":0}}, …]}
+```
+
+## 실시간 기억 (`src/live.rs`, 10-05)
+
+```
+so_open_live(sm_ctx, sm_lib, mem_dir)            sm_ctx: sgrt 면 sgrt_scenemap(s)(behavior-2026 objsearch-live), 로봇이면 scenemap 문맥
+  호출마다  sm_snapshot → 물체(sm_snap_objects·movable·object_room)·자세(sm_snap_pose)·방(sm_snap_rooms)·시각 복사 → 놓음
+  색인      mem_dir/view.json 이 바뀌면(sgrt save_s 주기 저장, 로봇은 sm_save_dsg) sgs_reload — 이름 사후·벡터·속성
+  pos_sd    mem_dir/view.json(A′)
+  확인      sgs_label_of(이름 → 라벨 표 영어) → sm_observe_object_name(id, 라벨, ln lr)(user 50 / close_look 10, 색인과 같은 값)
+            → sgs_confirm_ex(+ {"map": 결과, "map_label"}) → confirmations.jsonl 한 줄
+```
+
+- 자리·상태·자세·방은 **지금 지도** 그대로. 이름·생김새는 지도 저장 주기(sgrt 1 s)만큼 늦다 — 그 사이 새 물체는 검출 이름이 질의 라벨과
+  같으면 `unindexed: true` 로 나오고, `list_place` 에는 바로 나온다.
+- scenemap 함수는 링크하지 않고 `dlsym`: 프로세스에 scenemap 이 올라와 있어야 한다. 파이썬 ctypes(RTLD_LOCAL)로 올린 `libsgrt.so` 면 그 경로를 `sm_lib` 로.
+- 두 번 세지 않기: 지도(A′)가 받은 확인(`"map":"applied"`)은 다음 저장의 `name_post.external = true` 에 들어가므로, 색인이 다시 읽을 때
+  그 확인의 우도비를 빼고 지도 사후를 그대로 쓴다(behavior-2026 objsearch-live `objindex.cpp`). 저장 전에는 색인이 직접 셈.
+- A′ 가 꺼진 지도(지금 sgrt 기본)는 `sm_observe_object_name` 이 -3 → `"map":"not_aprime"`, 확인은 색인·기록에만.
+- 새 색인 함수(`sgs_confirm_ex`·`sgs_label_of`)는 `dlsym` 으로 찾아, 옛 `libsgclip_c.so` 에서도 돈다(그때는 덧붙임 없는 `sgs_confirm`).
 
 ## 실행 경로
 
@@ -70,7 +114,7 @@ LLM ── tool_call ──▶ ObjectSearch::run_tool (src/lib.rs) ── 인자
 - 기억 보기는 plan.md 3.2 의 `Memory` trait(`src/memview.rs`) — 오프라인 구현 `ViewJson`(view.json). 실시간(`sm_snapshot`) 판은 같은 trait 를 구현하면 된다.
 - 물체 벡터: A′(`objects/O<id>_views.f16`·`_emb.f16`)가 있으면 그것, 없으면 best view 사진을 영상 엔진으로 뽑아 `cache/objsearch/` 에 둔다(사진이 바뀐 것만 다시).
 - 쓰는 파일(기억 폴더 안): `confirmations.jsonl`(확인 기록 = 원본, 다시 열면 다시 적용), `cache/objsearch/names.json`(이름 캐시, 다시 셀 수 있음), `cache/objsearch/O<id>_view.f16`.
-- C ABI(`include/search_objects.h`, `src/ffi.rs`): `so_open(mem_dir)`, `so_call(h, tool, args_json)`, `so_definitions`, `so_close`.
+- C ABI(`include/search_objects.h`, `src/ffi.rs`): `so_open(mem_dir)`, `so_open_live(sm_ctx, sm_lib, mem_dir)`, `so_call(h, tool, args_json)`, `so_definitions`, `so_close`.
 
 ## 경로
 
@@ -87,7 +131,9 @@ LLM ── tool_call ──▶ ObjectSearch::run_tool (src/lib.rs) ── 인자
 # 공용 색인(C++) — behavior-2026 서브모듈에서(엔진 만들기는 그쪽 README "만들기"·"글 인코더")
 cmake -S ../../../behavior-2026/src/scene_graph/clip -B ~/sgclip_build && cmake --build ~/sgclip_build -j4 && ctest --test-dir ~/sgclip_build
 cd src/agent/tools/search_objects
-cargo test --release                     # 시험 5개(GPU 없이; 끝까지 시험은 라벨 표가 있어야)
+cargo test --release                     # 시험 9개(GPU 없이; 끝까지 시험은 라벨 표가 있어야)
+# 실시간: 진짜 scenemap(libsgrt.so 안)에 합성 LIMO 스트림 → 도구 끝까지(GPU 안 씀). SO_LIVE_APRIME=1 이면 A′ 켜고 확인이 지도에 들어가는지까지
+./target/release/search-objects live-check ~/sgrt_build_objlive/libsgrt.so /tmp/livemem
 cargo build --release --features llm
 ./target/release/search-objects schema
 cp -r ~/datasets/sim_detcmp/A_fastsam/gt/memory /tmp/mem        # 기억 폴더에 캐시·확인 기록이 생기므로 복사본에서
@@ -105,7 +151,12 @@ set -a; . ~/.config/behavior-2026/kau.env; set +a
 | `parse_tolerant_and_errors_fixable` | 문자열 인자·대소문자·"o12"·k 자르기, 고칠 수 있는 오류 문장 |
 | `appearance_hit_asks_user_and_reads_compactly` | 생김새 후보 → `ask_user`, `p_query`·`p_registered`, 대안 거르기, 속성 + 크기, 방·기준물(id·이름·거리·높이), 관계말 칸 없음, 한 후보 700 B 아래 |
 | `name_hit_no_question_filters_and_ties` | 비슷한 후보 둘(1 m 넘게 떨어짐) → 묻기, 방·state·near 거르기, 하나면 묻지 않음, 다 걸러지면 "nothing" |
-| `end_to_end_radio_registered_as_fire_extinguisher` | 가짜 기억 폴더(A′ 형식 벡터) + 공용 색인: "라디오" → 소화기로 등록된 O27 생김새 후보 → 확인 → "radio" 는 이름으로·묻지 않음, `confirmations.jsonl` 에 질의까지, 오류 관찰값, view.json 바뀌면 다시 읽음 |
+| `end_to_end_radio_registered_as_fire_extinguisher` | 가짜 기억 폴더(A′ 형식 벡터) + 공용 색인: "라디오" → 소화기로 등록된 O27 생김새 후보 → 확인 → "radio" 는 이름으로·묻지 않음, `confirmations.jsonl` 에 질의까지, list_place(가구 id·방, pos_sd), 오프라인 확인엔 `map` 없음, 오류 관찰값, view.json 바뀌면 다시 읽음 |
+| `coordinates_map_and_robot_relative` | `pos`·`size`·`pos_sd`(cm), 로봇이 돌아 있을 때 `rel` x·y·z·dist·bearing, `now_s` |
+| `time_filters` | `max_age_s`·`seen_after_s`(경계 포함) |
+| `list_place_room_and_furniture` | 방: 옮길 수 있는 것 먼저·구조물 뺌·`fixed`, 가구: 1.5 m 안 `dist_m`·`dz_m`, 관계말 칸 없음, 없는 방·id 오류, 15 개 자르기 + hint |
+| `live_memory_is_fresh_every_call_and_reads_side_pos_sd` | 가짜 scenemap: 호출마다 새 스냅숏(자리·시각), 저장 폴더 pos_sd, 방 이름·R 번호, 이름 관측 전달 |
+| `search-objects live-check`(손으로) | **진짜 scenemap**(`libsgrt.so`, behavior-2026 objsearch-live 빌드)에 합성 LIMO 깊이·검출 스트림: 저장 뒤 찾기 자리 = 스냅숏, list_place(탁자), 저장 없이 컵을 옮기면 새 물체가 `unindexed` 로 바로·로봇 90° 돌면 `rel` 바뀜, 다음 저장 뒤 색인에 들어감, 시간 거르개, 확인 → `sm_observe_object_name`(A′ 끔: not_aprime / `SO_LIVE_APRIME=1`: applied + 저장된 `name_post.external` true) — 13·16 항목 통과(10-05) |
 
 ## 측정 (10-05)
 
@@ -157,4 +208,6 @@ result │ {"hint":"O234 was seen there but is gone now","matches":[{"id":"O234"
 - 대체 벡터는 best view 사진 한 장. A′ 상위 5 시점 벡터·이름 사후(view.json 칸 형식 미정)가 들어오면 색인이 저절로 그쪽을 쓴다 — 그때 다시 잴 것.
 - 우도비(등록 3, user 50, close_look 10)와 문턱은 손으로 정했다. `confirmations.jsonl` 이 쌓이면 맞춘다.
 - 한국어 질의는 라벨 표의 한국어 이름에 기계 번역이 섞여 영어보다 낮다 — 도구 설명에 "영어 낱말이 가장 낫다" 고 적었다.
-- 실시간 기억(`sm_snapshot`)용 `Memory` 구현, `close_look` 을 `check` 결과에서 자동으로 부르는 것(plan.md 3.3 도구 수 9 개 문제)은 아직.
+- 실시간 기억은 합성 스트림 + 진짜 scenemap 으로만 시험했다(OmniGibson sgrt 판·실제 로봇에서 `so_open_live` 를 부르는 접착부는 아직). 지금 sgrt 는 A′ 를 안 켜서 확인은 지도에 안 들어간다(`not_aprime`).
+- 색인 고침(10-05, behavior-2026 objsearch-live): 색인이 A′ `name_post` 를 **배열로만** 읽어 A′ 의 `{"top":…}` 형식을 통째로 무시하고 있었다 — 고쳤다(서브모듈 올리기 전까지 옛 색인은 A′ 이름 사후를 안 씀).
+- `close_look` 을 `check` 결과에서 자동으로 부르는 것, 도구 수(plan.md 3.3 메모 — 지금 10 개)는 아직.
