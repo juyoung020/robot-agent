@@ -23,7 +23,11 @@ enum Profile { TEAM_DEFAULT = 0, CHEAP = 1 };   // 팀 기본(spp 1, 튕김 1, �
 
 struct Renderer;
 // E = 한 번에 그리는 판 수(작업 공간이 E × 256² × 72 B 라 큰 묶음은 나눠 그린다). 만들 때 한 번 그려 둔다(작업 공간 cudaMalloc 을 그래프 잡기 전에).
-Renderer* create(int E, int profile);
+// 렌더 흔들기(VLA_INPUT 6절·POLICY 3.4 "학생만: 조명·질감·카메라 노출"): on 0 이면 예전과 같은 장면(인스턴스 46). 세기 0..1:
+//   color = 무리(바닥·벽·컵·가구 칸)마다 기본 색 대신 흔든 색 변형(3 개 중)을 쓸 확률, light = 조명 방향·자리 흔들기, expo = 노출·대비·채널 이득·감마
+// 판마다 값은 RenderState 씨앗(pad[0..3] = 에피소드 번호)에서 → 같은 표본은 같은 그림(기록 = 본 것), 판 안에서는 같은 색·조명
+struct RenderAug { int on; float color, light, expo; };
+Renderer* create(int E, int profile, const RenderAug* aug = nullptr);
 void destroy(Renderer* r);
 // 장치 rs[0..n) (n ≤ E) → 카메라 c 의 rgb(c) 칸 [0, n). 비동기, 그래프로 잡힘(잡기 전에 create 가 한 번 그렸으므로 cudaMalloc 없음)
 void render(Renderer* r, const bc::RenderState* rs, int n, cudaStream_t st);

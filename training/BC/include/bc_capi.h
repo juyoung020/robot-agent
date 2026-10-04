@@ -41,6 +41,21 @@ typedef struct BcConfig {
   int32_t sample_render;    /* 1 = 미니배치 표본마다 다시 렌더(기본), 0 = 검증용 */
   int32_t vit_prec;     /* 얼린 인코더 GEMM 정밀도(G6): 0 = FP16 피연산자·FP32 누산(G5), 1 = FP16 피연산자·FP16 누산(k 64 마다 FP32 로, 패치 포함 — 기본),
                            2 = 실험: 블록 GEMM 48 개 FP8 E4M3(코사인 기준 미달, 속도 재기용) */
+  /* ---- v2(VLA_INPUT 1–7절). 모두 0 이면: MLP 학생, 행동 가림 0x3(vx, wz), 흔들기 끔, 렌더 흔들기 끔 ---- */
+  int32_t arch;         /* 0 = MLP 학생(위 vision/text/head), 1 = 토큰마다 학생(training/BC/include/tf.h: 영상·글·몸 3·물체 16·벽·방 토큰 → 트랜스포머 → flow 전문가) */
+  int32_t tf_d, tf_layers, tf_heads, tf_mlp, tf_elayers;   /* arch 1 모양(0 = tf.h 기본 256·6·4·1024·4) */
+  uint32_t act_mask;    /* 학습하는 행동 비트(0 = 0x3). 꺼진 행동: 라벨 0·손실에서 뺌·학생 행동 0. 장치 값 — bc_set_act_mask */
+  int32_t task;         /* 지시 문장 과제 번호(training/data/vla_v1/instr.jsonl 의 과제 차례, 0 = go_to_cup) */
+  int32_t aug_on;       /* 학생 입력 흔들기(observation/obs.h ObsAug, 교사 라벨 입력은 늘 끔) */
+  float aug_vel_sigma, aug_prev_drop, aug_prev_sigma;
+  float aug_p_erase, aug_p_syn, aug_p_hyper, aug_p_wrong;
+  float aug_p_slot_drop, aug_p_map_off;
+  int32_t aug_eval_unseen;   /* 1 = 처음 보는 이름·지시(heldout)로 — 7절 평가. bc_set_aug_eval 로 바꿈 */
+  int32_t render_aug;   /* 1 = 렌더 흔들기(판마다 색·조명·노출, src/bc_render.cu) */
+  float ra_color;       /* 재질 색 흔들기 세기(0..1: 0 = 기본 색, 1 = 색 표 전체) */
+  float ra_light;       /* 조명 방향·자리 흔들기 세기(0..1) */
+  float ra_expo;        /* 노출·대비·채널 이득 흔들기 세기(0..1) */
+  float render_team_mix;   /* 팀 기본 설정(튕김 1·반사 1·잡음 제거 4)으로 그릴 표본 비율(0 = 싼 설정만) */
 } BcConfig;
 
 typedef struct BcLog {
@@ -83,9 +98,14 @@ int bc_clear_table(void* h);
 int bc_save_student(void* h, const char* path);
 int bc_load_student(void* h, const char* path);
 int64_t bc_num_params(void* h);
-/* 지시 문장 글 벡터 표 읽기(text 1): f32 [k][768] 파일 — 동기, 시작 때만. 돌려준 값 = 문장 수(음수 = 오류) */
+/* 지시 문장 표: 기본은 만들 때 training/data/vla_v1 의 instr128(과제 task 의 바꿔 말하기)을 쓴다. 이 함수는 f32 [k][128] 파일로 바꾸기 —
+   예전 [k][768] SigLIP 2 파일이면 무시하고 지금 문장 수를 돌려준다(예전 설정이 그대로 돌게). 동기, 시작 때만 */
 int bc_load_text_table(void* h, const char* path);
 int64_t bc_device_bytes(void* h);
+/* 학습하는 행동 비트(장치 값, 비동기 복사) */
+int bc_set_act_mask(void* h, uint32_t mask);
+/* 흔들기 켬/끔과 처음 보는 이름·지시 평가 켬/끔(장치 값, 비동기 복사) */
+int bc_set_aug_eval(void* h, int32_t aug_on, int32_t eval_unseen);
 int bc_sync(void* h);
 
 #ifdef __cplusplus

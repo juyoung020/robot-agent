@@ -3,9 +3,10 @@
 //
 // 학생 신경망(StudentNet): student-lite 와 같은 칸 MLP(S1·S2) + 집합 + A1–A3 몸통에
 //   영상(vision): 카메라 2 장 → 렌더(bc_render) → 얼린 SigLIP 2 패치 토큰 128 개 × 768(vit) → P1(784 → 16, ELU, 토큰마다 같은 가중치) → 펼친 2,048
-//   글(text): 지시 문장의 얼린 SigLIP 2 글 벡터 768(미리 계산한 표, 문장 번호는 에피소드마다 해시)
-//   A1 입력 = [X0 288 | 영상 2,048 | 글 768]
-//   머리: MSE(A4 → 8) 또는 flow matching 행동 전문가(E1: [몸통 128 | 1 | x_τ 32 | 시간 sin·cos 32 | 0] 208 → 256 → 256 → 32 = 청크 16 × (vx, wz))
+//   글(text): 지시 문장의 얼린 128-d 벡터(training/data/vla_v1 instr128 — 이름·생김새와 같은 공간, 문장 번호는 에피소드마다 해시로 같은 과제의 바꿔 말하기 중 하나)
+//   A1 입력 = [X0 304 | 영상 2,048 | 글 128]
+//   머리: MSE(A4 → 8) 또는 flow matching 행동 전문가(E1: [몸통 128 | 1 | x_τ 128 | 시간 sin·cos 32 | 0] 304 → 256 → 256 → 128 = 청크 16 × 행동 8)
+// arch 1(토큰마다 학생, tf.h): 영상 128 + 글 1 + 몸 3 + 물체 16 + 벽·방 2 토큰 → 트랜스포머 → flow 행동 전문가(행동 8 × 청크 H)
 #pragma once
 #include <cmath>
 #include <cstdint>
@@ -18,6 +19,8 @@
 #include "map_api.h"
 #include "net.h"
 #include "net_ops.h"
+#include "tf.h"
+#include "vec_tab.h"
 #include "vit.h"
 
 namespace bcr { struct Renderer; }
@@ -44,19 +47,22 @@ enum SLayer { SL_S1, SL_S2, SL_P1, SL_A1, SL_A2, SL_A3, SL_A4, SL_E1, SL_E2, SL_
 constexpr int IMG_TOK = 2 * vit::NTOK;   // 표본 하나의 영상 토큰 128
 constexpr int IMG_D = 16;                // P1 출력(토큰마다)
 constexpr int IMG_W = IMG_TOK * IMG_D;   // 2,048
-constexpr int TXT_W = vit::D;            // 768
+constexpr int TXT_W = vlav::DIM;         // 128 (얼린 128-d 지시 벡터)
 constexpr int MAX_H = 16;                // 청크 최대 길이
-constexpr int FLOW_W = MAX_H * N_LAB;    // 32
+constexpr int FLOW_W = MAX_H * N_LAB;    // 128
 constexpr int TEMB = 32;                 // 시간 sin 16 + cos 16
-constexpr int E_X = 129, E_T = E_X + FLOW_W, E_IN = 208;   // E1 입력 칸: 몸통 0..127, 1 = 128, x_τ 129..160, 시간 161..192, 0 193..207
+constexpr int E_X = 129, E_T = E_X + FLOW_W, E_IN = 304;   // E1 입력 칸: 몸통 0..127, 1 = 128, x_τ 129..256, 시간 257..288, 0 289..303
+static_assert(E_T + TEMB <= E_IN && E_IN % 16 == 0, "E1 input");
 constexpr int MAX_TXT = 64;
+// 지시 문장 고르기(장치 값): 과제의 학습용 바꿔 말하기 / 처음 보는 바꿔 말하기(heldout, VLA_INPUT 7절 평가) 표 행
+struct TxtSel { int n_train, n_held, pad0, pad1; int train[16], held[16]; };
 struct StudentNet {
   net::LayerDesc L[SL_N];
   bool on[SL_N];
   long long off[SL_N], total;
   int k1 = net::X0_W;          // A1 입력 폭
   int x_img = 0, x_txt = 0;    // A1 입력 안 영상·글 시작 칸
-  int vision = 0, text = 0, head = 0, H = 1;
+  int vision = 0, text = 0, head = 0, H = 1, arch = 0;
   bool ext() const { return vision || text; }
 };
 StudentNet student_net(const BcConfig& c);
@@ -64,6 +70,11 @@ StudentNet student_net(const BcConfig& c);
 // ---- 장치·호스트 공용 작은 함수(검증이 같은 식을 CPU 에서 부른다) ----
 // 지시 문장 번호 = 에피소드 번호 해시(롤아웃·모으기가 같은 식)
 NDEV int text_id(uint32_t epi, int n_txt) { return n_txt > 1 ? (int)(net::mix64((uint64_t)epi * 0x9E3779B97F4A7C15ull + 0x7478u) % (uint64_t)n_txt) : 0; }
+// 표 행: 학습은 학습용 바꿔 말하기 중 하나, eval_unseen 이면 처음 보는 바꿔 말하기 중 하나
+NDEV int text_row(uint32_t epi, const TxtSel& s, int eval_unseen) {
+  if (eval_unseen && s.n_held > 0) return s.held[text_id(epi, s.n_held)];
+  return s.n_train > 0 ? s.train[text_id(epi, s.n_train)] : 0;
+}
 
 // 시간 τ 의 sin/cos 16 주기(0.004 … 4.0, 로그 간격 — π0 방식, 가정)
 NDEV void temb_write(float tau, uint16_t* dst) {
@@ -104,6 +115,17 @@ struct Bc {
   StudentNet sn;          // 학생
   int N, T, MB;
 
+  // v2 입력: 얼린 표, 흔들기(학생만, 교사 라벨은 늘 끔), 행동 가림, 지시 문장 고르기 — 모두 장치 값
+  obsv::VecTables vt;
+  obsv::ObsAug* aug_d = nullptr;
+  uint32_t* amask_d = nullptr;
+  TxtSel* tsel_d = nullptr;
+  // arch 1: 토큰마다 학생
+  tfm::Tf tf;
+  uint16_t* tg[tfm::N_GRP] = {};   // 묶음 입력 줄(영상은 sb.tok)
+  uint32_t *tobj = nullptr, *toff = nullptr;
+  float *tact = nullptr, *txb = nullptr;   // [N][H][8] 추론 청크, 오일러 작업
+
   std::unique_ptr<env::DeviceEnv> env;
   std::unique_ptr<gmap::DeviceMap> map;
   std::unique_ptr<gmap::TokenRecorder> tok;   // 줄 2 개 고리: 스텝 t 가 읽는 줄 t%2, 지도가 쓰는 줄 (t+1)%2 (T 짝수 → 다음 롤아웃 0 줄 = 지난 끝 줄)
@@ -121,6 +143,7 @@ struct Bc {
   Mode* mode_d = nullptr;
   Data* data_d = nullptr;
   int host_actor = 0;         // 호스트가 마지막으로 정한 actor(어느 롤아웃 그래프를 띄울지)
+  int cur_t = 0;              // 롤아웃 스텝(잡을 때 고정되는 호스트 값 — arch 1 추론 잡음 열쇠)
   // 비동기 장치 값 바꾸기용 고정 호스트 링(칸마다 이벤트)
   uint8_t* stage_h = nullptr;
   cudaEvent_t stage_ev[16] = {};
@@ -130,7 +153,7 @@ struct Bc {
   long long cap = 0;
   uint16_t* d_obs = nullptr;        // [cap][80] bf16
   gmap::MapTok* d_tok = nullptr;    // [cap]
-  float* d_lab = nullptr;           // [cap][2]
+  float* d_lab = nullptr;           // [cap][8]
   uint32_t* d_meta = nullptr;       // [cap]
   uint32_t* d_epi = nullptr;        // [cap] 에피소드 번호(청크 라벨·지시 번호)
   RenderState* d_rs = nullptr;      // [cap] (store_render)
@@ -142,8 +165,8 @@ struct Bc {
   NetBufs nt;     // 교사(행 N)
   SBufs sb;       // 학생(행 max(N, MB))
   int SM = 0;     // 학생 버퍼 행 수
-  float* lab_mb = nullptr;          // [MB][2]
-  float* chunk_mb = nullptr;        // [MB][16][2] 청크 라벨
+  float* lab_mb = nullptr;          // [MB][8]
+  float* chunk_mb = nullptr;        // [MB][16][8] 청크 라벨
   float* ws[SL_N] = {};
   float *gn_part = nullptr, *loss_part = nullptr;
   net::TrainState* ts = nullptr;    // iter = 갱신 스텝 수(미니배치 난수 열쇠), s_pg = 이 그래프 손실 합, n_mb = 스텝 수, lr
@@ -151,6 +174,7 @@ struct Bc {
 
   // 영상: 렌더(묶음 render_batch 판) + 얼린 인코더 + 렌더 상태(롤아웃 지금 / 미니배치)
   bcr::Renderer* rnd = nullptr;
+  bcr::Renderer* rnd_team = nullptr;   // render_team_mix > 0: 팀 기본 설정 렌더
   vit::Encoder enc;
   RenderState* rs_roll = nullptr;   // [N]
   RenderState* rs_mb = nullptr;     // [MB]
@@ -185,7 +209,8 @@ struct Bc {
   // 부분(검증용)
   void forward_teacher(NetBufs& b, int M);
   void vis_encode(const RenderState* rs, int M);   // 렌더 → 패치 → 인코더 → sb.tok
-  void student_trunk(int M, const RenderState* rs); // 칸 MLP·집합 → (영상·글) → A1–A3
+  void student_trunk(int M, const RenderState* rs); // 칸 MLP·집합 → (영상·글) → A1–A3 (arch 1: 묶음 줄 → 영상 → tf prefix)
+  void tf_rows(const float* obs, int stride, const gmap::MapTok* tok, const uint32_t* epi, int M, uint64_t k0sel, int role);   // arch 1 묶음 줄
   void student_act(int M);                           // 머리 추론 → sb.act (MSE 평균 / flow 오일러)
   void gather();
   void flow_inputs(int M);                           // flow 학습 입력 x_τ·시간·목표 u·가림

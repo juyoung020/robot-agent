@@ -36,6 +36,10 @@ static std::vector<double> fv(const std::vector<float>& v) { return std::vector<
 static std::string g_teacher = std::string(std::getenv("HOME") ? std::getenv("HOME") : "") + "/ra_ppoout/g5/t4/on_s1/ckpt_final.bin";
 static std::string g_text = "";
 static bool g_lite = false;
+static bool g_act8 = false;    // --act8: 행동 8 모두 학습(act_mask 0xff, VLA_INPUT 5절)
+static bool g_arch1 = false;   // --arch1: 토큰마다 학생(tf.h). 신경망 수치는 tf_verify, 여기는 입력·자료·그래프·결정성
+static bool g_aug = false;     // --aug: 학생 입력 흔들기 켬(v6/v7)
+static bool g_raug = false;    // --raug: 렌더 흔들기(색·조명·노출 0.8) + 팀 기본 섞기 0.25
 
 static BcConfig small_cfg(uint64_t seed, int graphs) {
   BcConfig c{};
@@ -48,14 +52,36 @@ static BcConfig small_cfg(uint64_t seed, int graphs) {
     c.vision = 1; c.head = 1; c.chunk = 16; c.flow_steps = 4; c.text = 1; c.render_profile = 1; c.render_batch = 256; c.img_dim = IMG_D;
     c.n_env = 256; c.mb = 256; c.cap = 256 * 16 * 3; c.upd_steps = 2;
   }
+  if (g_act8) c.act_mask = 0xffu;
+  if (g_raug) { c.render_aug = 1; c.ra_color = 0.8f; c.ra_light = 0.8f; c.ra_expo = 0.8f; c.render_team_mix = 0.25f; }
+  if (g_arch1 && !g_lite) { c.arch = 1; c.tf_d = 128; c.tf_layers = 2; c.tf_heads = 2; c.tf_mlp = 256; c.tf_elayers = 2; }
+  if (g_aug) {
+    c.aug_on = 1; c.aug_vel_sigma = 0.05f; c.aug_prev_drop = 0.1f; c.aug_prev_sigma = 0.05f;
+    c.aug_p_erase = 0.1f; c.aug_p_syn = 0.2f; c.aug_p_hyper = 0.1f; c.aug_p_wrong = 0.05f; c.aug_p_slot_drop = 0.1f; c.aug_p_map_off = 0.05f;
+  }
   c.vit_prec = std::getenv("BC_VIT_PREC") ? std::atoi(std::getenv("BC_VIT_PREC")) : 0;   // 인코더 정밀도(G6): 0 FP16·FP32 누산, 1 FP16 누산, 2 FP8
   c.fp8 = std::getenv("NET_FP8") ? std::atoi(std::getenv("NET_FP8")) : 0;   // G6: 몸통 층 FP8 비트(1 앞, 2 dgrad, 4 wgrad)
   netref::set_fp8(c.fp8);                                                    // CPU 흉내(바닥)도 같은 FP8 처방
   return c;
 }
 static void load_aux(Bc* b) {
-  if (bc_load_teacher(b, g_teacher.c_str()) != 0) std::fprintf(stderr, "note: teacher %s not loaded (labels from a zero teacher)\n", g_teacher.c_str());
-  if (b->sn.text) {
+  if (bc_load_teacher(b, g_teacher.c_str()) != 0) {   // v2 관측과 맞는 교사가 없으면 무작위 교사(PPO 와 같은 초기화 규칙, 씨앗 고정) — 라벨이 0 이 아니게
+    std::fprintf(stderr, "note: teacher %s not loaded (v1 checkpoint or missing) - using a random teacher (seed 77)\n", g_teacher.c_str());
+    std::vector<float> hp(b->lay.total, 0.f);
+    uint64_t sd = 77;
+    for (int l = 0; l < N_LAYER; ++l) {
+      const LayerDesc& L = kLayers[l];
+      const float a = (l == L_A4 ? 1.0f : L.gain) * std::sqrt(3.f / (float)L.bias);
+      for (int n = 0; n < L.N; ++n) for (int k = 0; k < L.bias; ++k) hp[b->lay.off[l] + (size_t)n * L.K + k] = dm::rand_range(sd, -a, a);
+    }
+    float* tmp = nullptr;
+    VCK(cudaMalloc(&tmp, sizeof(float) * hp.size()));
+    VCK(cudaMemcpy(tmp, hp.data(), sizeof(float) * hp.size(), cudaMemcpyHostToDevice));
+    to_bf16(tmp, b->PbT, (long long)hp.size(), 0);
+    VCK(cudaDeviceSynchronize());
+    cudaFree(tmp);
+  }
+  if (b->sn.text && !g_text.empty()) {
     const int k = bc_load_text_table(b, g_text.c_str());
     if (k < 1) { std::fprintf(stderr, "text table %s not loaded (%d)\n", g_text.c_str(), k); std::exit(2); }
   }
@@ -66,7 +92,8 @@ struct In {   // GPU 가 만든 같은 양자화 입력
   int M = 0;
   std::vector<uint16_t> x0, sin, tok, txt, ein;   // x0 [M][288], sin, 영상 토큰 [M×128][784], 글 [M][768], E1 입력의 x_τ·시간 [M][64]
   std::vector<uint32_t> mask;
-  std::vector<float> lab, u, fm;   // MSE 라벨 [M][2] / flow 목표 [M][32]·가림 [M][16]
+  std::vector<float> lab, u, fm;   // MSE 라벨 [M][8] / flow 목표 [M][128]·가림 [M][16]
+  uint32_t amask = 0x3u;           // 학습하는 행동 비트(장치 값)
 };
 struct Ref {
   std::vector<double> sin, s1o, s2o, x0, x0e, tok, h[SL_N], out, dz[SL_N], dpool, grad;
@@ -116,6 +143,7 @@ static void ref_run(netref::Mode md, const StudentNet& sn, const std::vector<dou
     r.dz[SL_A4].assign((size_t)M * N_ACT, 0.0);
     for (int m = 0; m < M; ++m)
       for (int k = 0; k < N_LAB; ++k) {
+        if (!((in.amask >> k) & 1u)) continue;
         if (em) {
           const float d = (float)r.out[(size_t)m * N_ACT + k] - in.lab[(size_t)m * N_LAB + k];
           Lf = Lf + d * d;
@@ -138,7 +166,7 @@ static void ref_run(netref::Mode md, const StudentNet& sn, const std::vector<dou
     r.dz[SL_E3].assign((size_t)M * FLOW_W, 0.0);
     for (int m = 0; m < M; ++m)
       for (int j = 0; j < FLOW_W; ++j) {
-        const float mk = in.fm[(size_t)m * MAX_H + j / N_LAB];
+        const float mk = ((in.amask >> (j % N_LAB)) & 1u) ? in.fm[(size_t)m * MAX_H + j / N_LAB] : 0.f;
         if (em) {
           const float d = (float)r.out[(size_t)m * FLOW_W + j] - in.u[(size_t)m * FLOW_W + j];
           Lf = Lf + mk * d * d;
@@ -225,6 +253,7 @@ static In grab_inputs(Bc& b, int M) {
   in.x0 = dl(b.sb.x0, (size_t)M * X0_W);
   in.sin = dl(b.sb.sin, (size_t)M * KSLOT * SLOT_IN);
   in.mask = dl(b.sb.mask, M);
+  in.amask = dl(b.amask_d, 1)[0];
   if (b.sn.vision) in.tok = dl(b.sb.tok, (size_t)M * IMG_TOK * vit::TOK_LD);
   if (b.sn.text) {
     const auto x0e = dl(b.sb.x0e, (size_t)M * b.sn.k1);
@@ -232,6 +261,7 @@ static In grab_inputs(Bc& b, int M) {
     for (int m = 0; m < M; ++m)
       for (int c = 0; c < TXT_W; ++c) in.txt[(size_t)m * TXT_W + c] = x0e[(size_t)m * b.sn.k1 + b.sn.x_txt + c];
   }
+  if (b.sn.arch == 1) { in.fm = dl(b.sb.fm, (size_t)M * MAX_H); return in; }
   if (!b.sn.head) in.lab = dl(b.lab_mb, (size_t)M * N_LAB);
   else {
     const auto h3 = dl(b.sb.h[SL_A3], (size_t)M * E_IN);
@@ -261,7 +291,7 @@ static int run_v5(int bug) {
   VCK(cudaDeviceSynchronize());
   { BcLog L; while (b.poll(&L)) {} }
   const Data dd = dl(b.data_d, 1)[0];
-  std::printf("v5 (%s): N %d T %d, data count %lld, minibatch %d, student params %lld, bug %d\n", g_lite ? "student-lite MSE" : "image student: vision + text + flow chunk",
+  std::printf("v5 (%s): N %d T %d, data count %lld, minibatch %d, student params %lld, bug %d\n", g_lite ? "student-lite MSE" : g_arch1 ? "token student (arch 1): images + text + body/object/space tokens, flow expert" : "image student: vision + text + flow chunk",
               N, b.T, dd.count, M, (long long)bc_num_params(&b), bug);
 
   // (1) 기록 = 본 것: 마지막 스텝(t = T−1)의 저장 표본으로 CPU 가 다시 만든 학생 입력 == 롤아웃 때 GPU 학생 입력(비트), 라벨 == clamp(교사 μ),
@@ -273,7 +303,9 @@ static int run_v5(int bug) {
     const auto mT = dl(b.nt.mean, (size_t)N * N_ACT);
     long long diff = 0, ldiff = 0, tdiff = 0;
     std::vector<uint16_t> obs(env::N_OBS), x0c(X0_W), sinc(KSLOT * SLOT_IN);
-    const auto tidg = sn.text ? dl(b.sb.tid, N) : std::vector<int>();
+    const auto tidg = (sn.text || sn.arch == 1) ? dl(b.sb.tid, N) : std::vector<int>();
+    const uint32_t am = dl(b.amask_d, 1)[0];
+    const TxtSel tsel = dl(b.tsel_d, 1)[0];
     for (int i = 0; i < N; ++i) {
       const long long slot = (cur_before + (long long)t * N + i) % b.cap;
       VCK(cudaMemcpy(obs.data(), b.d_obs + slot * env::N_OBS, 2 * env::N_OBS, cudaMemcpyDeviceToHost));
@@ -284,15 +316,15 @@ static int run_v5(int bug) {
       float of[env::N_OBS];
       for (int k = 0; k < env::N_OBS; ++k) of[k] = bf2f(obs[k]);
       std::fill(x0c.begin(), x0c.end(), 0);
-      const uint32_t mk = assemble_student(of, 1, 0, tk, x0c.data(), sinc.data(), c.use_map, c.student_goal, 0, 1);
+      const uint32_t mk = assemble_student(of, 1, 0, tk, x0c.data(), sinc.data(), c.use_map, c.student_goal, 0, 1, b.vt.host());
       for (int k = X0_OBS; k < X0_W; ++k) diff += x0c[k] != x0g[(size_t)i * X0_W + k];
       for (int k = 0; k < KSLOT * SLOT_IN; ++k) diff += sinc[k] != sing[(size_t)i * KSLOT * SLOT_IN + k];
       diff += mk != mg[i];
-      for (int k = 0; k < N_LAB; ++k) ldiff += lab[k] != std::fmin(std::fmax(mT[(size_t)i * N_ACT + k], -1.f), 1.f);
-      if (sn.text) {
+      for (int k = 0; k < N_LAB; ++k) ldiff += lab[k] != (((am >> k) & 1u) ? std::fmin(std::fmax(mT[(size_t)i * N_ACT + k], -1.f), 1.f) : 0.f);
+      if (sn.text || sn.arch == 1) {
         uint32_t ep;
         VCK(cudaMemcpy(&ep, b.d_epi + slot, 4, cudaMemcpyDeviceToHost));
-        tdiff += tidg[i] != text_id(ep, b.n_txt);
+        tdiff += tidg[i] != text_row(ep, tsel, 0);
       }
     }
     const bool ok = diff == 0 && ldiff == 0 && tdiff == 0;
@@ -341,7 +373,7 @@ static int run_v5(int bug) {
       VCK(cudaMemcpy(&tk, b.d_tok + idx, sizeof tk, cudaMemcpyDeviceToHost));
       float of[env::N_OBS];
       for (int k = 0; k < env::N_OBS; ++k) of[k] = bf2f(obs[k]);
-      const uint32_t mk = assemble_student(of, 1, 0, tk, x0c.data(), sinc.data(), c.use_map, c.student_goal, 0, 1);
+      const uint32_t mk = assemble_student(of, 1, 0, tk, x0c.data(), sinc.data(), c.use_map, c.student_goal, 0, 1, b.vt.host());
       for (int k = X0_OBS; k < X0_W; ++k) diff += x0c[k] != in.x0[(size_t)r * X0_W + k];
       for (int k = 0; k < KSLOT * SLOT_IN; ++k) diff += sinc[k] != in.sin[(size_t)r * KSLOT * SLOT_IN + k];
       diff += mk != in.mask[r];
@@ -364,6 +396,31 @@ static int run_v5(int bug) {
     ++total; fails += !ok;
     std::printf("  gather: student input CPU == GPU over %d rows: %lld words differ; chunk labels+mask %lld (valid chunk steps %.1f %%); render states %lld  %s\n", M, diff,
                 cdiff, 100.0 * nvalid / (M * (double)MAX_H), rsd, ok ? "ok" : "FAIL");
+  }
+  if (sn.arch == 1) {   // 토큰마다 학생: 묶음 입력 줄 = X0·지시 표에서 옮긴 값(CPU 가 같은 규칙으로 == GPU), 손실 유한. 신경망 수치는 tf_verify
+    const auto txt = dl(b.txt, (size_t)MAX_TXT * TXT_W);
+    const auto tid = dl(b.sb.tid, M);
+    long long d = 0;
+    const uint16_t one = 0x3f80;
+    for (int r = 0; r < M; ++r) {
+      const uint16_t* x = in.x0.data() + (size_t)r * X0_W;
+      auto chk = [&](int g, int K, int kreal, auto val) {
+        const auto rows = dl(b.tg[g] + (size_t)r * K, (size_t)K);
+        for (int k = 0; k < K; ++k) d += rows[k] != (k < kreal ? (uint16_t)val(k) : k == kreal ? one : (uint16_t)0);
+      };
+      chk(tfm::G_ARM, 48, 42, [&](int k) { return x[X0_OBS + k]; });
+      chk(tfm::G_BASE, 16, 3, [&](int k) { return x[X0_OBS + 42 + k]; });
+      chk(tfm::G_GOAL, 16, 15, [&](int k) { return k < 11 ? x[X0_OBS + 45 + k] : x[X0_WAY + k - 11]; });
+      chk(tfm::G_WALL, 80, 64, [&](int k) { return k < 56 ? x[X0_OBS + N_OBS_G1 + k] : x[X0_FRONT + k - 56]; });
+      chk(tfm::G_ROOM, 16, 10, [&](int k) { return x[X0_OBS + N_OBS_G1 + 56 + k]; });
+      chk(tfm::G_TXT, 144, 128, [&](int k) { return txt[(size_t)tid[r] * TXT_W + k]; });
+    }
+    const float L = dl(b.tf.loss_d, 1)[0];
+    const bool ok = d == 0 && std::isfinite(L) && L > 0.f;
+    ++total; fails += !ok;
+    std::printf("  tf token rows (ARM, BASE, GOAL, WALL, ROOM, TXT) CPU == GPU over %d rows: %lld words differ; flow loss %.6f (finite)  %s\n", M, d, L, ok ? "ok" : "FAIL");
+    std::printf("V5 (arch 1 inputs): %d / %d checks pass (transformer numerics: tf_verify)\n", total - fails, total);
+    return fails;
   }
   if (sn.head) {   // flow 입력: x_τ(bf16)·목표 u(f32)·시간 임베딩(bf16) — 초월 함수(log, cos, sin, pow)의 CPU·GPU 차는 1 ulp 안
     const auto chunk = dl(b.chunk_mb, (size_t)M * FLOW_W);
@@ -559,8 +616,9 @@ static Snap run_seq(BcConfig c) {
   b.launch(0);
   VCK(cudaDeviceSynchronize());
   drain();
-  const long long n = b.sn.total, cap = b.cap;
-  s.P = dl(b.P, n); s.Am = dl(b.Am, n); s.Av = dl(b.Av, n);
+  const bool t1 = b.sn.arch == 1;
+  const long long n = t1 ? b.tf.lay.total : b.sn.total, cap = b.cap;
+  s.P = dl(t1 ? b.tf.P : b.P, n); s.Am = dl(t1 ? b.tf.Am : b.Am, n); s.Av = dl(t1 ? b.tf.Av : b.Av, n);
   s.lab = dl(b.d_lab, (size_t)cap * N_LAB); s.obs = dl(b.d_obs, (size_t)cap * env::N_OBS); s.tok = dl(b.d_tok, (size_t)cap); s.meta = dl(b.d_meta, (size_t)cap);
   s.epi = dl(b.d_epi, (size_t)cap);
   s.rs = dl(b.d_rs, (size_t)cap);
@@ -588,7 +646,7 @@ static long diff_snap(const Snap& a, const Snap& b, bool verbose) {
 }
 static int run_v6() {
   const Snap g = run_seq(small_cfg(5, 1)), e = run_seq(small_cfg(5, 0));
-  std::printf("v6 graph vs eager (%s; record 2, update 3x%d, DAgger rollout 1, update 2, eval rollout 1):\n", g_lite ? "lite" : "image student", small_cfg(5, 1).upd_steps);
+  std::printf("v6 graph vs eager (%s; record 2, update 3x%d, DAgger rollout 1, update 2, eval rollout 1):\n", g_lite ? "lite" : g_arch1 ? "token student (arch 1)" : "image student", small_cfg(5, 1).upd_steps);
   const long d = diff_snap(g, e, true);
   unsigned long long ne = 0;
   for (size_t k = 0; k < g.tab.size(); k += 6) ne += g.tab[k];
@@ -650,6 +708,59 @@ static int run_bench(int N, int T, int mb, int K) {
   return 0;
 }
 
+// 렌더 흔들기·섞기의 인코더 쪽 효과(VLA_INPUT 6절, README "싼 설정 대 팀 기본 코사인 0.72"): 교사 기록 1 롤아웃의 렌더 상태 128 개를
+// (A) 싼 설정 (B) 팀 기본 (C) 싼 설정 + 흔들기 (D) 팀 기본 + 같은 흔들기 로 그려 얼린 인코더 패치 토큰(128 × 768 / 상태)의 토큰별 코사인을 낸다
+static void cos_stats(const std::vector<uint16_t>& a, const std::vector<uint16_t>& b, long long ntok, double& mean, double& p01) {
+  std::vector<double> cs((size_t)ntok);
+  for (long long t = 0; t < ntok; ++t) {
+    double xy = 0, xx = 0, yy = 0;
+    for (int k = 0; k < vit::D; ++k) {
+      const double x = bf2f(a[(size_t)t * vit::TOK_LD + k]), y = bf2f(b[(size_t)t * vit::TOK_LD + k]);
+      xy += x * y; xx += x * x; yy += y * y;
+    }
+    cs[(size_t)t] = xy / std::sqrt(std::fmax(xx * yy, 1e-30));
+  }
+  mean = 0;
+  for (double c : cs) mean += c;
+  mean /= (double)ntok;
+  std::sort(cs.begin(), cs.end());
+  p01 = cs[(size_t)(0.01 * (double)ntok)];
+}
+static int run_rquality(float color, float light, float expo) {
+  BcConfig c = small_cfg(31, 0);
+  Bc b(c);
+  load_aux(&b);
+  bc_set_mode(&b, 0, 1);
+  b.launch(0);
+  VCK(cudaDeviceSynchronize());
+  { BcLog L; while (b.poll(&L)) {} }
+  const int E = 128;
+  const long long s0 = (dl(b.data_d, 1)[0].cursor + (long long)b.cap - (long long)b.N) % b.cap;   // 마지막 스텝 표본들(판 0..127)
+  const RenderState* rs = b.d_rs + s0;
+  const bcr::RenderAug off{0, 0.f, 0.f, 0.f}, on{1, color, light, expo};
+  std::vector<uint16_t> tk[4];
+  const int prof[4] = {bcr::CHEAP, bcr::TEAM_DEFAULT, bcr::CHEAP, bcr::TEAM_DEFAULT};
+  for (int q = 0; q < 4; ++q) {
+    bcr::Renderer* R = bcr::create(E, prof[q], q < 2 ? &off : &on);
+    bcr::render(R, rs, E, cudaStreamPerThread);
+    b.enc.patchify(bcr::rgb(R, 0), bcr::rgb(R, 1), E, 0, cudaStreamPerThread);
+    b.enc.run(2 * E, b.sb.tok, cudaStreamPerThread);
+    VCK(cudaDeviceSynchronize());
+    tk[q] = dl(b.sb.tok, (size_t)E * IMG_TOK * vit::TOK_LD);
+    bcr::destroy(R);
+  }
+  const long long nt = (long long)E * IMG_TOK;
+  const char* nm[4] = {"cheap", "team default", "cheap + aug", "team default + aug"};
+  const int pr[5][2] = {{0, 1}, {0, 2}, {2, 3}, {1, 3}, {2, 1}};
+  std::printf("render quality (%d render states x 2 cameras, frozen SigLIP 2 patch tokens, aug color %.2f light %.2f expo %.2f):\n", E, color, light, expo);
+  for (auto& p : pr) {
+    double m, lo;
+    cos_stats(tk[p[0]], tk[p[1]], nt, m, lo);
+    std::printf("  %-20s vs %-20s token cosine mean %.4f, low 1 %% %.4f\n", nm[p[0]], nm[p[1]], m, lo);
+  }
+  return 0;
+}
+
 int main(int argc, char** argv) {
   if (argc < 2) { std::fprintf(stderr, "usage: bc_verify v5 [--negative] | v6 | v7 | bench [N T mb K]  [--lite] [--teacher CKPT] [--text F32]\n"); return 2; }
   bool neg = false;
@@ -664,6 +775,10 @@ int main(int argc, char** argv) {
     const std::string a = argv[i];
     if (a == "--negative") neg = true;
     else if (a == "--lite") g_lite = true;
+    else if (a == "--act8") g_act8 = true;
+    else if (a == "--arch1") g_arch1 = true;
+    else if (a == "--aug") g_aug = true;
+    else if (a == "--raug") g_raug = true;
     else if (a == "--teacher" && i + 1 < argc) g_teacher = argv[++i];
     else if (a == "--text" && i + 1 < argc) g_text = argv[++i];
     else pos.push_back(a);
@@ -685,6 +800,7 @@ int main(int argc, char** argv) {
     return all ? 0 : 1;
   }
   if (m == "v6") return run_v6();
+  if (m == "rquality") return run_rquality(argc > 2 ? (float)std::atof(argv[2]) : 0.8f, argc > 3 ? (float)std::atof(argv[3]) : 0.8f, argc > 4 ? (float)std::atof(argv[4]) : 0.8f);
   if (m == "v7") return run_v7();
   if (m == "bench")
     return run_bench(pos.size() > 1 ? std::atoi(pos[1].c_str()) : 4096, pos.size() > 2 ? std::atoi(pos[2].c_str()) : 64, pos.size() > 3 ? std::atoi(pos[3].c_str()) : 8192,

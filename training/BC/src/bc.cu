@@ -39,6 +39,7 @@ StudentNet student_net(const BcConfig& c) {
   s.vision = c.vision != 0;
   s.text = c.text != 0;
   s.head = c.head != 0;
+  s.arch = c.arch;
   s.H = s.head ? (c.chunk < 1 ? 1 : c.chunk > MAX_H ? MAX_H : c.chunk) : 1;
   s.x_img = X0_W;
   s.x_txt = X0_W + (s.vision ? IMG_W : 0);
@@ -59,6 +60,7 @@ StudentNet student_net(const BcConfig& c) {
   s.on[SL_P1] = s.vision;
   s.on[SL_A4] = !s.head;
   s.on[SL_E1] = s.on[SL_E2] = s.on[SL_E3] = s.head;
+  if (s.arch == 1) for (int l = 0; l < SL_N; ++l) s.on[l] = false;   // 토큰마다 학생: 변수는 tf 안(tf.h)
   long long o = 0;
   for (int l : {SL_S1, SL_S2, SL_A1, SL_A2, SL_A3, SL_A4, SL_E1, SL_E2, SL_E3, SL_P1}) {
     s.off[l] = o;
@@ -71,18 +73,22 @@ StudentNet student_net(const BcConfig& c) {
 }
 
 // ---- 관측 모으기(롤아웃: 판 e 그대로). role 0 = 교사(goal_mode 1), 1 = 학생 ----
+// 학생 흔들기 열쇠 = (롤아웃 번호, 스텝 << 32 | 판). 교사(role 0)는 흔들기 없음(라벨이 깨끗하게)
 __global__ void __launch_bounds__(AS_L * AS_E) assemble_k(const float* obs_col, const gmap::MapTok* tok, int N, int use_map, int role, int student_goal,
-                                                          uint16_t* x0, uint16_t* sin, uint32_t* mask) {
+                                                          uint16_t* x0, uint16_t* sin, uint32_t* mask, obsv::VecTab vt, const obsv::ObsAug* aug,
+                                                          const Data* dd, int t) {
   const int e = blockIdx.x * AS_E + threadIdx.x / AS_L, lane = threadIdx.x % AS_L;
   if (e >= N) return;   // N 은 8 의 배수 → 같은 워프의 두 판은 함께 돌아감(__syncwarp 안전)
   uint32_t mk;
-  if (role == 0) mk = obsv::assemble(obs_col, N, e, tok[e], x0 + (size_t)e * X0_W, sin + (size_t)e * KSLOT * SLOT_IN, use_map, 1, lane, AS_L);
-  else mk = assemble_student(obs_col, N, e, tok[e], x0 + (size_t)e * X0_W, sin + (size_t)e * KSLOT * SLOT_IN, use_map, student_goal, lane, AS_L);
+  if (role == 0) mk = obsv::assemble(obs_col, N, e, tok[e], x0 + (size_t)e * X0_W, sin + (size_t)e * KSLOT * SLOT_IN, use_map, 1, lane, AS_L, vt);
+  else mk = assemble_student(obs_col, N, e, tok[e], x0 + (size_t)e * X0_W, sin + (size_t)e * KSLOT * SLOT_IN, use_map, student_goal, lane, AS_L, vt, aug,
+                             (uint64_t)dd->rollouts, ((uint64_t)t << 32) | (uint64_t)e);
   if (lane == 0) mask[e] = mk;
 }
 
 // ---- 스텝 처음: 새 에피소드면 번호를 매기고, 학생 렌더 상태·지시 번호 ----
-__global__ void step_begin_k(env::Soa s, const int* cur_len, uint32_t* ep_uid, const Data* dd, int t, int T, int n_txt, RenderState* rs, int* tid) {
+__global__ void step_begin_k(env::Soa s, const int* cur_len, uint32_t* ep_uid, const Data* dd, int t, int T, const TxtSel* tsel, const obsv::ObsAug* aug,
+                             RenderState* rs, int* tid) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= s.N) return;
   uint32_t u = ep_uid[i];
@@ -91,8 +97,8 @@ __global__ void step_begin_k(env::Soa s, const int* cur_len, uint32_t* ep_uid, c
     if (u == 0) u = 1;
     ep_uid[i] = u;
   }
-  if (tid) tid[i] = text_id(u, n_txt);
-  if (rs) { RenderState r; render_state(s, i, r); rs[i] = r; }
+  if (tid) tid[i] = text_row(u, *tsel, aug->eval_unseen);
+  if (rs) { RenderState r; render_state(s, i, r, u); rs[i] = r; }
 }
 
 // ---- A1 입력 이어 붙이기: [X0 288 | 영상 2048 | 글 768] (16 B 덩이 하나 = 스레드 하나) ----
@@ -128,14 +134,16 @@ constexpr int LOSS_T = 256;
 template <int NQ>
 __device__ void bsum(float (&q)[NQ], float* sh);
 // L = (1/M) Σ_r Σ_j m (v − u)², dZ_E3 = 2 m (v − u)/M (bf16)
-__global__ void __launch_bounds__(LOSS_T) flow_loss_k(const float* v, const float* u, const float* fm, int M, int bug, uint16_t* dz, float* part) {
+__global__ void __launch_bounds__(LOSS_T) flow_loss_k(const float* v, const float* u, const float* fm, const uint32_t* amask, int M, int bug, uint16_t* dz,
+                                                      float* part) {
   __shared__ float sh[LOSS_T];
   const int r = blockIdx.x * LOSS_T + threadIdx.x;
   float q[1] = {0.f};
   if (r < M) {
     const float inv = 1.f / (float)M, two = bug == 3 ? 1.f : 2.f;
+    const uint32_t am = *amask;
     for (int j = 0; j < FLOW_W; ++j) {
-      const float m = fm[(size_t)r * MAX_H + j / N_LAB];
+      const float m = ((am >> (j % N_LAB)) & 1u) ? fm[(size_t)r * MAX_H + j / N_LAB] : 0.f;   // 꺼진 행동은 손실에서 뺌
       const float d = v[(size_t)r * FLOW_W + j] - u[(size_t)r * FLOW_W + j];
       q[0] = q[0] + m * d * d;
       dz[(size_t)r * FLOW_W + j] = f2bf(two * m * d * inv);
@@ -157,12 +165,12 @@ __global__ void flow_step_in_k(const float* x, float tau, int M, uint16_t* ein) 
   for (int j = 0; j < FLOW_W; ++j) e[E_X + j] = f2bf(x[(size_t)r * FLOW_W + j]);
   temb_write(tau, e + E_T);
 }
-__global__ void flow_euler_k(const float* v, float dt, int M, int last, float* x, float* act) {
+__global__ void flow_euler_k(const float* v, float dt, int M, int last, const uint32_t* amask, float* x, float* act) {
   const int r = blockIdx.x * blockDim.x + threadIdx.x;
   if (r >= M) return;
   for (int j = 0; j < FLOW_W; ++j) x[(size_t)r * FLOW_W + j] = x[(size_t)r * FLOW_W + j] - dt * v[(size_t)r * FLOW_W + j];
   if (last)
-    for (int k = 0; k < N_ACT; ++k) act[(size_t)r * N_ACT + k] = k < N_LAB ? x[(size_t)r * FLOW_W + k] : 0.f;
+    for (int k = 0; k < N_ACT; ++k) act[(size_t)r * N_ACT + k] = ((*amask >> k) & 1u) ? x[(size_t)r * FLOW_W + k] : 0.f;
 }
 __global__ void copy_mean_k(const float* mean, int M, float* act) {
   const int q = blockIdx.x * blockDim.x + threadIdx.x;
@@ -171,7 +179,7 @@ __global__ void copy_mean_k(const float* mean, int M, float* act) {
 
 // ---- 행동 고르기 + 기록(5.3): 워프 하나 = 판 하나 ----
 struct ActP {
-  const float *meanT, *meanS; const Mode* md; const Data* dd; int t, N; long long cap;
+  const float *meanT, *meanS; const Mode* md; const Data* dd; const uint32_t* amask; int t, N; long long cap;
   const float* obs_col; const gmap::MapTok* tok; env::Soa s; const float* met_init; const int* cur_len; const uint32_t* ep_uid;
   float* act_env; float* dis; uint16_t* d_obs; gmap::MapTok* d_tok; float* d_lab; uint32_t* d_meta; uint32_t* d_epi; RenderState* d_rs;
 };
@@ -179,17 +187,18 @@ __global__ void __launch_bounds__(256) act_rec_k(ActP p) {
   const int i = blockIdx.x * 8 + threadIdx.x / 32, l = threadIdx.x % 32;
   if (i >= p.N) return;
   const int actor = p.md->actor, rec = p.md->record;
+  const uint32_t am = *p.amask;   // 커리큘럼 가림(장치 값): 꺼진 행동은 움직임·라벨 모두 0(= 팔 홈 자세)
   if (l < N_ACT) {
     const int k = l;
     float a = 0.f;
-    if (k < N_LAB) a = actor ? p.meanS[(size_t)i * N_ACT + k] : p.meanT[(size_t)i * N_ACT + k];
-    p.act_env[(size_t)k * p.N + i] = a;   // 환경이 ±1 로 자름. 학습하지 않는 행동 6 개는 0
+    if ((am >> k) & 1u) a = actor ? p.meanS[(size_t)i * N_ACT + k] : p.meanT[(size_t)i * N_ACT + k];
+    p.act_env[(size_t)k * p.N + i] = a;   // 환경이 ±1 로 자름
   }
   float lab[N_LAB];
-  for (int k = 0; k < N_LAB; ++k) lab[k] = fminf(fmaxf(p.meanT[(size_t)i * N_ACT + k], -1.f), 1.f);
+  for (int k = 0; k < N_LAB; ++k) lab[k] = ((am >> k) & 1u) ? fminf(fmaxf(p.meanT[(size_t)i * N_ACT + k], -1.f), 1.f) : 0.f;
   if (l == 0) {
     float d = 0.f;
-    for (int k = 0; k < N_LAB; ++k) { const float e = p.meanS[(size_t)i * N_ACT + k] - lab[k]; d = d + e * e; }
+    for (int k = 0; k < N_LAB; ++k) { const float e = ((am >> k) & 1u) ? p.meanS[(size_t)i * N_ACT + k] - lab[k] : 0.f; d = d + e * e; }
     p.dis[(size_t)p.t * p.N + i] = d;
   }
   if (!rec) return;
@@ -207,7 +216,7 @@ __global__ void __launch_bounds__(256) act_rec_k(ActP p) {
     p.d_epi[slot] = p.ep_uid[i];
     if (p.d_rs) {
       RenderState r;
-      render_state(p.s, i, r);
+      render_state(p.s, i, r, p.ep_uid[i]);
       p.d_rs[slot] = r;
     }
   }
@@ -299,8 +308,9 @@ __global__ void __launch_bounds__(256) rollout_end_k(const float* dis, long long
 struct GatherP {
   const uint16_t* d_obs; const gmap::MapTok* d_tok; const float* d_lab; const uint32_t* d_meta; const uint32_t* d_epi; const RenderState* d_rs;
   const Data* dd; const TrainState* ts;
-  int MB, use_map, student_goal, N, H, n_txt; long long cap; uint64_t seed;
+  int MB, use_map, student_goal, N, H; long long cap; uint64_t seed;
   uint16_t* x0; uint16_t* sin; uint32_t* mask; float* lab; float* chunk; float* fm; RenderState* rs; int* tid;
+  obsv::VecTab vt; const obsv::ObsAug* aug; const TxtSel* tsel;
 };
 NDEV long long gather_index(uint64_t seed, long long iter, int r, long long cnt) {
   return cnt > 0 ? (long long)(hash4(seed, (uint64_t)iter, (uint64_t)r, 0x42434d42ull) % (uint64_t)cnt) : 0;
@@ -316,8 +326,9 @@ __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
   }
   __syncthreads();
   if (r >= g.MB) return;   // MB 는 8 의 배수 → 워프 단위로 같이 빠짐
+  // 흔들기 열쇠 = (갱신 스텝, 행): 같은 표본도 뽑힐 때마다 다르게(증강)
   const uint32_t mk = assemble_student(so[rl], 1, 0, g.d_tok[idx], g.x0 + (size_t)r * X0_W, g.sin + (size_t)r * KSLOT * SLOT_IN, g.use_map, g.student_goal,
-                                       lane, AS_L);
+                                       lane, AS_L, g.vt, g.aug, (uint64_t)g.ts->iter | 0x8000000000000000ull, (uint64_t)r);
   if (lane < N_LAB) g.lab[(size_t)r * N_LAB + lane] = g.d_lab[idx * N_LAB + lane];
   if (lane == 0) g.mask[r] = mk;
   const uint32_t e0 = g.d_epi[idx];
@@ -333,11 +344,11 @@ __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
     uint32_t* dst = reinterpret_cast<uint32_t*>(g.rs + r);
     for (int q = lane; q < (int)(sizeof(RenderState) / 4); q += AS_L) dst[q] = src[q];
   }
-  if (g.tid && lane == 0) g.tid[r] = text_id(e0, g.n_txt);
+  if (g.tid && lane == 0) g.tid[r] = text_row(e0, *g.tsel, g.aug->eval_unseen);
 }
 
 // ---- BC 손실(K5): L = (1/M) Σ_r Σ_{k<2} (μ − 라벨)², dZ_A4 = 2(μ − 라벨)/M (bf16), 나머지 행동 0 ----
-__global__ void __launch_bounds__(LOSS_T) bc_loss_k(const float* mean, const float* lab, int M, int bug, uint16_t* dz, float* part) {
+__global__ void __launch_bounds__(LOSS_T) bc_loss_k(const float* mean, const float* lab, const uint32_t* amask, int M, int bug, uint16_t* dz, float* part) {
   __shared__ float sh[LOSS_T];
   const int r = blockIdx.x * LOSS_T + threadIdx.x;
   float q[1] = {0.f};
@@ -345,7 +356,7 @@ __global__ void __launch_bounds__(LOSS_T) bc_loss_k(const float* mean, const flo
     const float inv = 1.f / (float)M, two = bug == 1 ? 1.f : 2.f;
     for (int k = 0; k < N_ACT; ++k) {
       float g = 0.f;
-      if (k < N_LAB) {
+      if ((*amask >> k) & 1u) {
         const float d = mean[(size_t)r * N_ACT + k] - lab[(size_t)r * N_LAB + k];
         q[0] = q[0] + d * d;
         g = two * d * inv;
@@ -379,6 +390,36 @@ __global__ void update_end_k(TrainState* ts, Data* dd, int ring, BcLog* out) {
   dd->pad = dd->pad + 1;
   L.seq = dd->pad;
   out[(L.seq - 1) % ring] = L;
+}
+
+// ---- arch 1(토큰마다 학생): X0(304)·지시 표 → 묶음 입력 줄(tf.h). 값은 bf16 그대로 옮김(새로 계산 없음) — 물체 묶음은 칸 줄(sin) 그대로 ----
+//   ARM 48 = 관측 0..41 | 1 · BASE 16 = 관측 42..44 | 1 · GOAL 16 = 관측 45..55(직전 명령 8, 손끝 → 목표 3) + 경유 지점 4 | 1
+//   WALL 80 = 벽 56 + 안 본 곳 광선 8 | 1 · ROOM 16 = 방 10 | 1 · TXT 144 = 지시 128 | 1
+struct PackP { const uint16_t* x0; const uint16_t* txt; const int* tid; int M; uint16_t* g[tfm::N_GRP]; };
+__global__ void tf_pack_k(PackP p) {
+  const int r = blockIdx.x, c = threadIdx.x;   // 블록 = 행, 스레드 = 칸(160)
+  if (r >= p.M) return;
+  const uint16_t* x = p.x0 + (size_t)r * X0_W;
+  const uint16_t one = 0x3f80;
+  auto put = [&](int g, int K, int kreal, uint16_t v) { if (c < K) p.g[g][(size_t)r * K + c] = c < kreal ? v : (c == kreal ? one : (uint16_t)0); };
+  put(tfm::G_ARM, 48, 42, c < 42 ? x[X0_OBS + c] : 0);
+  put(tfm::G_BASE, 16, 3, c < 3 ? x[X0_OBS + 42 + c] : 0);
+  put(tfm::G_GOAL, 16, 15, c < 11 ? x[X0_OBS + 45 + c] : (c < 15 ? x[X0_WAY + c - 11] : 0));
+  put(tfm::G_WALL, 80, 64, c < 56 ? x[X0_OBS + N_OBS_G1 + c] : (c < 64 ? x[X0_FRONT + c - 56] : 0));
+  put(tfm::G_ROOM, 16, 10, c < 10 ? x[X0_OBS + N_OBS_G1 + 56 + c] : 0);
+  put(tfm::G_TXT, 144, 128, c < 128 ? p.txt[(size_t)p.tid[r] * TXT_W + c] : 0);
+}
+static_assert(X0_OBS + N_OBS_G1 + 56 + 10 <= X0_BIAS, "wall/room inside X0");
+// 추론 청크의 첫 스텝 → 학생 행동 [M][8](꺼진 행동은 tf 가 이미 0)
+__global__ void tf_first_k(const float* act, int H, int M, float* out) {
+  const int q = blockIdx.x * blockDim.x + threadIdx.x;
+  if (q < M * N_ACT) out[q] = act[(size_t)(q / N_ACT) * H * N_ACT + q % N_ACT];
+}
+// tf 손실(loss_d[0] = 이 미니배치) → 기록 누적·다음 미니배치 열쇠(bc_loss_reduce_k 와 같은 뜻)
+__global__ void tf_loss_acc_k(const float* loss_d, TrainState* ts) {
+  ts->s_pg = ts->s_pg + loss_d[0];
+  ts->n_mb = ts->n_mb + 1;
+  ts->iter = ts->iter + 1;
 }
 
 __global__ void set_col_k(uint16_t* buf, long long rows, int ld, int col, uint16_t v) {
@@ -505,6 +546,62 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
   loss_part = alloc<float>((size_t)(MB + LOSS_T - 1) / LOSS_T);
   ts = alloc<TrainState>(1);
   txt = alloc<uint16_t>((size_t)MAX_TXT * TXT_W);
+  // v2: 얼린 이름·생김새·지시 표, 행동 가림·흔들기·지시 고르기(장치 값)
+  if (!vt.load()) std::abort();
+  vt.upload();
+  dev_bytes += vt.dev_bytes();
+  {
+    if (vt.n_instr > MAX_TXT) { std::fprintf(stderr, "bc: %d instructions > %d\n", vt.n_instr, MAX_TXT); std::abort(); }
+    BCK(cudaMemcpy(txt, vt.instr.data(), vt.instr.size() * 2, cudaMemcpyHostToDevice));
+    n_txt = vt.n_instr;
+    TxtSel ts_h{};
+    std::vector<std::string> tasks;
+    FILE* f = std::fopen((vt.dir + "/instr.jsonl").c_str(), "r");
+    char line[2048];
+    int row = 0;
+    while (f && std::fgets(line, sizeof line, f)) {
+      const std::string L(line);
+      auto field = [&](const char* k) { const size_t a = L.find(k); if (a == std::string::npos) return std::string(); const size_t b = L.find('"', a + std::strlen(k)); const size_t e = L.find('"', b + 1); return L.substr(b + 1, e - b - 1); };
+      const std::string task = field("\"task\":");
+      int ti = -1;
+      for (size_t q = 0; q < tasks.size(); ++q) if (tasks[q] == task) ti = (int)q;
+      if (ti < 0) { tasks.push_back(task); ti = (int)tasks.size() - 1; }
+      const bool held = L.find("\"heldout\": true") != std::string::npos;
+      if (ti == cfg.task) {
+        if (held && ts_h.n_held < 16) ts_h.held[ts_h.n_held++] = row;
+        if (!held && ts_h.n_train < 16) ts_h.train[ts_h.n_train++] = row;
+      }
+      ++row;
+    }
+    if (f) std::fclose(f);
+    if (ts_h.n_train == 0) { std::fprintf(stderr, "bc: no instructions for task %d\n", cfg.task); std::abort(); }
+    tsel_d = alloc<TxtSel>(1);
+    BCK(cudaMemcpy(tsel_d, &ts_h, sizeof ts_h, cudaMemcpyHostToDevice));
+    amask_d = alloc<uint32_t>(1);
+    const uint32_t am = cfg.act_mask ? cfg.act_mask : 0x3u;
+    BCK(cudaMemcpy(amask_d, &am, sizeof am, cudaMemcpyHostToDevice));
+    aug_d = alloc<obsv::ObsAug>(1);
+    obsv::ObsAug a = obsv::kAugOff;
+    a.on = cfg.aug_on; a.eval_unseen = cfg.aug_eval_unseen; a.vel_sigma = cfg.aug_vel_sigma; a.prev_drop = cfg.aug_prev_drop; a.prev_sigma = cfg.aug_prev_sigma;
+    a.p_erase = cfg.aug_p_erase; a.p_syn = cfg.aug_p_syn; a.p_hyper = cfg.aug_p_hyper; a.p_wrong = cfg.aug_p_wrong; a.p_slot_drop = cfg.aug_p_slot_drop;
+    a.p_map_off = cfg.aug_p_map_off; a.seed = cfg.seed * 0x2545F4914F6CDD1Dull + 0xB0Cull;
+    BCK(cudaMemcpy(aug_d, &a, sizeof a, cudaMemcpyHostToDevice));
+  }
+  if (sn.arch == 1) {   // 토큰마다 학생(tf.h): 변수·작업 버퍼는 tf 안. 묶음 입력 줄(영상·물체 묶음은 sb.tok·sb.sin 을 그대로)
+    tfm::TfCfg tc;
+    if (cfg.tf_d) tc.d = cfg.tf_d;
+    if (cfg.tf_layers) tc.layers = cfg.tf_layers;
+    if (cfg.tf_heads) tc.heads = cfg.tf_heads;
+    if (cfg.tf_mlp) tc.mlp = cfg.tf_mlp;
+    if (cfg.tf_elayers) tc.e_layers = cfg.tf_elayers;
+    tc.H = sn.H; tc.A = N_ACT; tc.Bmax = SM; tc.dw_chunk = cfg.dw_chunk; tc.seed = cfg.seed;
+    if (!sn.vision || !sn.head) { std::fprintf(stderr, "bc: arch 1 needs vision 1 and head 1 (flow)\n"); std::abort(); }
+    tf.init(tc);
+    dev_bytes += tf.bytes;
+    for (int g : {tfm::G_TXT, tfm::G_ARM, tfm::G_BASE, tfm::G_GOAL, tfm::G_WALL, tfm::G_ROOM}) tg[g] = alloc<uint16_t>((size_t)SM * tfm::kGrp[g].K);
+    tact = alloc<float>((size_t)SM * MAX_H * N_ACT);
+    txb = alloc<float>((size_t)SM * MAX_H * N_ACT * 2);
+  }
 
   if (sn.vision) {
     vit::HostWeights hw;
@@ -517,7 +614,12 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
       for (int l = 0; l < vit::LAYERS; ++l) enc.f8[l] = vit::F8_ALL;
     enc.init(hw, 2 * SM);
     const int rb = cfg.render_batch > 0 ? cfg.render_batch : 256;
-    rnd = bcr::create(rb < SM ? rb : SM, cfg.render_profile);
+    const bcr::RenderAug ra{cfg.render_aug, cfg.ra_color, cfg.ra_light, cfg.ra_expo};
+    rnd = bcr::create(rb < SM ? rb : SM, cfg.render_profile, &ra);
+    if (cfg.render_team_mix > 0.f) {   // 섞기: 묶음마다 앞 몫을 팀 기본 설정(튕김·반사·잡음 제거)으로 — 같은 흔들기
+      rnd_team = bcr::create(rb < SM ? rb : SM, bcr::TEAM_DEFAULT, &ra);
+      dev_bytes += bcr::bytes(rnd_team);
+    }
     rs_roll = alloc<RenderState>(N);
     rs_mb = alloc<RenderState>(MB);
     dev_bytes += enc.bytes + enc.W.bytes + bcr::bytes(rnd);
@@ -539,13 +641,13 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
     };
     for (int l : {SL_S1, SL_S2, SL_A1, SL_A2, SL_A3, SL_A4})
       if (sn.on[l]) fill(l, 0, sn.L[l].bias, sn.L[l].bias);
-    if (sn.head) {
+    if (sn.head && sn.arch == 0) {
       fill(SL_E1, 0, E_T + TEMB, E_T + TEMB - 1);
       fill(SL_E2, 0, sn.L[SL_E2].bias, sn.L[SL_E2].bias);
       fill(SL_E3, 0, sn.L[SL_E3].bias, sn.L[SL_E3].bias);
     }
-    if (sn.vision) fill(SL_P1, 0, vit::D, vit::D);
-    if (sn.ext()) fill(SL_A1, X0_W, sn.k1, sn.k1 - X0_W);
+    if (sn.vision && sn.arch == 0) fill(SL_P1, 0, vit::D, vit::D);
+    if (sn.ext() && sn.arch == 0) fill(SL_A1, X0_W, sn.k1, sn.k1 - X0_W);
     BCK(cudaMemcpy(P, hp.data(), sizeof(float) * sn.total, cudaMemcpyHostToDevice));
     to_bf16(P, Pb, sn.total, 0);
     TrainState h{};
@@ -573,7 +675,10 @@ Bc::~Bc() {
   for (auto* g : {&g_roll, &g_roll_s, &g_upd}) if (*g) cudaGraphExecDestroy(*g);
   tok.reset(); map.reset(); env.reset();
   if (rnd) bcr::destroy(rnd);
+  if (rnd_team) bcr::destroy(rnd_team);
   enc.free_all();
+  tf.free_all();
+  vt.free_dev();
   for (void* p : allocs) cudaFree(p);
   for (size_t k = 0; k < ev_a.size(); ++k) { cudaEventDestroy(ev_a[k]); cudaEventDestroy(ev_b[k]); }
   for (auto& e : stage_ev) if (e) cudaEventDestroy(e);
@@ -640,14 +745,40 @@ void Bc::vis_encode(const RenderState* rs, int M) {
   const int E = bcr::batch(rnd);
   for (int e0 = 0; e0 < M; e0 += E) {
     const int m = M - e0 < E ? M - e0 : E;
-    bcr::render(rnd, rs + e0, m, ST);
-    enc.patchify(bcr::rgb(rnd, 0), bcr::rgb(rnd, 1), m, e0, ST);
+    // 팀 기본 설정 섞기(render_team_mix): 이 묶음의 앞 round(mix·m) 표본(자리는 늘 같음 — 미니배치 행은 무작위 표본이라 표본 쪽에서는 무작위)
+    const int mt = rnd_team ? (int)(cfg.render_team_mix * (float)m + 0.5f) : 0;
+    if (mt > 0) {
+      bcr::render(rnd_team, rs + e0, mt, ST);
+      enc.patchify(bcr::rgb(rnd_team, 0), bcr::rgb(rnd_team, 1), mt, e0, ST);
+    }
+    if (m - mt > 0) {
+      bcr::render(rnd, rs + e0 + mt, m - mt, ST);
+      enc.patchify(bcr::rgb(rnd, 0), bcr::rgb(rnd, 1), m - mt, e0 + mt, ST);
+    }
   }
   enc.run(2 * M, sb.tok, ST);
 }
 
+// arch 1: 묶음 입력 줄(tf_pack_k) + 영상 토큰(sb.tok) + 물체 칸 줄(sb.sin, 같은 304 배치) → tf prefix 는 부르는 쪽(학습: forward_prefix, 추론: infer)
+static tfm::TfIn tf_in(Bc& b) {
+  tfm::TfIn in{};
+  for (int g = 0; g < tfm::N_GRP; ++g) in.g[g] = b.tg[g];
+  in.g[tfm::G_IMG] = b.sb.tok;
+  in.g[tfm::G_OBJ] = b.sb.sin;
+  in.obj_mask = b.sb.mask;
+  in.grp_off = nullptr;   // 지도 끄기는 obs.h 흔들기가 값으로(칸 비트 0·벽·방 0)
+  return in;
+}
 void Bc::student_trunk(int M, const RenderState* rs) {
   auto W = [&](int l) { return Pb + sn.off[l]; };
+  if (sn.arch == 1) {
+    vis_encode(rs, M);
+    PackP pk{sb.x0, txt, sb.tid, M, {}};
+    for (int g = 0; g < tfm::N_GRP; ++g) pk.g[g] = tg[g];
+    tf_pack_k<<<M, 160>>>(pk);
+    BCK(cudaGetLastError());
+    return;
+  }
   slot_fwd(sb.sin, sb.mask, W(SL_S1), W(SL_S2), M, sb.s1o, sb.s2o, sb.x0, sb.amax, 0);
   const uint16_t* X = sb.x0;
   if (sn.ext()) {
@@ -675,6 +806,13 @@ static void e_chain(Bc& b, int M) {
 // 추론 머리: MSE 는 A4 평균, flow 는 오일러 S 스텝(τ = 1 → 0) 뒤 청크 첫 행동
 void Bc::student_act(int M) {
   const unsigned g = (unsigned)((M + 127) / 128);
+  if (sn.arch == 1) {   // prefix 한 번 → 오일러(행동 전문가만) → 청크 첫 스텝
+    const int S = cfg.flow_steps > 0 ? cfg.flow_steps : 10;
+    tf.infer(tf_in(*this), M, S, amask_d, &data_d->rollouts, cur_t, cfg.seed ^ 0x1AF5ull, txb, tact, 0);
+    tf_first_k<<<(unsigned)((M * N_ACT + 255) / 256), 256>>>(tact, sn.H, M, sb.act);
+    BCK(cudaGetLastError());
+    return;
+  }
   if (!sn.head) {
     gemm_fwd(sn.L[SL_A4], sb.h[SL_A3], M, Pb + sn.off[SL_A4], sb.out, 0);
     copy_mean_k<<<(unsigned)((M * N_ACT + 255) / 256), 256>>>(sb.out, M, sb.act);
@@ -683,15 +821,16 @@ void Bc::student_act(int M) {
     for (int s = 0; s < S; ++s) {
       flow_step_in_k<<<g, 128>>>(sb.xf, 1.f - (float)s / (float)S, M, sb.h[SL_A3]);
       e_chain(*this, M);
-      flow_euler_k<<<g, 128>>>(sb.out, 1.f / (float)S, M, s == S - 1, sb.xf, sb.act);
+      flow_euler_k<<<g, 128>>>(sb.out, 1.f / (float)S, M, s == S - 1, amask_d, sb.xf, sb.act);
     }
   }
   BCK(cudaGetLastError());
 }
 
 void Bc::gather() {
-  GatherP g{d_obs, d_tok, d_lab, d_meta, d_epi, sn.vision ? d_rs : nullptr, data_d, ts, MB, cfg.use_map, cfg.student_goal, N, sn.H, n_txt, cap, cfg.seed,
-            sb.x0, sb.sin, sb.mask, lab_mb, sn.head ? chunk_mb : nullptr, sb.fm, sn.vision ? rs_mb : nullptr, sn.text ? sb.tid : nullptr};
+  GatherP g{d_obs, d_tok, d_lab, d_meta, d_epi, sn.vision ? d_rs : nullptr, data_d, ts, MB, cfg.use_map, cfg.student_goal, N, sn.H, cap, cfg.seed,
+            sb.x0, sb.sin, sb.mask, lab_mb, sn.head ? chunk_mb : nullptr, sb.fm, sn.vision ? rs_mb : nullptr, (sn.text || sn.arch == 1) ? sb.tid : nullptr,
+            vt.dev(), aug_d, tsel_d};
   gather_k<<<(MB + AS_E - 1) / AS_E, AS_L * AS_E>>>(g);
   BCK(cudaGetLastError());
 }
@@ -701,20 +840,35 @@ void Bc::flow_inputs(int M) {
   BCK(cudaGetLastError());
 }
 
+static tfm::TfFlow tf_flow(Bc& b) { return tfm::TfFlow{b.chunk_mb, b.sb.fm, b.amask_d, &b.ts->iter, b.cfg.seed ^ 0xF10Full}; }
 void Bc::head_forward(int M) {
+  if (sn.arch == 1) {
+    tf.forward_prefix(tf_in(*this), M, 0);
+    tf.flow_inputs(tf_flow(*this), M, 0);
+    tf.expert_forward(M, true, 0);
+    return;
+  }
   if (!sn.head) gemm_fwd(sn.L[SL_A4], sb.h[SL_A3], M, Pb + sn.off[SL_A4], sb.out, 0);
   else { flow_inputs(M); e_chain(*this, M); }
 }
 
 void Bc::loss(int M) {
   const int nb = (M + LOSS_T - 1) / LOSS_T;
-  if (!sn.head) bc_loss_k<<<nb, LOSS_T>>>(sb.out, lab_mb, M, bug, sb.dz[SL_A4], loss_part);
-  else flow_loss_k<<<nb, LOSS_T>>>(sb.out, sb.xf, sb.fm, M, bug, sb.dz[SL_E3], loss_part);
+  if (sn.arch == 1) {
+    tf.bug = bug == 3 ? 4 : 0;   // 음성 대조 3(flow 손실 배율 2 빠뜨림)을 tf 쪽 같은 버그로
+    tf.loss(tf_flow(*this), M, 0);
+    tf_loss_acc_k<<<1, 1>>>(tf.loss_d, ts);
+    BCK(cudaGetLastError());
+    return;
+  }
+  if (!sn.head) bc_loss_k<<<nb, LOSS_T>>>(sb.out, lab_mb, amask_d, M, bug, sb.dz[SL_A4], loss_part);
+  else flow_loss_k<<<nb, LOSS_T>>>(sb.out, sb.xf, sb.fm, amask_d, M, bug, sb.dz[SL_E3], loss_part);
   bc_loss_reduce_k<<<1, 256>>>(loss_part, nb, M, ts);
   BCK(cudaGetLastError());
 }
 
 void Bc::backward(int M) {
+  if (sn.arch == 1) { tf.backward(tf_in(*this), M, 0); return; }
   auto W = [&](int l) { return Pb + sn.off[l]; };
   const int ch = cfg.dw_chunk;
   const LayerDesc* L = sn.L;
@@ -741,8 +895,8 @@ void Bc::backward(int M) {
     gemm_dx_dact(L[SL_A1], b.dz[SL_A1], M, W(SL_A1) + sn.x_img, b.x0e + sn.x_img, IMG_W, b.dz[SL_P1], bug == 4 ? 1 : 0, 0);
     gemm_dw(L[SL_P1], b.dz[SL_P1], b.tok, M * IMG_TOK, ws[SL_P1], ch, 0);
   }
-  slot_bwd(b.dpool, b.s2o, b.s1o, b.sin, b.mask, b.amax, W(SL_S2), M, ch, ws[SL_S2], ws[SL_S1], keep_slot_bufs ? b.dz[SL_S2] : nullptr,
-           keep_slot_bufs ? b.dz[SL_S1] : nullptr, 0);
+  slot_bwd(b.dpool, b.s2o, b.s1o, b.sin, b.mask, b.amax, W(SL_S2), M, ch, ws[SL_S2], ws[SL_S1], (keep_slot_bufs || !kSlotFused) ? b.dz[SL_S2] : nullptr,
+           (keep_slot_bufs || !kSlotFused) ? b.dz[SL_S1] : nullptr, 0);
   DwJob jobs[SL_N];
   int nj = 0;
   for (int l = 0; l < SL_N; ++l) {
@@ -753,7 +907,10 @@ void Bc::backward(int M) {
   dw_reduce(jobs, nj, 0);
 }
 
-void Bc::optimizer() { adam_step(P, G, Am, Av, Pb, sn.total, gn_part, ts, ah, 0); }
+void Bc::optimizer() {
+  if (sn.arch == 1) tf.adam(ts, ah, 0);
+  else adam_step(P, G, Am, Av, Pb, sn.total, gn_part, ts, ah, 0);
+}
 
 void Bc::update_step() {
   gather();
@@ -782,20 +939,21 @@ void Bc::rollout_step(int t, bool student) {
   const int ab = (N + AS_E - 1) / AS_E;
   float* obs_t = obs_col + (size_t)(t % 2) * env::N_OBS * N;
   float* obs_n = obs_col + (size_t)((t + 1) % 2) * env::N_OBS * N;
-  step_begin_k<<<(N + 127) / 128, 128>>>(env->soa(), cur_len, ep_uid, data_d, t, T, n_txt, student && sn.vision ? rs_roll : nullptr,
-                                         student && sn.text ? sb.tid : nullptr);
-  assemble_k<<<ab, AS_L * AS_E>>>(obs_t, tok->at(t), N, cfg.teacher_use_map, 0, 0, nt.x0, nt.sin, nt.mask);
+  cur_t = t;
+  step_begin_k<<<(N + 127) / 128, 128>>>(env->soa(), cur_len, ep_uid, data_d, t, T, tsel_d, aug_d, student && sn.vision ? rs_roll : nullptr,
+                                         student && (sn.text || sn.arch == 1) ? sb.tid : nullptr);
+  assemble_k<<<ab, AS_L * AS_E>>>(obs_t, tok->at(t), N, cfg.teacher_use_map, 0, 0, nt.x0, nt.sin, nt.mask, vt.dev(), nullptr, data_d, t);
   forward_teacher(nt, N);
   const float* meanS = nt.mean;
   if (student) {
-    assemble_k<<<ab, AS_L * AS_E>>>(obs_t, tok->at(t), N, cfg.use_map, 1, cfg.student_goal, sb.x0, sb.sin, sb.mask);
+    assemble_k<<<ab, AS_L * AS_E>>>(obs_t, tok->at(t), N, cfg.use_map, 1, cfg.student_goal, sb.x0, sb.sin, sb.mask, vt.dev(), aug_d, data_d, t);
     student_trunk(N, rs_roll);
-    if (sn.head) flow_noise_k<<<(N + 127) / 128, 128>>>(data_d, cfg.seed, t, N, sb.xf);
+    if (sn.head && sn.arch == 0) flow_noise_k<<<(N + 127) / 128, 128>>>(data_d, cfg.seed, t, N, sb.xf);
     student_act(N);
     meanS = sb.act;
   }
   const float* met_init = map->metrics() + (size_t)gmap::M_INIT * N;
-  ActP p{nt.mean, meanS, mode_d, data_d, t, N, cap, obs_t, tok->at(t), env->soa(), met_init, cur_len, ep_uid, act_env, dis, d_obs, d_tok, d_lab, d_meta, d_epi, d_rs};
+  ActP p{nt.mean, meanS, mode_d, data_d, amask_d, t, N, cap, obs_t, tok->at(t), env->soa(), met_init, cur_len, ep_uid, act_env, dis, d_obs, d_tok, d_lab, d_meta, d_epi, d_rs};
   act_rec_k<<<(N + 7) / 8, 256>>>(p);
   env->step(act_env, obs_n, rew, done);
   epstat_k<<<(N + 127) / 128, 128>>>(done, met_init, N, cur_len, it_stat, it_out, tab);
@@ -864,11 +1022,19 @@ int bc_load_teacher(void* h, const char* path) {
 int bc_load_text_table(void* h, const char* path) {
   auto* b = static_cast<Bc*>(h);
   FILE* f = std::fopen(path, "rb");
-  if (!f) return -1;
+  if (!f) {   // v2: 표는 만들 때 training/data/vla_v1 에서 이미 읽음 — 예전 설정의 기본 경로가 없어도 돈다
+    std::fprintf(stderr, "bc: text table %s not found; using training/data/vla_v1 instr128 (%d sentences)\n", path, b->n_txt);
+    return b->n_txt;
+  }
   std::fseek(f, 0, SEEK_END);
   const long bytes = std::ftell(f);
   std::fseek(f, 0, SEEK_SET);
   const int k = (int)(bytes / (4 * bc::TXT_W));
+  if (bytes % (4 * 768) == 0 && bytes % (4 * bc::TXT_W * 6) != 0 && bytes / (4 * 768) <= 64) {   // 예전 SigLIP 2 [k][768] 파일: v2 는 vla_v1 instr128 을 씀
+    std::fclose(f);
+    std::fprintf(stderr, "bc: %s looks like an old 768-d text table; using training/data/vla_v1 instr128 (%d sentences)\n", path, b->n_txt);
+    return b->n_txt;
+  }
   if (k < 1 || k > bc::MAX_TXT || bytes != (long)k * 4 * bc::TXT_W) { std::fclose(f); return -2; }
   std::vector<float> v((size_t)k * bc::TXT_W);
   const bool ok = std::fread(v.data(), 4, v.size(), f) == v.size();
@@ -879,7 +1045,12 @@ int bc_load_text_table(void* h, const char* path) {
   BCK(cudaDeviceSynchronize());
   BCK(cudaMemcpy(b->txt, hb.data(), hb.size() * 2, cudaMemcpyHostToDevice));
   b->n_txt = k;
-  if (b->cfg.use_graphs) b->capture();   // 문장 수는 그래프에 박히는 호스트 값
+  {   // 새 표: 모든 행을 학습 문장으로
+    bc::TxtSel s{};
+    s.n_train = k < 16 ? k : 16;
+    for (int q = 0; q < s.n_train; ++q) s.train[q] = q;
+    BCK(cudaMemcpy(b->tsel_d, &s, sizeof s, cudaMemcpyHostToDevice));
+  }
   return k;
 }
 int bc_reset_env(void* h, uint64_t env_seed) {
@@ -924,18 +1095,20 @@ int bc_clear_table(void* h) {
   BCK(cudaMemsetAsync(b->tab, 0, sizeof(unsigned long long) * 3 * 2 * bc::TAB_C * bc::TAB_Q, 0));
   return 0;
 }
+static float* stud_P(Bc* b) { return b->sn.arch == 1 ? b->tf.P : b->P; }
+static long long stud_n(Bc* b) { return b->sn.arch == 1 ? b->tf.lay.total : b->sn.total; }
 int bc_save_student(void* h, const char* path) {
   auto* b = static_cast<Bc*>(h);
-  const long long n = b->sn.total;
+  const long long n = stud_n(b);
   std::vector<float> P((size_t)n);
   BCK(cudaDeviceSynchronize());
-  BCK(cudaMemcpy(P.data(), b->P, sizeof(float) * n, cudaMemcpyDeviceToHost));
+  BCK(cudaMemcpy(P.data(), stud_P(b), sizeof(float) * n, cudaMemcpyDeviceToHost));
   FILE* f = std::fopen(path, "wb");
   if (!f) return -1;
   uint8_t hd[64] = {0};
-  std::memcpy(hd, "BCSTUD02", 8);
+  std::memcpy(hd, b->sn.arch == 1 ? "BCSTUD03" : "BCSTUD02", 8);
   std::memcpy(hd + 8, &n, 8);
-  const int32_t shape[4] = {b->sn.vision, b->sn.text, b->sn.head, b->sn.H};
+  const int32_t shape[4] = {b->sn.vision, b->sn.text, b->sn.head, b->sn.H | (b->sn.arch << 8)};
   std::memcpy(hd + 16, shape, sizeof shape);
   std::fwrite(hd, 1, 64, f);
   std::fwrite(P.data(), sizeof(float), (size_t)n, f);
@@ -944,7 +1117,7 @@ int bc_save_student(void* h, const char* path) {
 }
 int bc_load_student(void* h, const char* path) {
   auto* b = static_cast<Bc*>(h);
-  const long long n = b->sn.total;
+  const long long n = stud_n(b);
   FILE* f = std::fopen(path, "rb");
   if (!f) return -1;
   uint8_t hd[64];
@@ -953,16 +1126,16 @@ int bc_load_student(void* h, const char* path) {
   std::fclose(f);
   long long nn = 0;
   std::memcpy(&nn, hd + 8, 8);
-  if (!ok || (std::memcmp(hd, "BCSTUD01", 8) && std::memcmp(hd, "BCSTUD02", 8)) || nn != n) return -2;
+  if (!ok || (std::memcmp(hd, "BCSTUD01", 8) && std::memcmp(hd, "BCSTUD02", 8) && std::memcmp(hd, "BCSTUD03", 8)) || nn != n) return -2;
   BCK(cudaDeviceSynchronize());
-  BCK(cudaMemcpy(b->P, P.data(), sizeof(float) * n, cudaMemcpyHostToDevice));
-  net::to_bf16(b->P, b->Pb, n, 0);
+  BCK(cudaMemcpy(stud_P(b), P.data(), sizeof(float) * n, cudaMemcpyHostToDevice));
+  net::to_bf16(stud_P(b), b->sn.arch == 1 ? b->tf.Pb : b->Pb, n, 0);
   BCK(cudaDeviceSynchronize());
   return 0;
 }
 int64_t bc_num_params(void* h) {
   auto* b = static_cast<Bc*>(h);
-  long long n = 0;
+  long long n = b->sn.arch == 1 ? b->tf.lay.total : 0;
   for (int l = 0; l < bc::SL_N; ++l)
     if (b->sn.on[l]) n += (long long)b->sn.L[l].N * b->sn.L[l].K;
   return n;
@@ -972,4 +1145,15 @@ int64_t bc_device_bytes(void* h) {
   return (int64_t)(b->dev_bytes + b->map->bytes() + b->tok->bytes() + sizeof(float) * (env::NUM_F + 3) * (size_t)b->N);
 }
 int bc_sync(void*) { BCK(cudaDeviceSynchronize()); return 0; }
+int bc_set_act_mask(void* h, uint32_t mask) {
+  auto* b = static_cast<Bc*>(h);
+  b->set_dev(b->amask_d, &mask, sizeof mask);
+  return 0;
+}
+int bc_set_aug_eval(void* h, int32_t aug_on, int32_t eval_unseen) {
+  auto* b = static_cast<Bc*>(h);
+  const int32_t v[2] = {aug_on, eval_unseen};   // ObsAug 앞 두 칸(on, eval_unseen)
+  b->set_dev(b->aug_d, v, sizeof v);
+  return 0;
+}
 }
