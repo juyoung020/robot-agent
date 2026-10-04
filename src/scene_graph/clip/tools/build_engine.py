@@ -1,4 +1,5 @@
-"""TensorRT engine for the SigLIP 2 mask-pooled image tower (export_siglip2.py ONNX).
+"""TensorRT engine for the SigLIP 2 mask-pooled image tower (export_siglip2.py ONNX) or the text tower
+(export_siglip2_text.py ONNX, input tok_emb N x 64 x 768 — same FP32 pins).
 
 FP16 with the numerically sensitive layers pinned to FP32 (docs/clip_candidates.md 2.4: SigLIP activations overflow FP16
 inside the opset-13 decomposed LayerNorm -> cosine 0.64-0.74 without this). Pinned: every layer whose ONNX name contains
@@ -101,8 +102,9 @@ def main():
             t = net.get_input(i)
             if t.name == "images":
                 t.dtype = trt.float16
-    S = net.get_input(0).shape[-1]
-    G = net.get_input(1).shape[-1]
+    # every input has a dynamic batch axis 0; the rest is static (image tower: images N x 3 x S x S + wpatch N x G²,
+    # text tower export_siglip2_text.py: tok_emb N x 64 x 768)
+    shapes = {net.get_input(i).name: tuple(net.get_input(i).shape)[1:] for i in range(net.num_inputs)}
     if "-" in a.profiles:
         lo, hi = (int(x) for x in a.profiles.split("-"))
         buckets = [(lo, hi, hi)]
@@ -110,8 +112,8 @@ def main():
         buckets = [(n, n, n) for n in (int(x) for x in a.profiles.split(","))]
     for lo, opt, hi in buckets:
         pr = b.create_optimization_profile()
-        pr.set_shape("images", (lo, 3, S, S), (opt, 3, S, S), (hi, 3, S, S))
-        pr.set_shape("wpatch", (lo, G), (opt, G), (hi, G))
+        for nm, rest in shapes.items():
+            pr.set_shape(nm, (lo,) + rest, (opt,) + rest, (hi,) + rest)
         cfg.add_optimization_profile(pr)
         if a.int8 and hasattr(cfg, "set_calibration_profile") and (lo, opt, hi) == buckets[-1]:
             cfg.set_calibration_profile(pr)
@@ -135,7 +137,7 @@ def main():
             n16 += 1
     if a.int8:
         cfg.int8_calibrator = Calib(a.int8, buckets[-1][2], a.plan + ".calib")
-    print(f"TRT {trt.__version__}: {net.num_layers} layers, pinned FP32 {n32}, kept FP16 {n16}, profiles {buckets}, S {S}, grid {G}")
+    print(f"TRT {trt.__version__}: {net.num_layers} layers, pinned FP32 {n32}, kept FP16 {n16}, profiles {buckets}, inputs {shapes}")
     blob = b.build_serialized_network(net, cfg)
     if blob is None:
         sys.exit("build failed")

@@ -31,7 +31,9 @@
 #define SGC_NEON 1
 #endif
 
-#include "sgclip.h"
+#include "labels_impl.hpp"
+
+using sgclip_detail::Row;
 
 namespace {
 
@@ -132,37 +134,11 @@ std::string lower(std::string s) {
   return s;
 }
 
-struct Row {
-  std::string en, ko, synset;
-  int syn = -1;                 // synset 번호(없으면 -1: 줄마다 고유)
-  std::vector<int> chain;       // [자기 synset, 상위어 …] 번호
-  bool main = false, structural = false;
-};
+
 
 }  // namespace
 
-struct sgc_labels {
-  std::string dir, name, sha;
-  int K = 0;
-  std::vector<uint16_t> text;   // K × D FP16
-  std::vector<Row> rows;
-  std::vector<std::string> syn_names;
-  std::unordered_map<std::string, int> syn_id;
-  std::vector<int> syn_row;     // synset → 표시 줄(main 먼저)
-  std::unordered_map<std::string, int> by_text;
-  std::vector<uint8_t> generic; // synset → 이름으로 쓰기엔 너무 넓은 상위어(artifact, instrumentality …)
-  // 색인
-  std::vector<float> mu, P;     // P: PD × D(행 = 출력 차원)
-  std::vector<float> cent;      // NC × PD
-  std::vector<int32_t> off, ids;
-  std::vector<float> qc;        // 질의에서 뺄 평균(영상 표본 평균, 표본이 없으면 0)
-  std::vector<uint16_t> lp;     // 목록 순서, 줄마다 128-d 투영(FP16) — 1단계 점수
-  std::string proj = "text";    // 투영을 맞춘 것: "text"(라벨 글 PCA) 또는 "img:<표본 sha>"(영상 표본 PCA)
-  std::vector<uint64_t> codes;  // 목록 순서, 줄마다 2 단어
-  std::vector<uint8_t> is_main; // 목록 순서
-  double build_ms = 0;
-  bool from_cache = false;
-};
+
 
 namespace {
 
@@ -426,7 +402,12 @@ sgc_labels* sgc_labels_open_ex(const char* dir, const char* index_dir, const cha
       const nlohmann::json j = nlohmann::json::parse(line);
       Row r;
       r.en = j.value("en", "");
-      if (j.contains("ko") && j["ko"].is_array() && !j["ko"].empty()) r.ko = j["ko"][0].get<std::string>();
+      if (j.contains("ko") && j["ko"].is_array() && !j["ko"].empty()) {
+        r.ko = j["ko"][0].get<std::string>();
+        for (const auto& x : j["ko"]) r.ko_all.push_back(x.get<std::string>());
+      }
+      if (j.contains("en_syn") && j["en_syn"].is_array())
+        for (const auto& x : j["en_syn"]) r.en_syn.push_back(x.get<std::string>());
       r.synset = j.value("synset", "");
       r.main = j.value("tier", "tail") == "main";
       r.structural = j.value("structural", false);
@@ -466,6 +447,31 @@ sgc_labels* sgc_labels_open_ex(const char* dir, const char* index_dir, const cha
     }
     for (int i = L->K - 1; i >= 0; --i)
       if (L->rows[i].main) L->by_text[lower(L->rows[i].en)] = i;   // 같은 글이면 main 줄
+    // 이름 검색용(sgc_labels_find_name, 물체 찾기 objindex): main 줄의 영어·한국어 전부·동의어가 먼저, 그다음 tail 줄.
+    // ("라디오" 는 tail 줄 radiocommunication 의 첫 한국어 이름이기도 해서 by_text 로는 그 줄이 나옴 — 물건 이름은 main 이 맞다)
+    // 순서: main 영어 이름 → main 한국어·동의어 → tail 영어 → tail 나머지(앞이 이김: "radio" 는 en "radio" 줄, en_syn 에 radio 가 있는 줄이 아님)
+    for (int pass = 0; pass < 4; ++pass)
+      for (int i = 0; i < L->K; ++i) {
+        const Row& r = L->rows[i];
+        if (r.main != (pass < 2)) continue;
+        if (pass % 2 == 0) {
+          L->by_name.emplace(lower(r.en), i);
+          continue;
+        }
+        for (const std::string& t : r.ko_all) L->by_name.emplace(lower(t), i);
+        for (const std::string& t : r.en_syn) L->by_name.emplace(lower(t), i);
+      }
+    // 뜻 전부(sgc_labels_find_names): 같은 글의 main 줄 전부("의자" → chair·armchair, "전등" → light bulb·lamp …)
+    for (int i = 0; i < L->K; ++i) {
+      const Row& r = L->rows[i];
+      auto& m = r.main ? L->names_main : L->names_tail;
+      std::vector<std::string> ts{lower(r.en)};
+      for (const std::string& t : r.ko_all) ts.push_back(lower(t));
+      for (const std::string& t : r.en_syn) ts.push_back(lower(t));
+      std::sort(ts.begin(), ts.end());
+      ts.erase(std::unique(ts.begin(), ts.end()), ts.end());
+      for (const std::string& t : ts) m[t].push_back(i);
+    }
     std::ifstream ef(L->dir + "/text_" + model + ".f16", std::ios::binary | std::ios::ate);
     if (!ef) throw std::runtime_error("no text_" + model + ".f16");
     const size_t bytes = size_t(ef.tellg());
@@ -598,6 +604,25 @@ int32_t sgc_labels_find(const sgc_labels* L, const char* text) {
   if (!L || !text) return -1;
   auto it = L->by_text.find(lower(text));
   return it == L->by_text.end() ? -1 : it->second;
+}
+
+int32_t sgc_labels_find_name(const sgc_labels* L, const char* text) {
+  if (!L || !text) return -1;
+  auto it = L->by_name.find(lower(text));
+  return it == L->by_name.end() ? -1 : it->second;
+}
+
+int32_t sgc_labels_find_names(const sgc_labels* L, const char* text, int32_t* rows, int32_t cap) {
+  if (!L || !text || !rows || cap <= 0) return -1;
+  const std::string t = lower(text);
+  auto it = L->names_main.find(t);
+  if (it == L->names_main.end()) {
+    it = L->names_tail.find(t);
+    if (it == L->names_tail.end()) return 0;
+  }
+  const int n = std::min<int>(cap, int(it->second.size()));
+  for (int i = 0; i < n; ++i) rows[i] = it->second[size_t(i)];
+  return n;
 }
 
 int32_t sgc_labels_text_emb(const sgc_labels* L, int32_t row, float* out) {

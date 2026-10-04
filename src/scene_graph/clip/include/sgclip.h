@@ -129,8 +129,41 @@ int32_t sgc_labels_lookup(const sgc_labels*, const float* q, int32_t k, sgc_hit*
 int32_t sgc_labels_names(const sgc_labels*, const float* q, sgc_names* out, const sgc_lookup_params* p);
 /* 글 → 표 줄(영어 이름·한국어 이름 정확히 같음, 소문자·앞뒤 공백 무시). 없으면 -1 */
 int32_t sgc_labels_find(const sgc_labels*, const char* text);
+/* 이름 검색용: 영어 이름·한국어 이름 전부·영어 동의어(en_syn), main(집 물건) 줄 먼저. 없으면 -1 */
+int32_t sgc_labels_find_name(const sgc_labels*, const char* text);
+/* 그 글을 이름(영어·한국어 전부·동의어)으로 가진 줄 전부(뜻이 여럿인 말: "의자" → chair·armchair). main 줄이 있으면 main 만, 없으면 tail.
+ * rows 에 최대 cap 개, 반환 = 개수(0 = 없음) */
+int32_t sgc_labels_find_names(const sgc_labels*, const char* text, int32_t* rows, int32_t cap);
 /* 줄의 글 임베딩(SGC_DIM, FP32 로 풀어 out 에). 0 = 성공 */
 int32_t sgc_labels_text_emb(const sgc_labels*, int32_t row, float* out);
+
+/* ---------------- 글 인코더(SigLIP 2 B/32 글 탑, TensorRT) ----------------
+ * 글 → 768-d L2 벡터(라벨 표·물체 영상 벡터와 같은 공간). 물체 찾기(sgsearch.h)의 자유 글 질의용. tools/export_siglip2_text.py 가
+ * 만든 파일 셋: 토크나이저(siglip2_b32_tok.bin, Gemma BPE), 토큰 임베딩 표(siglip2_b32_tokemb.f16, 256000 × 768, CPU mmap —
+ * 엔진 밖에 두어 GPU 는 변환기 12 층만, 약 170 MB), 엔진(siglip2_b32_text_fp16.plan, 입력 tok_emb N×64×768 FP32, 출력 emb N×768).
+ * 토큰화 = open_clip HFTokenizer(clean="canonicalize"): '_'→공백, ASCII 문장 부호 지움, 소문자, 공백 하나로, BPE, + eos, 64 로 자르고 0 채움.
+ * 동기 호출(한 번에 ≤ max_batch, 넘으면 나눠 돎). 한 스레드에서만. */
+typedef struct sgc_text sgc_text;
+
+typedef struct {
+  const char* engine;       /* NULL = 토크나이저만(sgc_text_tokenize) */
+  const char* tokenizer;    /* siglip2_b32_tok.bin */
+  const char* tok_emb;      /* siglip2_b32_tokemb.f16 */
+  int32_t device;
+  int32_t max_batch;        /* 8(엔진 프로필 안) */
+} sgc_text_config;
+/* dir(NULL = 환경 변수 SGC_TEXT_DIR, 없으면 ~/ovdet_models/x86_sm120/siglip2_b32) 아래 기본 파일 이름. 문자열은 정적 버퍼 */
+void sgc_text_default_config(sgc_text_config* c, const char* dir);
+sgc_text* sgc_text_create(const sgc_text_config* c, char* err, size_t err_len);
+void sgc_text_destroy(sgc_text*);
+#define SGC_TEXT_CTX 64
+/* ids: SGC_TEXT_CTX 칸(0 채움). 반환 = eos 포함 토큰 수, < 0 = 오류 */
+int32_t sgc_text_tokenize(const sgc_text*, const char* text, int32_t* ids);
+/* texts n 개 → out n × SGC_DIM(L2). 0 = 성공 */
+int32_t sgc_text_encode(sgc_text*, const char* const* texts, int32_t n, float* out);
+int32_t sgc_text_encode_ids(sgc_text*, const int32_t* ids /* n × SGC_TEXT_CTX */, int32_t n, float* out);
+float sgc_text_last_ms(const sgc_text*);   /* 마지막 encode 의 벽시계 ms(토큰화·모으기·엔진·복사) */
+int64_t sgc_text_device_bytes(const sgc_text*);
 
 /* ---------------- 작은 도구 ---------------- */
 void sgc_f32_to_f16(const float* in, uint16_t* out, int32_t n);
