@@ -25,6 +25,7 @@ struct Trainer {
 
   // 롤아웃 버퍼
   float* obs_buf = nullptr;   // [(T+1)][80][N]
+  float* obs_rows = nullptr;  // [(T+1)][N][80] — 같은 값을 판마다 이어서(미니배치 모으기가 섞은 행을 연속으로 읽게)
   float* act_env = nullptr;   // [8][N]
   float* act_buf = nullptr;   // [T][N][8]
   float* logp_buf = nullptr;  // [T][N]
@@ -81,6 +82,7 @@ struct Trainer {
   cudaGraphExec_t g_roll = nullptr, g_upd = nullptr;
   size_t dev_bytes = 0;
   int bug = 0;   // 음성 대조(검증용)
+  bool keep_slot_bufs = false;   // 검증용: 칸 MLP 뒤 묶음(slot_bwd)이 dZ S2·dZ S1 도 전역에 쓰게(V4·V5 가 층마다 비교)
 
   explicit Trainer(const PpoConfig& c);
   ~Trainer();

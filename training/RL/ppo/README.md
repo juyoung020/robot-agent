@@ -24,6 +24,8 @@ cmake -S training/RL/ppo -B ~/ra_ppobuild && cmake --build ~/ra_ppobuild -j
 ~/ra_ppobuild/ppo_verify eval <ckpt> <stage> [iters] [N] [use_map] [goal_from_map] [p0 p1 kmin kmax]
                                                      # 결정적 정책(σ → e^-12, 학습률 0) 성공률 + 처음 완성도별 표(5.6) + 충돌 다시 보기
 ~/ra_ppobuild/ppo_verify v4 --g4data                 # V4/V5 를 G4 자료(지도 목표·처음 지도 섞음)로
+~/ra_ppobuild/ppo_verify v6 --a2                     # A2 환경 + 안 본 곳 광선(use_map 2)으로(v4/v5 는 --g4data --a2)
+~/ra_ppobuild/ppo_verify snap out.bin 4096 64 6 1 1    # 빌드 사이 비트 비교용 스냅숏(두 빌드의 파일을 cmp)
 cd training/RL/ppo/driver && PPO_BUILD_DIR=~/ra_ppobuild cargo build --release   # PPO_BUILD_DIR 없으면 build.rs 가 CMake 로 빌드
 ./target/release/ppo_run ../../config/ppo_a0a1.json --out ~/runs/a0a1 [--minutes M] [--resume ckpt]
 ./target/release/ppo_run ../../config/ppo_g4.json --out ~/runs/g4          # G4: 지도 목표 + 처음 지도 커리큘럼
@@ -325,9 +327,49 @@ update 그래프(노드 763):  GAE·이득 통계(K4) → 에포크 5 × 미니�
 - V5 `--g4data --a2` 의 FP64 대 유한 차분 검사가 처음에 변수 하나(S2 층, 상대 오차 5.4e-3)에서 실패했다. 중심 차분 ±h 가 집합 최댓값이 바뀌는 꺾인 곳을 건넌 것이다(같은 변수가 h/10 에서 3.3e-9). 그래서 어긋나면 h 를 1/10·1/100 로 다시 재고 가장 작은 오차를 쓰게 했다(진짜 기울기 버그는 h 를 줄여도 남는다). 기본·`--g4data` 판의 값은 그대로(2.06e-6 · 3.39e-7).
 - A1 체크포인트 평가(`use_map` 1)는 바꾸기 전과 같은 출력이다(위 coll −20 판 다시 평가: 160,804 판, 성공 0.9920 — 충돌 다시 보기 줄에 "furniture 0" 만 더해짐).
 
+### 갱신 속도(G4 뒤) — 잰 값, 결과 비트 그대로
+**재기 전(커밋 2d2939b, nsys `--cuda-graph-trace=node`, `ppo_verify bench 4096 64 12`, A1·`use_map` 1, 바퀴당 커널 합 177.1 ms)**: GEMM 115.5(머리 사슬 앞 15.0·dX⊙ELU′ 16.2·dW 13.8 등 약 70 — 계산에 묶임, 칸 MLP 줄(행 = 미니배치 × 16) 앞 S1·S2 15.6·dX S2 12.0·dW S2 10.1·dW S1 6.9 = 45 — 메모리에 묶임), 모으기 `gather_k` 17.9(관측을 [80][N] 에서 섞은 행마다 80 줄로 읽음), `pool_bwd` 15.2, `pool_fwd` 2.1, 지도 19.6(롤아웃).
+
+바꾼 것(모두 출력 원소마다 같은 연산·같은 차례 — 누산 순서를 바꾼 것 없음):
+
+| 바꾼 것 | 무엇 | 커널 시간(바퀴당) 전 → 후 |
+|---|---|---|
+| GEMM `gemm2_k` | ldmatrix(.trans)로 조각 읽기(32 비트 읽기 16 → ldmatrix 4 번 / k16), 전치 피연산자도 [k][행] 16 B cp.async, 이중 버퍼, 모양별 타일(N ≥ 128 은 128 × 128·워프 64 × 32) | 머리 앞 15.0 → 12.9, dX⊙ELU′ 16.2 → 13.6, dW 13.8 → 12.8 |
+| 실행 수 | 정책·가치 사슬의 같은 모양 층을 한 실행으로(`gemm_fwd2·gemm_dx_dact2·gemm_dw2`, `blockIdx.z` = 문제) | 미니배치당 실행 38 → 22, 그래프 노드 rollout 1,231 → 906, update 763 → 443 |
+| 칸 MLP 앞 묶음 `slot_fwd` | S1 → S2 → 집합 한 커널(타일 32 행, 상주 블록이 타일을 돎, s1o·s2o 를 다시 읽지 않고 16 B 로 씀, 집합은 칸마다 스레드 하나) | S1·S2·집합 17.7 → 14.5 |
+| 칸 MLP 뒤 묶음 `slot_bwd` | 집합 뒤 → dW S2·dX S2(⊙ELU′) → dW S1 한 커널, 블록 = dW 조각(1,024 행), dZ S2·dZ S1 은 공유 메모리에만 | 44.2 → 14.2 |
+| 모으기 | 롤아웃이 관측을 판마다 이어서도 둠(`obs_rows_k`, 0.19 ms), 모으기는 16 B 덩이로 씀 | 17.9 → 6.7 |
+| 집합 앞·뒤(예전 길) | 스레드당 8 칸 16 B | `pool_bwd` 15.2 → (묶음 안으로) |
+
+바퀴 시간 전후(`ppo_verify bench 4096 64 30`, GPU 다른 일 없음, 번갈아 두 번):
+
+| | rollout | update | update 몫 | env-step/s |
+|---|---|---|---|---|
+| 전(2d2939b) | 28.9 / 29.0 ms | 135.2 / 135.3 ms | 82 % | 1.60e6 |
+| 후 | 27.5 / 27.6 ms | **86.5 / 86.7 ms** | 76 % | **2.29e6 / 2.30e6** |
+
+- 커널 합 177.1 → 122.3 ms/바퀴(GEMM 115.5 → 61.0, 칸 MLP 묶음 28.7, 모으기 17.9 → 6.7, 집합 17.6 → 0). Rust 실행기(A2 설정, nsys 안 30 s): rollout 25.4 + update 87.6 ms, 2.32e6 env-step/s.
+- 단계별 update(같은 bench): 전 135.4 → 관측 행·집합 16 B(`NET_GEMM_OLD=1 NET_SLOT_OLD=1`) 121.0 → + `gemm2_k`·짝 실행(`NET_SLOT_OLD=1`) 112.1 → + 칸 MLP 묶음 91.9 → + 앞 묶음 16 B 쓰기·집합 칸마다 88.7 → + 앞 묶음 공유 메모리 33 KB(SM 당 3 블록) 88.3 → + 모으기 16 B 쓰기 86.4.
+- 해 보고 버린 것: 칸 입력을 sin 버퍼 없이 묶음 커널이 토큰에서 바로 만들기 112.9(sin 판 91.9 — FP16 → bf16 계산이 두 커널의 지연에 붙음), GEMM 타일 128 × 256 134.8·256 × 128 136.9·64 × 128 115.5(그때 128 × 128 112.9).
+- 머리 GEMM 효율(추정 — FLOP 은 계산값, 시간은 nsys): 앞 약 58 TFLOPS, dW 약 59, dX⊙ELU′ 약 38(K 128 층이 짧음). BF16 상한 87.9.
+- 장치 메모리 1.85 → 1.93 GB(관측 행 판 85 MB). 호스트 동기: Rust 실행기 nsys 30 s(266 바퀴) 동안 첫·마지막 `cudaGraphLaunch` 사이 CUDA API 는 `cudaGraphLaunch` 532·`cudaEventRecord` 797·`cudaEventQuery` 86,352·`cudaMemcpyAsync` 4(체크포인트 한 번)뿐 — 동기 0.
+
+검증(후 빌드):
+
+| 검사 | 결과 |
+|---|---|
+| 빌드 사이 비트 비교 `ppo_verify snap <파일> 4096 64 6 <단계> <use_map>`(새 도구: 학습 크기 6 바퀴 뒤 변수·Adam m·v·관측·이득·가치·행동·지도 토큰·기록·에피소드 표를 파일로) | A1·`use_map` 1, A2·`use_map` 2 둘 다 **전과 바이트까지 같음**(FNV `4854679ade0fcf94`, `24c72dce276df91d`). 작은 판(N 512)은 바꿀 때마다 확인 |
+| V4 / V5 (G3 자료, `--g4data`, `--g4data --a2`) | 33/33 · 36/36 모두. V4·V5 는 묶음 커널이 dZ S2·dZ S1 을 전역에도 쓰게 해서(`keep_slot_bufs`) 층마다 견줌 |
+| V4 / V5 `--negative` | 버그 1·2 모두 실패(정상): V4 1·1, V5 17·23 개 |
+| V6 / V7 (기본, `--a2`) | 0 낱말 다름. V7 다른 씨앗의 다른 낱말 수 2,596,639 · 2,506,444 — 바꾸기 전과 같음 |
+| 결정적 평가 `eval`(A2 켬 씨앗 1 체크포인트, 40 바퀴 + 충돌 다시 보기) | 출력 전체가 바꾸기 전 빌드와 같음(다시 보기 고리가 관측 행 판도 옮기게 고친 뒤) |
+
+- 칸 MLP 앞 묶음은 gemm 이 0 으로 채우던 k 단계(S1 k 48..63, S2 k 80..95)를 뺐다. 0 을 더할 뿐이라 비트가 같고(스냅숏으로 확인) 공유 메모리가 줄었다.
+- `NET_GEMM_OLD=1`(예전 GEMM), `NET_SLOT_OLD=1`(예전 칸 MLP 커널)로 예전 길을 그대로 돌릴 수 있다(비교·측정용, 결과 같음).
+
 ## 다음
 1. **G5**: 학생(BC)이 같은 자라는 지도 + 이 교사(A2 토큰 켬, 씨앗 1 체크포인트) 궤적으로, DAgger.
 2. A2 충돌: 켬 2 는 0.055(기준 5 %)다. 다시 보기에서 가구 모서리를 앞으로 가며 긋는 것이 가장 많다 — 더 긴 학습 또는 가구 쪽 가까움 벌 무게(가정 값) 조정.
 3. 안 본 곳 광선의 효과를 가르려면 씨앗을 더(지금 광선 뺀 판 하나).
 4. 경로 거리를 문서대로 "정책이 아는(자란) 지도" 로 — 지금은 참 장면.
-5. 속도: A2 rollout 이 42 ms(A1 25–29 ms) — 환경 A2 0.17 ms/스텝, 지도 단계.
+5. 속도: 이제 rollout 몫이 24 %(A2 는 42 ms) — 환경 A2 0.17 ms/스텝·지도 keyframe. 갱신은 칸 MLP 묶음(앞 14.5·뒤 14.2 ms, 지연에 묶임)과 dX⊙ELU′(38 TFLOPS)가 남은 큰 몫.

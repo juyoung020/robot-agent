@@ -44,6 +44,13 @@ void gemm_dx_dact(const LayerDesc& L, const uint16_t* dZ, int M, const uint16_t*
 void gemm_dx_pool(const LayerDesc& L, const uint16_t* dZ, int M, const uint16_t* Wb, float* dpool, bool accumulate, cudaStream_t st);
 // dW 조각 부분합: ws[split][L.N][L.K], 조각 = kchunk 행
 void gemm_dw(const LayerDesc& L, const uint16_t* dZ, const uint16_t* X, int M, float* ws, int kchunk, cudaStream_t st);
+// 정책·가치 사슬의 같은 모양 층 둘을 한 번에(결과는 따로 부른 것과 같음 — 실행 수만 줄임)
+void gemm_fwd2(const LayerDesc& L, const uint16_t* XA, const uint16_t* XC, int M, const uint16_t* WA, const uint16_t* WC, void* outA, void* outC,
+               cudaStream_t st);
+void gemm_dx_dact2(const LayerDesc& L, const uint16_t* dZA, const uint16_t* dZC, int M, const uint16_t* WA, const uint16_t* WC, const uint16_t* XinA,
+                   const uint16_t* XinC, int Np, uint16_t* dZprevA, uint16_t* dZprevC, int bugA, cudaStream_t st);
+void gemm_dw2(const LayerDesc& L, const uint16_t* dZA, const uint16_t* dZC, const uint16_t* XA, const uint16_t* XC, int M, float* wsA, float* wsC,
+              int kchunk, cudaStream_t st);
 inline int dw_splits(int M, int kchunk) { return (M + kchunk - 1) / kchunk; }
 // 모든 층의 조각을 고정 순서로 더해 기울기 버퍼(평평)에
 struct DwJob { const float* ws; float* g; int n; int splits; };
@@ -54,6 +61,13 @@ void dw_reduce(const DwJob* jobs, int njobs, cudaStream_t st);
 void pool_fwd(const uint16_t* s2o, const uint32_t* mask, int M, uint16_t* x0, uint8_t* amax, cudaStream_t st);
 // dpool[M][POOL_W] → dZ_S2[M*16][S_H] = (평균 몫 + 최댓값 몫) ⊙ elu'(s2o)
 void pool_bwd(const float* dpool, const uint16_t* s2o, const uint32_t* mask, const uint8_t* amax, int M, uint16_t* dzs2, cudaStream_t st);
+// 칸 MLP 앞 묶음: S1 → S2 → 집합을 한 커널로(같은 결과). s1o·s2o·x0 의 집합 칸·amax 를 씀
+void slot_fwd(const uint16_t* sin, const uint32_t* mask, const uint16_t* W1, const uint16_t* W2, int M, uint16_t* s1o, uint16_t* s2o, uint16_t* x0,
+              uint8_t* amax, cudaStream_t st);
+// 칸 MLP 뒤 묶음: pool_bwd → dW S2 · dX S2 → dW S1 을 한 커널로(같은 결과). dW 부분합 ws2·ws1 은 gemm_dw 와 같은 자리.
+// dz2_out·dz1_out 이 nullptr 이 아니면 dZ S2·dZ S1 도 전역에 씀(검증용). kchunk 는 64 의 배수
+void slot_bwd(const float* dpool, const uint16_t* s2o, const uint16_t* s1o, const uint16_t* sin, const uint32_t* mask, const uint8_t* amax,
+              const uint16_t* W2, int M, int kchunk, float* ws2, float* ws1, uint16_t* dz2_out, uint16_t* dz1_out, cudaStream_t st);
 
 // ---- PPO 손실(K5): 평균·가치 머리 출력 → dZ(bf16) + log σ 기울기·통계 부분합 ----
 struct LossIn {

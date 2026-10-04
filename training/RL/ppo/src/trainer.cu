@@ -32,8 +32,23 @@ __global__ void __launch_bounds__(AS_L * AS_E) assemble_k(const float* obs_row, 
                                                           uint16_t* x0, uint16_t* sin, uint32_t* mask) {
   const int e = blockIdx.x * AS_E + threadIdx.x / AS_L, lane = threadIdx.x % AS_L;
   if (e >= N) return;
-  const uint32_t mk = obsv::assemble(obs_row, N, e, tok_row[e], x0 + (size_t)e * X0_W, sin + (size_t)e * KSLOT * SLOT_IN, use_map, goal_mode, lane, AS_L);
+  const uint32_t mk = obsv::assemble(obs_row + (size_t)e * N_OBS_G1, 1, 0, tok_row[e], x0 + (size_t)e * X0_W, sin + (size_t)e * KSLOT * SLOT_IN, use_map, goal_mode, lane, AS_L);
   if (lane == 0) mask[e] = mk;
+}
+
+// 관측 [80][N] → [N][80] (판 32 개씩 공유 메모리로 뒤집음 — 읽기·쓰기 모두 이어서). 값은 그대로 복사
+__global__ void __launch_bounds__(256) obs_rows_k(const float* col, int N, float* rows) {
+  __shared__ float s[32][N_OBS_G1 + 1];
+  const int i0 = blockIdx.x * 32;
+  for (int q = threadIdx.x; q < 32 * N_OBS_G1; q += 256) {
+    const int c = q / 32, e = q % 32;
+    if (i0 + e < N) s[e][c] = col[(size_t)c * N + i0 + e];
+  }
+  __syncthreads();
+  for (int q = threadIdx.x; q < 32 * N_OBS_G1; q += 256) {
+    const int e = q / N_OBS_G1, c = q % N_OBS_G1;
+    if (i0 + e < N) rows[(size_t)(i0 + e) * N_OBS_G1 + c] = s[e][c];
+  }
 }
 
 // 섞기: 정의역 2^(2hb) 위 4 단 Feistel + 순환 걷기 → [0, S) 의 순열. 열쇠는 (씨앗, 바퀴, 에포크) — 장치에서 계산
@@ -58,7 +73,7 @@ inline int half_bits(uint32_t S) {
 }
 
 struct GatherP {
-  const float* obs_buf; const gmap::MapTok* tok0; const float* act_buf; const float* logp_buf; const float* val_buf; const float* adv_buf;
+  const float* obs_buf /* 행 판 obs_rows [T+1][N][80] */; const gmap::MapTok* tok0; const float* act_buf; const float* logp_buf; const float* val_buf; const float* adv_buf;
   const float* ret_buf; int N, T, MB, base, epoch, hb, use_map, goal_mode; uint64_t seed; const TrainState* ts;
   uint16_t* x0; uint16_t* sin; uint32_t* mask; float *act, *oldlogp, *oldv, *adv, *ret;
 };
@@ -69,7 +84,7 @@ __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
   const uint32_t S = (uint32_t)g.N * (uint32_t)g.T;
   const uint32_t p = feistel_perm((uint32_t)(g.base + r), S, g.hb, key);
   const int t = (int)(p / (uint32_t)g.N), i = (int)(p % (uint32_t)g.N);
-  const uint32_t mk = obsv::assemble(g.obs_buf + (size_t)t * N_OBS_G1 * g.N, g.N, i, g.tok0[(size_t)t * g.N + i], g.x0 + (size_t)r * X0_W,
+  const uint32_t mk = obsv::assemble(g.obs_buf + ((size_t)t * g.N + i) * N_OBS_G1, 1, 0, g.tok0[(size_t)t * g.N + i], g.x0 + (size_t)r * X0_W,
                                      g.sin + (size_t)r * KSLOT * SLOT_IN, g.use_map, g.goal_mode, lane, AS_L);
   if (lane < N_ACT) g.act[(size_t)r * N_ACT + lane] = g.act_buf[((size_t)t * g.N + i) * N_ACT + lane];
   if (lane == 0) {
@@ -305,6 +320,7 @@ Trainer::Trainer(const PpoConfig& c) : cfg(c) {
   ah = AdamHyper{cfg.adam_b1, cfg.adam_b2, cfg.adam_eps, cfg.max_grad_norm};
 
   obs_buf = alloc<float>((size_t)(T + 1) * N_OBS_G1 * N);
+  obs_rows = alloc<float>((size_t)(T + 1) * N_OBS_G1 * N);
   act_env = alloc<float>((size_t)N_ACT * N);
   act_buf = alloc<float>((size_t)T * N * N_ACT);
   logp_buf = alloc<float>((size_t)T * N);
@@ -435,6 +451,7 @@ void Trainer::make_env(int stage) {
   map = std::make_unique<gmap::DeviceMap>(N, cfg.seed * 7919ull + 3ull + (uint64_t)stage);
   tok = std::make_unique<gmap::TokenRecorder>(N, T + 1);
   PCK(cudaMemset(obs_buf, 0, sizeof(float) * (size_t)(T + 1) * N_OBS_G1 * N));
+  PCK(cudaMemset(obs_rows, 0, sizeof(float) * (size_t)(T + 1) * N_OBS_G1 * N));
   PCK(cudaMemset(ep_ret, 0, sizeof(float) * N));
   PCK(cudaMemset(ep_len, 0, sizeof(int) * N));
   PCK(cudaMemset(cur_len, 0, sizeof(int) * N));
@@ -462,41 +479,51 @@ void Trainer::capture() {
   g_upd = capture_one(this, &Trainer::update_body);
 }
 
+static bool slot_old() {   // NET_SLOT_OLD=1: 칸 MLP 를 예전 따로 커널(gemm·pool)로 — 비교·측정용
+  static const bool v = [] { const char* e = std::getenv("NET_SLOT_OLD"); return e && std::atoi(e) != 0; }();
+  return v;
+}
+
 // ---- 몸통 ----
 void Trainer::forward(int M) {
   const uint16_t* W = Pb;
   auto Wl = [&](int l) { return W + lay.off[l]; };
-  gemm_fwd(kLayers[L_S1], sin, M * KSLOT, Wl(L_S1), s1o, 0);
-  gemm_fwd(kLayers[L_S2], s1o, M * KSLOT, Wl(L_S2), s2o, 0);
-  pool_fwd(s2o, mask, M, x0, amax, 0);
-  gemm_fwd(kLayers[L_A1], x0, M, Wl(L_A1), ho[L_A1], 0);
-  gemm_fwd(kLayers[L_A2], ho[L_A1], M, Wl(L_A2), ho[L_A2], 0);
-  gemm_fwd(kLayers[L_A3], ho[L_A2], M, Wl(L_A3), ho[L_A3], 0);
-  gemm_fwd(kLayers[L_A4], ho[L_A3], M, Wl(L_A4), mean, 0);
-  gemm_fwd(kLayers[L_C1], x0, M, Wl(L_C1), ho[L_C1], 0);
-  gemm_fwd(kLayers[L_C2], ho[L_C1], M, Wl(L_C2), ho[L_C2], 0);
-  gemm_fwd(kLayers[L_C3], ho[L_C2], M, Wl(L_C3), ho[L_C3], 0);
-  gemm_fwd(kLayers[L_C4], ho[L_C3], M, Wl(L_C4), val, 0);
+  if (!slot_old()) {   // 칸 MLP 앞 묶음(한 커널, 같은 결과). 칸 입력은 토큰에서(sin 버퍼를 쓰지·읽지 않음)
+    slot_fwd(sin, mask, Wl(L_S1), Wl(L_S2), M, s1o, s2o, x0, amax, 0);
+  } else {
+    gemm_fwd(kLayers[L_S1], sin, M * KSLOT, Wl(L_S1), s1o, 0);
+    gemm_fwd(kLayers[L_S2], s1o, M * KSLOT, Wl(L_S2), s2o, 0);
+    pool_fwd(s2o, mask, M, x0, amax, 0);
+  }
+  // 정책·가치 사슬의 같은 층을 한 번에(gemm_fwd2: 실행 수만 반, 결과 같음)
+  gemm_fwd2(kLayers[L_A1], x0, x0, M, Wl(L_A1), Wl(L_C1), ho[L_A1], ho[L_C1], 0);
+  gemm_fwd2(kLayers[L_A2], ho[L_A1], ho[L_C1], M, Wl(L_A2), Wl(L_C2), ho[L_A2], ho[L_C2], 0);
+  gemm_fwd2(kLayers[L_A3], ho[L_A2], ho[L_C2], M, Wl(L_A3), Wl(L_C3), ho[L_A3], ho[L_C3], 0);
+  gemm_fwd2(kLayers[L_A4], ho[L_A3], ho[L_C3], M, Wl(L_A4), Wl(L_C4), mean, val, 0);
 }
 
 void Trainer::backward(int M) {
   auto Wl = [&](int l) { return Pb + lay.off[l]; };
   const int ch = cfg.dw_chunk;
-  for (int head : {L_A1, L_C1}) {   // 정책 사슬, 가치 사슬
-    const int l4 = head + 3, l3 = head + 2, l2 = head + 1, l1 = head;
-    gemm_dw(kLayers[l4], dz[l4], ho[l3], M, ws[l4], ch, 0);
-    gemm_dx_dact(kLayers[l4], dz[l4], M, Wl(l4), ho[l3], kLayers[l3].N, dz[l3], 0, 0);
-    gemm_dw(kLayers[l3], dz[l3], ho[l2], M, ws[l3], ch, 0);
-    gemm_dx_dact(kLayers[l3], dz[l3], M, Wl(l3), ho[l2], kLayers[l2].N, dz[l2], (bug == 1 && head == L_A1) ? 1 : 0, 0);
-    gemm_dw(kLayers[l2], dz[l2], ho[l1], M, ws[l2], ch, 0);
-    gemm_dx_dact(kLayers[l2], dz[l2], M, Wl(l2), ho[l1], kLayers[l1].N, dz[l1], 0, 0);
-    gemm_dw(kLayers[l1], dz[l1], x0, M, ws[l1], ch, 0);
-    gemm_dx_pool(kLayers[l1], dz[l1], M, Wl(l1), dpool, head == L_C1, 0);
+  // 정책 사슬(A)·가치 사슬(C)의 같은 층을 한 번에(*2: 실행 수만 반, 결과 같음). dpool 은 A 가 쓰고 C 가 더함(예전 순서)
+  const int a4 = L_A4, a3 = L_A3, a2 = L_A2, a1 = L_A1, c4 = L_C4, c3 = L_C3, c2 = L_C2, c1 = L_C1;
+  gemm_dw2(kLayers[a4], dz[a4], dz[c4], ho[a3], ho[c3], M, ws[a4], ws[c4], ch, 0);
+  gemm_dx_dact2(kLayers[a4], dz[a4], dz[c4], M, Wl(a4), Wl(c4), ho[a3], ho[c3], kLayers[a3].N, dz[a3], dz[c3], 0, 0);
+  gemm_dw2(kLayers[a3], dz[a3], dz[c3], ho[a2], ho[c2], M, ws[a3], ws[c3], ch, 0);
+  gemm_dx_dact2(kLayers[a3], dz[a3], dz[c3], M, Wl(a3), Wl(c3), ho[a2], ho[c2], kLayers[a2].N, dz[a2], dz[c2], bug == 1 ? 1 : 0, 0);
+  gemm_dw2(kLayers[a2], dz[a2], dz[c2], ho[a1], ho[c1], M, ws[a2], ws[c2], ch, 0);
+  gemm_dx_dact2(kLayers[a2], dz[a2], dz[c2], M, Wl(a2), Wl(c2), ho[a1], ho[c1], kLayers[a1].N, dz[a1], dz[c1], 0, 0);
+  gemm_dw2(kLayers[a1], dz[a1], dz[c1], x0, x0, M, ws[a1], ws[c1], ch, 0);
+  gemm_dx_pool(kLayers[a1], dz[a1], M, Wl(a1), dpool, false, 0);
+  gemm_dx_pool(kLayers[c1], dz[c1], M, Wl(c1), dpool, true, 0);
+  if (!slot_old() && ch % 32 == 0) {   // 칸 MLP 뒤 묶음(한 커널, 같은 결과)
+    slot_bwd(dpool, s2o, s1o, sin, mask, amax, Wl(L_S2), M, ch, ws[L_S2], ws[L_S1], keep_slot_bufs ? dz[L_S2] : nullptr, keep_slot_bufs ? dz[L_S1] : nullptr, 0);
+  } else {
+    pool_bwd(dpool, s2o, mask, amax, M, dz[L_S2], 0);
+    gemm_dw(kLayers[L_S2], dz[L_S2], s1o, M * KSLOT, ws[L_S2], ch, 0);
+    gemm_dx_dact(kLayers[L_S2], dz[L_S2], M * KSLOT, Wl(L_S2), s1o, kLayers[L_S1].N, dz[L_S1], 0, 0);
+    gemm_dw(kLayers[L_S1], dz[L_S1], sin, M * KSLOT, ws[L_S1], ch, 0);
   }
-  pool_bwd(dpool, s2o, mask, amax, M, dz[L_S2], 0);
-  gemm_dw(kLayers[L_S2], dz[L_S2], s1o, M * KSLOT, ws[L_S2], ch, 0);
-  gemm_dx_dact(kLayers[L_S2], dz[L_S2], M * KSLOT, Wl(L_S2), s1o, kLayers[L_S1].N, dz[L_S1], 0, 0);
-  gemm_dw(kLayers[L_S1], dz[L_S1], sin, M * KSLOT, ws[L_S1], ch, 0);
   DwJob jobs[N_LAYER];
   for (int l = 0; l < N_LAYER; ++l) {
     const int rows = l <= L_S2 ? M * KSLOT : M;
@@ -506,7 +533,7 @@ void Trainer::backward(int M) {
 }
 
 void Trainer::gather(int epoch, int mb) {
-  GatherP g{obs_buf, tok->at(0), act_buf, logp_buf, val_buf, adv_buf, ret_buf, N, T, MB, mb * MB, epoch, half_bits((uint32_t)(N * T)), cfg.use_map,
+  GatherP g{obs_rows, tok->at(0), act_buf, logp_buf, val_buf, adv_buf, ret_buf, N, T, MB, mb * MB, epoch, half_bits((uint32_t)(N * T)), cfg.use_map,
             cfg.goal_from_map, cfg.seed, ts, x0, sin, mask, mb_act, mb_oldlogp, mb_oldv, mb_adv, mb_ret};
   gather_k<<<(MB + AS_E - 1) / AS_E, AS_L * AS_E>>>(g);
   PCK(cudaGetLastError());
@@ -537,6 +564,7 @@ void Trainer::log_iter() {
 void Trainer::rollout_body() {
   // 지난 바퀴 끝 줄(관측·지도 토큰)을 0 줄로
   PCK(cudaMemcpyAsync(obs_buf, obs_buf + (size_t)T * N_OBS_G1 * N, sizeof(float) * N_OBS_G1 * N, cudaMemcpyDeviceToDevice, 0));
+  PCK(cudaMemcpyAsync(obs_rows, obs_rows + (size_t)T * N_OBS_G1 * N, sizeof(float) * N_OBS_G1 * N, cudaMemcpyDeviceToDevice, 0));
   PCK(cudaMemcpyAsync(tok->at(0), tok->at(T), sizeof(gmap::MapTok) * N, cudaMemcpyDeviceToDevice, 0));
   for (int t = 0; t <= T; ++t) rollout_step(t);
   PCK(cudaGetLastError());
@@ -545,11 +573,12 @@ void Trainer::rollout_body() {
 // 롤아웃 한 스텝(t < T): 관측 모으기 → 정책 앞 → 표본 → 환경 → 지도. t == T: 마지막 가치(부트스트랩)만
 void Trainer::rollout_step(int t) {
   const int ab = (N + AS_E - 1) / AS_E, sb = (N + 127) / 128;
-  assemble_k<<<ab, AS_L * AS_E>>>(obs_buf + (size_t)t * N_OBS_G1 * N, tok->at(t), N, cfg.use_map, cfg.goal_from_map, x0, sin, mask);
+  assemble_k<<<ab, AS_L * AS_E>>>(obs_rows + (size_t)t * N_OBS_G1 * N, tok->at(t), N, cfg.use_map, cfg.goal_from_map, x0, sin, mask);
   forward(N);
   if (t == T) { value_k<<<sb, 128>>>(val, N, val_buf + (size_t)T * N); return; }
   sample_k<<<sb, 128>>>(mean, val, P + lay.logstd, ts, cfg.seed, t, N, cfg.act_dims, act_env, act_buf, logp_buf, val_buf);
   env->step(act_env, obs_buf + (size_t)(t + 1) * N_OBS_G1 * N, rew_buf + (size_t)t * N, done_buf + (size_t)t * N);
+  obs_rows_k<<<(N + 31) / 32, 256>>>(obs_buf + (size_t)(t + 1) * N_OBS_G1 * N, N, obs_rows + (size_t)(t + 1) * N_OBS_G1 * N);
   epstat_k<<<sb, 128>>>(done_buf + (size_t)t * N, map->metrics() + (size_t)gmap::M_INIT * N, N, cur_len, it_stat, tab);
   map->step(env->soa(), 0, 0, 0, tok->at(t + 1), curr_d);
 }

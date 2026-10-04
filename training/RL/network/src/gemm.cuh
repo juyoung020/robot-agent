@@ -204,4 +204,153 @@ __global__ void __launch_bounds__(GNT) gemm_k(GemmP p) {
       }
 }
 
+// ---- 갱신 속도판(G4 뒤): 같은 계산 순서, 더 빠른 실행 --------------------------------------------------------------------
+// 출력 원소마다 k 를 0 → K 차례로 mma(k16) 한 번씩 더하는 순서·0 채움(타일 k 32, 8 단위 덩이)·끝단 식이 gemm_k 와 같아서 결과 비트가 같다.
+// 다른 것: (1) 공유 메모리 → 조각을 ldmatrix(.trans) 로(32 비트 읽기 16 번 → 4 번 / k16), 전치 피연산자도 [k][행] 그대로 16 B 복사,
+// (2) 전역 → 공유를 cp.async 이중 버퍼(레지스터 거치지 않음), (3) 블록·워프 타일을 모양마다(큰 N 은 128 × 128, 워프 64 × 32).
+// 공유 메모리 줄 간격: [행][k] 은 40 bf16(80 B), [k][행] 은 행 + 8 — 둘 다 ldmatrix 8 줄이 서로 다른 은행(덩이 16 B)에 떨어진다.
+constexpr int G2K = 32;
+template <int R, bool T>
+struct G2Tile {
+  static constexpr int LD = T ? R + 8 : G2K + 8;      // 줄 간격(bf16)
+  static constexpr int ELEMS = (T ? G2K : R) * LD;
+  static constexpr int CHUNKS = T ? G2K * (R / 8) : R * (G2K / 8);
+};
+__device__ __forceinline__ void cp16(void* s, const void* g, bool ok) {
+  const unsigned a = (unsigned)__cvta_generic_to_shared(s);
+  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" ::"r"(a), "l"(g), "r"(ok ? 16 : 0));
+}
+__device__ __forceinline__ void cp_commit() { asm volatile("cp.async.commit_group;\n" ::); }
+template <int N_>
+__device__ __forceinline__ void cp_wait() { asm volatile("cp.async.wait_group %0;\n" ::"n"(N_)); }
+__device__ __forceinline__ void ldsm4(uint32_t (&r)[4], const uint16_t* p) {
+  const unsigned a = (unsigned)__cvta_generic_to_shared(p);
+  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n" : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(a));
+}
+__device__ __forceinline__ void ldsm4t(uint32_t (&r)[4], const uint16_t* p) {
+  const unsigned a = (unsigned)__cvta_generic_to_shared(p);
+  asm volatile("ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {%0,%1,%2,%3}, [%4];\n" : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(a));
+}
+// R 행 × k 32 타일(T: 전역에서 행이 연속 — [k][행] 으로 둠). 덩이 = 8 bf16. 범위 밖 덩이는 0(gemm_k 와 같은 자리)
+template <int R, bool T, int NT>
+__device__ __forceinline__ void g2_load(uint16_t* S, const uint16_t* P, long long ld, int r0, int rlim, int k0, int klim, int tid) {
+  using C = G2Tile<R, T>;
+#pragma unroll
+  for (int q0 = 0; q0 < C::CHUNKS; q0 += NT) {
+    const int q = q0 + tid;
+    if (C::CHUNKS % NT != 0 && q >= C::CHUNKS) break;
+    if (!T) {
+      const int row = q >> 2, c = q & 3, gr = r0 + row, gk = k0 + c * 8;
+      const bool ok = gr < rlim && gk < klim;
+      cp16(S + row * C::LD + c * 8, ok ? P + (long long)gr * ld + gk : P, ok);
+    } else {
+      constexpr int MC = R / 8;
+      const int mc = q % MC, kr = q / MC, gr = r0 + mc * 8, gk = k0 + kr;
+      const bool ok = gr < rlim && gk < klim;
+      cp16(S + kr * C::LD + mc * 8, ok ? P + (long long)gk * ld + gr : P, ok);
+    }
+  }
+}
+// 문제 둘을 한 번에(정책·가치 사슬의 같은 모양 층): blockIdx.z = 문제 · zper + 조각. 문제마다 계산은 따로(결과 같음), 실행 수만 준다
+struct GemmG { GemmP p[2]; int zper; };
+template <bool AT, bool BT, int EPI, int BM, int BN, int WM, int WN>
+__global__ void __launch_bounds__((BM / WM) * (BN / WN) * 32) gemm2_k(const __grid_constant__ GemmG gg) {
+  const GemmP& p = gg.p[blockIdx.z / gg.zper];
+  const int zs = blockIdx.z % gg.zper;
+  constexpr int NWM = BM / WM, NT = NWM * (BN / WN) * 32, MI = WM / 16, NI = WN / 8;
+  static_assert(NI % 2 == 0 && WM % 16 == 0, "warp tile");
+  using CA = G2Tile<BM, AT>;
+  using CB = G2Tile<BN, BT>;
+  extern __shared__ __align__(128) uint16_t g2s[];   // 동적(큰 타일은 48 KB 넘음): sA[2][CA::ELEMS] 다음 sB[2][CB::ELEMS]
+  uint16_t (*sA)[CA::ELEMS] = reinterpret_cast<uint16_t (*)[CA::ELEMS]>(g2s);
+  uint16_t (*sB)[CB::ELEMS] = reinterpret_cast<uint16_t (*)[CB::ELEMS]>(g2s + 2 * CA::ELEMS);
+  const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31, g = lane >> 2, t4 = lane & 3;
+  const int m0 = blockIdx.y * BM, n0 = blockIdx.x * BN;
+  int kbeg = 0, kend = p.K;
+  if (EPI == EPI_SPLIT_F32) {
+    kbeg = zs * p.kchunk;
+    kend = min(p.K, kbeg + p.kchunk);
+  }
+  const int wm = (warp % NWM) * WM, wn = (warp / NWM) * WN;
+  float acc[MI][NI][4];
+#pragma unroll
+  for (int a = 0; a < MI; ++a)
+#pragma unroll
+    for (int b = 0; b < NI; ++b)
+#pragma unroll
+      for (int c = 0; c < 4; ++c) acc[a][b][c] = 0.f;
+  g2_load<BM, AT, NT>(sA[0], p.A, p.lda, m0, p.M, kbeg, kend, tid);
+  g2_load<BN, BT, NT>(sB[0], p.B, p.ldb, n0, p.N, kbeg, kend, tid);
+  cp_commit();
+  int buf = 0;
+  // ldmatrix 주소(레인마다): 행렬 j = lane / 8, 줄 = lane % 8
+  const int lr = lane & 7, j0 = (lane >> 3) & 1, j1 = lane >> 4;
+  for (int k0 = kbeg; k0 < kend; k0 += G2K) {
+    if (k0 + G2K < kend) {
+      g2_load<BM, AT, NT>(sA[buf ^ 1], p.A, p.lda, m0, p.M, k0 + G2K, kend, tid);
+      g2_load<BN, BT, NT>(sB[buf ^ 1], p.B, p.ldb, n0, p.N, k0 + G2K, kend, tid);
+    }
+    cp_commit();
+    cp_wait<1>();
+    __syncthreads();
+    const uint16_t* A = sA[buf];
+    const uint16_t* B = sB[buf];
+#pragma unroll
+    for (int kk = 0; kk < G2K; kk += 16) {
+      uint32_t af[MI][4], bfr[NI][2];
+#pragma unroll
+      for (int mi = 0; mi < MI; ++mi) {
+        if (!AT) ldsm4(af[mi], A + (wm + mi * 16 + lr + j0 * 8) * CA::LD + kk + j1 * 8);
+        else ldsm4t(af[mi], A + (kk + lr + j1 * 8) * CA::LD + wm + mi * 16 + j0 * 8);
+      }
+#pragma unroll
+      for (int nj = 0; nj < NI / 2; ++nj) {
+        uint32_t r[4];
+        if (!BT) ldsm4(r, B + (wn + nj * 16 + lr + j1 * 8) * CB::LD + kk + j0 * 8);
+        else ldsm4t(r, B + (kk + lr + j0 * 8) * CB::LD + wn + nj * 16 + j1 * 8);
+        bfr[2 * nj][0] = r[0]; bfr[2 * nj][1] = r[1]; bfr[2 * nj + 1][0] = r[2]; bfr[2 * nj + 1][1] = r[3];
+      }
+#pragma unroll
+      for (int mi = 0; mi < MI; ++mi)
+#pragma unroll
+        for (int ni = 0; ni < NI; ++ni) mma_bf16(acc[mi][ni], af[mi], bfr[ni]);
+    }
+    __syncthreads();
+    buf ^= 1;
+  }
+  // 끝단(gemm_k 와 같은 식)
+#pragma unroll
+  for (int mi = 0; mi < MI; ++mi)
+#pragma unroll
+    for (int ni = 0; ni < NI; ++ni)
+#pragma unroll
+      for (int h = 0; h < 2; ++h) {
+        const int r = m0 + wm + mi * 16 + g + h * 8, c = n0 + wn + ni * 8 + 2 * t4;
+        if (r >= p.M || c >= p.N) continue;
+        float x0 = acc[mi][ni][2 * h], x1 = acc[mi][ni][2 * h + 1];
+        if (EPI == EPI_ACT_BF16) {
+          if (p.act == ACT_ELU) { x0 = elu(x0); x1 = elu(x1); }
+          reinterpret_cast<uint32_t*>(p.C)[((long long)r * p.ldc + c) >> 1] = (uint32_t)f2bf(x0) | ((uint32_t)f2bf(x1) << 16);
+        } else if (EPI == EPI_F32) {
+          *reinterpret_cast<float2*>(reinterpret_cast<float*>(p.C) + (long long)r * p.ldc + c) = make_float2(x0, x1);
+        } else if (EPI == EPI_ACC_F32) {
+          float2* d = reinterpret_cast<float2*>(reinterpret_cast<float*>(p.C) + (long long)r * p.ldc + c);
+          float2 o = *d;
+          o.x = o.x + x0;
+          o.y = o.y + x1;
+          *d = o;
+        } else if (EPI == EPI_DACT_BF16) {
+          const uint32_t yy = reinterpret_cast<const uint32_t*>(p.Y)[((long long)r * p.ldy + c) >> 1];
+          if (!p.bug) {
+            x0 = x0 * elu_grad_from_y(bf2f((uint16_t)(yy & 0xffffu)));
+            x1 = x1 * elu_grad_from_y(bf2f((uint16_t)(yy >> 16)));
+          }
+          reinterpret_cast<uint32_t*>(p.C)[((long long)r * p.ldc + c) >> 1] = (uint32_t)f2bf(x0) | ((uint32_t)f2bf(x1) << 16);
+        } else {   // EPI_SPLIT_F32
+          float* C = reinterpret_cast<float*>(p.C) + (long long)zs * p.M * p.N;
+          *reinterpret_cast<float2*>(C + (long long)r * p.N + c) = make_float2(x0, x1);
+        }
+      }
+}
+
 }  // namespace net

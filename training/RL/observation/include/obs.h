@@ -39,12 +39,36 @@ static_assert(G_TGT + env::N_TGT == env::N_OBS, "target cell is the tail of the 
 NDEV bool goal_known(const gmap::MapTok& tok) { return tok.n_slot > 0 && tok.slot[0][gmap::T_TARGET] == 0x3c00u; }
 NDEV bool goal_col(int c) { return (c >= G_EE_TGT && c < G_EE_TGT + 3) || (c >= G_TGT && c < G_TGT + env::N_TGT); }
 
+// 칸 줄 값 하나(칸 b, 열 c, 채운 칸 수 ns) → bf16. assemble 과 칸 MLP 묶음 커널(slot_fused.cuh)이 같이 쓴다
+NDEV int slot_count(const gmap::MapTok& tok, int use_map) { return use_map ? (tok.n_slot < 0 ? 0 : (tok.n_slot > net::KSLOT ? net::KSLOT : tok.n_slot)) : 0; }
+NDEV uint16_t slot_in(const gmap::MapTok& tok, int b, int c, int ns) {
+  float v = 0.f;
+  if (b < ns) {
+    if (c < net::SLOT_VALS) v = clamp10(net::h2f(tok.slot[b][c]) * slot_scale(c));
+    else if (c < net::SLOT_VALS + net::N_ID) v = (tok.name_id[b] == c - net::SLOT_VALS) ? 1.f : 0.f;
+    else if (c < net::SLOT_VALS + 2 * net::N_ID) v = (tok.app_id[b] == c - net::SLOT_VALS - net::N_ID) ? 1.f : 0.f;
+    else if (c == net::SLOT_BIAS) v = 1.f;
+  }
+  return f2bf(v);
+}
+
+// bf16 8 개를 한 번에(16 B 정렬 자리)
+NDEV void put8(uint16_t* d, const uint16_t h[8]) {
+#ifdef __CUDA_ARCH__
+  *reinterpret_cast<uint4*>(d) = make_uint4(h[0] | ((uint32_t)h[1] << 16), h[2] | ((uint32_t)h[3] << 16), h[4] | ((uint32_t)h[5] << 16), h[6] | ((uint32_t)h[7] << 16));
+#else
+  for (int e = 0; e < 8; ++e) d[e] = h[e];
+#endif
+}
+static_assert((net::X0_W - net::X0_OBS) % 8 == 0 && net::X0_OBS % 8 == 0 && net::SLOT_IN % 8 == 0, "16 B pieces");
+
 // 판 하나의 입력을 레인 nl 개가 나눠 쓴다(lane = 0..nl-1). CPU 는 nl = 1.
 // obs: G1 관측 [k*stride + i]. x0: 이 판의 X0 줄. srows: 이 판의 칸 줄 16 × 48. use_map = 0 이면 지도 입력을 모두 0 으로
 NDEV uint32_t assemble(const float* obs, int stride, int i, const gmap::MapTok& tok, uint16_t* x0, uint16_t* srows, int use_map, int goal_mode,
                        int lane, int nl) {
   const bool show = goal_mode == 0 || goal_known(tok);
-  for (int c = lane; c < net::X0_W - net::X0_OBS; c += nl) {
+  // 8 칸(16 B)씩: 레인마다 덩이 하나를 계산해 한 번에 씀(값·자리는 칸 하나씩 쓰던 때와 같음)
+  auto x0v = [&](int c) -> uint16_t {
     const int col = net::X0_OBS + c;
     float v = 0.f;
     if (c < net::N_OBS_G1) v = (show || !goal_col(c)) ? clamp10(obs[(size_t)c * stride + i]) : 0.f;
@@ -55,20 +79,21 @@ NDEV uint32_t assemble(const float* obs, int stride, int i, const gmap::MapTok& 
     } else if (use_map && c < net::OBS_W) v = clamp10(net::h2f(tok.comp[c - net::N_OBS_G1 - gmap::N_WALL - gmap::N_ROOMTOK]));
     else if (col == net::X0_BIAS) v = 1.f;
     else if (use_map >= 2 && col >= net::X0_FRONT && col < net::X0_FRONT + net::N_FRONT) v = clamp10(net::h2f(tok.front[col - net::X0_FRONT]));
-    x0[col] = f2bf(v);
+    return f2bf(v);
+  };
+  for (int q = lane; q < (net::X0_W - net::X0_OBS) / 8; q += nl) {
+    uint16_t h[8];
+    for (int e = 0; e < 8; ++e) h[e] = x0v(q * 8 + e);
+    put8(x0 + net::X0_OBS + q * 8, h);
   }
-  const int ns = use_map ? (tok.n_slot < 0 ? 0 : (tok.n_slot > net::KSLOT ? net::KSLOT : tok.n_slot)) : 0;
-  for (int e = lane; e < net::KSLOT * net::SLOT_IN; e += nl) {
-    const int b = e / net::SLOT_IN, c = e % net::SLOT_IN;
-    float v = 0.f;
-    if (b < ns) {
-      if (c < net::SLOT_VALS) v = clamp10(net::h2f(tok.slot[b][c]) * slot_scale(c));
-      else if (c < net::SLOT_VALS + net::N_ID) v = (tok.name_id[b] == c - net::SLOT_VALS) ? 1.f : 0.f;
-      else if (c < net::SLOT_VALS + 2 * net::N_ID) v = (tok.app_id[b] == c - net::SLOT_VALS - net::N_ID) ? 1.f : 0.f;
-      else if (c == net::SLOT_BIAS) v = 1.f;
+  const int ns = slot_count(tok, use_map);
+  if (srows)   // nullptr 이면 칸 줄은 쓰지 않음
+    for (int q = lane; q < net::KSLOT * net::SLOT_IN / 8; q += nl) {
+      uint16_t h[8];
+      const int b = q / (net::SLOT_IN / 8), c0 = (q % (net::SLOT_IN / 8)) * 8;
+      for (int e = 0; e < 8; ++e) h[e] = slot_in(tok, b, c0 + e, ns);
+      put8(srows + q * 8, h);
     }
-    srows[e] = f2bf(v);
-  }
   return ns >= 32 ? 0xffffffffu : ((1u << ns) - 1u);
 }
 

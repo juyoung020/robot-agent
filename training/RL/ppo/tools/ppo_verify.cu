@@ -92,6 +92,7 @@ static netref::Batch make_batch(Trainer& tr, netref::Hyper& hy) {
   while (tr.poll(&L)) {}
   tr.rollout_body();
   tr.gae();
+  tr.keep_slot_bufs = true;   // sin·dZ S2·dZ S1 을 전역에도(층마다 CPU 와 비교)
   tr.gather(0, 0);
   VCK(cudaDeviceSynchronize());
   const int M = tr.MB;
@@ -412,6 +413,29 @@ static int run_v7() {
   return (d || !dc) ? 1 : 0;
 }
 
+// 비트 동일 비교(빌드 사이): 학습 크기로 몇 바퀴 돈 뒤 변수·Adam·버퍼·기록을 파일로. 두 빌드의 파일을 cmp 로 견준다(갱신 최적화 전후).
+//   ppo_verify snap <out> [N=4096] [T=64] [iters=6] [stage=1] [use_map=1]
+static int run_snap(const char* out, int N, int T, int iters, int stage, int use_map) {
+  PpoConfig c = small_cfg(7, 1);
+  c.n_env = N; c.horizon = T; c.minibatches = 4; c.epochs = 5; c.use_map = use_map; c.adaptive_lr = 1; c.stage = stage;
+  const Snap s = run_iters(c, iters);
+  FILE* f = std::fopen(out, "wb");
+  if (!f) { std::perror(out); return 2; }
+  uint64_t h = 1469598103934665603ull;
+  auto put = [&](const void* p, size_t nb) {
+    std::fwrite(p, 1, nb, f);
+    for (size_t i = 0; i < nb; ++i) h = (h ^ ((const uint8_t*)p)[i]) * 1099511628211ull;
+  };
+  put(s.P.data(), 4 * s.P.size()); put(s.m.data(), 4 * s.m.size()); put(s.v.data(), 4 * s.v.size());
+  put(s.obs.data(), 4 * s.obs.size()); put(s.adv.data(), 4 * s.adv.size()); put(s.val.data(), 4 * s.val.size()); put(s.act.data(), 4 * s.act.size());
+  put(s.tok.data(), s.tok.size()); put(s.tab.data(), 8 * s.tab.size()); put(s.logs.data(), sizeof(PpoLog) * s.logs.size());
+  std::fclose(f);
+  const PpoLog& L = s.logs.back();
+  std::printf("snap %s: N %d T %d iters %d A%d use_map %d -> FNV-1a %016llx (last log: kl %.6f succ %.4f ep_ret %.4f)\n", out, N, T, iters, stage, use_map,
+              (unsigned long long)h, L.kl, L.succ, L.ep_ret);
+  return 0;
+}
+
 static int run_bench(int N, int T, int iters, int mbs, int use_map) {
   PpoConfig c = small_cfg(7, 1);
   c.n_env = N; c.horizon = T; c.minibatches = mbs; c.epochs = 5; c.use_map = use_map; c.adaptive_lr = 1;
@@ -513,6 +537,7 @@ static int run_eval(const char* path, int stage, int iters, int N, int use_map, 
     for (int k = 0; k < 4 * tr.T; ++k) {
       const int t = k % tr.T;
       if (t == 0 && k == 0) { VCK(cudaMemcpy(tr.obs_buf, tr.obs_buf + (size_t)tr.T * N_OBS_G1 * N, sizeof(float) * N_OBS_G1 * N, cudaMemcpyDeviceToDevice));
+                              VCK(cudaMemcpy(tr.obs_rows, tr.obs_rows + (size_t)tr.T * N_OBS_G1 * N, sizeof(float) * N_OBS_G1 * N, cudaMemcpyDeviceToDevice));
                               VCK(cudaMemcpy(tr.tok->at(0), tr.tok->at(tr.T), sizeof(gmap::MapTok) * N, cudaMemcpyDeviceToDevice)); }
       tr.env->download(fs, iv, rg);
       const std::vector<gmap::MapTok> tk = dl(tr.tok->at(t), N);
@@ -525,6 +550,7 @@ static int run_eval(const char* path, int stage, int iters, int N, int use_map, 
       for (int i = 0; i < N; ++i) for (int q = 0; q < 2; ++q) sat_all[q] += std::fabs(mu[(size_t)i * N_ACT + q]) > 1.f;
       n_all += N;
       if (t == tr.T - 1) { VCK(cudaMemcpy(tr.obs_buf, tr.obs_buf + (size_t)tr.T * N_OBS_G1 * N, sizeof(float) * N_OBS_G1 * N, cudaMemcpyDeviceToDevice));
+                           VCK(cudaMemcpy(tr.obs_rows, tr.obs_rows + (size_t)tr.T * N_OBS_G1 * N, sizeof(float) * N_OBS_G1 * N, cudaMemcpyDeviceToDevice));
                            VCK(cudaMemcpy(tr.tok->at(0), tr.tok->at(tr.T), sizeof(gmap::MapTok) * N, cudaMemcpyDeviceToDevice)); }
       for (int i = 0; i < N; ++i) {
         if (!done[i]) continue;
@@ -621,5 +647,8 @@ int main(int argc, char** argv) {
                     argc > 7 ? std::atoi(argv[7]) : 1, mc);
   }
   if (m == "v7") return run_v7();
+  if (m == "snap" && argc > 2)
+    return run_snap(argv[2], argc > 3 ? std::atoi(argv[3]) : 4096, argc > 4 ? std::atoi(argv[4]) : 64, argc > 5 ? std::atoi(argv[5]) : 6,
+                    argc > 6 ? std::atoi(argv[6]) : 1, argc > 7 ? std::atoi(argv[7]) : 1);
   return 2;
 }
