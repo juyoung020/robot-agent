@@ -73,3 +73,29 @@ cmake -S . -B ~/ra_envbuild && cmake --build ~/ra_envbuild -j
 
 - 가구 배열을 `Core` 에 넣었을 때 A1 커널이 레지스터 208 → 168·넘침 356 B 로 1.8 배 느려졌다. 가구 값은 `Core::Furn`(상태 자리를 가리킴)으로 빼고, A0/A1 은 가구 수를 컴파일 때 0 으로 둔 커널(`FURN = false`)을 띄운다. 그래도 N 1M 에서 −19 %(N 4,096 에서는 +2 µs/스텝 = 바퀴당 0.13 ms)가 남았다 — 원인은 찾지 않았다.
 - A2 는 판 하나가 스레드 하나라 리셋하는 판(다익스트라: 꼭짓점 32 × 32 × 상자 8 보임 검사)이 커널 전체를 붙잡는다(N 4,096 이면 지연에 묶임). `step_kernel_a2` 는 리셋하는 판마다 워프 32 레인이 꼭짓점 하나씩 맡는다(같으면 앞 번호인 최솟값을 워프 셔플로, 식·순서는 `path_prepare` 그대로 → CPU 참조판과 비트 동일). 남은 0.17 ms 중 리셋 아닌 스텝의 `path_dist`(모든 판 0.05 ms)와 장면 만들기가 대부분이다(가정 — 나눠 재지 않음).
+
+## E2 — BEHAVIOR 집 장면(stage 3, 커리큘럼 B1–B5) (2026-10-04)
+계획서 [CURRICULUM_BEHAVIOR2026](../../../docs/map_vla/CURRICULUM_BEHAVIOR2026.md) 3.1절(집기·놓기 거르개 표)·5.4절(상태·잰 값 전부). 상자 방 A0–A2(= B0)는 바이트 그대로다.
+
+```
+cmake --build ~/ra_envbuild -j4
+~/ra_envbuild/bscene_check                      # 장면 묶음 만들기 + 표 확인(시작 자세·경로·방·창), 장면별 거르개 지남 수
+~/ra_envbuild/bscene_check --dump-combos F      # 지시문 조합 → training/embed/pnp_instr.py → training/data/pnp_v1
+~/ra_envbuild/pnp_check [10000] [--strict] [--negative free_area|in_closed|artic|spawn_reach|spawn_free|dst_reach|stance]
+~/ra_envbuild/env_verify 2048 600 --stage 3 --follow [--strict] [--split 1] [--mix p1,p2] [--negative | --negative-scene]
+~/ra_envbuild/env_bench 300 3 32768
+```
+
+| 파일 | 내용 |
+|---|---|
+| `include/bscene.h` | 장치 장면(`SceneSet`: 장면 ≤ 8 × 회전 상자·1 m 묶음·방 격자·문·띠 점유·칸 성분, 시작 조건 `Entry`, 집기·놓기 고르기 표, 이름 확신도 표), 커리큘럼 `BCurr`, 지도 되먹임 `NavFb`, 기하(OBB SAT·광선·묶음 걷기), B4·B5 판정 정의 |
+| `include/bscene_host.h`, `src/bscene_host.cpp` | 호스트: RASC v3(`tools/b1kconv/cpp/rasc.h`) + vla_v1 이름 표 → 묶음, 벽 상자 문 자르기, 시작 조건 표(B1 방 표, 집기·놓기 표 + 창 닿는 칸 비트), 거르개 표 `PnpFilter`(RASC LIMITS 를 읽음), `upload`. **장치 커널은 이 파일에 기대지 않는다**(학습기·BC·뷰어 빌드 그대로) |
+| `include/env_beh.h` | 판 리셋(B1 방 표 / B2–B5 인스턴스 → 물체 → 놓을 곳, 무작위 시작 `spawn_ok`), 스텝(공용 `act_prepare`·`substeps`·`obs_body` + 장면 충돌·광선·보임·거리·성공) |
+| `include/omx_workspace_grasp.h` | `tools/omx_ws --grasp` 생성: E0 잡는 점(ee 링크 −0.0119 m) 작업 공간 — B3 성공 판정 |
+
+API(뷰어·학습기용, 뒤로 맞음 — 예전 호출은 그대로):
+- `DeviceEnv(N, stage, seed, arm_free, const bsc::SceneSet* ss_dev = nullptr, const bsc::BCurr& cu0 = kBCurrDefault)`, `kStageBeh = 3`. `bcurr_dev()`·`set_bcurr_source(ptr)`(장치 커리큘럼 값), `set_nav(map.nav_fb())`(지도 거리장·목표 확정 되먹임). `CpuEnv(..., &scenes.host, cu)` 와 `CpuEnv::nav`.
+- SoA 끝에 더함(앞 자리 번호 그대로): `F_B_WX..F_B_DIST`(창 가운데 세계 좌표 — **판의 x·y·목표는 창 좌표**, 세계 = 창 + (F_B_WX, F_B_WY)), `I_B_KIND`(0 상자 방, 1 B1, 2 B2, 3 B3), `I_B_SCENE`, `I_B_ENT`(→ `SceneBuild::ent`: 물체 9·놓을 곳·이름·RASC 번호), `I_B_ROOM`, `I_B_FSET`(쓴 거르개), `I_B_INSTR`(지시문 행). `I_NF` = 0 이라 상자 가구는 없다 — BEHAVIOR 판 장면은 `SceneBuild::sc[I_B_SCENE]`(상자·방)·`ent[I_B_ENT].prim` 으로 그린다.
+- `step_core` 는 같은 연산을 공용 조각으로 나눈 것(결과 바이트 같음, 뷰어 훅 그대로).
+
+잰 값(5.4절): `env_verify 2048 600 --stage 3 --follow` 비트 동일(대본 판 B1 성공 407·B2 312·B3 241), 음성 대조 30,059,004·11,539,830 불일치로 실패(정상). 상자 방 env 스트림 해시 6 설정이 f5b4ec7 빌드와 같음. 처리량(ms/스텝) A2 0.176 / 0.235, BEHAVIOR 0.336 / 0.444(N 4,096 / 32,768). `pnp_check` 10,000 판 위반 0(느슨·엄격), GPU == CPU 고르기 비트 동일. 장면 묶음 장치 61.2 MB, 만들기 약 9 s(CPU, 장면마다 스레드).

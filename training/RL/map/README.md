@@ -75,6 +75,14 @@ GPU 한 스텝 = 커널 셋(`DeviceMap::step`):
 
 장면: G1 은 빈 방 + 컵이라 지도용 상자를 더했다. 벽에 붙인 가구 5 개(의자·탁자·장·쓰레기통, 탁자·장은 고정 종류)와 바닥의 작은 물건 3 개다. A0/A1 에서는 **G1 동역학이 이 상자와 충돌하지 않는다**(지도만의 장면). 로봇 시작점·컵과 겹치지 않게 놓는다. **A2**(`../env` README A2)에서는 환경이 상자 8 개를 만들어 몸통과 부딪히게 하고, 지도는 판 리셋 때 환경 SoA 의 상자를 그대로 장면으로 쓴다(`make_scene`, `EnvView::fb·fi` — 리셋 때만 읽음, `m.rng` 를 쓰지 않음). 광선·가림·검출·C0/C1 처음 지도가 동역학과 같은 장면이다.
 
+## E2 — BEHAVIOR 집 장면 (2026-10-04, 잰 값)
+계획서 CURRICULUM_BEHAVIOR2026 5.4절. `DeviceMap(N, seed, scenes.dev)`(장면 묶음이 있으면 판마다 `BMapEnv` + 거리장, 커널은 `BEH = true` 판), `CpuMap(N, seed, &scenes.host)`. 상자 방 판(장면 묶음 없음)은 `BEH = false` 커널이라 레지스터·스택·출력이 예전과 같다(`map_verify` 4 설정 출력·`map_tokrec` 파일 md5 가 f5b4ec7 빌드와 같음).
+- 장면: 광선(깊이 64 × 9·보임 점·부재 확인)이 바닥·천장 + 정적 회전 상자(1 m 묶음 걷기, 깊이 범위 밖은 결과가 같아 안 봄) + 과제 물체 prim. 지도 물체 = 시작 조건의 9 개(이름 = vla_v1 행), 틀린 이름 = 이름 표의 비슷한 이름 3, 확신도 = 장면 묶음 표. 방·문 토큰 = 장면 방 격자·문(창 방 ≤ 16). C0/C1 = 장면 띠 점유 래스터. 목표 칸 표시(`T_TARGET`) = 집을 것 + 놓을 곳(`BMapEnv::goal`).
+- **다가가기 거리장**(map.h 8 절, `map_nav_kernel` 워프 = 판): nav_k(`MapCurr::nav_k`, 예전 `pad` 자리, 0 = 10) 스텝마다 믿는 점유 비트에서 BFS → 로봇 둘레 32 × 32 조각. `nav_fb()` 를 `DeviceEnv::set_nav` 에.
+- `map_verify 2048 600 --stage 3`(C2·C0·C1·섞음+팔·매 keyframe·nav_k 1/20·엄격) 비트 동일, 방 토큰 대 RASC 방 격자(독립 로더) 0 다름, 음성 대조 `--negative` 1,021,077·`--negative-room` 591·`--negative-nav` 1,199·`--negative-way` 121·`--negative-live` 599 로 실패(정상).
+- 지도 단계 ms/스텝(자연, N 4,096 / 32,768): 상자 방 0.237 / 1.572, BEHAVIOR 거리장 끔 0.362 / 2.057, K 1 0.608 / 3.743, K 10 0.446 / 2.420, K 20 0.443 / 2.302. `nav_tradeoff`(같은 행동, K 1 기준 판 보상 합 차): C2 K 5/10/20 0.052/0.124/0.295, C0 0.005/0.011/0.018.
+- API 더함(뒤로 맞음): `MapHost::bm·lev·navorg·navtag·navconf`, `DeviceMap::nav_fb()·set_nav(bool)`, `read_env(s, i, beh = false)`, `make_tokens_n(…, tbug, const BCtx* = nullptr)`. BEHAVIOR 판의 `Slot::cls`·`Prim::cls` 는 **이름 표 행**(0..583)이다(상자 방은 예전처럼 `Cls` 0..5) — `MapCore::init_pad` = 1 이 표시.
+
 ## 결과 (RTX 5070 Ti, sm_120, CUDA 12.8 — 잰 값)
 ### 지도 토큰 v2(VLA_INPUT 3·4절, 2026-10-04) — 잰 값
 `MapTok` 1,280 → **1,296 B**(뒤에 `way[4]` + 0 4 개, 앞 값의 자리는 그대로). 바꾼 것(모두 `map_tok.h` 공용 경로, CPU == GPU):
