@@ -27,10 +27,14 @@ add_executable(map_verify tools/map_verify.cu)
 target_link_libraries(map_verify gmap)
 add_executable(map_bench tools/map_bench.cu)
 target_link_libraries(map_bench gmap)
+# 지도 토큰 기록(5.3): 스텝마다 장치 기록 버퍼 [T][N] 에 쓰고 끝에 파일로
+add_executable(map_tokrec tools/map_tokrec.cu)
+target_link_libraries(map_tokrec gmap)
 
 enable_testing()
 add_test(NAME map_bit_identical COMMAND map_verify 1024 300)
 add_test(NAME map_negative_control COMMAND map_verify 1024 120 --negative)
+add_test(NAME map_bit_identical_arm COMMAND map_verify 1024 300 --arm)
 
 # 구간별 시간(clock64) 재기: 같은 소스를 -DMAP_PROF 로. 결과 비교에는 쓰지 않음
 add_library(gmap_prof STATIC src/map_kernel.cu src/map_ref.cpp)
@@ -43,3 +47,21 @@ target_link_libraries(map_prof gmap_prof)
 # 보정용: 정해진 궤적에서 slam 자세 오차·가짜 검출 통계(GPU 지도). 학습 경로 아님
 add_executable(map_drift tools/map_drift.cpp)
 target_link_libraries(map_drift gmap)
+
+# 진짜 scenemap 코드와 맞춰 보기(CPU, 선택): cmake -DMAP_REALCHECK=ON. scenemap 소스는 서브모듈에서 읽기만 한다(빌드 산출물은 이 빌드 폴더에)
+option(MAP_REALCHECK "build map_realcheck against the real scenemap sources" OFF)
+if(MAP_REALCHECK)
+  set(SM_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../src/behavior-2026/src/scene_graph/scenemap)
+  add_library(sm_real STATIC ${SM_DIR}/src/scan.cpp ${SM_DIR}/src/grid.cpp ${SM_DIR}/src/slam2d.cpp ${SM_DIR}/src/fk.cpp ${SM_DIR}/src/capi.cpp
+              ${SM_DIR}/src/objmap.cpp ${SM_DIR}/src/bestview.cpp ${SM_DIR}/src/cloud.cpp ${SM_DIR}/src/png.cpp ${SM_DIR}/src/walls.cpp
+              ${SM_DIR}/src/stream.cpp ${SM_DIR}/../da/src/merge.cpp ${SM_DIR}/src/dsg_save.cpp ${SM_DIR}/src/rooms.cpp ${SM_DIR}/src/sgraph.cpp)
+  target_include_directories(sm_real PUBLIC ${SM_DIR}/include ${SM_DIR}/../da/include)
+  set_target_properties(sm_real PROPERTIES CXX_STANDARD 20)
+  target_compile_options(sm_real PRIVATE -w)
+  find_package(ZLIB REQUIRED)
+  find_package(Threads REQUIRED)
+  target_link_libraries(sm_real PUBLIC ZLIB::ZLIB Threads::Threads)
+  add_executable(map_realcheck tools/map_realcheck.cpp)
+  set_target_properties(map_realcheck PROPERTIES CXX_STANDARD 20)
+  target_link_libraries(map_realcheck gmap sm_real)
+endif()

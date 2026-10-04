@@ -1,0 +1,331 @@
+// 지도 토큰(계획서 GPU_TRAINING.md 5.3·4.4, VLA_INPUT.md 3·4절) — 스텝마다 판마다 1,280 B. map.h 끝에서 include 된다.
+// CPU 참조판과 GPU 커널이 같은 make_tokens 를 쓴다(GPU 는 판 하나 = 레인 16, CPU 는 레인 1). 모든 값은 믿는(slam) 자세의 base_link 기준이다.
+//   물체 칸 16 × 숫자 33 (FP16) + 이름 표 번호·생김새 표 번호(int16, 4.4: 벡터는 장치 표에, 관측에는 번호만) + 벽 56 (FP16) + 방 10 (FP16)
+//   + 완성도 4 (FP16) + 칸 수·표시.
+// 칸 고르기: 확정 물체(scenemap 스냅숏처럼), 목표 물체가 맨 앞, 나머지는 로봇에서 가까운 순(VLA_INPUT 3절). 빈 칸 = 0, 번호 −1.
+#pragma once
+#ifdef __CUDACC__
+#include <cuda_fp16.h>
+#endif
+
+namespace gmap {
+
+constexpr int TOK_SLOT_VALS = 33;
+constexpr int N_WALL = 56;   // walls.hpp kStateLen = 16 + 8·5
+constexpr int N_ROOMTOK = 10;
+constexpr int N_COMP = 4;
+// 칸 숫자 33 의 자리(VLA_INPUT 3절 표 순서)
+enum TokSlot {
+  T_POS = 0,        // 3 위치 xyz (base_link)
+  T_POS_EEF = 3,    // 3 위치 − 팔 끝 (base_link 축)
+  T_DIST = 6,       // 수평 거리
+  T_BEAR = 7,       // 방위 rad
+  T_EXT = 8,        // 3 크기
+  T_EEF_C = 11,     // 팔 끝 ↔ 중심 거리
+  T_EEF_S = 12,     // 팔 끝 ↔ 상자 겉면 거리(안이면 0)
+  T_REACH = 13,     // 팔이 닿는지(0/1)
+  T_DISP = 14,      // 3 처음 자리에서 옮겨진 양(base_link 축)
+  T_VEL = 17,       // 3 물체 속도 m/s (지난 스텝 지도 자리와의 차, base_link 축)
+  T_STATE = 20,     // 4 보임·사라짐·옮겨짐·들고 있음
+  T_AGE = 24,       // 마지막 본 뒤 s
+  T_SCORE = 25,     // 검출 점수
+  T_NOBS = 26,      // 본 횟수
+  T_SRC = 27,       // 1 = 지금 보는 중(마지막 keyframe 에서 봄), 0 = 기억
+  T_UNC = 28,       // 위치 불확실도 m
+  T_SAMEROOM = 29,  // 로봇과 같은 (드러난) 방
+  T_TARGET = 30,    // 목표 물체
+  T_CONF1 = 31,     // 이름 확신도: 1위 점수
+  T_CONF2 = 32,     // 1위 − 2위
+};
+struct alignas(16) MapTok {
+  uint16_t slot[KSLOT][TOK_SLOT_VALS];   // FP16
+  int16_t name_id[KSLOT];                // 이름 뜻 표 번호 = 지도의 이름 번호(틀린 이름 그대로), −1 빈 칸
+  int16_t app_id[KSLOT];                 // 생김새 표 번호 = 출처 참 물체의 종류, 유령 = NCLS(배경·잡동사니), −1 빈 칸
+  uint16_t wall[N_WALL];                 // FP16, walls.hpp wallStateVector 와 같은 배치
+  uint16_t room[N_ROOMTOK];              // FP16: 방 종류 6(kitchen·bathroom·bedroom·living room·office·모름), 가까운 문 x·y·거리 m, 문 있음
+  uint16_t comp[N_COMP];                 // FP16: 과제 물체 확정, 장면 물체 확정 비율, 방 칸 본 비율, 드러난 방 비율
+  int16_t n_slot;                        // 채운 칸 수
+  int16_t flags;                         // 비트 0 = 이번 스텝 keyframe
+  uint16_t pad[8];
+};
+static_assert(sizeof(MapTok) == 1280, "map token = 1280 B per env-step");
+struct TPrev { float p[3]; int tag; };   // 칸마다 지난 스텝 지도 자리, tag = 물체 번호 << 16 | 스텝 & 0xffff (물체 속도용, 확정 칸만 씀)
+
+// float → FP16 (가장 가까운 짝수로 반올림, NaN 은 0x7fff). CPU 는 정수 연산(f2h_soft), GPU 는 하드웨어 __float2half_rn —
+// 둘이 float 2^32 개 전부에서 같은 비트임을 map_verify 가 시작 때 확인한다.
+DEV uint16_t f2h_soft(float f) {
+#ifdef __CUDA_ARCH__
+  const uint32_t x = (uint32_t)__float_as_uint(f);
+#else
+  uint32_t x;
+  __builtin_memcpy(&x, &f, 4);
+#endif
+  const uint32_t sign = (x >> 16) & 0x8000u, ax = x & 0x7fffffffu;
+  if (ax > 0x7f800000u) return (uint16_t)0x7fffu;   // NaN
+  if (ax == 0x7f800000u) return (uint16_t)(sign | 0x7c00u);
+  if (ax >= 0x477ff000u) return (uint16_t)(sign | 0x7c00u);   // ≥ 65520 → inf
+  if (ax < 0x38800000u) {                                     // 정규 FP16 아래
+    if (ax < 0x33000000u) return (uint16_t)sign;
+    const uint32_t mm = (ax & 0x7fffffu) | 0x800000u;
+    const int sh = 126 - (int)(ax >> 23);
+    uint32_t h = mm >> sh;
+    const uint32_t rem = mm & ((1u << sh) - 1u), half = 1u << (sh - 1);
+    if (rem > half || (rem == half && (h & 1u))) ++h;
+    return (uint16_t)(sign | h);
+  }
+  uint32_t h = (ax - 0x38000000u) >> 13;
+  const uint32_t rem = ax & 0x1fffu;
+  if (rem > 0x1000u || (rem == 0x1000u && (h & 1u))) ++h;
+  return (uint16_t)(sign | h);
+}
+DEV uint16_t f2h(float f) {
+#ifdef __CUDA_ARCH__
+  return __half_as_ushort(__float2half_rn(f));
+#else
+  return f2h_soft(f);
+#endif
+}
+
+// ---- 벽 상태 56(walls.cpp wallStateVector) ----------------------------------------------------------------------------
+// 광선(rayDistances): 격자 DDA(Amanatides–Woo, walls.cpp 와 같은 꼴: 처음 경계 t 를 구하고 칸마다 tdx·tdy 를 더함, tx < ty 일 때만 x),
+// 첫 점유 칸에 들어간 거리(시작 칸이 점유면 0), wall_range 넘으면 wall_range. walls.cpp 는 double, 여기는 float.
+// 광선은 로봇 둘레 행 TOK_SROWS 개(8 의 배수에서 시작, 로봇 행 ± 41 = 4 m 를 덮음)만 읽는다. tok_stage 가 그 행을 옮긴다(CPU·GPU 같은 함수).
+constexpr int TOK_SROWS = 96;
+DEV int tok_row0(float ey) {
+  const int cy = (int)floorf((ey - (float)GX0 * RES) / RES);
+  const int r0 = ((cy - 42) >> 3) * 8;
+  return r0 < 0 ? 0 : r0 > GW - TOK_SROWS ? GW - TOK_SROWS : r0;
+}
+DEV void tok_stage(const uint32_t* occ_full, int row0, uint32_t* so, int lane, int nl) {
+#ifdef __CUDA_ARCH__
+  const uint4* src = reinterpret_cast<const uint4*>(occ_full) + row0;
+  uint4* dst = reinterpret_cast<uint4*>(so);
+  for (int k = lane; k < TOK_SROWS; k += nl) dst[k] = src[k];
+#else
+  for (int k = lane; k < TOK_SROWS * 4; k += nl) so[k] = occ_full[row0 * 4 + k];
+#endif
+}
+DEV float wall_ray(const uint32_t* so, int row0, float x, float y, float th) {
+  constexpr float OX = (float)GX0 * RES;
+  float s, c;
+  sincosf_d(th, &s, &c);
+  const float fx = (x - OX) / RES, fy = (y - OX) / RES;
+  int cx = (int)floorf(fx), cy = (int)floorf(fy);
+  const int sx = c > 0.f ? 1 : -1, sy = s > 0.f ? 1 : -1;
+  const float tdx = c != 0.f ? absf(RES / c) : kInf, tdy = s != 0.f ? absf(RES / s) : kInf;
+  float tx = c != 0.f ? ((sx > 0 ? (float)(cx + 1) - fx : fx - (float)cx) * RES) / absf(c) : kInf;
+  float ty = s != 0.f ? ((sy > 0 ? (float)(cy + 1) - fy : fy - (float)cy) * RES) / absf(s) : kInf;
+  float t = 0.f;
+  while (t <= MP::wall_range) {
+    if ((unsigned)cx < (unsigned)GW && (unsigned)(cy - row0) < (unsigned)TOK_SROWS &&
+        ((so[(cy - row0) * 4 + (cx >> 5)] >> (cx & 31)) & 1u))
+      return maxf(t, 0.f);
+    if (tx < ty) { t = tx; tx = tx + tdx; cx += sx; } else { t = ty; ty = ty + tdy; cy += sy; }
+  }
+  return MP::wall_range;
+}
+// 선분 하나를 로봇 기준으로(segmentsRobotFrame): a·b 끝(m) 과 로봇에서 선분까지 거리
+DEV float wall_seg_robot(const int16_t* q, float px, float py, float c, float s, float r[4]) {
+  float w[4];
+  for (int k = 0; k < 4; ++k) w[k] = ((float)q[k] * 0.5f + (float)GX0) * RES;
+  const float ax = w[0] - px, ay = w[1] - py, bx = w[2] - px, by = w[3] - py;
+  r[0] = c * ax + s * ay; r[1] = -s * ax + c * ay;
+  r[2] = c * bx + s * by; r[3] = -s * bx + c * by;
+  const float abx = r[2] - r[0], aby = r[3] - r[1];
+  const float t = clampf(-(r[0] * abx + r[1] * aby) / maxf(abx * abx + aby * aby, 1e-12f), 0.f, 1.f);
+  const float dx = r[0] + abx * t, dy = r[1] + aby * t;
+  return sqrtf(dx * dx + dy * dy);
+}
+DEV const int16_t* seg_at(const int16_t* segs, const MapCore& m, int k) {   // 가로 nseg_h 개 다음 세로
+  return k < m.nseg_h ? segs + 4 * k : segs + 4 * (MAXSEG + k - m.nseg_h);
+}
+
+struct TokScratch {   // 판 하나의 작업 공간(GPU 공유 메모리)
+  float sd[2 * MAXSEG];   // 선분 거리
+  float sk[KSLOT];        // 칸 순서 열쇠(수평 거리), 안 넣는 칸 −1
+  float tk[KSLOT];        // 목표 후보 열쇠, 아님 −1
+  float ray[16];          // 광선 거리 m
+  TPrev tp[KSLOT];        // 확정 칸의 지난 자리(미리 읽음)
+  union {
+    uint32_t so[TOK_SROWS * 4];   // 로봇 둘레 행의 점유 비트(광선이 읽음). 광선 뒤에는 out 이 덮어씀
+    MapTok out;
+  };
+};
+
+// 판 하나의 토큰. 레인 lane / nl 개가 나눠 하고 sync 로 맞춘다(CPU: lane 0, nl 1). write = false 면 tprev 를 쓰지 않음(GPU 남는 레인)
+// occ: 판의 점유 비트 전체. 로봇 둘레 행을 ts.so 로 옮긴 뒤 광선을 쏘고, out 은 그다음 동기부터 쓴다(so 와 같은 자리)
+template <class Sync>
+DEV void make_tokens(const MapCore& m, const uint32_t* occ, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
+                     bool write, const Sync& sync) {
+  MapTok& o = ts.out;
+  float s, c;
+  sincosf_d(m.eyaw, &s, &c);
+  const float px = m.ex, py = m.ey;
+  const int nseg = m.nseg_h + m.nseg_v;
+  const int rk = room_of(m, px, py);
+  const int rrk = (rk >= 0 && ((m.rrev >> rk) & 1)) ? rk : -1;   // 로봇이 있는 드러난 방
+  // 1) 서로 무관한 전역 읽기를 먼저 다 낸다(지연을 겹침): 칸 열쇠·지난 자리, 선분 거리, 로봇 둘레 점유 행
+  {
+    const Prim& P = m.prim[0];   // 참 컵(과제 물체): 목표 칸 = 같은 이름의 확정 칸 중 짝 문턱 안 가장 가까운 것(가정: 교사 쪽 정답으로 고름)
+    const float tcx = 0.5f * (P.lo[0] + P.hi[0]), tcy = 0.5f * (P.lo[1] + P.hi[1]);
+    float pext[3];
+    for (int a = 0; a < 3; ++a) pext[a] = P.hi[a] - P.lo[a];
+    const float thr = maxf(MP::da_min, MP::da_k * max3(pext));
+    const int cm = m.conf_mask;
+    for (int b = lane; b < KSLOT; b += nl) {
+      if (!((cm >> b) & 1)) { ts.sk[b] = -1.f; ts.tk[b] = -1.f; continue; }
+      const Slot& S = m.slot[b];
+#ifdef __CUDA_ARCH__
+      {  // 칸 기록(100 B)을 L1 로 미리 — 3) 이 광선 뒤에 다시 읽음
+        const char* sp = reinterpret_cast<const char*>(&S);
+        for (int q = 0; q < (int)sizeof(Slot); q += 32) asm volatile("prefetch.global.L1 [%0];" ::"l"(sp + q));
+      }
+#endif
+      ts.tp[b] = tprev[b];
+      const float dx = S.pos[0] - px, dy = S.pos[1] - py;
+      ts.sk[b] = sqrtf(dx * dx + dy * dy);
+      const float tx = S.pos[0] - tcx, ty = S.pos[1] - tcy, d2 = tx * tx + ty * ty;
+      ts.tk[b] = (S.cls == C_CUP && S.state != S_GONE && d2 < thr * thr) ? d2 : -1.f;
+    }
+  }
+  for (int k = lane; k < nseg; k += nl) {
+    float r[4];
+    ts.sd[k] = wall_seg_robot(seg_at(segs, m, k), px, py, c, s, r);
+  }
+  const int row0 = tok_row0(py);
+  tok_stage(occ, row0, ts.so, lane, nl);
+  sync();
+  PROF_MARK(TK_STAGE);
+  // 2) 광선 16
+  for (int i = lane; i < 16; i += nl) ts.ray[i] = wall_ray(ts.so, row0, px, py, m.eyaw + kTwoPi * (float)i * (1.0f / 16.f));
+  sync();
+  PROF_MARK(TK_A);
+  for (int i = lane; i < 16; i += nl) o.wall[i] = f2h(ts.ray[i] / MP::wall_range);
+  int tgt = -1, nslot = 0;
+  for (int b = 0; b < KSLOT; ++b) {
+    nslot += ts.sk[b] >= 0.f;
+    if (ts.tk[b] >= 0.f && (tgt < 0 || ts.tk[b] < ts.tk[tgt])) tgt = b;
+  }
+  PROF_MARK(TK_SEG);
+  // 3) 가까운 선분 8(거리 순, 같으면 앞 번호)
+  for (int k = lane; k < nseg; k += nl) {
+    int rank = 0;
+    for (int j = 0; j < nseg; ++j) rank += ts.sd[j] < ts.sd[k] || (ts.sd[j] == ts.sd[k] && j < k);
+    if (rank >= 8) continue;
+    float r[4];
+    const float d = wall_seg_robot(seg_at(segs, m, k), px, py, c, s, r);
+    const bool valid = d <= MP::wall_valid;
+    uint16_t* w = o.wall + 16 + 5 * rank;
+    for (int q = 0; q < 4; ++q) w[q] = f2h(valid ? clampf(r[q] / MP::wall_range, -1.f, 1.f) : 0.f);
+    w[4] = f2h(valid ? 1.f : 0.f);
+  }
+  for (int j = lane; j < 8; j += nl)
+    if (j >= nseg) for (int q = 0; q < 5; ++q) o.wall[16 + 5 * j + q] = 0;
+  // 4) 물체 칸
+  const int t_kf = m.t - m.since;   // 마지막 keyframe 시각
+  const int tag_now = m.t & 0xffff, tag_prev = (m.t - 1) & 0xffff;
+  for (int b = lane; b < KSLOT; b += nl) {
+    if (ts.sk[b] < 0.f) continue;
+    const Slot& S = m.slot[b];
+    const TPrev tp = ts.tp[b];
+    {
+      const float kb = b == tgt ? -1.f : ts.sk[b];
+      int rank = 0;
+      for (int j = 0; j < KSLOT; ++j) {
+        if (ts.sk[j] < 0.f || j == b) continue;
+        const float kj = j == tgt ? -1.f : ts.sk[j];
+        rank += kj < kb || (kj == kb && j < b);
+      }
+      uint16_t* v = o.slot[rank];   // 바로 FP16 으로(지역 배열 없이)
+      const float dx = S.pos[0] - px, dy = S.pos[1] - py;
+      const float pr0 = c * dx + s * dy, pr1 = -s * dx + c * dy, pr2 = S.pos[2] - MP::base_z;
+      const float pe0 = pr0 - m.eef_b[0], pe1 = pr1 - m.eef_b[1], pe2 = pr2 - m.eef_b[2];
+      const float dist = sqrtf(pr0 * pr0 + pr1 * pr1);
+      v[T_POS] = f2h(pr0); v[T_POS + 1] = f2h(pr1); v[T_POS + 2] = f2h(pr2);
+      v[T_POS_EEF] = f2h(pe0); v[T_POS_EEF + 1] = f2h(pe1); v[T_POS_EEF + 2] = f2h(pe2);
+      v[T_DIST] = f2h(dist);
+      v[T_BEAR] = f2h(atan2f_d(pr1, pr0));
+      for (int a = 0; a < 3; ++a) v[T_EXT + a] = f2h(S.ext[a]);
+      v[T_EEF_C] = f2h(sqrtf(pe0 * pe0 + pe1 * pe1 + pe2 * pe2));
+      float g2 = 0.f;
+      for (int a = 0; a < 3; ++a) {
+        const float gk = maxf(0.f, maxf((S.pos[a] - 0.5f * S.ext[a]) - m.eef_m[a], m.eef_m[a] - (S.pos[a] + 0.5f * S.ext[a])));
+        g2 = g2 + gk * gk;
+      }
+      v[T_EEF_S] = f2h(sqrtf(g2));
+      {  // omx_joint1 원점(base_link, 관절각과 무관) — 구 반경 arm_reach (가정)
+        const limo_omx::JointConst& Jm = limo_omx::joint(limo_omx::J_OMX_MOUNT_JOINT);
+        const limo_omx::JointConst& J1 = limo_omx::joint(limo_omx::J_OMX_JOINT1);
+        float j1[3];
+        env::mat_vec(Jm.R, J1.t, j1);
+        const float d0 = pr0 - (Jm.t[0] + j1[0]), d1 = pr1 - (Jm.t[1] + j1[1]), d2 = pr2 - (Jm.t[2] + j1[2]);
+        v[T_REACH] = f2h(sqrtf(d0 * d0 + d1 * d1 + d2 * d2) <= MP::arm_reach ? 1.f : 0.f);
+      }
+      const float fdx = S.pos[0] - S.first_pos[0], fdy = S.pos[1] - S.first_pos[1];
+      v[T_DISP] = f2h(c * fdx + s * fdy);
+      v[T_DISP + 1] = f2h(-s * fdx + c * fdy);
+      v[T_DISP + 2] = f2h(S.pos[2] - S.first_pos[2]);
+      if (m.t > 0 && tp.tag == ((S.id << 16) | tag_prev)) {
+        const float vx = (S.pos[0] - tp.p[0]) / MP::tok_dt, vy = (S.pos[1] - tp.p[1]) / MP::tok_dt;
+        v[T_VEL] = f2h(c * vx + s * vy);
+        v[T_VEL + 1] = f2h(-s * vx + c * vy);
+        v[T_VEL + 2] = f2h((S.pos[2] - tp.p[2]) / MP::tok_dt);
+      } else {
+        v[T_VEL] = 0; v[T_VEL + 1] = 0; v[T_VEL + 2] = 0;
+      }
+      for (int q = 0; q < 4; ++q) v[T_STATE + q] = S.state == q ? (uint16_t)0x3c00u : (uint16_t)0u;   // FP16 1.0 / 0
+      v[T_AGE] = f2h((float)(m.t - S.last_seen) * MP::tok_dt);
+      v[T_SCORE] = f2h(S.score);
+      v[T_NOBS] = f2h((float)S.n_obs);
+      v[T_SRC] = (!S.held && S.last_seen == t_kf) ? (uint16_t)0x3c00u : (uint16_t)0u;
+      {  // 마지막 본 뒤 믿는 오도메트리 이동·회전에 오도메트리 잡음 규칙을 곱함(가정: σ = odo_t·Δs + (odo_rr·Δθ + odo_rt·Δs)·거리)
+        const float dl = m.plen - S.seen_len, dr = m.prot - S.seen_rot;
+        v[T_UNC] = f2h(S.held ? 0.f : MP::odo_t * dl + (MP::odo_rr * dr + MP::odo_rt * dl) * dist);
+      }
+      const int ok = room_of(m, S.pos[0], S.pos[1]);
+      v[T_SAMEROOM] = (rrk >= 0 && ok == rrk) ? (uint16_t)0x3c00u : (uint16_t)0u;
+      v[T_TARGET] = b == tgt ? (uint16_t)0x3c00u : (uint16_t)0u;
+      v[T_CONF1] = f2h(S.score);                                   // 라벨 표가 없어 검출 점수로(가정)
+      v[T_CONF2] = f2h(maxf(0.f, 2.f * S.score - 1.f));            // 1위 − 2위(가정: 나머지 점수가 2위)
+      o.name_id[rank] = (int16_t)S.cls;
+      o.app_id[rank] = (int16_t)(S.src >= 0 ? m.prim[S.src].cls : NCLS);
+    }
+    if (write) tprev[b] = TPrev{{S.pos[0], S.pos[1], S.pos[2]}, (S.id << 16) | tag_now};
+  }
+  for (int j = lane; j < KSLOT; j += nl)
+    if (j >= nslot) {
+      for (int q = 0; q < TOK_SLOT_VALS; ++q) o.slot[j][q] = 0;
+      o.name_id[j] = -1;
+      o.app_id[j] = -1;
+    }
+  PROF_MARK(TK_SLOT);
+  // 5) 방·완성도·표시
+  if (lane == 0) {
+    float r[N_ROOMTOK];
+    for (int q = 0; q < N_ROOMTOK; ++q) r[q] = 0.f;
+    r[rrk >= 0 ? m.rtype[rrk] : N_RTYPE] = 1.f;
+    float bd = kInf;
+    for (int j = 0; j < m.n_room - 1; ++j) {   // 문 = 양쪽 방이 다 드러난 자르는 선(scenemap: 두 방 사이 이음매)
+      if (!((m.rrev >> j) & 1) || !((m.rrev >> (j + 1)) & 1)) continue;
+      const float dxw = (m.raxis ? m.rdoor[j] : m.rcut[j]) - px, dyw = (m.raxis ? m.rcut[j] : m.rdoor[j]) - py;
+      const float d = sqrtf(dxw * dxw + dyw * dyw);
+      if (d < bd) {
+        bd = d;
+        r[6] = c * dxw + s * dyw;
+        r[7] = -s * dxw + c * dyw;
+        r[8] = d;
+        r[9] = 1.f;
+      }
+    }
+    for (int q = 0; q < N_ROOMTOK; ++q) o.room[q] = f2h(r[q]);
+    o.comp[0] = f2h((float)m.n_task_conf);
+    o.comp[1] = f2h((float)m.n_obj_conf / (float)N_PRIM);
+    o.comp[2] = f2h(m.room_cells > 0 ? (float)m.n_seen_room / (float)m.room_cells : 0.f);
+    o.comp[3] = f2h((float)popc32((uint32_t)m.rrev) / (float)m.n_room);
+    o.n_slot = (int16_t)nslot;
+    o.flags = (int16_t)(m.kf_flag ? 1 : 0);
+    for (int q = 0; q < 8; ++q) o.pad[q] = 0;
+  }
+}
+
+}  // namespace gmap

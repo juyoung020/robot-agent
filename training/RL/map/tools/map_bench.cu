@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
   cudaDeviceProp p;
   cudaGetDeviceProperties(&p, 0);
   std::printf("GPU %s (sm_%d%d, %d SMs). map per env: %zu B (grid %d x %d @ %.2f m)\n", p.name, p.major, p.minor, p.multiProcessorCount,
-              sizeof(gmap::MapCore) + sizeof(int16_t) * gmap::NCELL + 4 * gmap::NWORD, gmap::GW, gmap::GW, gmap::RES);
+              gmap::DeviceMap(1, 1).bytes(), gmap::GW, gmap::GW, gmap::RES);
   std::vector<int> Ns = {1024, 4096, 16384, 32768, 65536};
   if (minN > 0 && minN == maxN) Ns = {minN};   // 판 수 하나만(아무 값)
   for (int N : Ns) {
@@ -44,6 +44,7 @@ int main(int argc, char** argv) {
     for (int force = 0; force < 2; ++force) {
       DeviceEnv e(N, 1, 1);
       gmap::DeviceMap m(N, 7);
+      if (std::getenv("MAP_BENCH_NOTOK")) m.set_tokens(false);   // 측정용: 토큰 커널 빼고
       float *act, *obs, *rew; int* done;
       cudaMalloc(&act, sizeof(float) * N_ACT * (size_t)N);
       cudaMalloc(&obs, sizeof(float) * N_OBS * (size_t)N);
@@ -81,7 +82,7 @@ int main(int argc, char** argv) {
         gmap::prof_read(pr);
         static const char* nm[gmap::P_NSEC] = {"load core", "begin(odo/kf gate)", "reset clear", "ray cast+prefilter", "pose corr+detect(t0)",
                                                "association+update", "absence+prune", "obj vis points", "grid mark+complete", "grid apply",
-                                               "finish+metrics", "store core"};
+                                               "finish+metrics", "store core", "walls: group", "walls: rects+occ", "walls: clear", "walls: transpose", "walls: run count", "walls: prefix", "walls: runs", "tok: loads+keys", "tok: rays", "tok: target", "tok: segs+slots", "tok: room+out"};
         const double nb = (double)(pr[gmap::P_NSEC] + pr[gmap::P_NSEC + 1]);
         double tot = 0;
         for (int k = 0; k < gmap::P_NSEC; ++k) tot += (double)pr[k];
