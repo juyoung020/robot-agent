@@ -124,7 +124,7 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 | `SGRT_LABELS` | `~/embed_work/labels/objects-v1` | 라벨 표 폴더(이름 찾기). 색인 캐시는 `<out_dir>/cache/index` |
 | `SGC_IMG_SAMPLE` | `~/ovdet_models/x86_sm120/siglip2_b32/img_sample_lvis10k.f16`(있으면) | 라벨 표 투영을 맞출 영상 임베딩 표본(sgclip 변수, sgrt_clip 이 읽어 넘김) |
 | `SGRT_LIB` | `~/sgrt_build/libsgrt.so` | 글루: 읽을 라이브러리 |
-| `SGRT_ENGINE` | `~/ovdet_models/x86_sm120/yoloe-11l-all.plan` | 글루: 검출 엔진. 이름 표는 `<엔진>.names.txt` |
+| `SGRT_ENGINE` | `~/ovdet_models/archive/x86_sm120/yoloe-11l-all.plan` (YOLOE 보관됨 2026-10-05, FastSAM-s + SigLIP 2 로 옮기는 중) | 글루: 검출 엔진. 이름 표는 `<엔진>.names.txt` |
 | `SGRT_GT_POSE` | `1` | 글루: 시뮬 로봇 베이스 정답 자세를 `sgrt_push_pose` 로 넣기(`0` = 끔). gt 모드면 map 자세, 아니면 떠밀림 진단에만 쓰임 |
 | `SGRT_GT_EVERY` | `0` | 글루: `1` 이면 정답 자세를 매 스텝 읽음. 아니면 영상 시각·keyframe·지도 스텝에 필요한 스텝만 |
 | `SGRT_MAP_EVERY` | `0` | 글루: n 스텝마다 깊이만으로 격자 갱신(검출·물체 지도·임베딩은 keyframe 그대로). 0 = keyframe 에서만 |
