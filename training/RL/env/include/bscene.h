@@ -153,6 +153,37 @@ DEV bool body_hits_scene(const SceneDev& d, float x, float y, float s, float co,
   return false;
 }
 
+// 점 → 회전 상자 바닥 자국 거리(안이면 0)
+DEV float dist_pt_obb2(const SBox& b, float x, float y) {
+  const float dx = x - b.cx, dy = y - b.cy;
+  const float lx = b.c * dx + b.s * dy, ly = -b.s * dx + b.c * dy;
+  const float ex = maxf(absf(lx) - b.hx, 0.f), ey = maxf(absf(ly) - b.hy, 0.f);
+  return sqrtf(ex * ex + ey * ey);
+}
+// 한 제어 스텝의 충돌 후보(넓은 단계): 스텝 시작 자리에서 r 안의 BK_COLL 정적 상자(겹치면 한 번). 넘치면 overflow(모든 묶음 검사로)
+constexpr int NCAND = 8;
+struct CollCand { int n, overflow; int idx[NCAND]; };
+DEV void coll_gather(const SceneDev& d, float x, float y, float r, CollCand& cc) {
+  cc.n = 0; cc.overflow = 0;
+  int bx0, by0, bx1, by1;
+  bin_of(d, x - r, y - r, bx0, by0);
+  bin_of(d, x + r, y + r, bx1, by1);
+  bx0 = bx0 < 0 ? 0 : bx0; by0 = by0 < 0 ? 0 : by0;
+  bx1 = bx1 >= d.BW ? d.BW - 1 : bx1; by1 = by1 >= d.BH ? d.BH - 1 : by1;
+  for (int by = by0; by <= by1; ++by)
+    for (int bx = bx0; bx <= bx1; ++bx) {
+      const int b = by * d.BW + bx;
+      for (uint32_t k = d.bstart[b]; k < d.bstart[b + 1]; ++k) {
+        const int j = d.bitem[k];
+        if (!(d.bkind[j] & BK_COLL) || !(dist_pt_obb2(d.box[j], x, y) < r)) continue;
+        bool dup = false;
+        for (int q = 0; q < cc.n; ++q) dup = dup || cc.idx[q] == j;
+        if (dup) continue;
+        if (cc.n < NCAND) cc.idx[cc.n++] = j; else cc.overflow = 1;
+      }
+    }
+}
+
 // 2D 반직선 o + t·(dx, dy) 이 회전 상자에 들어가는 t(안이면 0), 없으면 tmax
 DEV float ray_obb2(float ox, float oy, float dx, float dy, const SBox& b, float tmax) {
   const float rx = ox - b.cx, ry = oy - b.cy;

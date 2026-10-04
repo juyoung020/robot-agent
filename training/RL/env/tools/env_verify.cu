@@ -150,7 +150,7 @@ int main(int argc, char** argv) {
     mismatches += m;
     if (m && !negative) break;   // 정상 판은 첫 불일치에서 멈춰 자세히 보여 준다
   }
-  std::printf("env_verify: N=%d steps=%d stage A%d arm %s  episode ends seen: running %d, success %d, collision %d, timeout %d\n", N, T, stage, arm ? "free (8 actions)" : arm_zero ? "GPU free with arm actions 0 vs CPU fixed" : "fixed", ends[0], ends[1], ends[2], ends[3]);
+  std::printf("env_verify: N=%d steps=%d stage %s%d arm %s  episode ends seen: running %d, success %d, collision %d, timeout %d\n", N, T, stage >= kStageBeh ? "B(BEHAVIOR) " : "A", stage, arm ? "free (8 actions)" : arm_zero ? "GPU free with arm actions 0 vs CPU fixed" : "fixed", ends[0], ends[1], ends[2], ends[3]);
   if (stage >= kStageBeh)
     for (int p = 0; p < 2; ++p)
       for (int k = 1; k < 4; ++k)

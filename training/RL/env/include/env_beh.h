@@ -120,6 +120,27 @@ DEV bool collides_beh(const Core& c, const BState& b, const bsc::SceneSet& ss) {
   }
   return false;
 }
+// 같은 판정을 스텝 시작에 모은 후보로(결과 같음): 서브스텝 10 번 동안 몸통 가운데는 v_max·dt·10 = 0.05 m 안에서만 움직이고, 몸통과 겹치는 상자는
+// 가운데에서 외접원(0.194 m) 안에 있으므로 시작 자리에서 0.27 m 안의 상자만 볼 수 있다. 후보가 넘치면 모든 묶음 검사
+constexpr float COLL_R = 0.27f;
+DEV bool collides_beh_c(const Core& c, const BState& b, const bsc::SceneSet& ss, const bsc::CollCand& cc) {
+  if (cc.overflow) return collides_beh(c, b, ss);
+  float s, co;
+  sincosf_d(c.yaw, &s, &co);
+  const bsc::SceneDev& d = ss.sc[b.scene];
+  const float wx = c.x + b.wx, wy = c.y + b.wy;
+  for (int q = 0; q < cc.n; ++q)
+    if (bsc::rect_hits_obb(wx, wy, s, co, K::half_len, K::half_wid, d.box[cc.idx[q]])) return true;
+  const bsc::Entry& E = ss.ent[b.ent];
+  for (int p = 0; p < E.nprim; ++p) {
+    const bsc::BPrim& P = E.prim[p];
+    if (P.sbox >= 0 || !(P.lo[2] < bsc::H_COLL)) continue;
+    if (bsc::rect_hits_aabb(c.x, c.y, s, co, K::half_len, K::half_wid, P.lo, P.hi)) return true;
+  }
+  return false;
+}
+static_assert(K::v_max * K::dt * K::sub + 0.1942f + 0.02f <= COLL_R, "collision candidate radius covers one control step");
+
 // 벽 광선 16(상자 방 wall_rays 와 같은 배치·/4 m): 정적 BK_COLL 상자 + 과제 물체 상자
 DEV void wall_rays_beh(const Core& c, const BState& b, const bsc::SceneSet& ss, float out[N_RAYS]) {
   const bsc::SceneDev& d = ss.sc[b.scene];
@@ -191,7 +212,9 @@ DEV void step_core_beh(Core& c, BState& b, const bsc::SceneSet& ss, const uint8_
                        const Hook& hook) {
   float act[N_ACT], jerk, v_cmd, w_cmd, q_cmd[N_Q];
   act_prepare(c, act_in, act, jerk, v_cmd, w_cmd, q_cmd, arm_free);
-  const bool hit = substeps(c, v_cmd, w_cmd, q_cmd, hook, [&](const Core& cc) { return collides_beh(cc, b, ss); });
+  bsc::CollCand cand;
+  bsc::coll_gather(ss.sc[b.scene], c.x + b.wx, c.y + b.wy, COLL_R, cand);
+  const bool hit = substeps(c, v_cmd, w_cmd, q_cmd, hook, [&](const Core& cc) { return collides_beh_c(cc, b, ss, cand); });
 
   float tb[3], sn, cs;
   int n = obs_body(c, act, b.tz, o.obs, tb, sn, cs);
