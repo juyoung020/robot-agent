@@ -4,16 +4,17 @@
 //! move-robot schema                         도구 정의(OpenAI tools 항목) 출력
 //! move-robot call '<args>' [--addr A]       시뮬 접착부에 한 번 호출 (기본 127.0.0.1:8771)
 //! move-robot mock '<args>' ['<args>' …]     가짜 로봇에서 차례로 호출
+//! move-robot vla-mock '<call>' ['<call>' …] 가짜 LIMO + OMX-F(컵 O1·상자 O2·먼 의자 O3)에서 VLA 호출을 차례로(각본 정책 대역)
 //! move-robot llm "<지시>" [--addr A | --mock] [--turns 8]   (--features llm) KAU Qwen 원형 도구 호출 루프
 //! ```
 
-use move_robot::link::{run_tool, Mock, TcpSim, DEFAULT_ADDR};
+use move_robot::link::{run_tool, LimoMockBackend, Mock, TcpSim, DEFAULT_ADDR};
 #[cfg(feature = "llm")]
 use move_robot::link::Backend;
 use serde_json::Value;
 
 fn usage() -> ! {
-    eprintln!("usage: move-robot schema | call '<json>' [--addr host:port] | mock '<json>'... | llm \"<instruction>\" [--addr A | --mock] [--turns N]\n\n{}", move_robot::link::part_help());
+    eprintln!("usage: move-robot schema | call '<json>' [--addr host:port] | mock '<json>'... | vla-mock '<vla call>'... | llm \"<instruction>\" [--addr A | --mock] [--turns N]\n\n{}", move_robot::link::part_help());
     std::process::exit(2)
 }
 
@@ -39,6 +40,13 @@ fn main() {
             for s in args.iter().skip(1) {
                 let a: Value = serde_json::from_str(s).unwrap_or(Value::String(s.clone()));
                 println!("{}", run_tool(&a, &mut m));
+            }
+        }
+        "vla-mock" => {
+            let mut b = LimoMockBackend(move_robot::limo_mock::LimoMock::new(move_robot::limo_mock::demo_scene()));
+            for s in args.iter().skip(1) {
+                let a: Value = serde_json::from_str(s).unwrap_or(Value::String(s.clone()));
+                println!("{}", run_tool(&a, &mut b));
             }
         }
         "llm" => llm(&args),

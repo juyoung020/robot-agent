@@ -39,6 +39,9 @@ decisions-agg <dirs> --by prompt    # 프롬프트 판 × 정책
 - 접점: 평가기 쪽 `src/behavior-2026/src/sim/explore/run_explore.py` 가 도구 호출 `{"executor":"vla","skill":"<π0.5 문장>","max_s":20}` 를
   가로채 `act()` 를 π0.5 네이티브 엔진(`Pi05NativePolicy`)으로 돌리고, 끝나면 `move_robot` 실행기를 `reset`(유지 목표를 다음 관측에서 다시 잡음)해
   되돌린다. 결과 `{"status":"done","executor":"vla",…}`.
-- 지금: `--vla-weights` 없이 돌려 `{"status":"unavailable"}` 를 돌려준다(탐사는 베이스만이라 필요 없음). LLM 에게는 아직 이 실행기를 도구로 보이지 않는다.
+- 리모 + OMX-F(10-04): 같은 호출에 `objects:[id…]` 를 더해 libmove_robot VLA 실행기(`mr_vla_*`)가 받는다 — 정책(지금은 각본·재생 대역) → `move_robot`
+  안전 거르개 → 끝 신호 + 자동 확인 + 예산 → `{"status":"done|failed|timeout|handback","reason","evidence","steps","min_clear_m","contacts"}`.
+  설계·상태는 [POLICY.md](../../docs/map_vla/POLICY.md) 1.3·1.4. 아래 R1 경로는 그대로.
+- R1 지금: `--vla-weights` 없이 돌려 `{"status":"unavailable"}` 를 돌려준다(탐사는 베이스만이라 필요 없음). LLM 에게는 아직 이 실행기를 도구로 보이지 않는다.
 - 쓰려면: (1) 탐사 판에 `--vla-weights <…>.pi05w` 를 주고 VRAM(Isaac Sim + π0.5 ≈ 15 GB)을 확인, (2) 에이전트에 두 번째 도구 `run_skill(skill 문장)`
   을 더해 `{"executor":"vla"}` 로 보냄, (3) `label.vla_better` 를 채우는 규칙(같은 하위 목표를 두 실행기로 했을 때 성공·시간 비교) — 같은 장면 짝 실험이 필요.

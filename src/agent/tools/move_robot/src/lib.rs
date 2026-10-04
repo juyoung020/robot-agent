@@ -14,10 +14,15 @@
 //! 그리퍼 = smooth [-1,1] → 손가락 0…0.05 m). 머리(카메라)는 NullJointController 라 움직일 수 없다.
 
 pub mod ffi;
+pub mod limo;
+pub mod limo_mock;
 pub mod link;
 pub mod map;
 pub mod nav;
 pub mod robot_nav;
+mod robot_vla;
+pub mod verify;
+pub mod vla;
 
 pub use map::{Grid, MapIn, NavParams, RoomGrid, Scan};
 
@@ -548,6 +553,8 @@ pub struct Robot {
     pub nav: robot_nav::NavState,
     /// 이번 스텝의 GT 자세(map 틀). 다음 tick 한 번에서 base_qvel 적분 대신 쓰인다(Map_Vla)
     gt_pose: Option<[f64; 3]>,
+    /// VLA 실행기(LIMO + OMX-F, POLICY 1.3): 기억 물체·거르개·지금 단계
+    pub vla: vla::VlaCtx,
 }
 
 /// [`Robot::tick`] 결과
@@ -569,7 +576,7 @@ impl Default for Robot {
 
 impl Robot {
     pub fn new(hz: f64) -> Robot {
-        Robot { safety: Safety::default(), dt: 1.0 / hz, hold: [0.0; ACTION_DIM], state: None, active: None, result: None, ticks: 0, nav: robot_nav::NavState::with_body(&Self::body()), gt_pose: None }
+        Robot { safety: Safety::default(), dt: 1.0 / hz, hold: [0.0; ACTION_DIM], state: None, active: None, result: None, ticks: 0, nav: robot_nav::NavState::with_body(&Self::body()), gt_pose: None, vla: vla::VlaCtx::default() }
     }
 
     /// 몸 크기: `MOVE_ROBOT_FOOTPRINT`(r1pro 기본 | limo_omx | rect:LxW | circle:R). R1Pro 가 아니면 한 번 알린다.
@@ -613,6 +620,10 @@ impl Robot {
             self.result = Some(json!({"status": "error", "message": "episode reset while moving"}));
         }
         self.active = None;
+        if self.vla.run.is_some() {
+            self.vla_stop("reset");
+        }
+        self.vla.filter.init = false;
         self.state = None;
         self.gt_pose = None;
         self.nav.gt_prev = None; // 새 판의 첫 GT 자세를 지난 판 끝에서 잰 거리로 세지 않게
@@ -666,6 +677,9 @@ impl Robot {
     fn start(&mut self, args: &Value) -> Result<bool, String> {
         if self.active.is_some() {
             return Err("still executing the previous move_robot call".into());
+        }
+        if self.vla.run.is_some() {
+            return Err("a VLA step is running; wait for its result".into());
         }
         let cmd = parse(args)?;
         let Some(st) = self.state.clone() else { return Err("no robot observation yet; try again in a moment".into()) };
@@ -966,6 +980,8 @@ pub fn error_obs(msg: &str) -> Value {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_vla;
 
 /// 관측 모양 변형(실험): 주변 여유 빼기
 pub fn robot_nav_style_compact() -> robot_nav::ObsStyle {

@@ -1,4 +1,4 @@
-/* move_robot: R1Pro 한 부분 직접 움직이기 실행기 C ABI (src/ffi.rs). libmove_robot.so */
+/* move_robot: R1Pro 한 부분 직접 움직이기 실행기 + LIMO + OMX-F VLA 실행기 C ABI (src/ffi.rs). libmove_robot.so */
 #ifndef MOVE_ROBOT_H
 #define MOVE_ROBOT_H
 #include <stddef.h>
@@ -34,6 +34,27 @@ int mr_set_reference(MrRobot *r, const unsigned char *cells, int w, int h, doubl
 void mr_set_contacts(MrRobot *r, unsigned long long n);
 /* 뷰어 겹침 JSON(지나온 길·계획 경로·목표·프런티어·자세, map 좌표). 쓴 길이 / -(필요 길이) */
 ssize_t mr_overlay_json(MrRobot *r, char *buf, size_t cap);
+
+/* ---- VLA 실행기 (LIMO + OMX-F, docs/map_vla/POLICY.md 1.3·7.1·7.2) ----
+ * 호출 {"executor":"vla","skill":"<skillspec 문장>","objects":["O12",...],"max_s":30[,"policy":"scripted|replay:<jsonl>|external"]}
+ * 결과(mr_take_result) {"status":"done|failed|timeout|handback","reason","evidence","steps","min_clear_m","contacts",...}
+ * 행동 8 = [vx m/s, wz rad/s, omx_joint1..5 rad(목표 위치), 그리퍼 벌림 0..1] — 이미 안전 거르개를 지난 값.
+ * proprio = LIMO 평가기 proprio 24 (base_qvel 3, arm_0_qpos 5, arm_0_qvel 5, eef_0_pos 3, eef_0_quat 4, gripper_0_qpos 2, gripper_0_qvel 2).
+ * VLA 단계 중에는 mr_tick 대신 mr_vla_tick 만 부른다(자세 적분이 두 번 되지 않게). */
+int mr_vla_start(MrRobot *r, const char *call_json);   /* 0 시작, 1 바로 끝남(오류·handback: 결과 준비), -2 */
+/* 0 대기(유지), 1 실행 중, 2 이번에 끝남(결과 준비), -1 proprio 이상, -2 인자 이상 */
+int mr_vla_tick(MrRobot *r, const float *proprio, size_t n, float *out8);
+/* 밖의 정책(학습된 엔진): 행동 8·끝 신호 확률·확신 낮음(0..1)을 넣으면 거르고 끝을 판정 */
+int mr_vla_tick_ext(MrRobot *r, const float *proprio, size_t n, const float *action8, float end_prob, float unsure, float *out8);
+/* 거르개만: 비트 1 잘림, 2 베이스 정지, 4 팔 막힘, 8 NaN / -1 proprio 이상 / -2 */
+int mr_filter(MrRobot *r, const float *proprio, size_t n, const float *action8, float *out8);
+/* 기억 물체: scenemap.h sm_snap_objects 의 sm_object 배열 그대로(여기서 복사), now = 같은 시계(sm_object.last_seen) */
+struct sm_object_s;
+int mr_vla_set_objects(MrRobot *r, const void *sm_objects, int n, double now);
+int mr_vla_set_objects_json(MrRobot *r, const char *objects_json, double now);
+void mr_vla_contacts(MrRobot *r, unsigned long long body, unsigned long long arm);   /* 누적: 몸통 / 팔·그리퍼 */
+int mr_vla_stop(MrRobot *r);                 /* 1 멈춤(결과 handback "cancelled"), 0 실행 중 아님 */
+int mr_vla_busy(const MrRobot *r);
 
 #ifdef __cplusplus
 }

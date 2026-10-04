@@ -254,3 +254,190 @@ pub unsafe extern "C" fn mr_overlay_json(r: *mut Robot, buf: *mut c_char, cap: u
     *buf.add(s.len()) = 0;
     s.len() as isize
 }
+
+// ---------------------------------------------------------------- VLA 실행기 (LIMO + OMX-F, POLICY 1.3)
+
+/// scenemap.h `sm_object` 와 같은 배치. 평가기 접착부는 `sm_snap_objects` 가 준 배열 포인터를 그대로 [`mr_vla_set_objects`] 에 넘긴다.
+#[repr(C)]
+pub struct SmObject {
+    pub id: u32,
+    pub name: *const c_char,
+    pub score: f32,
+    pub pos: [f64; 3],
+    pub extent: [f64; 3],
+    pub first_pos: [f64; 3],
+    pub n_obs: u32,
+    pub last_seen: f64,
+    pub state: i32,
+    pub handled: i32,
+    pub structural: i32,
+}
+
+/// VLA 단계 시작(`{"executor":"vla","skill",...,"objects":[ids],"max_s"}`). 반환: 0 실행 시작, 1 바로 끝남(오류·handback, 결과 준비), -2 인자 이상.
+///
+/// # Safety
+/// `args` 는 NUL 로 끝나는 문자열.
+#[no_mangle]
+pub unsafe extern "C" fn mr_vla_start(r: *mut Robot, args: *const c_char) -> c_int {
+    if r.is_null() || args.is_null() {
+        return -2;
+    }
+    let s = CStr::from_ptr(args).to_string_lossy();
+    let v: Value = serde_json::from_str(&s).unwrap_or(Value::String(s.into_owned()));
+    (*r).vla_start(&v) as c_int
+}
+
+/// VLA 한 스텝(안의 정책: 각본·재생). `proprio` = LIMO 평가기 proprio(24), `out` 에 거른 행동 8
+/// [vx m/s, wz rad/s, j1..j5 rad, 그리퍼 0..1]. 반환: 0 대기(유지), 1 실행 중, 2 이번에 끝남(결과 준비), -1 proprio 이상, -2 인자 이상.
+///
+/// # Safety
+/// `proprio` 는 `n` 개, `out` 은 8 개 이상.
+#[no_mangle]
+pub unsafe extern "C" fn mr_vla_tick(r: *mut Robot, proprio: *const f32, n: usize, out: *mut f32) -> c_int {
+    if r.is_null() || proprio.is_null() || out.is_null() {
+        return -2;
+    }
+    let p = std::slice::from_raw_parts(proprio, n);
+    let o = std::slice::from_raw_parts_mut(out, crate::limo::ACTION_DIM);
+    tick_code((*r).vla_tick(p, o))
+}
+
+/// VLA 한 스텝(밖의 정책 = 학습된 엔진 자리): 그 정책의 행동 8(`action`)·끝 신호 확률·확신 낮음(0..1)을 넣으면 거르고 끝을 판정한다.
+///
+/// # Safety
+/// `action`·`out` 은 8 개, `proprio` 는 `n` 개.
+#[no_mangle]
+pub unsafe extern "C" fn mr_vla_tick_ext(r: *mut Robot, proprio: *const f32, n: usize, action: *const f32, end_prob: f32, unsure: f32, out: *mut f32) -> c_int {
+    if r.is_null() || proprio.is_null() || action.is_null() || out.is_null() {
+        return -2;
+    }
+    let p = std::slice::from_raw_parts(proprio, n);
+    let a = std::slice::from_raw_parts(action, crate::limo::ACTION_DIM);
+    let mut a8 = [0.0; crate::limo::ACTION_DIM];
+    for (d, s) in a8.iter_mut().zip(a) {
+        *d = *s as f64;
+    }
+    let o = std::slice::from_raw_parts_mut(out, crate::limo::ACTION_DIM);
+    tick_code((*r).vla_tick_ext(p, &a8, end_prob as f64, unsure as f64, o))
+}
+
+fn tick_code(t: Tick) -> c_int {
+    match t {
+        Tick::Idle => 0,
+        Tick::Moving => 1,
+        Tick::Done => 2,
+        Tick::BadObs => -1,
+    }
+}
+
+/// 거르개만: 행동 8 하나를 안전 한계·장애물 정지로 거른다(POLICY 7.1 `mr_filter`). 반환: 비트 1 잘림, 2 베이스 정지, 4 팔 막힘, 8 NaN; -1 proprio 이상, -2 인자 이상.
+///
+/// # Safety
+/// `action`·`out` 은 8 개, `proprio` 는 `n` 개.
+#[no_mangle]
+pub unsafe extern "C" fn mr_filter(r: *mut Robot, proprio: *const f32, n: usize, action: *const f32, out: *mut f32) -> c_int {
+    if r.is_null() || proprio.is_null() || action.is_null() || out.is_null() {
+        return -2;
+    }
+    let p = std::slice::from_raw_parts(proprio, n);
+    let a = std::slice::from_raw_parts(action, crate::limo::ACTION_DIM);
+    let mut a8 = [0.0; crate::limo::ACTION_DIM];
+    for (d, s) in a8.iter_mut().zip(a) {
+        *d = *s as f64;
+    }
+    match (*r).vla_filter(p, &a8) {
+        Err(_) => -1,
+        Ok((f, info)) => {
+            let o = std::slice::from_raw_parts_mut(out, crate::limo::ACTION_DIM);
+            for (d, s) in o.iter_mut().zip(f.iter()) {
+                *d = *s as f32;
+            }
+            (info.clipped as c_int) | ((info.base_stop.map_or(false, |(_, r)| r <= 0.01) as c_int) << 1) | ((info.arm_blocked as c_int) << 2) | ((info.bad_input as c_int) << 3)
+        }
+    }
+}
+
+/// 기억 물체(scenemap 스냅숏 `sm_snap_objects` 배열 그대로)와 그 시계의 지금 시각. id 는 "O<id>". 반환 0, -2 인자 이상.
+///
+/// # Safety
+/// `objs` 는 `n` 개(스냅숏이 살아 있는 동안 — 여기서 복사한다).
+#[no_mangle]
+pub unsafe extern "C" fn mr_vla_set_objects(r: *mut Robot, objs: *const SmObject, n: i32, now: f64) -> c_int {
+    if r.is_null() || (n > 0 && objs.is_null()) || !now.is_finite() {
+        return -2;
+    }
+    let mut v = vec![];
+    if n > 0 {
+        for o in std::slice::from_raw_parts(objs, n as usize) {
+            // 구조물(가구·받침, structural)도 넣는다: 놓기의 받침·서랍·가구 문이 이것들이다
+            if o.pos.iter().any(|x| !x.is_finite()) {
+                continue;
+            }
+            let name = if o.name.is_null() { String::new() } else { CStr::from_ptr(o.name).to_string_lossy().into_owned() };
+            v.push(crate::verify::MemObject {
+                id: format!("O{}", o.id),
+                name,
+                score: o.score as f64,
+                pos: o.pos,
+                extent: o.extent,
+                first_pos: o.first_pos,
+                n_obs: o.n_obs,
+                last_seen: o.last_seen,
+                state: crate::verify::ObjState::from_i32(o.state),
+            });
+        }
+    }
+    (*r).vla_set_objects(v, now);
+    0
+}
+
+/// 기억 물체 JSON 배열(`[{"id","pos","extent","first_pos","last_seen","state":"seen|gone|moved|held"}]`) — 시험·scenemap 없는 쪽용.
+///
+/// # Safety
+/// `json` 은 NUL 로 끝나는 문자열.
+#[no_mangle]
+pub unsafe extern "C" fn mr_vla_set_objects_json(r: *mut Robot, json: *const c_char, now: f64) -> c_int {
+    if r.is_null() || json.is_null() || !now.is_finite() {
+        return -2;
+    }
+    let s = CStr::from_ptr(json).to_string_lossy();
+    let Ok(Value::Array(xs)) = serde_json::from_str::<Value>(&s) else { return -2 };
+    let v = xs.iter().filter_map(crate::verify::MemObject::from_json).collect();
+    (*r).vla_set_objects(v, now);
+    0
+}
+
+/// 접촉 누적 수(바닥 아닌 것): 몸통(차체·바퀴) / 팔·그리퍼. VLA 단계 중 몸통 접촉이 늘면 failed(unsafe).
+///
+/// # Safety
+/// `r` 는 mr_new 가 준 것.
+#[no_mangle]
+pub unsafe extern "C" fn mr_vla_contacts(r: *mut Robot, body: u64, arm: u64) {
+    if !r.is_null() {
+        (*r).vla_set_contacts(body, arm);
+    }
+}
+
+/// 실행 중인 VLA 단계를 멈춘다(결과 handback "cancelled" 준비). 반환 1 멈춤, 0 실행 중 아님.
+///
+/// # Safety
+/// `r` 는 mr_new 가 준 것.
+#[no_mangle]
+pub unsafe extern "C" fn mr_vla_stop(r: *mut Robot) -> c_int {
+    if r.is_null() {
+        return 0;
+    }
+    (*r).vla_stop("cancelled") as c_int
+}
+
+/// VLA 단계 실행 중이면 1
+///
+/// # Safety
+/// `r` 는 mr_new 가 준 것.
+#[no_mangle]
+pub unsafe extern "C" fn mr_vla_busy(r: *const Robot) -> c_int {
+    if r.is_null() {
+        return 0;
+    }
+    (*r).vla_busy() as c_int
+}

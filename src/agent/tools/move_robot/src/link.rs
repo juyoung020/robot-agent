@@ -17,7 +17,14 @@ pub trait Backend {
 }
 
 /// LLM 도구 호출 하나 실행. 인자는 여기서 먼저 검사해(왕복 없이) 틀리면 오류 관찰값을 바로 돌려준다.
+/// `{"executor":"vla",…}` 는 VLA 실행기 호출(POLICY 1.3): 실행기 나눔·물체 id 를 먼저 보고 같은 접점으로 보낸다.
 pub fn run_tool(args: &Value, backend: &mut dyn Backend) -> Value {
+    if crate::vla::is_vla_call(args) {
+        return match crate::vla::parse_call(args) {
+            Err(e) => e,
+            Ok(_) => backend.exec(args),
+        };
+    }
     match parse(args) {
         Err(e) => error_obs(&e),
         Ok(_) => backend.exec(args),
@@ -38,7 +45,12 @@ impl TcpSim {
             std::net::ToSocketAddrs::to_socket_addrs(&self.addr).map_err(|e| format!("address {}: {e}", self.addr))?.collect();
         let addr = a.first().ok_or("no address")?;
         let mut s = TcpStream::connect_timeout(addr, Duration::from_secs(3)).map_err(|e| format!("simulator not reachable at {}: {e}", self.addr))?;
-        s.set_read_timeout(Some(self.timeout)).ok();
+        // VLA 단계는 예산(시뮬 s)만큼 걸린다: 실시간보다 느린 시뮬까지 넉넉히
+        let t = match crate::vla::parse_call(args) {
+            Ok(c) if crate::vla::is_vla_call(args) => self.timeout.max(Duration::from_secs_f64(c.budget_s * 10.0 + 30.0)),
+            _ => self.timeout,
+        };
+        s.set_read_timeout(Some(t)).ok();
         let args = match args {
             Value::String(t) => serde_json::from_str(t).unwrap_or(Value::Null),
             v => v.clone(),
@@ -430,4 +442,17 @@ pub fn part_help() -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// VLA 호출을 가짜 LIMO([`crate::limo_mock::LimoMock`])에서 실행하는 백엔드(move_robot 호출은 LIMO 팔이 없어 거절)
+pub struct LimoMockBackend(pub crate::limo_mock::LimoMock);
+
+impl Backend for LimoMockBackend {
+    fn exec(&mut self, args: &Value) -> Value {
+        if crate::vla::is_vla_call(args) {
+            self.0.run(args)
+        } else {
+            error_obs("limo mock: only VLA calls are simulated here")
+        }
+    }
 }

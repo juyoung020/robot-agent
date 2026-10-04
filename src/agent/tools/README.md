@@ -143,3 +143,13 @@ C ABI 추가(`include/move_robot.h`): `mr_set_map(r, &sgrt_map_view)`(평가기 
 시험 26개(`cargo test --release`): 지도 요약, 프런티어 go_to 무접촉, probe 벽 앞 정지, 모르는 점 go_to 거절, 옆(안 보이는 곳) delta 정지, 덜 감, 길에 나타나는 장애물(1.5 m 앞에 0.25 m 물체가 갑자기 생김 → 접촉 0, 치우면 다시 열림).
 
 시간(시뮬, 1 층 집 판): 지도 받기(격자 복사·거리장·바뀐 칸) 2–5 ms/keyframe, 관측 만들기 1–2.5 ms/호출, 다시 계획 0.4–1.4 ms, 닫힌 고리 한 스텝 평균 0.2 ms(서 있을 때)–5 ms(DWA 중). 평가기 한 스텝 130–165 ms 라 실행기 몫은 3 % 안팎.
+
+## 2026-10-04 변경: VLA 실행기(리모 + OMX-F) — [POLICY.md](../../../docs/map_vla/POLICY.md) 1.2·1.3·1.4·7.1·7.2
+
+- 호출 `{"executor":"vla","skill":"pick up cup","objects":["O12"],"max_s":30}` → 결과 `{"status":"done|failed|timeout|handback","reason","evidence","steps","min_clear_m","contacts",…}`.
+  `run_tool` 이 먼저 나눔(`move to`·탐사는 `route:"move_robot"` 로 거절)·`objects` 를 검사한다. `TcpSim` 은 VLA 호출이면 예산만큼 기다린다.
+- 코드: `src/limo.rs`(부분 base 2·arm 5·gripper 1, 한계 = `src/robot/real_limits.json`, 순기구학), `src/verify.rs`(자동 확인), `src/vla.rs`(나눔·시작 조건·물체 칸 `is_goal`·정책 접점·안전 거르개·끝 판정),
+  `src/robot_vla.rs`, `src/limo_mock.rs`(가짜 LIMO), 시험 `src/tests_vla.rs`(19).
+- C ABI: `mr_vla_start`, `mr_vla_tick`(안의 대역 정책), `mr_vla_tick_ext`(밖의 엔진 행동·끝 신호·확신), `mr_filter`(거르개만), `mr_vla_set_objects`(scenemap `sm_object` 배열 포인터)·`mr_vla_set_objects_json`,
+  `mr_vla_contacts`(몸통/팔), `mr_vla_stop`, `mr_vla_busy`. VLA 단계 중에는 `mr_tick` 대신 `mr_vla_tick` 만.
+- 정책은 아직 학습된 VLA 가 없어 대역(`scripted` 기본, `replay:<jsonl>`, `external`)이다. 손으로: `move-robot vla-mock '<call>' …`.

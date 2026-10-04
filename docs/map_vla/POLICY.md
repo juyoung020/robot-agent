@@ -1,6 +1,6 @@
 # 정책 설계 — RL 교사와 VLA 학생 (리모 + OMX-F)
 
-작성 2026-10-03. **설계 문서**다. 여기 적은 정책·학습기·인터페이스 변경은 아직 하나도 없다.
+작성 2026-10-03. **설계 문서**다. 정책·학습기는 아직 없다. 실행기 접점(1.2·1.3)과 안전 거르개·끝 조건(7.1·7.2)은 10-04 에 구현했다 — 1.4 "구현 상태".
 입력·출력은 [VLA_INPUT.md](VLA_INPUT.md) 에서 정했다. 이 문서는 그 입력·출력을 쓰는 **정책 두 개**(RL 교사, VLA 학생)와 학습 순서를 정한다.
 GPU 학습 시스템(커널 합치기, FP8, GPU 환경 안에서 지도 만들기)은 [GPU_TRAINING.md](GPU_TRAINING.md)(작성 중)에 둔다. 여기서는 되풀이하지 않는다.
 
@@ -59,15 +59,46 @@ GPU 학습 시스템(커널 합치기, FP8, GPU 환경 안에서 지도 만들�
 - 원칙: **"어디로 가나" 는 지도 기반 고전 제어, "어떻게 손대나" 는 VLA.** 결정 기록(`decisions.jsonl`)의 `executor`·`label.vla_better` 로 이 나눔이 맞는지 나중에 데이터로 본다.
 - VLA 단계 시작 조건: 대상 물체가 지도에 있고, 로봇이 그 물체에서 1.5 m 안(추정), 지금 카메라에 보이거나 기억 불확실도가 작을 때. 아니면 상태 기계가 먼저 `go_to` 를 넣는다(plan.md 3.3 "`pick up` 앞에 `move to` 자동 삽입" 과 같은 규칙).
 
-### 1.3 실행기 접점에 더할 것 (제안, 지금 없음)
+### 1.3 실행기 접점에 더할 것 (10-04 구현, 리모 + OMX-F)
 
-| 무엇 | 지금 | 바꿀 것 |
+| 무엇 | 전(10-03) | 지금 |
 |---|---|---|
-| 호출 | `{"executor":"vla","skill","max_s"}` | + `objects:[id…]`(set_plan 의 물체 id). 이 id 로 물체 칸의 **목표인지** 값을 켠다(문장만으로 고르지 않게) |
-| 끝 | `max_s` 스텝 수만 | 정책의 **끝 신호**(6.2) + 자동 확인(`verify.rs` 와 같은 증거) + 예산 |
-| 결과 | `{"status":"done"}` | `{"status":"done|failed|timeout|handback","reason","evidence","steps","min_clear_m","contacts"}` |
-| 안전 | VLA 행동이 `move_robot` 을 거치지 않음 | VLA 행동도 `move_robot` 안전 거르개를 지남(6.1) |
-| 몸 | R1 Pro 부분 | 리모 + OMX-F 부분 `base`·`arm`(5)·`gripper`, 한계는 `src/robot/map_vla_description` URDF 에서 |
+| 호출 | `{"executor":"vla","skill","max_s"}` | + `objects:[id…]`(set_plan 의 물체 id, scenemap `O<id>`). 이 id 로 물체 칸의 **목표인지** 값을 켠다(문장만으로 고르지 않게). 선택 `policy`(대역 고르기) |
+| 끝 | `max_s` 스텝 수만 | 정책의 **끝 신호**(5.3, 7.2) + 자동 확인(`verify.rs`, 계획기 `Core::evidence` 와 같은 증거) + 예산 |
+| 결과 | `{"status":"done"}` | `{"status":"done|failed|timeout|handback","reason","evidence","steps","min_clear_m","contacts"}` (+ `policy`·`time_s`·`filter`) |
+| 안전 | VLA 행동이 `move_robot` 을 거치지 않음 | VLA 행동도 `move_robot` 안전 거르개를 지남(7.1) |
+| 몸 | R1 Pro 부분 | 리모 + OMX-F 부분 `base`(vx, wz)·`arm`(5)·`gripper`, 한계는 `src/robot/real_limits.json`(URDF 의 ±2π 자리표시 대신 실제 범위), 순기구학은 `map_vla_description` URDF |
+
+(10-03 판의 "6.1·6.2" 는 절 번호가 바뀌기 전 표기다. 안전 거르개는 7.1, 끝 조건은 7.2.)
+
+### 1.4 구현 상태 (10-04)
+
+코드: `src/agent/tools/move_robot` 의 `limo.rs`(몸·한계·순기구학) · `verify.rs`(자동 확인) · `vla.rs`(호출·나눔·물체 칸·정책 접점·거르개·끝 판정) ·
+`robot_vla.rs`(Robot 에 붙임) · `limo_mock.rs`(가짜 LIMO) · `ffi.rs`/`include/move_robot.h`(`mr_vla_*`, `mr_filter`). 시뮬 쪽은 behavior-2026
+`src/sim/move_robot/move_robot_limo.py`(`vla_start`·`vla_act`)·`src/sim/explore/run_explore.py`(LIMO 면 libmove_robot 실행기, 물체는 keyframe 마다 scenemap 스냅숏 `sm_snap_objects` 포인터 그대로).
+
+| 항목 | 상태 |
+|---|---|
+| 1.2 나눔 | `vla::route`: `move to`·탐사 → 거절 + `route:"move_robot"`, 다가가기·집기·놓기·서랍/가구 문·스위치 → VLA, 방문 → 미정(거절) |
+| 1.2 시작 조건 | 대상(놓기는 받침)이 기억에 없음 → `handback(not_in_map)`(아는 id 목록), 1.5 m 밖 → `handback(too_far)`(`next: move_robot go_to`), 사라짐·못 봄 + 불확실도 > 0.3 m → `handback(not_visible)`. 불확실도 = 마지막 본 뒤 이동 × 10 % + 회전 × 거리 × 5 % + 2 cm(추정) |
+| 목표인지 | `build_slots`: set_plan id 칸만 `is_goal`, 목표는 멀어도 항상 넣고 나머지는 가까운 순 16 칸. 칸 값은 VLA_INPUT 3절 중 위치·거리·방향·크기·상태·출처·불확실도·나이까지(이름 뜻·생김새 벡터 256 은 아직) |
+| 끝(7.2) | 순서: 몸통 접촉 → `failed(unsafe)`, 거르개 정지·팔 막힘 2 s → `failed(unsafe)`, 대상 사라짐 2 s → `handback(not_visible)`, 끝 신호 > 0.8 이 0.5 s + 확인 done(집기는 1 s 유지) → `done(verified)` / 확인 failed → `failed(grasp_missed·place_missed)` / 확인 못 하는 스킬 → `handback(unverified)`, 확신 낮음 1 s → `handback(unsure)`, 진척 없음 예산/3 → `handback(stalled)`, 예산 → `timeout(budget)` |
+| 확인 | 집기: 그리퍼가 빈손 문턱(벌림 0.03, 추정) 위에서 닫히는 중 + 0.1 m 들림 또는 `held`. 놓기: 벌림 ≥ 0.6 + 받침 0.6 m 안 + 손끝 0.05 m 물러남. 다가가기: 팔 받침에서 0.38 m 안 + 멈춤. 서랍·문·스위치: unknown(영상 몫) |
+| 예산 | `max_s`(없으면 스킬별 기본 20–45 s, 추정 — 교사 p90 × 1.5 가 생기면 바꿈) |
+| 거르개(7.1) | 관절: 실제 한계 − 2°, 60 °/s(추정), 막힘(지령–실제 > 20° 6 스텝) → 측정 자리. 그리퍼 0..1, 1 /s, 닫다 막히면 유지. 베이스: 0.3 m/s · 35 °/s, 가감속, 앞은 지도 장애물 + 깊이 정지(`go_to`/`delta` 와 같은 `free_ahead`), 뒤는 지도. NaN → 유지. 단독 `mr_filter` 도 있음 |
+| 정책 | **학습된 VLA 없음.** 대역: `scripted`(목표 칸만 보고 다가가기 → 수치 역기구학 → 잡기/놓기 → 들기/물러나기 → 끝 신호), `replay:<jsonl>`, `external`(`mr_vla_tick_ext` 로 엔진 행동·끝 신호·확신을 넣음 — 학습된 엔진 자리) |
+| 접촉 | 시뮬이 몸통(차체·바퀴)/팔(`omx_*`) 접촉을 나눠 줌(`mr_vla_contacts`). 몸통만 unsafe — 집기는 팔이 물체에 닿아야 하므로 |
+| 시험 | `cargo test`: 기존 31 + VLA 19(가짜 LIMO 에서 집기·놓기 done, 헛집기 failed, too_far·not_in_map·not_visible·stalled·unsure·unverified handback, timeout, 몸통 접촉·지도 벽 앞 정지 unsafe, 거르개 한계, real_limits.json 일치, 영점 순기구학 = rviz TF). `move-robot vla-mock` 으로 손으로 볼 수 있음. 파이썬 접착부 자체 시험(`move_robot_limo.py`). OG 시뮬 한 판(리모, turning_on_radio, slam, 약 6 분): `move to` 거절(route move_robot) → 없는 id `handback(not_in_map)`(아는 id O1·O3·O4) → 1.97 m `handback(too_far)`(rel_m) → `go_to` → 다가가기 `done(verified)`(팔 받침 0.34 m, 거르개 베이스 정지 181 스텝, min_clear 0.01 m, 접촉 0) → 집기(대상이 탁자라 대역이 못 잡음) `failed(grasp_missed)` 5.7 s, 팔(omx_link5)–탁자 접촉 3(몸통 0 이라 unsafe 아님) → 그 뒤 move_robot 정상 |
+
+남은 것:
+- 학습된 VLA 연결(`external` 로 넣는 엔진, 10 Hz 묶음 실행·미리 추론), 확신 낮음 값(묶음 4 개 퍼짐)은 엔진이 내야 함.
+- 물체 칸의 이름 뜻·생김새 벡터(256)·손끝 기준 값·"팔이 닿는지"(작업 공간 표), 벽·방 토큰. 지금 칸은 정책 대역용 일부.
+- 확인 문턱의 OMX-F 실측(빈손 벌림, 들림 판정의 scenemap 높이 오차), 놓기의 "1 s 정지".
+- 상태 기계(`task/machine.rs`)·`set_plan`·`skillspec` 은 아직 코드가 없다(plan.md 설계). 지금 호출은 사람·시험 스크립트가 만든다. `handback` 뒤 `go_to` 자동 삽입, `stalled` 1 번 다시 보내기도 상태 기계 몫.
+- `move_robot` LLM 도구의 LIMO 팔·그리퍼 부분(`part: arm/gripper`)은 아직 없다(리모 탐사는 베이스만). VLA 실행기와 거르개만 LIMO 부분을 쓴다.
+- R1 경로(π0.5 엔진, `--vla-weights`)는 그대로: 끝은 `max_s` 뿐, 결과 `done`, 거르개 안 지남.
+- 대상 물체와의 팔 접촉 vs 다른 물체와의 팔 접촉을 아직 안 나눔(지금 팔 접촉은 세기만).
+- 시뮬 한 판에서 팔이 탁자 앞을 가리자 scenemap 이 탁자를 `held`·0.49 m 옮겨짐으로 표시했다. 집기 확인이 `held` 를 들림 대신 받으므로, 확인에 그리퍼 쥠(벌림)을 꼭 같이 보는 지금 규칙을 유지하고 scenemap 쪽 `held` 판정(팔 가림)을 고쳐야 한다.
 
 ## 2. 왜 교사와 학생을 나누나
 
@@ -341,12 +372,12 @@ GPU 학습 시스템(커널 합치기, FP8, GPU 환경 안에서 지도 만들�
 
 ### 7.1 단단한 층: `move_robot`
 
-- VLA 행동은 매 스텝 `move_robot` 안전 거르개를 지난다(제안, 지금은 안 지남 — 1.1).
+- VLA 행동은 매 스텝 `move_robot` 안전 거르개를 지난다(리모 + OMX-F 는 10-04 구현 — 1.4. R1 π0.5 경로는 아직 안 지남).
   - 관절: URDF 한계 안쪽으로 자르기, 속도·가속 상한(지금 R1 Pro 기본 45 °/s 를 OMX-F 에 맞게 다시 정함), 막힘 판정(지령–실제 차이) → 더 밀지 않음.
   - 그리퍼: 닫다가 막히면 그대로 유지(지금 규칙과 같음).
   - 베이스: 속도 상한(VLA 는 `delta` 수준 0.3 m/s 이하 제안), 몸통 원 + 깊이 프레임 얇은 안전 정지, 지도 장애물 정지(지금 `delta` 의 진행 방향 정지와 같은 코드).
   - 거르개가 행동을 크게 바꾸면(잘림이 N 스텝 넘게 계속) 정책이 같은 실수를 되풀이하는 것으로 보고 넘김(7.2).
-- C ABI 에 "행동 거르기" 함수가 하나 필요하다(예: `mr_filter(r, action, proprio) → action`, 이름은 제안). 지금 ABI 에는 없다.
+- C ABI "행동 거르기": `mr_filter(r, proprio, n, action8, out8)`(10-04). 단계 전체는 `mr_vla_tick`/`mr_vla_tick_ext` 가 거르기까지 한다.
 
 ### 7.2 VLA 가 단계를 끝내거나 돌려주는 조건
 
