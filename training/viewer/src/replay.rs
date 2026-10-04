@@ -41,6 +41,15 @@ impl HeadCache {
         if let Ok(rd) = fs::read_dir(dir) {
             for e in rd.flatten() {
                 let n = e.file_name().to_string_lossy().to_string();
+                if n.ends_with(".sg") && trainfmt::safe_name(&n) {
+                    // sgview 판(og2sg): meta.json 의 meta 가 판 줄
+                    let p = e.path();
+                    let m: Value = std::fs::read_to_string(p.join("meta.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(json!({}));
+                    let mt = std::fs::metadata(p.join("stream.sgs")).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+                    let size = std::fs::metadata(p.join("stream.sgs")).map(|m| m.len()).unwrap_or(0);
+                    rows.push((mt, json!({"file": n, "size": size, "mtime": mt, "meta": m["meta"], "kind": "sg", "duration": m["duration"], "pin": false})));
+                    continue;
+                }
                 if !n.ends_with(".trp") || !trainfmt::safe_name(&n) {
                     continue;
                 }

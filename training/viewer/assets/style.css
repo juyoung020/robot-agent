@@ -146,3 +146,9 @@ pre.small { white-space: pre-wrap; max-height: 300px; overflow: auto; margin: 0;
 
 .synbanner { background: var(--critical); color: #fff; font-weight: 700; padding: 8px 14px; border-radius: 6px; margin: 0 0 10px; font-size: 14px; }
 .hud .synline { color: var(--critical); }
+
+.sghost { position: absolute; inset: 0; z-index: 1; }
+#rp_view .hud, #rp_view .cams { z-index: 2; }
+#rp_view .hud { left: auto; right: 330px; top: auto; bottom: 8px; }
+#rp_view.sgmode .cams { right: auto; left: 8px; top: auto; bottom: 8px; }
+#rp_view.sgmode .cams img { width: 180px; height: auto; }

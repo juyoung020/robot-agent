@@ -9,6 +9,9 @@ serde_json = "1"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 trainfmt = { path = "trainfmt" }
 
+[build-dependencies]
+cc = "1"
+
 [[bin]]
 name = "trainview"
 path = "src/main.rs"

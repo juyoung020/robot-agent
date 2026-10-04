@@ -51,6 +51,35 @@ target/release/trainview --root ~/ra_ppoout --root ~/ra_bc/runs [--port 7810] [-
 | `tools/record_replay/`: `record_ppo`, `record_bc`, `scene_b1k` (C++/CUDA) | **진짜 판 궤적**: 체크포인트를 돌려 `.trp` 를 실행 폴더 `s_eval/` 에 쓴다(아래 "재생 기록"). BEHAVIOR 장면 배치(RASC)도 프레임 하나짜리 `.trp` 로 |
 | `csv2run --out DIR <실행 폴더>…` | 규약 이전 실행(`log.csv` + `config.json` + `events.txt`/`results.json`)을 규약 폴더로 옮김(원본은 읽기만). 키 이름은 runfolder.rs 와 같다 |
 
+## 재생 탭 = sgview 화면 (2026-10-04 바꿈)
+
+재생 탭은 기본으로 **sgview(장면 그래프 실시간 뷰어, `src/scene_graph/sgview`)의 페이지를 고치지 않고 그대로** iframe 으로 띄운다(`/sg/`). 점유 지도(기운 벽 θ 격자 포함)·하늘색 2D 벽 선·물체 점구름(true colour)·이름표·썸네일·공중의 장면 그래프 층(물체·방 노드와 간선)·LIMO URDF 로봇(관절)·궤적을 sgview 와 똑같이 그린다. 예전 3D 그리기는 `3D classic` 으로 남았다.
+
+- 서버(`src/sg.rs`)가 sgview 의 실시간 경로를 판 재생으로 흉내 낸다: `/api/mode` → live, `/stream`(SSE: `map`·`pose`·`view`·`joints`·`walls`·`reset`), `/file/`(물체 조각·점구름), `/api/robot`. 벽 선분·벽 상태는 sgview 와 같은 C++(scenemap `walls.cpp` + sgview `walls_ffi.cpp`, `build.rs` 가 읽기만 해서 컴파일).
+- 세션: 브라우저마다 쿠키 `sgsess`. 시간 막대·재생·속도·한 걸음(←/→ 0.5 s)은 `/api/sg/ctl`; 옮기면 SSE 가 `reset` + 그 시각까지 쌓은 스냅숏을 보낸다(sgview 의 새 실행 처리 그대로).
+- 부모 화면이 같은 출처 iframe 장면에 덧그리는 것(`assets/sgpanel.js`): 참(GT) 궤적(초록, 시각까지), LIMO 관절 순서(robot.json `joint_order` 가 비어 있어 sgview 가 관절 스트림을 안 쓰므로 proprio 순서를 넣음, 그리퍼 둘째 손가락 = −첫째), **BEHAVIOR 집 바탕 층**(켜고 끔: 방 바닥 방 종류 색·이름, 벽 칸 세우기(문 자리 비어 있음), 가구·문 칠한 상자(마우스를 올리면 종류), 놓을 곳(RASC v3 PLACES, 초록 윗면)·집을 것(PICKS, 주황)·과제 물체(분홍)), 몸통 카메라 그림.
+- sgview 파일은 바꾸지 않았다(behavior-2026 서브모듈 변경 없음).
+
+| 판 종류 | 만드는 것 | 내용 |
+|---|---|---|
+| OmniGibson LIMO 탐사(`.sg`) | `tools/og2sg` (C++) | sgrt 기록 `rec.bin` 을 scenemap(서브모듈 소스, C ABI)으로 다시 돌리며 scenemap 자신의 sgview 스트림(`sm_stream_start`)을 이 도구가 받아 시뮬 시각을 붙여 `stream.sgs` 로. 끝에 `sm_save_dsg`(물체 RGB·마스크·깊이 조각, 점구름 PLY). 몸통 카메라 JPEG 2 Hz, GT 궤적(`G` 기록 → `frame.json` map_from_world 로 map 좌표), 검출 번호 → 이름(원래 실행 `memory/view.json` 물체와 위치로 짝), 바탕 층(RASC v3) |
+| BEHAVIOR 집 배치(`.sg`, `og2sg --layout`) | `tools/og2sg` | 다닐 곳 격자를 점유 지도로(집만 잘라), 방 노드, 과제 첫 인스턴스 로봇 시작 자세, 바탕 층 |
+| GPU 환경 판(`.trp`, A2 교사·G5 학생) | 서버가 읽을 때 바꿈 | G2 지도 MAP_RECT 그대로, 자세(slam)·관절, 물체 칸 → 요약(점구름 없음 → sgview 가 상자로), 방 하나, 궤적 노드 |
+
+```bash
+cmake -S training/viewer/tools/og2sg -B ~/ra_og2sg && cmake --build ~/ra_og2sg -j 4
+~/ra_og2sg/og2sg --rec ~/datasets/limo_rec/r4live.bin --run <OG 실행 폴더> --run-out ~/trainview_work/behavior_og/radio_slamfix_live --rasc ~/ra_b1k/house_double_floor_lower.rasc
+~/ra_og2sg/og2sg --layout --rasc ~/ra_b1k/Rs_int.rasc --run-out ~/trainview_work/behavior/b1k_scenes --ep 6
+```
+- 기록 짝(과제 → 장면): turning_on_radio = house_double_floor_lower, bringing_water = house_single_floor. `rec.bin` r1·r3·r4live = turning_on_radio(`~/b26-wt-slam/outputs/explore_20261004_200928…slamrec1`, `…202155…slamrec3`, `…203510…slamfix_live`), r2 = bringing_water(`…201510…slamrec2`).
+- 확인(잰 값): 네 판 모두 스트림 프레임 버림 0(5,583 / 4,707 / 6,616 / 5,415 프레임), 물체 80–94 개, 한 판 3.8–6.3 s, 24–36 MB. radio_slamfix_live 재생 t 8 / 60 / 123 s 에서 물체 9 / 57 / 80, 점구름 9 / 49 / 80 개(2.3 만 / 10.7 만 / 18.2 만 점).
+- 검출 번호 중 원래 실행 물체와 짝이 안 된 것은 `cls<k>` 로 남는다(원래 실행의 프롬프트 표가 기록에 없음).
+
+## 가짜 시험 자료(synthetic)
+
+`fake_run` 이 만든 실행(run.json `"synthetic": true`)은 **기본으로 숨긴다**(실행 줄 맨 아래 `test data` 를 켜야 보임, 기본 선택 후보 아님). 보일 때는 학습·재생·비교 탭 위에 빨간 띠 "가짜 시험 자료(synthetic) — 실제 학습 결과 아님", 재생 HUD·목록에도 표시. fake_run 의 판 결과는 궤적과 모순이면 `n/a`(성공이라 했는데 손끝이 컵 0.15 m 안에 안 갔거나(집기·놓기) 로봇이 1 m 안에 안 감(다가가기)).
+진짜 판의 스킬 이름: A2 교사·G5 학생 = `approach`, OmniGibson LIMO = `explore`, BEHAVIOR 배치 = `layout`. 집기(pick) 진짜 판은 E2/E6 환경 뒤.
+
 ## 재생 기록 (record_replay) — 진짜 판을 진짜 장면에서
 
 학습기와 따로 도는 독립 도구다. 학습기 코드·CUDA 그래프는 고치지 않고 **공개 헤더로만** 쓴다: `ppo::Trainer`(trainer.h)·`bc::Bc`(bc.h)를 그래프 없이 만들어 `rollout_step` 을 한 스텝씩 부르고, 스텝마다 `DeviceEnv::download`·`DeviceMap::download` 로 환경·지도를 내려받는다(ppo_verify eval 의 충돌 다시 보기와 같은 방식). 끝 프레임은 같은 `env.h` 를 호스트에서 한 스텝 다시 돌려 얻는다(장치 상태는 이미 새 판으로 리셋돼 있으므로). `.trp` 바이트는 `trpc`(Rust `trainfmt::trp` 의 C ABI 정적 라이브러리)가 쓴다 — 형식 정의는 trainfmt 한 곳.
@@ -159,7 +188,8 @@ cmake -S training/viewer/tools/record_replay -B ~/ra_recbuild [-DTRAIN_SRC=<학�
 
 - **학습 중 판마다 기록(episodes.jsonl)·리플레이**: 학습기 안에서 하려면 장치 기록 링 변경이 필요하다(CUDA·그래프). 지금 진짜 판 궤적은 학습 뒤 `record_replay` 로 체크포인트를 돌려 얻는다(평가 줄기 `s_eval`). 학습 판 표본의 성공 표는 아직 fake_run 자료로만 확인.
 - 보상 항목별 값(`r_<항>`): 환경 스텝이 합만 내서 `.trp` 에는 `r_total` 하나. 영상 학생의 `end_p`·가치 없음.
-- BEHAVIOR 장면에서 로봇이 도는 판은 E2(환경을 RASC 로) 뒤에.
+- BEHAVIOR 장면에서 **우리 정책**이 도는 판은 E2(환경을 RASC 로) 뒤에. 지금 BEHAVIOR 판은 OmniGibson LIMO 탐사 기록(og2sg).
+- og2sg 의 지도 시각: scenemap 은 다시 돌린 것이라 원래 실행(sgrt 안 scenemap 판)과 조금 다를 수 있다(같은 기록·같은 설정, 물체 번호는 이 재생 기준).
 - PPO 의 `train/explained_variance`, `log/*_dropped`(장치 링 넘침 수), 보상 항목별 합(`reward/<스킬>/<항>`), 접촉 수는 장치 기록에 없어 키가 없다(화면은 "not logged").
 - 영상 칸(img 섹션 JPEG): 화면은 읽지만 쓰는 쪽이 없다.
 - `progress` 첫 읽기를 64 MB 씩 여러 요청에 나눠 "읽는 중 n %" 표시(지금은 한 요청 안에서 64 MB 씩 끝까지 읽음).

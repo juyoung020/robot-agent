@@ -593,7 +593,8 @@ trainfmt/             (쓰는 쪽과 같이 쓰는 형식 크레이트, 4.6)
 | V0 `trainfmt` + `fake_run` | **됨** | 되감기(trim 없는 재개), 반쪽 줄, 줄기, labs, .trp(프레임·f16 슬롯·MAP_RECT 지도), 평가 표, 씨앗 묶음. `"synthetic": true` |
 | V1 서버(목록·메타·이어 읽기·열 저장소) + 학습 탭(카드·곡선) | **됨** | 되감긴 줄 걷기, 반쪽 줄 안 받음, ino·길이로 새 파일 판정(sig), 64 KB 넘으면 gzip, 10 분 안 본 실행 내림 |
 | V2 성공 표 + 고장 무늬 검사 | **됨** | 표 숫자 = 직접 센 값. 검사 8 개, 못 잰 검사는 이유와 함께 따로 |
-| V3 `.trp` 재생 탭 | **됨 — 진짜 판·진짜 장면** | 학습 뒤 기록 도구 `training/viewer/tools/record_replay`(`record_ppo`·`record_bc`, 학습기 공개 헤더로 체크포인트를 돌림)가 A2 교사·G5 영상 학생 판을 `s_eval/` 에 씀: 참 장면(방 벽·가구·컵), 자라는 지도(G2 로그 오즈 → MAP_RECT), 지도 벽 선분, 물체 기억 칸, 참/slam 자세, 팔 관절, 목표, 학생 카메라 JPEG. BEHAVIOR 장면 배치(`scene_b1k`, RASC)도 봄. 학습 중 판 기록은 남은 일 |
+| V3 재생 탭 | **됨 — sgview 화면 그대로 + 진짜 판** | 재생 탭은 sgview 페이지를 고치지 않고 iframe 으로 띄우고 서버가 sgview 실시간 경로(/stream 등)를 판 재생으로 흉내(`src/sg.rs`). OmniGibson LIMO 탐사 판은 `tools/og2sg`(rec.bin → scenemap 재실행 → sgview 스트림 + 메모리 폴더), BEHAVIOR 집 배치는 `og2sg --layout`, GPU 판(.trp)은 서버가 같은 프레임으로 바꿈. 바탕 층(RASC v3 방·벽·가구·놓을 곳·집을 것) 켜고 끔. 예전 3D 그리기는 `3D classic` |
+| (옛) `.trp` 3D 재생 | **됨 — 진짜 판·진짜 장면** | 학습 뒤 기록 도구 `training/viewer/tools/record_replay`(`record_ppo`·`record_bc`, 학습기 공개 헤더로 체크포인트를 돌림)가 A2 교사·G5 영상 학생 판을 `s_eval/` 에 씀: 참 장면(방 벽·가구·컵), 자라는 지도(G2 로그 오즈 → MAP_RECT), 지도 벽 선분, 물체 기억 칸, 참/slam 자세, 팔 관절, 목표, 학생 카메라 JPEG. BEHAVIOR 장면 배치(`scene_b1k`, RASC)도 봄. 학습 중 판 기록은 남은 일 |
 | V4 SSE 실시간 + 비교 탭 | **됨** | 실제 `ppo_run` 짧은 실행으로 화면 갱신 확인. 씨앗 묶음 평균 ± σ 띠 |
 | V5 평가 표·영상 칸 | **됨** | `bc_run` 평가마다 `evals/*.json`. 영상 칸은 `record_bc` 가 학생이 본 카메라 2 장(2 Hz JPEG)을 씀. FP8 묶음은 키가 오면 그림(지금 학습기는 `fp8/*` 감시 값을 안 냄) |
 

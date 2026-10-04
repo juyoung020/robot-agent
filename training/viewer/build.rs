@@ -28,7 +28,19 @@ fn main() {
         }
     }
     list(&sg.join("robot"), "robot/", &mut code);
+    // 재생 탭의 sgview 화면: sgview 페이지(index.html)를 고치지 않고 그대로 넣는다
+    let idx = sg.join("index.html");
+    if idx.exists() {
+        code.push_str(&format!("    (\"sgview_index.html\", include_bytes!({:?})),\n", std::fs::canonicalize(&idx).unwrap().to_string_lossy()));
+        println!("cargo:rerun-if-changed={}", idx.display());
+    }
     code.push_str("];\n");
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("assets.rs");
     std::fs::write(out, code).unwrap();
+    // 벽 선분·벽 상태: sgview 와 같은 C++ (scenemap walls.cpp + sgview walls_ffi.cpp), 읽기만 해서 같이 컴파일
+    let sgv = Path::new("../../src/scene_graph/sgview/src/walls_ffi.cpp");
+    let walls = Path::new("../../src/scene_graph/scenemap/src/walls.cpp");
+    cc::Build::new().cpp(true).std("c++17").opt_level(3).include("../../src/scene_graph/scenemap/include").file(walls).file(sgv).compile("tv_walls");
+    println!("cargo:rerun-if-changed={}", sgv.display());
+    println!("cargo:rerun-if-changed={}", walls.display());
 }

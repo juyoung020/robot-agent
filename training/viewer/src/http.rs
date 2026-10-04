@@ -9,6 +9,7 @@ pub struct Req {
     pub path: String,
     pub q: HashMap<String, String>,
     pub gzip: bool,
+    pub cookie: String,
 }
 
 impl Req {
@@ -26,6 +27,7 @@ pub fn read_request(s: &TcpStream) -> Option<Req> {
     let mut line = String::new();
     rd.read_line(&mut line).ok()?;
     let mut gzip = false;
+    let mut cookie = String::new();
     loop {
         let mut h = String::new();
         if rd.read_line(&mut h).unwrap_or(0) <= 2 {
@@ -34,6 +36,9 @@ pub fn read_request(s: &TcpStream) -> Option<Req> {
         let hl = h.to_ascii_lowercase();
         if hl.starts_with("accept-encoding:") && hl.contains("gzip") {
             gzip = true;
+        }
+        if hl.starts_with("cookie:") {
+            cookie = h[7..].trim().to_string();
         }
     }
     let mut parts = line.split_whitespace();
@@ -45,7 +50,7 @@ pub fn read_request(s: &TcpStream) -> Option<Req> {
         Some(i) => (&target[..i], &target[i + 1..]),
         None => (target, ""),
     };
-    Some(Req { path: percent_decode(path), q: parse_query(query), gzip })
+    Some(Req { path: percent_decode(path), q: parse_query(query), gzip, cookie })
 }
 
 pub fn respond(s: &mut TcpStream, code: u16, ctype: &str, body: &[u8], gzip_ok: bool) {

@@ -2,6 +2,7 @@
 // 좌표는 전부 map 프레임(x 앞, y 왼쪽, z 위) — sgview 장면이 z 위라 바꿀 것이 없다. 격자 행 0 = 최소 y (sgview onMapEvent 와 같음).
 // 실행이 바뀌면 화면부터 비운다(전투기 뷰어 교훈 17).
 import { fmt, esc, cssv } from "./charts.js";
+import { SgPanel } from "./sgpanel.js";
 
 const STATE_COL = [0x2ea043, 0x8c8c8c, 0xf58c14, 0x286ee6];   // 보임 · 사라짐 · 옮겨짐 · 들고 있음 (sgview STATE_COL)
 const STATE_NAME = ["seen", "gone", "moved", "held"];
@@ -62,11 +63,16 @@ export class Replay {
     this.run = null; this.meta = null; this.rows = []; this.tr = null; this.f = 0; this.t = 0; this.playing = false; this.visible = false; this.ready = false;
     const $ = id => document.getElementById(id);
     this.$ = $;
+    this.mode = "sg";
+    this.sg = new SgPanel({ api, host: $("rp_sg") });
+    $("rp_mode").onchange = e => { this.mode = e.target.value; const f = this.file; if (f) this.open(f); };
+    $("rp_ul").onchange = e => this.sg.setUnderlay(e.target.checked);
     for (const id of ["rp_stream", "rp_skill", "rp_outcome", "rp_home", "rp_near"]) $(id).addEventListener("change", () => id === "rp_stream" ? this.refreshList() : this.renderList());
-    $("rp_play").onclick = () => this.toggle();
-    $("rp_prev").onclick = () => this.step(-1);
-    $("rp_next").onclick = () => this.step(1);
-    $("rp_time").oninput = e => { this.seek(+e.target.value); };
+    $("rp_play").onclick = () => this.sgOn ? this.sg.toggle() : this.toggle();
+    $("rp_prev").onclick = () => this.sgOn ? this.sg.seek((this.sg.state ? this.sg.state.t : 0) - 0.5) : this.step(-1);
+    $("rp_next").onclick = () => this.sgOn ? this.sg.seek((this.sg.state ? this.sg.state.t : 0) + 0.5) : this.step(1);
+    $("rp_time").oninput = e => { if (this.sgOn) this.sg.seek(+e.target.value / 10); else this.seek(+e.target.value); };
+    $("rp_speed").onchange = e => { if (this.sgOn) this.sg.speed(+e.target.value); };
     $("rp_camsel").onchange = e => this.setCam(+e.target.value);
     $("rp_ee").onchange = () => this.apply();
     $("rp_slam").onchange = () => this.apply();
@@ -74,9 +80,9 @@ export class Replay {
     addEventListener("keydown", e => {
       if (!this.visible || e.target.tagName === "INPUT" && e.target.type !== "range" || e.target.tagName === "SELECT") return;
       if (e.key >= "1" && e.key <= "4") { $("rp_camsel").value = e.key; this.setCam(+e.key); }
-      else if (e.key === " ") { e.preventDefault(); this.toggle(); }
-      else if (e.key === "ArrowLeft") { e.preventDefault(); this.step(-1); }
-      else if (e.key === "ArrowRight") { e.preventDefault(); this.step(1); }
+      else if (e.key === " ") { e.preventDefault(); $("rp_play").onclick(); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); $("rp_prev").onclick(); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); $("rp_next").onclick(); }
     });
     addEventListener("resize", () => this.resize());
   }
@@ -189,6 +195,7 @@ export class Replay {
   // ---------------------------------------------------------------- 판 하나 열기
   clearEpisode() {
     this.tr = null; this.file = null; this.playing = false;
+    if (this.sgOn) this.setSg(false);
     if (this.ready) {
       this.gEp.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } });
       this.gEp.clear();
@@ -200,9 +207,26 @@ export class Replay {
     this.$("rp_legend").innerHTML = "";
     this.dirty = true;
   }
+  setSg(on) {
+    this.sgOn = on;
+    this.$("rp_sg").hidden = !on;
+    this.$("rp_view").classList.toggle("sgmode", on);
+    if (this.renderer) this.renderer.domElement.style.display = on ? "none" : "";
+    this.$("rp_strip").style.display = on ? "none" : "";
+    this.$("rp_legend").style.display = on ? "none" : "";
+    if (!on) this.sg.close();
+  }
   async open(file) {
     const id = this.run, st = this.$("rp_stream").value || "main";
     this.clearEpisode(); this.file = file; this.renderList();
+    // sgview 화면(장면 그래프 뷰어 그대로) — .sg(OmniGibson) 는 늘, .trp 는 고른 방식대로
+    if (this.mode === "sg" || file.endsWith(".sg")) {
+      this.setSg(true);
+      this.$("rp_empty").hidden = true;
+      await this.sg.open(id, st, file);
+      return;
+    }
+    this.setSg(false);
     this.$("rp_empty").textContent = "loading…"; this.$("rp_empty").hidden = false;
     const t0 = performance.now();
     const r = await fetch(`/api/replay?run=${encodeURIComponent(id)}&stream=${encodeURIComponent(st)}&id=${encodeURIComponent(file)}`);
@@ -480,7 +504,7 @@ export class Replay {
   }
   tick() {
     const now = performance.now(), dt = (now - this.last) / 1000; this.last = now;
-    if (!this.visible) return;   // 보이지 않는 탭은 그리지 않는다
+    if (!this.visible || this.sgOn) return;   // 보이지 않는 탭·sgview 화면일 때는 그리지 않는다
     if (this.playing && this.tr) {
       this.t += dt * +this.$("rp_speed").value;
       const f = Math.floor(this.t / (this.tr.head.dt || 0.1));

@@ -83,8 +83,9 @@
       <div id="rp_list" class="list"></div>
     </aside>
     <div id="rp_main">
-      <div id="rp_view"><div id="rp_hud" class="hud mono"></div><div id="rp_cams" class="cams"></div><div id="rp_empty" class="empty">Pick an episode from the list</div></div>
+      <div id="rp_view"><div id="rp_sg" class="sghost" hidden></div><div id="rp_hud" class="hud mono"></div><div id="rp_cams" class="cams"></div><div id="rp_empty" class="empty">Pick an episode from the list</div></div>
       <div class="bar">
+        <select id="rp_mode" title="그리는 방식: sgview(장면 그래프 뷰어 그대로) / 예전 3D"><option value="sg" selected>sgview</option><option value="3d">3D classic</option></select>
         <button id="rp_play">▶</button>
         <button id="rp_prev" title="previous frame (←)">◀︎|</button>
         <button id="rp_next" title="next frame (→)">|▶︎</button>
@@ -94,6 +95,7 @@
         <select id="rp_camsel" title="camera (keys 1–4)"><option value="1">1 top-down</option><option value="2">2 follow</option><option value="3">3 wrist</option><option value="4" selected>4 free orbit</option></select>
         <label><input type="checkbox" id="rp_ee" checked> end-effector path</label>
         <label><input type="checkbox" id="rp_slam" checked> SLAM pose path</label>
+        <label title="BEHAVIOR 집 배치(방 바닥·벽·가구·놓을 곳·집을 것) 바탕 층"><input type="checkbox" id="rp_ul" checked> house layout</label>
       </div>
       <canvas id="rp_strip" height="110"></canvas>
       <div id="rp_legend" class="legend small"></div>

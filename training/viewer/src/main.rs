@@ -6,6 +6,7 @@ mod http;
 mod live;
 mod replay;
 mod runs;
+mod sg;
 mod table;
 mod tail;
 
@@ -28,6 +29,7 @@ pub struct App {
     pub heads: Mutex<replay::HeadCache>,
     lines: Mutex<tail::LineCount>,
     disk: Mutex<runs::DiskCache>,
+    pub sg: Arc<Mutex<sg::SgState>>,
 }
 
 impl App {
@@ -123,6 +125,14 @@ fn handle(mut s: TcpStream, app: Arc<App>) {
     let Some(req) = http::read_request(&s) else { return };
     let gz = req.gzip;
     let p = req.path.as_str();
+    // 재생 탭의 sgview(iframe): sgview 페이지를 그대로, 그 실시간 경로를 판 재생으로
+    if p == "/stream" {
+        let sess = sg::cookie_sess(&req);
+        return sg::serve_stream(s, app.sg.clone(), sess);
+    }
+    if sg::handle_sgview(&mut s, &req, &app.sg, asset("sgview_index.html").unwrap_or(b"no sgview page")) {
+        return;
+    }
     match p {
         "/" | "/index.html" => http::respond(&mut s, 200, "text/html; charset=utf-8", asset("index.html").unwrap_or(b"no index"), gz),
         "/api/runs" => http::json(&mut s, &app.runs_json(), gz),
@@ -231,6 +241,37 @@ fn handle(mut s: TcpStream, app: Arc<App>) {
             http::json(&mut s, &json!({"lines": &ls[k..], "total": ls.len()}).to_string(), gz);
         }
         "/api/live" => live::serve(s, app, &req),
+        "/api/sg/ctl" => {
+            let a2 = app.clone();
+            let body = sg::ctl(&app.sg, &req, move |key| {
+                let mut it = key.splitn(3, '|');
+                let (run, st, id) = (it.next()?, it.next()?, it.next()?);
+                let r = a2.find(run)?;
+                if !trainfmt::safe_name(st) || !trainfmt::safe_name(id) {
+                    return None;
+                }
+                let p = runs::stream_dir(&r.dir, st).join("replays").join(id);
+                let e = if id.ends_with(".sg") { sg::load_sg(&p) } else { sg::load_trp(&p) };
+                e.map(Arc::new)
+            });
+            http::json(&mut s, &body, gz);
+        }
+        "/api/sg/info" => {
+            // 부모 화면용: 참 궤적, 바탕 층(BEHAVIOR 집), 카메라 그림 목록, 관절 순서
+            let sess = req.get("sess").to_string();
+            let info = app.sg.lock().unwrap().sess.get(&sess).map(|x| json!({"info": x.ep.info, "duration": x.ep.duration, "frames": x.ep.frames.len()}));
+            http::json(&mut s, &info.unwrap_or(json!({"error": "no session"})).to_string(), gz);
+        }
+        "/api/sg/cam" => {
+            let Some(r) = run_of(&app, &mut s, &req) else { return };
+            let Some(st) = stream_of(&mut s, &req) else { return };
+            let (id, f) = (req.get("id"), req.get("file"));
+            let ok = trainfmt::safe_name(id) && id.ends_with(".sg") && f.starts_with("cam/") && trainfmt::safe_name(&f[4..]);
+            match if ok { std::fs::read(runs::stream_dir(&r.dir, &st).join("replays").join(id).join(f)).ok() } else { None } {
+                Some(b) => http::respond(&mut s, 200, "image/jpeg", &b, false),
+                None => http::not_found(&mut s, "no such camera frame"),
+            }
+        }
         _ => {
             let name = p.trim_start_matches('/');
             match asset(name) {
@@ -295,6 +336,7 @@ fn main() {
         heads: Mutex::new(replay::HeadCache::default()),
         lines: Mutex::new(tail::LineCount::default()),
         disk: Mutex::new(runs::DiskCache(HashMap::new())),
+        sg: Arc::new(Mutex::new(sg::SgState::default())),
     });
     let l = TcpListener::bind((bind.as_str(), port)).unwrap_or_else(|e| {
         eprintln!("cannot listen on {}:{}: {}", bind, port, e);
