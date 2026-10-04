@@ -1,0 +1,8 @@
+[package]
+name = "ppo_run"
+version = "0.1.0"
+edition = "2021"
+description = "RL 교사 PPO 실행기(G3): 설정 읽기, 실행 순서, 커리큘럼, 비동기 기록, 체크포인트. 계산은 전부 libppo(C++/CUDA)."
+
+[dependencies]
+serde_json = "1"
