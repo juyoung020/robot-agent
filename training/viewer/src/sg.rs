@@ -32,6 +32,8 @@ pub struct Episode {
     pub duration: f64,
     pub robot: String,
     pub info: Value,         // 부모 화면용: gt_path, underlay, cams, joint_order, map_from_world …
+    /// 정책이 본 지도(GPU 근사판 G2, .trp 의 MAP_RECT): (시각, 48 B 머리 + 칸) — 진짜 scenemap 과 겹쳐 보기
+    pub policy: Vec<(f64, Vec<u8>)>,
 }
 
 // ---------------------------------------------------------------- 읽기
@@ -90,7 +92,28 @@ pub fn load_sg(dir: &Path) -> Option<Episode> {
         "kind": "sg", "meta": meta["meta"], "gt_path": meta["gt_path"], "map_from_world": meta["map_from_world"], "cams": meta["cams"],
         "joint_order": meta["joint_order"], "underlay": underlay, "stream": meta["stream"], "og_run": meta["og_run"], "n_objects": meta["n_objects"],
     });
-    Some(Episode { dir: dir.join("memory"), frames, duration, robot: meta["robot"].as_str().unwrap_or("limo_omx").to_string(), info })
+    let mut policy = vec![];
+    if let Some(pt) = meta["policy_trp"].as_str() {
+        if let Ok(b) = std::fs::read(dir.join(pt)) {
+            if let Some(h) = trainfmt::trp::read_head(&b) {
+                let dt = h["dt"].as_f64().unwrap_or(0.1);
+                if let Some(s) = h["sections"].as_array().and_then(|a| a.iter().find(|s| s["name"] == "map")) {
+                    let (o, l) = (s["off"].as_u64().unwrap_or(0) as usize, s["len"].as_u64().unwrap_or(0) as usize);
+                    let mut p = o;
+                    while p + 52 <= o + l && o + l <= b.len() {
+                        let fr = u32::from_le_bytes(b[p..p + 4].try_into().unwrap()) as f64;
+                        let i32at = |q: usize| i32::from_le_bytes(b[q..q + 4].try_into().unwrap());
+                        let n = ((i32at(p + 44) - i32at(p + 36) + 1) * (i32at(p + 48) - i32at(p + 40) + 1)) as usize;
+                        policy.push((fr * dt, b[p + 4..p + 52 + n].to_vec()));
+                        p += 52 + n;
+                    }
+                }
+            }
+        }
+    }
+    let mut info = info;
+    info["has_policy_map"] = json!(!policy.is_empty());
+    Some(Episode { dir: dir.join("memory"), frames, duration, robot: meta["robot"].as_str().unwrap_or("limo_omx").to_string(), info, policy })
 }
 
 /// GPU 환경 판(.trp) → sgview 프레임. 좌표는 G2 지도 = 세계(map 프레임 같음).
@@ -215,7 +238,7 @@ pub fn load_trp(path: &Path) -> Option<Episode> {
     let info = json!({"kind": "trp", "meta": h["meta"], "gt_path": gt, "map_from_world": [1, 0, 0, 0], "cams": [],
         "joint_order": ["", "", "", "", "", "", "omx_joint1", "omx_joint2", "omx_joint3", "omx_joint4", "omx_joint5", "omx_gripper_joint_1", "front_left_wheel", "front_right_wheel", "rear_left_wheel", "rear_right_wheel"],
         "underlay": {"scene": h["scene"]["name"], "boxes": boxes, "rooms": h["scene"]["rooms"], "places": [], "picks": [], "task_objects": []}});
-    Some(Episode { dir: PathBuf::new(), frames, duration, robot: "limo_omx".into(), info })
+    Some(Episode { dir: PathBuf::new(), frames, duration, robot: "limo_omx".into(), info, policy: vec![] })
 }
 
 // ---------------------------------------------------------------- 세션·상태
@@ -562,6 +585,22 @@ pub fn ctl(st: &Arc<Mutex<SgState>>, req: &Req, ep_of: impl Fn(&str) -> Option<A
         x.t0 = x.ep.duration;
     }
     json!({"t": t, "duration": x.ep.duration, "playing": x.playing, "speed": x.speed, "epoch": x.epoch, "frames": x.ep.frames.len()}).to_string()
+}
+
+/// 정책이 본 지도(G2 근사판)의 시각 t 까지 쌓은 격자 — 회색(sgview cell_grey 와 같은 색) base64 + 자리(세계 좌표)
+pub fn policy_grid(ep: &Episode, t: f64) -> Value {
+    let mut l = Live::new();
+    for (ft, pl) in &ep.policy {
+        if *ft > t + 1e-6 {
+            break;
+        }
+        l.apply(&Frame { t: *ft, ty: 2, pl: pl.clone() }, false);
+    }
+    if l.w <= 0 {
+        return json!({"why": "no policy map"});
+    }
+    let g: Vec<u8> = l.cells.iter().map(|&v| cell_grey(v)).collect();
+    json!({"w": l.w, "h": l.h, "res": l.res, "ox": l.ox, "oy": l.oy, "b64": b64(&g)})
 }
 
 /// iframe 의 sgview 가 부르는 경로(쿠키 sgsess 로 세션). 처리했으면 true

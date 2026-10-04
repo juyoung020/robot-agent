@@ -185,60 +185,8 @@ static bool next(FILE* f, Rec& r) {
   return true;
 }
 
-// ---- 스트림 받기(scenemap 이 sgview --ingest 에 보내듯 이 프로세스로) ----
-struct Capture {
-  int lfd = -1, port = 0;
-  std::atomic<double> now{0.0};
-  std::atomic<uint64_t> bytes{0};
-  std::atomic<bool> quit{false};
-  FILE* out = nullptr;
-  std::thread th;
-  uint64_t frames = 0, by_type[8] = {};
-  bool start(const std::string& path) {
-    out = std::fopen(path.c_str(), "wb");
-    if (!out) return false;
-    std::fwrite("SGS1", 1, 4, out);
-    lfd = socket(AF_INET, SOCK_STREAM, 0);
-    sockaddr_in a{};
-    a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK); a.sin_port = 0;
-    if (bind(lfd, (sockaddr*)&a, sizeof a) || listen(lfd, 1)) return false;
-    socklen_t al = sizeof a;
-    getsockname(lfd, (sockaddr*)&a, &al);
-    port = ntohs(a.sin_port);
-    th = std::thread([this] { run(); });
-    return true;
-  }
-  void run() {
-    const int c = accept(lfd, nullptr, nullptr);
-    if (c < 0) return;
-    std::vector<uint8_t> buf;
-    auto rd_all = [&](void* p, size_t n) {
-      uint8_t* q = (uint8_t*)p;
-      while (n) { const ssize_t k = read(c, q, n); if (k <= 0) return false; q += k; n -= size_t(k); bytes += uint64_t(k); }
-      return true;
-    };
-    for (;;) {
-      uint8_t hd[5];
-      if (!rd_all(hd, 5)) break;
-      uint32_t len;
-      std::memcpy(&len, hd, 4);
-      buf.resize(len);
-      if (!rd_all(buf.data(), len)) break;
-      const double t = now.load();
-      std::fwrite(&t, 8, 1, out);
-      std::fwrite(hd, 1, 5, out);
-      std::fwrite(buf.data(), 1, len, out);
-      ++frames;
-      if (hd[4] < 8) ++by_type[hd[4]];
-    }
-    close(c);
-  }
-  void stop() {
-    if (th.joinable()) th.join();
-    if (lfd >= 0) close(lfd);
-    if (out) std::fclose(out);
-  }
-};
+#include "sg_capture.h"   // Capture(스트림 받기)·sg_drain — record_replay 와 같이 씀
+
 
 // 배치만(--layout): 시뮬 기록 없이 BEHAVIOR 장면 하나를 sgview 판으로 — 다닐 곳 격자를 점유 지도로, 방을 방 노드로, 로봇은 과제 인스턴스 시작 자세.
 // 좌표는 세계 그대로(map_from_world = 항등). 바탕 층(underlay.json)은 같은 집 배치.
@@ -358,18 +306,8 @@ int main(int argc, char** argv) {
   if (sm_stream_start(c, hp.c_str())) { std::fprintf(stderr, "sm_stream_start failed\n"); return 1; }
   // 받는 쪽이 붙고 따라잡을 때까지 기다림(스트림은 링이 차면 프레임을 버린다 — 기록이므로 한 프레임도 버리지 않게 걸음을 맞춘다)
   // frames_sent 는 묶음 수라 프레임 수와 견줄 수 없다: 보낸 바이트가 두 번 연달아(송신 스레드 한 바퀴 ≥ 100 µs) 그대로이고 받은 바이트가 따라잡으면 비었다고 본다
-  auto drain = [&]() {
-    uint64_t prev = ~0ull;
-    int same = 0;
-    for (int k = 0; k < 20000; ++k) {
-      sm_stream_stats ss{};
-      sm_stream_get_stats(c, &ss);
-      if (ss.connected && ss.bytes_sent == prev && cap.bytes.load() >= ss.bytes_sent) { if (++same >= 2) return; }
-      else same = 0;
-      prev = ss.bytes_sent;
-      std::this_thread::sleep_for(std::chrono::microseconds(150));
-    }
-  };
+  auto drain = [&]() { sg_drain(c, cap); };
+
   drain();
 
   std::vector<double> hist;

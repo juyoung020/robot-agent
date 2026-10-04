@@ -67,6 +67,7 @@ export class Replay {
     this.sg = new SgPanel({ api, host: $("rp_sg") });
     $("rp_mode").onchange = e => { this.mode = e.target.value; const f = this.file; if (f) this.open(f); };
     $("rp_ul").onchange = e => this.sg.setUnderlay(e.target.checked);
+    $("rp_pmap").onchange = e => this.sg.setPolicyMap(e.target.checked);
     $("rp_ckpt").onchange = () => { const i = this.ckList.indexOf($("rp_ckpt").value); if (i >= 0) $("rp_ckslide").value = i; this.renderList(); };
     $("rp_ckslide").oninput = e => { $("rp_ckpt").value = this.ckList[+e.target.value] || ""; this.renderList(); };
     for (const id of ["rp_stream", "rp_skill", "rp_outcome", "rp_home", "rp_near"]) $(id).addEventListener("change", () => id === "rp_stream" ? this.refreshList() : this.renderList());

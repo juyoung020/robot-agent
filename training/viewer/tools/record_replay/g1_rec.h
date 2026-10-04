@@ -12,6 +12,7 @@
 #include "env_soa.h"
 #include "map_api.h"
 #include "rec_util.h"
+#include "sg_feed.h"
 
 namespace rec {
 
@@ -41,6 +42,7 @@ struct G1Rec {
     std::vector<int8_t> prev;
     std::vector<float> segs_prev;
     float last_m[3] = {0, 0, 0};   // 끝 프레임용 slam 자세
+    std::vector<SgStep> sgs;       // sgview 판(진짜 scenemap)용 입력
   };
   int N = 0;
   std::vector<int> tracked;
@@ -48,7 +50,8 @@ struct G1Rec {
   Out out;
   std::string driver, source_json, skill = "approach", home_prefix = "G1", tag;   // tag: 체크포인트 이름(it000200 / final) — 파일 이름·판 줄에
   double ckpt_iter = NAN;
-  int max_success = 1 << 30;   // 성공 판은 이만큼만 쓰고(그 뒤 성공은 버림) 실패를 더 기다린다
+  int max_success = 1 << 30;
+  bool sg = true;   // 판마다 진짜 scenemap 을 돌려 sgview 판(.sg)으로(--no-sg 면 .trp 만)   // 성공 판은 이만큼만 쓰고(그 뒤 성공은 버림) 실패를 더 기다린다
   long next_ep = 0;
   int finished = 0, img_every = 5;
   int n_success = 0, n_coll = 0, n_tout = 0, dropped_success = 0;
@@ -195,6 +198,19 @@ struct G1Rec {
           const std::vector<uint8_t> j = jpeg::encode(p, img_res, img_res, 80);
           trp_image(e.w, fr, (uint8_t)cam, j.data(), j.size());
         }
+      if (sg) {   // 진짜 scenemap 입력(이 스텝 전 상태): proprio 12, keyframe, 참 자세, 장면 상자
+        const gmap::MapCore& A = mh.core[i];
+        SgStep q{};
+        q.stamp = e.frames * 0.1;
+        q.q[SM_LIMO_ODOM_X] = A.ex; q.q[SM_LIMO_ODOM_Y] = A.ey; q.q[SM_LIMO_ODOM_YAW] = A.eyaw;
+        q.q[SM_LIMO_VX] = c.v; q.q[SM_LIMO_VY] = 0.f; q.q[SM_LIMO_WZ] = c.w;
+        for (int k = 0; k < 5; ++k) q.q[SM_LIMO_ARM_Q + k] = c.q[k];
+        q.q[SM_LIMO_GRIPPER] = c.q[5];
+        q.kf = A.kf_flag && A.rhx > 0.f;
+        q.x = c.x; q.y = c.y; q.yaw = c.yaw; q.rhx = A.rhx; q.rhy = A.rhy;
+        std::memcpy(q.prim, A.prim, sizeof q.prim);
+        e.sgs.push_back(q);
+      }
       e.path += std::hypot(c.x - e.lx, c.y - e.ly);
       e.lx = c.x; e.ly = c.y;
       e.frames++;
@@ -238,14 +254,45 @@ struct G1Rec {
         .num("t", e.frames * 0.1).num("steps", e.frames).num("ret", e.ret).raw("r", "{\"total\":" + jnum(e.ret) + "}").num("contacts", d == env::kCollision ? 1 : 0)
         .num("path_len", e.path).num("path_len_opt", lopt).num("final_dist", surf).num("final_aim_deg", aim).str("replay", file).str("ckpt", tag).num("ckpt_iter", ckpt_iter).done();
     (void)so;
+    std::string path = out.rep + "/" + file;
+    std::string sgdir;
+    if (sg && !e.sgs.empty()) {   // sgview 판: <판>.sg/ 안에 스트림·메모리·바탕·정책 지도(episode.trp)
+      std::string f2 = file;
+      f2.replace(f2.size() - 4, 4, ".sg");
+      sgdir = out.rep + "/" + f2;
+      mkdirs(sgdir);
+      path = sgdir + "/episode.trp";
+      line.replace(line.find(std::string("\"replay\":\"") + file + "\""), std::string("\"replay\":\"").size() + std::strlen(file) + 1, std::string("\"replay\":\"") + f2 + "\"");
+    }
     trp_set_head(e.w, "meta", line.c_str());
-    const std::string path = out.rep + "/" + file;
     const long long nb = trp_finish(e.w, path.c_str());
     trp_free(e.w);
     e.w = nullptr;
+    if (!sgdir.empty()) {
+      int nobj = 0;
+      const long nfr = sg_run_episode(e.sgs, sgdir, &nobj);
+      // map(scenemap) ← world: 처음 proprio 자세가 map 원점(믿는 자세 = 처음엔 참 자세)
+      const SgStep& s0 = e.sgs.front();
+      const double th = -double(s0.q[SM_LIMO_ODOM_YAW]), cth = std::cos(th), sth = std::sin(th);
+      const double tx = -(cth * s0.q[SM_LIMO_ODOM_X] - sth * s0.q[SM_LIMO_ODOM_Y]), ty = -(sth * s0.q[SM_LIMO_ODOM_X] + cth * s0.q[SM_LIMO_ODOM_Y]);
+      std::string gt = "[";
+      for (size_t k = 0; k < e.sgs.size(); ++k) {
+        const SgStep& q = e.sgs[k];
+        gt += std::string(k ? "," : "") + "[" + jnum(q.stamp) + "," + jnum(cth * q.x - sth * q.y + tx) + "," + jnum(sth * q.x + cth * q.y + ty) + "," + jnum(q.yaw + th) + "]";
+      }
+      gt += "]";
+      // 바탕 층: 같은 장면 상자(세계) — 화면이 map_from_world 로 돌림
+      const std::string scene = scene_json(cc, m, e.stage);
+      std::ofstream(sgdir + "/underlay.json") << "{\"scene\":\"A" << e.stage << " room\",\"boxes\":" << scene.substr(scene.find("\"boxes\":") + 8, scene.find(",\"rooms\"") - scene.find("\"boxes\":") - 8)
+                                             << ",\"rooms\":[{\"name\":\"room\",\"type\":\"room\",\"centroid\":[0,0],\"bmin\":[" << jnum(-cc.rhx) << "," << jnum(-cc.rhy) << "],\"bmax\":[" << jnum(cc.rhx) << "," << jnum(cc.rhy) << "]}]}";
+      std::ofstream(sgdir + "/meta.json") << Obj().str("format", "SGS1").raw("meta", line).str("robot", "limo_omx").raw("map_from_world", "[" + jnum(cth) + "," + jnum(sth) + "," + jnum(tx) + "," + jnum(ty) + "]")
+                                                .raw("gt_path", gt).raw("labels", "{}").raw("cams", "[]").num("duration", e.sgs.back().stamp).str("policy_trp", "episode.trp")
+                                                .raw("joint_order", "[\"\",\"\",\"\",\"\",\"\",\"\",\"omx_joint1\",\"omx_joint2\",\"omx_joint3\",\"omx_joint4\",\"omx_joint5\",\"omx_gripper_joint_1\"]")
+                                                .num("n_objects", nobj).num("stream_frames", (double)nfr).str("source", "GPU env episode → real scenemap (limo_omx), depth/id raycast like map_cmp").done();
+    }
     out.append_episode(line);
     ++finished;
-    std::printf("  ep %ld env %d: %s, %d frames, return %.2f -> %s (%.0f KB)\n", e.ep, i, oc, e.frames + 1, e.ret, path.c_str(), nb / 1024.0);
+    std::printf("  ep %ld env %d: %s, %d frames, return %.2f -> %s (%.0f KB)\n", e.ep, i, oc, e.frames + 1, e.ret, sgdir.empty() ? path.c_str() : sgdir.c_str(), nb / 1024.0);
   }
 };
 

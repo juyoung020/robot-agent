@@ -30,7 +30,7 @@ export class SgPanel {
     f.src = "/sg/?k=" + Math.random().toString(36).slice(2);
     f.style.cssText = "width:100%;height:100%;border:0;display:block";
     this.host.appendChild(f);
-    this.frame = f; this.win = null; this.ul = null; this.gt = null;
+    this.frame = f; this.win = null; this.ul = null; this.gt = null; this.pm = null; this._pmT = null;
     f.onload = () => this.attach();
     this.run = run; this.stream = stream; this.id = id;
     this.startPoll();
@@ -57,10 +57,11 @@ export class SgPanel {
     this.$("rp_play").textContent = st.playing ? "❚❚" : "▶";
     const ul = i.underlay || {};
     this.$("rp_hud").textContent = `${m.skill || "?"} · ${m.task || ""} · ${ul.scene || m.home || ""}\n` +
-      `${m.skill === "layout" ? "BEHAVIOR house layout (RASC v3) — no episode, robot at the task start pose" : i.kind === "sg" ? "OmniGibson LIMO explore (real sim record → scenemap replay)" : "GPU env episode (G2 map, " + (m.driver || "") + ")"}\n` +
+      `${m.skill === "layout" ? "BEHAVIOR house layout (RASC v3) — no episode, robot at the task start pose" : i.has_policy_map ? "GPU env episode → real scenemap (" + (m.driver || "") + ")" + (this.pmOn ? " · orange = policy map (G2)" : "") : i.kind === "sg" ? "OmniGibson LIMO explore (real sim record → scenemap replay)" : "GPU env episode (G2 map, " + (m.driver || "") + ")"}\n` +
       `t ${st.t.toFixed(1)} s / ${st.duration.toFixed(1)} s` + (m.gt_cov != null ? `   final coverage ${fmt(m.gt_cov, 1)}` : "") + (m.path_m != null ? `   path ${fmt(m.path_m)} m` : "") +
       (m.skill === "layout" ? "" : `\nGT path green · SLAM path blue (sgview)`);
     this.drawGt(st.t);
+    if (this.pmOn) this.drawPolicyMap(st.t);
     // 카메라 그림(몸통 카메라, 2 Hz)
     const cams = i.cams || [];
     if (cams.length) {
@@ -108,6 +109,28 @@ export class SgPanel {
     const pts = this.info.gt_path || [];
     let n = 0; while (n < pts.length && pts[n][0] <= t) n++;
     this.gt.geometry.setDrawRange(0, Math.max(n, 1)); this.invalidate();
+  }
+  // 정책이 본 지도(G2 근사판) — 진짜 scenemap 지도 위 반투명 주황(점유 진하게, 빈칸 옅게, 모름 투명). 세계 좌표 → map_from_world
+  setPolicyMap(on) { this.pmOn = on; if (this.pm) this.pm.visible = on; if (on && this.state) this.drawPolicyMap(this.state.t, true); this.invalidate(); }
+  async drawPolicyMap(t, force) {
+    if (!this.win || !this.info || !this.info.has_policy_map) return;
+    const k = Math.round(t * 2) / 2;
+    if (!force && this._pmT === k) return;
+    this._pmT = k;
+    const g = await (await fetch(`/api/sg/policymap?sess=${this.sess}&t=${k}`)).json();
+    if (g.why) return;
+    const T = this.win.THREE, px = Uint8Array.from(atob(g.b64), c => c.charCodeAt(0)), rgba = new Uint8Array(g.w * g.h * 4);
+    for (let i = 0; i < g.w * g.h; i++) { const v = px[i]; if (v === 205) continue; const occ = 255 - v; rgba[4 * i] = 235; rgba[4 * i + 1] = 104; rgba[4 * i + 2] = 52; rgba[4 * i + 3] = 40 + occ * 0.7; }
+    if (!this.pm) {
+      const mfw = this.info.map_from_world || [1, 0, 0, 0];
+      this.pm = new T.Group(); this.pm.rotation.z = Math.atan2(mfw[1], mfw[0]); this.pm.position.set(mfw[2], mfw[3], 0);
+      this.scene().add(this.pm);
+    }
+    this.pm.clear();
+    const tex = new T.DataTexture(rgba, g.w, g.h, T.RGBAFormat); tex.needsUpdate = true; tex.magFilter = T.NearestFilter;
+    const mesh = new T.Mesh(new T.PlaneGeometry(g.w * g.res, g.h * g.res), new T.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+    mesh.position.set(g.ox + g.w * g.res / 2, g.oy + g.h * g.res / 2, 0.03); mesh.renderOrder = 4;
+    this.pm.add(mesh); this.pm.visible = !!this.pmOn; this.invalidate();
   }
   setUnderlay(on) { this.ulOn = on; if (this.ul) { this.ul.visible = on; this.invalidate(); } }
   buildUnderlay() {

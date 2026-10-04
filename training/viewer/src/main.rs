@@ -274,6 +274,13 @@ fn handle(mut s: TcpStream, app: Arc<App>) {
             let info = app.sg.lock().unwrap().sess.get(&sess).map(|x| json!({"info": x.ep.info, "duration": x.ep.duration, "frames": x.ep.frames.len()}));
             http::json(&mut s, &info.unwrap_or(json!({"error": "no session"})).to_string(), gz);
         }
+        "/api/sg/policymap" => {
+            let sess = req.get("sess").to_string();
+            let ep = app.sg.lock().unwrap().sess.get(&sess).map(|x| x.ep.clone());
+            let t = req.num("t").unwrap_or(0.0);
+            let body = ep.map(|e| sg::policy_grid(&e, t)).unwrap_or(json!({"why": "no session"}));
+            http::json(&mut s, &body.to_string(), gz);
+        }
         "/api/sg/cam" => {
             let Some(r) = run_of(&app, &mut s, &req) else { return };
             let Some(st) = stream_of(&mut s, &req) else { return };
