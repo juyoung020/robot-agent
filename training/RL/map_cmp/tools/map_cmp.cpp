@@ -79,7 +79,7 @@ struct RAcc {   // 진짜 쪽 혼자 값
   double ext_t_max = 0, ext_r_max = 0;          // 카메라 외부 자세: sm_robot_fk cam 0 − 근사판
   long n_ext = 0;
   long confirm_only_a[gmap::NCLS] = {0}, confirm_only_r[gmap::NCLS] = {0};   // 판 끝 확정이 한쪽에만(종류별)
-  // 진단: 진짜만 관측한 참 물체의 근사판 쪽 까닭 — 0 중심 깊이 [ozmin, ozmax] 밖, 1 min_px·넓이(9 점 다 보여도), 2 보이는 점 0(시야 밖·가림),
+  // 진단: 진짜만 관측한 참 물체의 근사판 쪽 까닭 — 0 상자 어디도 깊이 [ozmin, ozmax] 안이 아님, 1 min_px·넓이(보임 점 다 보여도), 2 보이는 점 0(시야 밖·가림),
   //       3 넓이 × 보이는 점 비율 < min_points, 4 근사판 검출 규칙은 넘음(기타)
   long why_a[5] = {0};
   long why_a_cls[5][gmap::NCLS] = {{0}};
@@ -431,11 +431,11 @@ int main(int argc, char** argv) {
             gmap::DetGeo g;
             int why = 4;
             const bool pre = gmap::det_prefilter(A, o3, cyw, sy, K, p, g);
-            if (!(g.fwd >= gmap::MP::ozmin && g.fwd <= gmap::MP::ozmax)) why = 0;
+            if (!g.inr) why = 0;
             else if (!pre) why = 1;
             else {
               int nv = 0;
-              for (int qq = 0; qq < gmap::NPT; ++qq) nv += gmap::vis_point(A, o3, cyw, sy, K, p * gmap::NPT + qq);
+              for (int qq = 0; qq < gmap::NPT; ++qq) nv += gmap::vis_point(A, o3, cyw, sy, g, p, qq);
               if (nv == 0) why = 2;
               else if (g.af * ((float)nv / (float)gmap::NPT) < (float)gmap::MP::min_points) why = 3;
             }
@@ -609,7 +609,7 @@ int main(int argc, char** argv) {
   std::printf("\nconfirmed by episode end only in real (by class):  ");
   for (int c = 0; c < gmap::NCLS; ++c) std::printf(" %s %ld", kLabels[c], R.confirm_only_r[c]);
   std::printf("\nreal: duplicates %ld, unmatched confirmed %ld, gone %ld (keyframe x object)\n", R.dup, R.unm, R.n_gone);
-  const char* why_a_name[5] = {"center depth outside [ozmin,ozmax]", "min_px / area prefilter", "no visible point of 9 (FOV/occlusion)",
+  const char* why_a_name[5] = {"no part within [ozmin,ozmax]", "min_px / area prefilter", "no visible lattice point (FOV/occlusion)",
                                "area x visible share < min_points", "passes approx rule (other)"};
   std::printf("why approx did not observe (real did):\n");
   for (int k = 0; k < 5; ++k) {

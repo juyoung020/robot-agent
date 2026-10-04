@@ -164,9 +164,17 @@ static void check_grid_walls(int N, int T) {
       gmap::phase_cast(m, sh, e, 0, 1);
       sm::Scan2 sc;
       sc.ox = env::K::cam_x; sc.oy = 0.f;
+      const gmap::Cam ck = gmap::cam_consts();
       for (int col = 0; col < gmap::NCOL; ++col) {
-        if (sh.colt[col] == 1) { sc.hx.push_back(sh.colx[col]); sc.hy.push_back(sh.coly[col]); }
-        else if (sh.colt[col] == 2) { sc.fx.push_back(sh.colx[col]); sc.fy.push_back(sh.coly[col]); }
+        const float xn = ((float)(2 * col + 1 - gmap::NCOL) / (float)gmap::NCOL) * ck.tanh;
+        const float t = sh.colt_t[col];
+        for (int d = 0; d < 2; ++d) {   // 수직면 맞추기 점 → 진짜 Scan2 의 맞추기 점(mx, my)
+          const float td = d ? sh.cold1[col] : sh.cold0[col];
+          if (td == 0.f || (d && sh.cold1[col] == sh.cold0[col])) continue;
+          sc.mx.push_back(env::K::cam_x + td); sc.my.push_back(-xn * td);
+        }
+        if (sh.colt[col] == 1) { sc.hx.push_back(env::K::cam_x + t); sc.hy.push_back(-xn * t); }
+        else if (sh.colt[col] == 2) { sc.fx.push_back(env::K::cam_x + t); sc.fy.push_back(-xn * t); }
       }
       real[i]->insert(sc, sm::Pose2{m.ex, m.ey, m.eyaw});
       // 칸 비교(근사 창 안)

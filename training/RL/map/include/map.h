@@ -61,10 +61,11 @@ constexpr int GX0 = -GW / 2;            // 창 첫 칸의 전역 칸 번호(칸 
 constexpr int NCELL = GW * GW;
 constexpr int NWORD = NCELL / 32;
 constexpr int NT = 64;                  // 블록 스레드 수
-constexpr int NCOL = 64, NROW = 8;      // 거친 깊이 광선: 가로 64 (계획서 5.1 예) × 세로 8 (가정)
+constexpr int NCOL = 64, NROW = 8;      // 거친 깊이 광선: 가로 64 (계획서 5.1 예) × 세로 8 (가정). 128 열은 map_cmp 격자 일치율이 같아(0.982 대 0.983) 64 로 둠
+constexpr int NROWC = NROW + 1;         // + 빈칸 줄 하나: 깊이 범위 안 가장 먼 바닥 점(scan.cpp 빈 광선 끝) — MP::scan_step 참고
 constexpr int M_SCN = 8;                // 장면 상자(가구 5 + 작은 물건 3) — G1 빈 방에 지도용으로 더함
 constexpr int N_PRIM = M_SCN + 1;       // + 컵(과제 물체, 0 번)
-constexpr int NPT = 9;                  // 물체마다 보임 광선 점(중심 + 0.8 배 줄인 모서리 8)
+constexpr int NPT = 5;                  // 물체마다 보임 광선: 시야로 자른 실루엣 안 5 점(가운데 + 가로·세로 0.8 배 안쪽 넷)
 constexpr int KSLOT = 16;               // 물체 기억 칸 (가정; 계획서 8절 예는 64)
 constexpr int MAXDET = N_PRIM + N_GHOST_V;   // 한 keyframe 검출 최대(참 물체 + 유령 자리)
 constexpr int NCLS = 6;
@@ -89,7 +90,11 @@ struct MP {
   // grid.hpp GridParams + OccGrid::kQ = 256 (scenemap)
   static constexpr int q_hit = qround(0.85f), q_miss = qround(-0.4f), q_min = qround(-4.f), q_max = qround(4.f);
   // 깊이 범위(Dabai 데이터시트: 0.3–3.0 m). 높이 띠는 scan.hpp ScanParams (scenemap)
-  static constexpr float zmin = 0.3f, zmax = 3.0f, band_lo = 0.10f, band_hi = 1.80f;
+  // 높이 띠는 LIMO 값 0.05–0.50 m (scenemap capi.cpp robotParams·README LIMO 절: 5 cm 턱, 팔 접은 키 ≈ 0.35 m), 맞추기 점 위 끝 match_hi 3.0 (scan.hpp)
+  static constexpr float zmin = 0.3f, zmax = 3.0f, band_lo = 0.05f, band_hi = 0.50f, match_hi = 3.0f;
+  // 빈칸 줄: scan.cpp 는 깊이 화소 간격 scan_step 의 모든 바닥 점 중 가장 먼 것을 빈 광선 끝으로 쓴다. 그 줄 = 바닥 깊이가 zmax 안인
+  // 첫 화소 줄(v = scan_step 의 배수) (가정: sgrt 깊이 간격 4, 640 × 400 → 160 × 100 점)
+  static constexpr int scan_step = 4;
   static constexpr float depth_hfov = env::K::cam_hfov;        // 깊이 가로 FOV 67.9° (Dabai 데이터시트) — 환경 K::cam_hfov 와 같은 값(시뮬 RGB·깊이 모두 67.9°)
   // slam2d.hpp SlamParams (움직임 거르기 update_policy 0, 제자리 규칙) (scenemap)
   static constexpr float mf_xy = 0.05f, mf_yaw = 0.034906585f /*2도*/, still_v = 0.01f, still_w = 0.01f;
@@ -121,7 +126,7 @@ struct MP {
   static constexpr int img_w = 640, img_h = 400;                 // 깊이 영상 640×400 (Dabai 데이터시트), 정사각 화소(가정: 세로 FOV 45.6°, 사양 45.3°)
   static constexpr float wall_h = 2.5f;                          // 벽 높이(가정)
   static constexpr bool noise = MAP_NOISE_V != 0;                // 잡음 켬(기본). 0 이면 위 잡음·실수가 모두 꺼짐(map_cmp 비교용)
-  static constexpr int min_hits = 5;                             // 맞추기 최소 맞은 줄 (가정: min_inliers 50 / 720 칸 × 64 줄 ≈ 5)
+  static constexpr int min_hits = 5;                             // 맞추기 최소 맞은 열 (가정: min_inliers 50 / 720 칸 × 64 열 ≈ 5)
   static constexpr float cup_h = 2.f * env::K::tgt_z;            // 컵 높이 0.10 m (가정: tgt_z 를 중심 높이로 봄)
   // ---- 벽 상태 56 (walls.hpp, scenemap) ----
   // 점유 = export8 값 ≥ kOccMin 65. grid.cpp 표: lround(100·σ(L/256)) ≥ 65 ⇔ L ≥ 153 (map_realcheck 가 진짜 OccGrid 로 확인)
@@ -192,15 +197,21 @@ struct MapCore {
 static_assert(sizeof(MapCore) % 8 == 0, "MapCore must be whole 8-byte words (no tail padding)");
 constexpr int CORE_WORDS = (int)(sizeof(MapCore) / 4);
 
-struct Det { int cls, src; float pos[3], ext[3], score; };   // keyframe 한 번의 검출 하나(src: Slot.src 와 같음)
-struct DetGeo { float ctr[3], ext[3], rx, ry, fwd, left, up, rh, af; };
+struct Det { int cls, src; float pos[3], ext[3], score, bc[3]; };   // keyframe 한 번의 검출 하나(src: Slot.src 와 같음)
+// 검출 기하(참 카메라 기준). med·bc: 보이는 면 점의 축별 중앙값·10–90 백분위 상자 중심(카메라 기준 앞·왼쪽·위), pe: 백분위 폭
+struct DetGeo { float ctr[3], ext[3], rx, ry, fwd, left, up, rh, af; float med[3], bc[3], pe[3]; float xr[2], yr[2]; int inr; };   // inr: 일부라도 깊이 범위 안(진단용)
 constexpr int NPART = (NT + 31) / 32;
 
 // 블록 안 작업 공간(GPU 공유 메모리, CPU 지역 변수)
 struct Scratch {
-  uint32_t hitb[NWORD], missb[NWORD];
-  float colx[NCOL], coly[NCOL];     // 줄 끝(베이스 기준)
-  int8_t colt[NCOL];                // 0 없음, 1 맞음(띠 안), 2 빈 광선 끝(바닥)
+  union {
+    struct { uint32_t hitb[NWORD], missb[NWORD]; };   // 격자 표시(phase_mark 부터)
+    struct {                                           // 열 끝(phase_cast → phase_mark 앞까지). 열 방향은 열 번호로 다시 구함
+      float colt_t[NCOL];           // 맞음·빈 광선 끝의 광학 깊이 t
+      float cold0[NCOL], cold1[NCOL];   // 수직면 맞추기 점(띠 아래 끝 ~ match_hi) 중 가장 가까운·먼 t, 없으면 0
+      int8_t colt[NCOL];            // 0 없음, 1 맞음(띠 안), 2 빈 광선 끝(바닥)
+    };
+  };
   uint32_t vism[N_PRIM];            // 물체마다 보이는 점 비트(NPT 개)
   int part[NPART];                  // 워프별 부분합(GPU) / 스레드 0 값(CPU): 맞은 열 수, 새로 본 칸 수, 짝 후보 번호(CPU)
   float partf[NPART];               // 짝 후보 열쇠(CPU 일반판)
@@ -633,50 +644,123 @@ DEV void clear_grid(int16_t* L, uint32_t* seen, uint32_t* occ, int tid, int nt) 
 }
 
 // ---- 2. 광선(모든 스레드): 깊이 줄 + 물체 점 보임. 참 장면·참 카메라에서 쏜다 ----------------------------------------------
-DEV int vis_point(const MapCore& m, const float o[3], float c, float s, const Cam& k, int p) {
-  const int pi = p / NPT, q = p % NPT;
-  const Prim& b = m.prim[pi];
-  float pt[3];
-  for (int a = 0; a < 3; ++a) pt[a] = 0.5f * (b.lo[a] + b.hi[a]);
-  if (q > 0) {
-    const int bits = q - 1;
-    for (int a = 0; a < 3; ++a) {
-      const float h = 0.5f * (b.hi[a] - b.lo[a]) * 0.8f;
-      pt[a] = pt[a] + ((bits >> a) & 1 ? h : -h);
-    }
-  }
-  const float r[3] = {pt[0] - o[0], pt[1] - o[1], pt[2] - o[2]};
-  const float fwd = c * r[0] + s * r[1], left = -s * r[0] + c * r[1];
-  if (!(fwd >= MP::ozmin && fwd <= MP::ozmax)) return 0;
-  const float xn = -left / fwd, yn = -r[2] / fwd;
-  if (absf(xn) > k.tanh || absf(yn) > k.tanv) return 0;
+// 물체 pi 의 보임 광선 q: 시야로 자른 실루엣(정규화 화면 좌표 xr × yr) 안 점 방향으로 쏴서, 자기 상자에 먼저 닿고(다른 상자가 가리지 않고)
+// 그 깊이가 [ozmin, ozmax] 안이면 보임. 실루엣은 상자 모서리의 투영 범위로 어림한다(모서리 사이로 빗나가면 안 보임으로 셈)
+DEV int vis_point(const MapCore& m, const float o[3], float c, float s, const DetGeo& g, int pi, int q) {
+  const float xc = 0.5f * (g.xr[0] + g.xr[1]), yc = 0.5f * (g.yr[0] + g.yr[1]);
+  const float hx = 0.4f * (g.xr[1] - g.xr[0]), hy = 0.4f * (g.yr[1] - g.yr[0]);
+  const float xn = xc + (q == 1 ? -hx : q == 2 ? hx : 0.f), yn = yc + (q == 3 ? -hy : q == 4 ? hy : 0.f);
+  float d[3];
+  pix_dir(c, s, xn, yn, d);
   float inv[3];
-  ray_inv(r, inv);
+  ray_inv(d, inv);
+  const float t = ray_box_inv(o, d, inv, m.prim[pi]);   // 광학 깊이(d 의 앞 성분 = 1)
+  if (!(t >= MP::ozmin && t <= MP::ozmax)) return 0;
   for (int j = 0; j < N_PRIM; ++j)
-    if (j != pi && ray_box_inv(o, r, inv, m.prim[j]) < 1.f) return 0;   // 다른 상자가 사이를 가림
+    if (j != pi && ray_box_inv(o, d, inv, m.prim[j]) < t) return 0;   // 다른 상자가 사이를 가림
   return 1;
 }
 
 DEV float max3(const float v[3]) { return maxf(v[0], maxf(v[1], v[2])); }
 
-// 3b 검출 판정 중 보임 점과 무관한 부분(참 장면·참 카메라). ozmin/ozmax·min_px 를 넘고, 9 점이 다 보여도 넓이가 min_points 를 못 넘으면
-// 검출될 수 없으므로 false — 그 물체의 보임 광선을 쏘지 않는다(넓이는 보이는 점 수에 단조라 결과는 그대로). 넓이 = af · nv / NPT
+// 보이는 면 점의 통계(objmap: 마스크 안 깊이 점의 축별 중앙값 = 위치, 10–90 백분위 = 상자). 상자에서 카메라 쪽을 보는 면(x 면·y 면 하나씩,
+// 카메라가 윗면보다 높으면 윗면)마다 화소 수 ∝ 넓이·cos / 거리² 로 무게를 주고, 축 a 의 값은 "a 면의 점 = 그 면 평면 한 값(무게 w_a)" +
+// "다른 면의 점 = [lo, hi] 고르게(나머지 무게)" 의 섞임으로 본다. 분위수는 닫힌 꼴이라 CPU·GPU 같은 연산. 가림·시야·깊이 범위 자르기와
+// 마스크 깎기·MAD 거르기는 보지 않는다(가정). 면이 안 보이면(카메라가 상자 안) 상자 중심·폭
+DEV float mix_quantile(float lo, float hi, int side, float wa, float W, float q) {
+  // side −1: 면이 lo 쪽, +1: hi 쪽, 0: 그 축 면이 안 보임(고르게만)
+  if (side == 0 || W <= 0.f) return lo + (hi - lo) * q;
+  const float rest = W - wa;
+  if (side < 0) { const float m = q * W; return m <= wa || rest <= 0.f ? lo : lo + (hi - lo) * ((m - wa) / rest); }
+  const float m = (1.f - q) * W;
+  return m <= wa || rest <= 0.f ? hi : hi - (hi - lo) * ((m - wa) / rest);
+}
+DEV void surf_stats(const Prim& b, const float o[3], float med[3], float plo[3], float phi[3]) {
+  float w[3], W = 0.f;
+  int side[3];
+  for (int a = 0; a < 3; ++a) {
+    side[a] = o[a] < b.lo[a] ? -1 : o[a] > b.hi[a] ? 1 : 0;
+    if (a == 2 && side[a] < 0) side[a] = 0;   // 바닥 면은 안 보임
+    w[a] = 0.f;
+    if (!side[a]) continue;
+    const int a1 = (a + 1) % 3, a2 = (a + 2) % 3;
+    const float f = side[a] < 0 ? b.lo[a] : b.hi[a];
+    float fc[3];
+    fc[a] = f; fc[a1] = 0.5f * (b.lo[a1] + b.hi[a1]); fc[a2] = 0.5f * (b.lo[a2] + b.hi[a2]);
+    const float dx = fc[0] - o[0], dy = fc[1] - o[1], dz = fc[2] - o[2];
+    const float d2 = dx * dx + dy * dy + dz * dz;
+    const float area = (b.hi[a1] - b.lo[a1]) * (b.hi[a2] - b.lo[a2]);
+    w[a] = area * absf(o[a] - f) / (d2 * sqrtf(d2));
+    W = W + w[a];
+  }
+  for (int a = 0; a < 3; ++a) {
+    med[a] = mix_quantile(b.lo[a], b.hi[a], side[a], w[a], W, 0.5f);
+    plo[a] = mix_quantile(b.lo[a], b.hi[a], side[a], w[a], W, 0.1f);
+    phi[a] = mix_quantile(b.lo[a], b.hi[a], side[a], w[a], W, 0.9f);
+  }
+}
+
+// 3b 검출 판정 중 보임 점과 무관한 부분(참 장면·참 카메라). 상자의 일부라도 깊이 범위 [ozmin, ozmax] 안(모서리 8 개의 앞 거리로)이고
+// min_px 를 넘고, 보임 점이 다 보여도 넓이가 min_points 를 못 넘으면 검출될 수 없으므로 false — 그 물체의 보임 광선을 쏘지 않는다
+// (넓이는 보이는 점 수에 단조라 결과는 그대로). 넓이 = af · nv / NPT. 크기·넓이는 중심 앞 거리를 깊이 범위로 자른 값으로 어림
 DEV bool det_prefilter(const MapCore& m, const float o[3], float c, float s, const Cam& k, int p, DetGeo& g) {
   const Prim& b = m.prim[p];
   for (int a = 0; a < 3; ++a) { g.ctr[a] = 0.5f * (b.lo[a] + b.hi[a]); g.ext[a] = b.hi[a] - b.lo[a]; }
   g.rx = g.ctr[0] - o[0]; g.ry = g.ctr[1] - o[1];
   g.fwd = c * g.rx + s * g.ry; g.left = -s * g.rx + c * g.ry; g.up = g.ctr[2] - o[2];
-  if (!(g.fwd >= MP::ozmin && g.fwd <= MP::ozmax)) return false;
-  const float size_px = k.fx * max3(g.ext) / g.fwd;                     // objmap 부재 확인과 같은 식
+  float fmin = kInf, fmax = -kInf;
+  for (int q = 0; q < 4; ++q) {
+    const float x = ((q & 1) ? b.hi[0] : b.lo[0]) - o[0], y = ((q & 2) ? b.hi[1] : b.lo[1]) - o[1];
+    const float f = c * x + s * y;
+    fmin = minf(fmin, f); fmax = maxf(fmax, f);
+  }
+  g.inr = fmax >= MP::ozmin && fmin <= MP::ozmax;
+  if (!g.inr) return false;
+  const float fe = minf(maxf(g.fwd, maxf(fmin, MP::ozmin)), MP::ozmax);   // 깊이 범위 안 앞 거리
+  const float size_px = k.fx * max3(g.ext) / fe;                          // objmap 부재 확인과 같은 식
   g.rh = sqrtf(g.rx * g.rx + g.ry * g.ry);
   const float ux = g.rx / g.rh, uy = g.ry / g.rh;
   const float wsil = g.ext[0] * absf(uy) + g.ext[1] * absf(ux);          // 수평 실루엣 폭
-  g.af = (k.fx * wsil / g.fwd) * (k.fx * g.ext[2] / g.fwd);
-  return !(size_px < (float)MP::min_px || g.af < (float)MP::min_points);   // af · NPT/NPT = af
+  g.af = (k.fx * wsil / fe) * (k.fx * g.ext[2] / fe);
+  {  // 실루엣의 화면 범위(모서리 8 개 투영, 카메라 뒤 모서리가 있으면 그쪽 끝은 시야 끝) → 시야로 자름. 넓이에 시야 안 비율을 곱함
+    float x0 = kInf, x1 = -kInf, y0 = kInf, y1 = -kInf;
+    bool behind = false;
+    for (int q = 0; q < 8; ++q) {
+      const float x = ((q & 1) ? b.hi[0] : b.lo[0]) - o[0], y = ((q & 2) ? b.hi[1] : b.lo[1]) - o[1], z = ((q & 4) ? b.hi[2] : b.lo[2]) - o[2];
+      const float f = c * x + s * y, l = -s * x + c * y;
+      if (f < 0.05f) { behind = true; continue; }
+      const float iv = 1.f / f, xq = -l * iv, yq = -z * iv;
+      x0 = minf(x0, xq); x1 = maxf(x1, xq); y0 = minf(y0, yq); y1 = maxf(y1, yq);
+    }
+    if (behind) { x0 = -kInf; x1 = kInf; y0 = minf(y0, -k.tanv); y1 = maxf(y1, k.tanv); }
+    g.xr[0] = maxf(x0, -k.tanh); g.xr[1] = minf(x1, k.tanh);
+    g.yr[0] = maxf(y0, -k.tanv); g.yr[1] = minf(y1, k.tanv);
+    if (!(g.xr[0] < g.xr[1] && g.yr[0] < g.yr[1])) return false;   // 시야 밖
+    const float fx = behind ? 1.f : (g.xr[1] - g.xr[0]) / (x1 - x0), fy = behind ? 1.f : (g.yr[1] - g.yr[0]) / (y1 - y0);
+    g.af = g.af * fx * fy;
+  }
+  if (size_px < (float)MP::min_px || g.af < (float)MP::min_points) return false;   // af · NPT/NPT = af
+  float med[3], plo[3], phi[3];
+  surf_stats(b, o, med, plo, phi);
+  const float mx = med[0] - o[0], my = med[1] - o[1];
+  g.med[0] = c * mx + s * my; g.med[1] = -s * mx + c * my; g.med[2] = med[2] - o[2];
+  const float bx = 0.5f * (plo[0] + phi[0]) - o[0], by = 0.5f * (plo[1] + phi[1]) - o[1];
+  g.bc[0] = c * bx + s * by; g.bc[1] = -s * bx + c * by; g.bc[2] = 0.5f * (plo[2] + phi[2]) - o[2];
+  for (int a = 0; a < 3; ++a) g.pe[a] = phi[a] - plo[a];
+  return true;
+}
+
+// 줄 r 의 세로 정규화 좌표 yn(아래 +). 줄 0..NROW−1 은 세로 시야를 고르게, 줄 NROW 는 빈칸 줄(MP::scan_step)
+DEV void row_yn(const Cam& k, float yn[NROWC]) {
+  for (int r = 0; r < NROW; ++r) yn[r] = ((float)(2 * r + 1 - NROW) / (float)NROW) * k.tanv;
+  // 바닥 깊이가 zmax 안인 첫 화소 줄: v = cy + cam_z/zmax · fy 를 scan_step 배수로 올림(화소 중심 cy = h/2 − 0.5)
+  const float cy = 0.5f * (float)MP::img_h - 0.5f;
+  const float v = cy + (env::K::cam_z / MP::zmax) * k.fx;
+  const float vs = ceilf(v / (float)MP::scan_step) * (float)MP::scan_step;
+  yn[NROW] = (vs - cy) / k.fx;
 }
 
 DEV void phase_cast(const MapCore& m, Scratch& sh, const EnvView& e, int tid, int nt) {
-  for (int w = tid; w < NWORD; w += nt) { sh.hitb[w] = 0u; sh.missb[w] = 0u; }
   for (int p = tid; p < N_PRIM; p += nt) sh.vism[p] = 0u;   // 보임 점 비트(obj_pre 가 동기 뒤에 OR)
   const Cam k = cam_consts();
   float s, c;
@@ -685,25 +769,27 @@ DEV void phase_cast(const MapCore& m, Scratch& sh, const EnvView& e, int tid, in
   cam_world(e.x, e.y, c, s, o);
   if (tid == 0) { sh.tc = c; sh.ts = s; sh.to[0] = o[0]; sh.to[1] = o[1]; sh.to[2] = o[2]; sh.occ_chg = 0; }   // 뒤 단계가 같은 값을 다시 씀
   // 줄마다 같은 값(열과 무관): 세로 방향 d2 = -yn, 1/d2, 바닥·천장까지 t
-  float invz[NROW], troomz[NROW];
-  for (int r = 0; r < NROW; ++r) {
-    const float yn = ((float)(2 * r + 1 - NROW) / (float)NROW) * k.tanv;
-    const float d2 = -yn;
+  float yn[NROWC], invz[NROWC], troomz[NROWC];
+  row_yn(k, yn);
+  for (int r = 0; r < NROWC; ++r) {
+    const float d2 = -yn[r];
     invz[r] = absf(d2) < 1e-12f ? 0.f : 1.f / d2;
     troomz[r] = d2 < 0.f ? -o[2] / d2 : d2 > 0.f ? (MP::wall_h - o[2]) / d2 : kInf;
   }
-  // scan.cpp makeScan: 띠 [band_lo, band_hi] 안 가장 가까운 점 = 장애물, 띠 아래(바닥) 가장 먼 점 = 빈 광선 끝. 기울기 0 이라 열 = 방위 칸
-  // 한 열의 줄 8 개는 수평 방향이 같다: 방 벽·상자의 xy 판은 열마다 한 번, z 판만 줄마다(ray_room·ray_box 와 비트 같음)
+  // scan.cpp makeScan: 띠 [band_lo, band_hi] 안 가장 가까운 점 = 장애물, 띠 아래(바닥) 가장 먼 점 = 빈 광선 끝. 기울기 0 이라 열 = 방위 칸.
+  // 수직면(방 벽·상자 옆면)에 맞은 줄 중 높이 [band_lo, match_hi] 는 맞추기 점(dense) — 지도에 맞음으로만 넣는다(가장 가까운·먼 것 둘).
+  // 한 열의 줄은 수평 방향이 같다: 방 벽·상자의 xy 판은 열마다 한 번, z 판만 줄마다(ray_room·ray_box 와 비트 같음)
   for (int col = tid; col < NCOL; col += nt) {
     const float xn = ((float)(2 * col + 1 - NCOL) / (float)NCOL) * k.tanh;
     const float d0 = c + s * xn, d1 = s - c * xn;   // pix_dir
     float txy = kInf;
     if (d0 > 0.f) txy = minf(txy, (m.rhx - o[0]) / d0); else if (d0 < 0.f) txy = minf(txy, (-m.rhx - o[0]) / d0);
     if (d1 > 0.f) txy = minf(txy, (m.rhy - o[1]) / d1); else if (d1 < 0.f) txy = minf(txy, (-m.rhy - o[1]) / d1);
-    float tr[NROW];
-    for (int r = 0; r < NROW; ++r) tr[r] = minf(txy, troomz[r]);
+    float tr[NROWC];
+    uint32_t vert = 0u;   // 줄마다 수직면에 맞았나
+    for (int r = 0; r < NROWC; ++r) { tr[r] = minf(txy, troomz[r]); vert |= (txy < troomz[r] ? 1u : 0u) << r; }
     float trmax = tr[0];
-    for (int r = 1; r < NROW; ++r) trmax = maxf(trmax, tr[r]);
+    for (int r = 1; r < NROWC; ++r) trmax = maxf(trmax, tr[r]);
     const float inv0 = absf(d0) < 1e-12f ? 0.f : 1.f / d0, inv1 = absf(d1) < 1e-12f ? 0.f : 1.f / d1;
     for (int p = 0; p < N_PRIM; ++p) {
       const Prim& b = m.prim[p];
@@ -711,23 +797,27 @@ DEV void phase_cast(const MapCore& m, Scratch& sh, const EnvView& e, int tid, in
       if (!slab(o[0], d0, inv0, b.lo[0], b.hi[0], t0, t1) || !slab(o[1], d1, inv1, b.lo[1], b.hi[1], t0, t1)) continue;
       if (t0 > t1) continue;   // z 판은 구간을 좁히기만 하므로 이미 비면 어느 줄도 안 맞음
       if (t0 >= trmax) continue;  // 들어가는 t ≥ 모든 줄의 지금 값: 어느 줄도 줄일 수 없음(minf 결과 같음)
-      for (int r = 0; r < NROW; ++r) {
-        const float yn = ((float)(2 * r + 1 - NROW) / (float)NROW) * k.tanv;
+      for (int r = 0; r < NROWC; ++r) {
         float u0 = t0, u1 = t1;
-        if (!slab(o[2], -yn, invz[r], b.lo[2], b.hi[2], u0, u1)) continue;
-        tr[r] = minf(tr[r], slab_end(u0, u1));
+        if (!slab(o[2], -yn[r], invz[r], b.lo[2], b.hi[2], u0, u1)) continue;
+        const float te = slab_end(u0, u1);
+        if (te < tr[r]) {
+          tr[r] = te;
+          vert = (vert & ~(1u << r)) | ((u0 == t0 ? 1u : 0u) << r);   // xy 판으로 들어감 = 옆면
+        }
       }
       trmax = tr[0];
-      for (int r = 1; r < NROW; ++r) trmax = maxf(trmax, tr[r]);
+      for (int r = 1; r < NROWC; ++r) trmax = maxf(trmax, tr[r]);
     }
-    float best = kInf, hit_t = 0.f, floor_r = 0.f, floor_t = 0.f;
-    for (int r = 0; r < NROW; ++r) {
-      const float yn = ((float)(2 * r + 1 - NROW) / (float)NROW) * k.tanv;
-      float d[3];
-      pix_dir(c, s, xn, yn, d);
+    float best = kInf, hit_t = 0.f, floor_r = 0.f, floor_t = 0.f, dv0 = 0.f, dv1 = 0.f;
+    for (int r = 0; r < NROWC; ++r) {
       const float t = tr[r];
       if (!(t >= MP::zmin && t <= MP::zmax)) continue;   // 깊이 없음
-      const float pz = o[2] + d[2] * t;
+      const float pz = o[2] - yn[r] * t;
+      if (((vert >> r) & 1u) && pz >= MP::band_lo && pz <= MP::match_hi) {
+        dv0 = dv0 == 0.f ? t : minf(dv0, t);
+        dv1 = maxf(dv1, t);
+      }
       if (pz > MP::band_hi) continue;
       const float rr2 = t * t * (1.f + xn * xn);
       if (pz < MP::band_lo) {
@@ -736,9 +826,10 @@ DEV void phase_cast(const MapCore& m, Scratch& sh, const EnvView& e, int tid, in
         best = rr2; hit_t = t;
       }
     }
-    if (best < kInf) { sh.colt[col] = 1; sh.colx[col] = env::K::cam_x + hit_t; sh.coly[col] = -xn * hit_t; }
-    else if (floor_r > 0.f) { sh.colt[col] = 2; sh.colx[col] = env::K::cam_x + floor_t; sh.coly[col] = -xn * floor_t; }
-    else { sh.colt[col] = 0; sh.colx[col] = 0.f; sh.coly[col] = 0.f; }
+    sh.colt[col] = best < kInf ? 1 : floor_r > 0.f ? 2 : 0;
+    sh.colt_t[col] = best < kInf ? hit_t : floor_r > 0.f ? floor_t : 0.f;
+    sh.cold0[col] = dv0;
+    sh.cold1[col] = dv1;
   }
   for (int p = tid; p < N_PRIM; p += nt) sh.pcand[p] = det_prefilter(m, o, c, s, k, p, sh.geo[p]) ? 1 : 0;
 }
@@ -758,7 +849,7 @@ DEV void obj_pre(const MapCore& m, Scratch& sh, int tid, int nt) {
   for (int i = tid; i < ncand * NPT; i += nt) {
     int p = 0;
     for (int j = i / NPT; ; ++p) if (sh.pcand[p] && j-- == 0) break;   // (i / NPT) 번째 후보
-    if (vis_point(m, o, c, s, k, p * NPT + i % NPT)) or_bits(&sh.vism[p], 1u << (i % NPT));   // vism 은 phase_begin 이 비움
+    if (vis_point(m, o, c, s, sh.geo[p], p, i % NPT)) or_bits(&sh.vism[p], 1u << (i % NPT));   // vism 은 phase_cast 가 비움
   }
 }
 
@@ -766,16 +857,27 @@ DEV void obj_pre(const MapCore& m, Scratch& sh, int tid, int nt) {
 DEV float p_miss_at(float d) { return d < MP::miss_d1 ? MP::p_miss_near : d < MP::miss_d2 ? MP::p_miss_mid : MP::p_miss_far; }
 
 // 검출 하나를 지도에: 참 몸 좌표의 앞·옆·위(fwd, left, up, 수평 거리 rh)에 깊이·옆·높이 잡음을 넣고, 본 순간의 믿는 자세로 세계에 놓는다
-DEV void put_det(Det& D, uint64_t& rng, float fwd, float left, float up, float rh, const float ext[3], float o2, float ex, float ey, float ec, float es) {
+// 검출 하나를 지도에: 보이는 면 중앙값(카메라 기준 앞·왼쪽·위 med)에 깊이·옆·높이 잡음을 넣고, 본 순간의 믿는 자세로 세계에 놓는다.
+// 백분위 상자 중심 bc 도 같은 잡음으로 옮긴다(큰 물체의 합집합 상자용). 난수 순서는 전과 같음
+DEV void put_det(Det& D, uint64_t& rng, const float med[3], const float bc[3], const float ext[3], float o2, float ex, float ey, float ec, float es) {
+  const float fwd = med[0], left = med[1], rh = sqrtf(fwd * fwd + left * left);
   const float sig_d = MP::dn0 + MP::dn2 * fwd * fwd;
   const float gd = (MP::noise ? gauss(rng) : 0.f) * sig_d, gl = (MP::noise ? gauss(rng) : 0.f) * MP::lat_n, gz = (MP::noise ? gauss(rng) : 0.f) * MP::lat_n;
   // 몸 좌표의 수평 시선 단위(fwd, left)/rh 와 그 수직
   const float bu = fwd / rh, bv = left / rh;
-  const float f2 = fwd + bu * gd - bv * gl, l2 = left + bv * gd + bu * gl;
-  const float bx = env::K::cam_x + f2, by = l2;
-  D.pos[0] = ex + (ec * bx - es * by);
-  D.pos[1] = ey + (es * bx + ec * by);
-  D.pos[2] = o2 + up + gz;
+  const float nf = bu * gd - bv * gl, nl = bv * gd + bu * gl;
+  {
+    const float bx = env::K::cam_x + fwd + nf, by = left + nl;
+    D.pos[0] = ex + (ec * bx - es * by);
+    D.pos[1] = ey + (es * bx + ec * by);
+    D.pos[2] = o2 + med[2] + gz;
+  }
+  {
+    const float bx = env::K::cam_x + bc[0] + nf, by = bc[1] + nl;
+    D.bc[0] = ex + (ec * bx - es * by);
+    D.bc[1] = ey + (es * bx + ec * by);
+    D.bc[2] = o2 + bc[2] + gz;
+  }
   for (int a = 0; a < 3; ++a) D.ext[a] = maxf(0.01f, ext[a] + (MP::noise ? gauss(rng) : 0.f) * MP::ext_n);
 }
 
@@ -808,7 +910,7 @@ DEV void obj_detect(MapCore& m, Scratch& sh, const EnvView& e, int nt) {
     if (g.af * ((float)nv / (float)NPT) < (float)MP::min_points) continue;   // 깊이 점 수(간격 1)
     if (MP::noise && rand01(rng) < p_miss_at(sqrtf(g.rh * g.rh + g.up * g.up))) continue;
     Det& D = sh.det[nd++];
-    put_det(D, rng, g.fwd, g.left, g.up, g.rh, g.ext, o2, ex, ey, ec, es);
+    put_det(D, rng, g.med, g.bc, g.pe, o2, ex, ey, ec, es);
     int cls = m.prim[p].cls;
     if (MP::noise && rand01(rng) < MP::p_conf) cls = (cls + 1 + (int)(rand01(rng) * (float)(NCLS - 1))) % NCLS;
     D.cls = cls;
@@ -829,7 +931,8 @@ DEV void obj_detect(MapCore& m, Scratch& sh, const EnvView& e, int nt) {
     if (!(rand01(rng) < MP::p_ghost)) continue;
     const float ext[3] = {G.sz, G.sz, G.sz};
     Det& D = sh.det[nd++];
-    put_det(D, rng, fwd, left, up, sqrtf(rx * rx + ry * ry), ext, o2, ex, ey, ec, es);
+    const float rel[3] = {fwd, left, up};
+    put_det(D, rng, rel, rel, ext, o2, ex, ey, ec, es);
     D.cls = G.cls;
     D.src = -1 - gi;
     D.score = 0.4f;
@@ -860,7 +963,7 @@ DEV void obj_keys(const MapCore& m, Scratch& sh, int tid, int nt) {
       for (int q = 0; q < 3; ++q) {
         const float dd = D.pos[q] - S.pos[q];
         d2 = d2 + dd * dd;
-        const float olo = D.pos[q] - 0.5f * D.ext[q], ohi = D.pos[q] + 0.5f * D.ext[q];
+        const float olo = D.bc[q] - 0.5f * D.ext[q], ohi = D.bc[q] + 0.5f * D.ext[q];   // 관측 상자 = 백분위 상자
         const float mlo = S.pos[q] - 0.5f * S.ext[q], mhi = S.pos[q] + 0.5f * S.ext[q];
         const float gk = maxf(0.f, maxf(olo - mhi, mlo - ohi));
         g2 = g2 + gk * gk;
@@ -938,7 +1041,7 @@ DEV void obj_update_matched(MapCore& m, Scratch& sh, int tid, int nt, int bug) {
     for (int q = 0; q < 3; ++q) {
       if (bigo) {   // 합집합, keyframe 마다 면마다 grow_max·한 변 max_ext 까지
         float mlo = S.pos[q] - 0.5f * S.ext[q], mhi = S.pos[q] + 0.5f * S.ext[q];
-        const float olo = D.pos[q] - 0.5f * D.ext[q], ohi = D.pos[q] + 0.5f * D.ext[q];
+        const float olo = D.bc[q] - 0.5f * D.ext[q], ohi = D.bc[q] + 0.5f * D.ext[q];   // 관측 상자 = 백분위 상자
         const float lo = maxf(minf(mlo, olo), mlo - MP::grow_max);
         const float hi = minf(maxf(mhi, ohi), mhi + MP::grow_max);
         if (hi - lo <= MP::max_ext) { mlo = lo; mhi = hi; }
@@ -977,7 +1080,8 @@ DEV void obj_update_new(MapCore& m, Scratch& sh, int bug) {
     }
     if (mf >= 0) {
       Slot& S = m.slot[mf];
-      for (int q = 0; q < 3; ++q) { S.pos[q] = D.pos[q]; S.ext[q] = D.ext[q]; }
+      const bool bigd = is_static(D.cls) || maxf(D.ext[0], D.ext[1]) > MP::big;   // 큰 것: 자리 = 상자 중심(근사판 칸은 상자를 자리 ± 크기/2 로 둠)
+      for (int q = 0; q < 3; ++q) { S.pos[q] = bigd ? D.bc[q] : D.pos[q]; S.ext[q] = D.ext[q]; }
       S.moved = best > MP::moved_d * MP::moved_d ? 1 : S.moved;   // 짝 문턱(≥ 0.30 m) 밖이라 사실상 항상 옮겨짐
       S.state = S.moved ? S_MOVED : S_SEEN;
       S.misses = 0;
@@ -994,7 +1098,8 @@ DEV void obj_update_new(MapCore& m, Scratch& sh, int bug) {
     if (fs < 0) { m.n_dropped += 1; continue; }   // 칸이 다 참(가정: 버림)
     Slot& S = m.slot[fs];
     S.valid = 1; S.id = m.next_id++; S.cls = D.cls;
-    for (int q = 0; q < 3; ++q) { S.pos[q] = D.pos[q]; S.first_pos[q] = D.pos[q]; S.ext[q] = D.ext[q]; }
+    const bool bigd = is_static(D.cls) || maxf(D.ext[0], D.ext[1]) > MP::big;   // 큰 것: 자리 = 백분위 상자 중심(다음 합집합과 같은 상자)
+    for (int q = 0; q < 3; ++q) { S.pos[q] = bigd ? D.bc[q] : D.pos[q]; S.first_pos[q] = S.pos[q]; S.ext[q] = D.ext[q]; }
     S.n_obs = 1; S.last_seen = t; S.last_kf = t; S.score = D.score;
     S.held = 0; S.src = D.src; S.seen_len = m.plen; S.seen_rot = m.prot;
     S.confirmed = confirm_n <= 1 ? 1 : 0;
@@ -1078,14 +1183,45 @@ DEV void mark(uint32_t* bits, int ix, int iy) {
   const int idx = ly * GW + lx;
   or_bits(&bits[idx >> 5], 1u << (idx & 31));
 }
-DEV void phase_mark(const MapCore& m, Scratch& sh, const int16_t* L, const uint32_t* seen, int tid, int nt) {
+// 열 끝은 hitb·missb 와 같은 자리(공용체)에 있으므로 먼저 레지스터로 옮기고, 동기 뒤 비트표를 비우고, 다시 동기 뒤 표시한다
+#ifdef __CUDA_ARCH__
+constexpr int MARK_CPT = (NCOL + NT - 1) / NT;   // 스레드마다 열 수(GPU)
+#else
+constexpr int MARK_CPT = NCOL;                   // CPU(nt 1)
+#endif
+DEV void mark_cell(Scratch& sh, uint32_t* bits, float wx, float wy) { mark(bits, (int)floorf(wx * INV_RES), (int)floorf(wy * INV_RES)); }
+template <class Sync>
+DEV void phase_mark(const MapCore& m, Scratch& sh, const int16_t* L, const uint32_t* seen, int tid, int nt, const Sync& sync) {
   const float ec = sh.ec, es = sh.es;
+  int8_t ty[MARK_CPT];
+  float tt[MARK_CPT], t0[MARK_CPT], t1[MARK_CPT];
+#pragma unroll
+  for (int j = 0; j < MARK_CPT; ++j) {
+    const int col = tid + j * nt;
+    ty[j] = col < NCOL ? sh.colt[col] : (int8_t)0;
+    tt[j] = col < NCOL ? sh.colt_t[col] : 0.f;
+    t0[j] = col < NCOL ? sh.cold0[col] : 0.f;
+    t1[j] = col < NCOL ? sh.cold1[col] : 0.f;
+  }
+  sync();
+  for (int w = tid; w < NWORD; w += nt) { sh.hitb[w] = 0u; sh.missb[w] = 0u; }
+  sync();
+  const Cam k = cam_consts();
   const float ox = m.ex + ec * env::K::cam_x, oy = m.ey + es * env::K::cam_x;
   const int cx = (int)floorf(ox * INV_RES), cy = (int)floorf(oy * INV_RES);
-  for (int col = tid; col < NCOL; col += nt) {
-    const int ty = sh.colt[col];
-    if (ty == 0) continue;
-    const float bx = sh.colx[col], by = sh.coly[col];
+#pragma unroll
+  for (int j = 0; j < MARK_CPT; ++j) {
+    const int col = tid + j * nt;
+    if (col >= NCOL) continue;
+    const float xn = ((float)(2 * col + 1 - NCOL) / (float)NCOL) * k.tanh;
+    for (int d = 0; d < 2; ++d) {   // 맞추기 점(수직면): 맞음만, 광선 없음(grid.cpp: 맞추기 점 먼저)
+      const float t = d ? t1[j] : t0[j];
+      if (t == 0.f || (d && t1[j] == t0[j])) continue;
+      const float bx = env::K::cam_x + t, by = -xn * t;
+      mark_cell(sh, sh.hitb, m.ex + (ec * bx - es * by), m.ey + (es * bx + ec * by));
+    }
+    if (ty[j] == 0) continue;
+    const float bx = env::K::cam_x + tt[j], by = -xn * tt[j];
     const float wx = m.ex + (ec * bx - es * by), wy = m.ey + (es * bx + ec * by);
     const int x1 = (int)floorf(wx * INV_RES), y1 = (int)floorf(wy * INV_RES);
     int x = cx, y = cy;
@@ -1099,7 +1235,7 @@ DEV void phase_mark(const MapCore& m, Scratch& sh, const int16_t* L, const uint3
         if (e2 >= dy) { err += dy; x += sx; }
         if (e2 <= dx) { err += dx; y += sy; }
       }
-      mark_in(ty == 1 ? sh.hitb : sh.missb, x1, y1, L, seen, lastw);
+      mark_in(ty[j] == 1 ? sh.hitb : sh.missb, x1, y1, L, seen, lastw);
       continue;
     }
     while (!(x == x1 && y == y1)) {
@@ -1108,7 +1244,7 @@ DEV void phase_mark(const MapCore& m, Scratch& sh, const int16_t* L, const uint3
       if (e2 >= dy) { err += dy; x += sx; }
       if (e2 <= dx) { err += dx; y += sy; }
     }
-    mark(ty == 1 ? sh.hitb : sh.missb, x1, y1);
+    mark(ty[j] == 1 ? sh.hitb : sh.missb, x1, y1);
   }
 }
 
@@ -1540,7 +1676,7 @@ DEV void map_keyframe(MapCore& m, Scratch& sh, const EnvView& e, int16_t* L, uin
   sync();
   PROF_MARK(P_ABSENCE);
   obj_complete(m, sh, tid, nt);
-  phase_mark(m, sh, L, seen, tid, nt);
+  phase_mark(m, sh, L, seen, tid, nt, sync);
   sync();
   PROF_MARK(P_MARK);
   phase_apply(m, sh, L, seen, occ, tid, nt);
