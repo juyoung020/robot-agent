@@ -27,13 +27,13 @@ cmake -S . -B ~/ra_mapbuild && cmake --build ~/ra_mapbuild -j
 ~/ra_mapbuild/map_verify 2048 600 --negative   # 실패해야 정상(종료 코드 0)
 ~/ra_mapbuild/map_bench 200 65536             # 판 수 1,024 … 65,536
 ~/ra_mapbuild/map_prof 200 32768 32768       # 한 판 수만, 구간별 시간(clock64)
-~/ra_mapbuild/map_drift 1 1024                # 탐색 비슷한 궤적의 자세 오차(0 = gt_move 대본)
+~/ra_mapbuild/map_drift 4 1024                # 자세 오차: 4 = LIMO 둘째 탐색 판 비슷(38 m), 2 = 첫 판(13 m), 3 = limo4, 1 = R1 탐색, 0 = gt_move
 ~/ra_mapbuild/map_verify 2048 600 --arm        # 팔을 푼 G1(arm_free) + 팔·그리퍼 행동: 들기·놓기도 비트 동일
 ~/ra_mapbuild/map_tokrec 256 300 tok.bin --arm # 지도 토큰 기록
 cmake -S . -B ~/ra_mapbuild -DMAP_REALCHECK=ON && cmake --build ~/ra_mapbuild --target map_realcheck && ~/ra_mapbuild/map_realcheck 256 600
 MAP_BENCH_NOTOK=1 ~/ra_mapbuild/map_bench 200 65536   # 토큰 커널을 뺀 시간(측정용)
 # 맞춤 값 바꿔 보기(CPU 참조판, 같은 결과):
-g++ -std=c++17 -O2 -ffp-contract=off -fopenmp -DDRIFT_CPU_ONLY -DKF_CORR_XY_V=0.03f -I include -I ../env/include \
+g++ -std=c++17 -O2 -ffp-contract=off -fopenmp -DDRIFT_CPU_ONLY -DKF_CORR_XY_V=0.002f -DODO_T_V=0.08f -I include -I ../env/include \
     -I /usr/local/cuda-12.8/include tools/map_drift.cpp src/map_ref.cpp -o /tmp/drift && /tmp/drift 1 256
 ```
 
@@ -73,6 +73,27 @@ GPU 한 스텝 = 커널 셋(`DeviceMap::step`):
 장면: G1 은 빈 방 + 컵이라 지도용 상자를 더했다. 벽에 붙인 가구 5 개(의자·탁자·장·쓰레기통, 탁자·장은 고정 종류)와 바닥의 작은 물건 3 개다. **G1 동역학은 이 상자와 충돌하지 않는다**(G1 비트 동일을 지키려고 환경을 바꾸지 않음). 로봇 시작점·컵과 겹치지 않게 놓는다.
 
 ## 결과 (RTX 5070 Ti, sm_120, CUDA 12.8 — 잰 값)
+### LIMO 보정 — 잡음 기본값을 LIMO 로
+`../map_calib/limo`(7a474a0)의 LIMO 값을 `MP` 기본값으로 했다(-D 로 바꿀 수 있는 매크로, 예전 R1 값은 `../map_calib/README.md` 의 기록). 위 5.2 고침(띠·빈칸 줄·보이는 면 자리)으로 오차 동역학이 바뀌어 `map_drift` 로 다시 맞췄다. `map_drift` 에 궤적을 더했다: kind 2 = 첫 LIMO 탐색 판 비슷(13.2 m), kind 3 = limo4 비슷(제자리 한 바퀴 뒤 3.9 m), kind 4 = 둘째 LIMO 탐색 판 비슷(38.2 m).
+
+목표(SLAM − GT, 잰 값):
+- 첫 탐색 판 094010(카메라 FK 1 cm 오차 있음): 13.17 m, rms 3.05 cm / 0.256°, max 5.34 cm / 0.662°. 오차가 길이에 따라 천천히 자람(2 m 1.4, 5 m 2.1, 13 m 3.1 cm rms).
+- 둘째 탐색 판 100358(렌즈 프레임·67.9°, 고친 카메라): 38.15 m, 3,100°, rms 9.9 cm / 0.30°, max 12.6 cm / 1.75°. **오차는 길이로 자라지 않는다**: 첫 제자리 회전 동안(0.3–0.6 m, 스텝 84–120) 약 9 cm 로 뛰고, 그 뒤 세계 좌표로 거의 고정된 약 10 cm 치우침(몸 좌표 성분이 회전과 함께 돎)으로 끝까지 간다(5 m 까지 rms 9.1, 13 m 10.2, 38 m 9.9 cm).
+
+| 값 묶음 | kind 2 (13.4 m) rms / max | kind 4 (38.7 m) rms / max | kind 3 (4.0 m) rms | kind 1 (16.8 m) rms |
+|---|---|---|---|---|
+| R1 값(5.2 고친 모형) | — | — | — | 5.43 cm / 0.596°, max 12.82 cm / 3.37° |
+| LIMO 제안 값 그대로(0.06·0.005·0.02, kf 0.0075·0.15) | 2.76 cm / 0.215°, 5.41 cm / 0.608° | 3.00 cm / 0.221°, 6.57 cm / 0.746° | 1.55 cm / 0.201° | |
+| **기본값(둘째 판에 맞춤: 0.10·0.04·0.02, kf 0.001·0.15)** | 6.39 cm / 0.300°, 11.34 cm / 1.071° | **9.19 cm / 0.308°, 16.66 cm / 1.301°** | 2.88 cm / 0.298° | 7.25 cm / 0.313° |
+| 목표 | 첫 판 3.05 / 0.256°, 5.34 / 0.662° | 둘째 판 9.9 / 0.30°, 12.6 / 1.75° | limo4 1.32 / 0.206° | |
+
+(GPU 1,024 판의 판별 평균. 격자 탐색은 CPU 참조판 256 판 — 같은 코드.)
+- **두 판을 같이 맞출 수 없다.** 이 모형의 오차는 걸음 잡음 + 치우침 − keyframe 되돌림이라 길이에 따라 자란다. keyframe 되돌림을 0 으로 해도 kind 4 / kind 2 rms 비는 1.67(≈ √(38/13))인데, 실제는 3.2 이고 그것도 자람이 아니라 첫 회전의 한 번 뜀이다. 두 판의 로그 오차를 같이 줄이는 값(되돌림 0, odo_t 0.06)은 둘 다 30–45 % 어긋난다.
+- 그래서 지시대로 **고친 카메라로 찍은 둘째 판을 우선**했다: kind 4 의 rms 는 −7 %(xy)·+3 %(yaw)다. max 는 xy +32 %·yaw −26 % 로 맞지 않는다. 모형의 max/rms 는 약 1.8 이고 실제(고정 치우침)는 1.27 이다. 첫 판 길이(kind 2)에서는 실제보다 xy 2.1 배, yaw 1.2 배 크다. 첫 판 값(위 둘째 줄)은 `-DODO_T_V=0.06f -DODO_RR_V=0.005f -DKF_CORR_XY_V=0.0075f` 로 쓸 수 있다.
+- 검출 쪽(kind 2): 가짜 있는 keyframe 0.012, 확정 칸 맞음 0.75 / 틀린 이름 0.21 / 가짜 0.05(실제 탐색 판 0.81 / 0.19 / 0, limo3 가짜 keyframe 0.013).
+- `map_verify 2048 600` 비트 동일(해시 `a2684f0ca297271d`, 가짜 검출 203,824 → 5,875), `--force-kf`·`--arm` 비트 동일, `--negative` 1,180,920 불일치로 실패(정상). G1 `env_verify` 비트 동일(성공 8,907 / 충돌 3,420 / 시간초과 1,543), `--negative` 실패(정상). map_cmp 는 잡음을 끄므로 결과가 같다(통과, 음성 대조 실패).
+- 처리량(N=32,768, 자연 / 매 스텝 keyframe): 1.294 / 1.755 ms, 환경+제어+지도 2.42e7 / 1.80e7 env-step/s(5.2 고침 뒤 1.341 / 1.828 ms — 가짜 검출이 줄어 조금 빠름).
+
 ### 5.2 비교(map_cmp)로 고친 것 — 진짜 LIMO scenemap 쪽으로
 `../map_cmp` 가 같은 입력(렌더 깊이·완벽한 검출·proprio, 잡음 끔)으로 진짜 scenemap 과 비교한 다른 점을 고쳤다. 모두 `map.h` 공용 경로다.
 1. **관측 자리 = 보이는 면 점의 중앙값**(objmap: 마스크 안 깊이 점의 축별 중앙값, 크기 = 10–90 백분위 폭). 상자에서 카메라를 보는 면(x·y 면 하나씩, 카메라가 윗면보다 높으면 윗면)마다 화소 수 ∝ 넓이·cos/거리² 로 무게를 주고, 축마다 "그 축 면 = 한 값 + 다른 면 = 고르게" 섞임의 분위수를 닫힌 꼴로 구한다(`surf_stats`). 큰 것(> 0.5 m·고정 종류)의 합집합 상자와 짝짓기 틈은 백분위 상자(`Det::bc` ± 크기/2)를 쓴다. 가림·시야·깊이 범위 자르기, 마스크 1 칸 깎기, MAD 거르기는 보지 않는다(가정).
@@ -266,12 +287,10 @@ N=32,768 매 스텝 keyframe 에서 각 단계 뒤 지도 ms: 5.65 → 1.49(1, 2
 | 빈칸 줄 = 바닥 깊이 3 m 안 첫 화소 줄, 화소 간격 4 | (가정: sgrt 깊이 간격 4 — scan.cpp 규칙) |
 | 보이는 면 무게 ∝ 넓이·cos/거리², 시야로 자른 실루엣 5 점 | (가정) objmap 중앙값·백분위의 닫힌 꼴 근사 |
 | 깊이 잡음 σ = 0 + 0.006·z² m | Dabai 데이터시트(1 m 에서 6 mm, z² 법칙) |
-| 걸음마다 오도메트리 잡음 `odo_t 0.15`, `odo_rr 0.035`, `odo_rt 0.03` | R1 시뮬 기록 보정(calib.json 맞춤 B) |
-| 판마다 치우침 σ: 이동 3.0 %, 회전 13 %, 직진 중 yaw 1.78 °/m | R1 시뮬 기록 보정(원 오도메트리 대 GT 구간) |
-| 놓침 < 1.5 m 0.15, 1.5–2.5 m 0.10, ≥ 2.5 m 0.79 / 틀린 이름 0.07 | R1 시뮬 기록 보정(gt_move·gt_move2 검출) |
-| 옆·높이 잡음 0.04 m, 크기 잡음 0.05 m | R1 시뮬 기록 보정 |
-| keyframe 보정 xy 0.025, yaw 0.7 | 맞춤(위 모형으로 R1 탐색 판 rms 에, `map_drift`) |
-| 유령 자리 3 개, 시야 안 검출 1.0 | 맞춤(확정 물체의 가짜 비율 0.2 에, `map_drift`) |
+| 판마다 치우침 σ: 이동 0.82 %, 회전 1.21 %, 직진 중 yaw 0 | LIMO 탐색 기록 보정(limo3 원 오도메트리 대 GT, 표본 하나 — `../map_calib/limo`) |
+| 걸음마다 오도메트리 잡음 `odo_t 0.10`, `odo_rr 0.04`, `odo_rt 0.02`, keyframe 보정 xy 0.001·yaw 0.15 | LIMO 탐색 기록 보정 → 이 모형에서 `map_drift` kind 4 로 둘째 탐색 판(100358, 38 m)에 맞춤(아래 "LIMO 보정") |
+| 틀린 이름 0.08, 유령 자리 3 개·시야 안 검출 0.03, 옆·높이 잡음 0.023 m | LIMO 탐색 기록 보정(`../map_calib/limo`: 확정 틀린 이름 3/16, limo3 가짜 keyframe 1/80, 검출 중심 강건 σ) |
+| 놓침 < 1.5 m 0.15, 1.5–2.5 m 0.10, ≥ 2.5 m 0.79, 크기 잡음 0.05 m | R1 시뮬 기록 보정(LIMO 기록으로는 맞추지 못해 그대로) |
 | 거친 광선 64 열 × 8 줄 | (가정) 계획서 5.1 예 64 + 세로 8 |
 | 벽 높이 2.5 m, 컵 높이 0.10 m(tgt_z 를 중심으로 봄) | (가정) 장면 자산으로 |
 | 맞추기 최소 맞은 열 5 (min_inliers 50 / 720 칸 × 64 열) | (가정) |
@@ -289,7 +308,7 @@ N=32,768 매 스텝 keyframe 에서 각 단계 뒤 지도 ms: 5.65 → 1.49(1, 2
 | 목표 칸 = 참 컵에 짝 문턱 안 가장 가까운 확정 "컵" 칸 | (가정: 교사 쪽 정답) |
 | 생김새 번호 = 출처 참 물체의 종류, 유령 = 6 | (가정: G1 상자는 종류마다 생김새가 같다고 봄) |
 
-R1 단서: 보정에 쓴 기록은 모두 BEHAVIOR 의 R1(Pro) 로봇이다(전방향 베이스, 머리 카메라 1.4 m, 깊이 잡음 없음, 깊이 8 m). LIMO 기록이 생기면 다시 맞춘다.
+LIMO 단서(`../map_calib/limo` README): 오도메트리 치우침·검출 값은 기록 하나씩에서 쟀고, 첫 탐색 판·limo3 은 카메라 FK 1 cm 오차(렌즈 프레임 전)가 든 판이다. 예전 R1 값(odo_t 0.15·odo_rr 0.035·odo_rt 0.03, 치우침 3.0 %·13 %·1.78 °/m, kf_corr 0.025·0.7, p_conf 0.07, p_ghost 1.0, lat_n 0.04)은 `../map_calib/README.md` 에 기록으로 남는다.
 
 scenemap 기본값에서 가져온 값: 격자 Q·l_hit·l_miss·l_min/max, scan 의 높이 띠, slam2d 의 mf_xy·mf_yaw·mf_kf·still_v/w, objmap 의 min_points·min_px·confirm·prune_s·moved_d·gone_misses·gone_min_s·occl·da_min·da_k·da_gap·big·grow_max·max_ext·ozmin. 칸 크기만 0.05 → 0.10 m 다(계획서 8절).
 

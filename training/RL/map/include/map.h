@@ -13,18 +13,43 @@
 #pragma once
 #include "env.h"
 #include "env_soa.h"
-// 맞춤 값(README "보정"). map_drift 로 다시 맞출 때만 -D 로 바꾼다
+// 잡음·맞춤 값의 기본(MP 가 씀). 기본은 LIMO 탐색 기록 보정(../map_calib/limo, calib_limo.json) + 이 모형에 다시 맞춘 값(README "LIMO 보정").
+// map_drift 로 다시 맞출 때만 -D 로 바꾼다. R1 값(예전 기본)은 ../map_calib/README.md 에 기록으로 남김
+#ifndef ODO_T_V
+#define ODO_T_V 0.10f
+#endif
+#ifndef ODO_RR_V
+#define ODO_RR_V 0.04f
+#endif
+#ifndef ODO_RT_V
+#define ODO_RT_V 0.02f
+#endif
+#ifndef ODO_BT_V
+#define ODO_BT_V 0.0082f
+#endif
+#ifndef ODO_BR_V
+#define ODO_BR_V 0.0121f
+#endif
+#ifndef ODO_BW_V
+#define ODO_BW_V 0.0f
+#endif
 #ifndef KF_CORR_XY_V
-#define KF_CORR_XY_V 0.025f
+#define KF_CORR_XY_V 0.001f
 #endif
 #ifndef KF_CORR_YAW_V
-#define KF_CORR_YAW_V 0.7f
+#define KF_CORR_YAW_V 0.15f
+#endif
+#ifndef P_CONF_V
+#define P_CONF_V 0.08f
+#endif
+#ifndef LAT_N_V
+#define LAT_N_V 0.023f
 #endif
 #ifndef N_GHOST_V
 #define N_GHOST_V 3
 #endif
 #ifndef P_GHOST_V
-#define P_GHOST_V 1.0f
+#define P_GHOST_V 0.03f
 #endif
 // 잡음 끄기(map_cmp 의 진짜 scenemap 비교용, -DMAP_NOISE_V=0): 오도메트리 치우침·걸음 잡음, 놓침, 틀린 이름, 유령, 깊이·옆·크기 잡음을
 // 모두 끈다. 기본 1 = 지금 모형 그대로(비트 같음)
@@ -104,24 +129,24 @@ struct MP {
   static constexpr float ozmin = 0.15f, ozmax = 3.0f, da_min = 0.30f, da_k = 0.5f, da_gap = 0.10f, big = 0.5f;
   static constexpr float moved_d = 0.15f, occl = 0.10f, grow_max = 0.25f, max_ext = 4.0f;
   static constexpr int prune_steps = 100, gone_min_steps = 20;   // prune_s 10 s, gone_min_s 2 s (제어 10 Hz, 영상 = 제어 스텝 (가정))
-  // ---- 오도메트리·slam ----
-  // 걸음마다 랜덤워크: 이동 σ = odo_t·거리, 회전 σ = odo_rr·|dθ| + odo_rt·거리 (R1 시뮬 기록 보정, calib.json 맞춤 B)
-  static constexpr float odo_t = 0.15f, odo_rr = 0.035f, odo_rt = 0.03f;
-  // 판마다 뽑는 배율 치우침(판 리셋 때 가우스, 판 안에서 고정): 이동 배율 σ 3.0 %, 회전 배율 σ 13 %, 직진 중 yaw σ 1.78 °/m
-  // (R1 시뮬 기록 보정: 원 오도메트리 대 GT 구간 분석. R1 은 회전을 늘 +13 % 더 셌다. LIMO 는 부호를 모르므로 ± 대칭으로 뽑는다)
-  static constexpr float odo_bt = 0.030f, odo_br = 0.13f, odo_bw = 0.031066f;
-  // keyframe 맞추기가 되돌리는 오차 비율, xy 와 yaw 따로 (맞춤)
+  // ---- 오도메트리·slam ---- (LIMO 탐색 기록 보정 — ../map_calib/limo. 단서: 기록 하나(탐색 판 094010 + limo3), 카메라 FK 1 cm 오차가 든 판)
+  // 걸음마다 랜덤워크: 이동 σ = odo_t·거리, 회전 σ = odo_rr·|dθ| + odo_rt·거리. 원 오도메트리에는 걸음 잡음이 없어 SLAM 잔차에 맞춘 유효 값
+  static constexpr float odo_t = ODO_T_V, odo_rr = ODO_RR_V, odo_rt = ODO_RT_V;
+  // 판마다 뽑는 배율 치우침(판 리셋 때 가우스, 판 안에서 고정): 이동 배율 σ 0.82 %, 회전 배율 σ 1.21 %, 직진 중 yaw 0
+  // (LIMO 탐색 기록 보정: limo3 원 오도메트리 대 GT — 직진 0.80 m 에서 +0.82 %, 제자리 363° 에서 +1.21 %/rad. 표본 하나라 σ = |측정값|, 부호는 ± 대칭)
+  static constexpr float odo_bt = ODO_BT_V, odo_br = ODO_BR_V, odo_bw = ODO_BW_V;
+  // keyframe 맞추기가 되돌리는 오차 비율, xy 와 yaw 따로 (LIMO 탐색 기록 보정 — 이 모형에서 map_drift kind 2 로 맞춤)
   static constexpr float kf_corr_xy = KF_CORR_XY_V, kf_corr_yaw = KF_CORR_YAW_V;
   // ---- 검출 ----
-  // 놓침 확률, 카메라–물체 중심 거리별 계단(R1 시뮬 기록 보정: < 1.5 m 0.15, 1.5–2.5 m 0.10, ≥ 2.5 m 0.79. 거리 무관 평균은 0.21)
+  // 놓침 확률, 카메라–물체 중심 거리별 계단(R1 시뮬 기록 보정: < 1.5 m 0.15, 1.5–2.5 m 0.10, ≥ 2.5 m 0.79. LIMO 기록으로는 맞추지 못해 그대로)
   static constexpr float miss_d1 = 1.5f, miss_d2 = 2.5f, p_miss_near = 0.15f, p_miss_mid = 0.10f, p_miss_far = 0.79f;
-  static constexpr float p_conf = 0.07f;                         // 틀린 이름 (R1 시뮬 기록 보정)
-  // 가짜 물체: 판마다 정해진 유령 자리 n_ghost 개가 시야에 들면 keyframe 마다 p_ghost 로 다시 검출된다(R1 시뮬 기록 보정:
-  // keyframe 의 76 % 에 가짜가 하나 이상, 평균 1.46 개, 같은 자리에 되풀이). 개수·확률은 G1 판에서 그 비율에 맞춘 값 (맞춤)
+  static constexpr float p_conf = P_CONF_V;                      // 틀린 이름 (LIMO 탐색 기록 보정: 확정 물체 틀린 이름 3/16 = 0.19 에 맞춤)
+  // 가짜 물체: 판마다 정해진 유령 자리 n_ghost 개가 시야에 들면 keyframe 마다 p_ghost 로 검출된다
+  // (LIMO 탐색 기록 보정: limo3 가짜가 있는 keyframe 1/80 = 0.013, 탐색 판 확정 가짜 0/16)
   static constexpr int n_ghost = N_GHOST_V;
   static constexpr float p_ghost = P_GHOST_V;
   static constexpr float dn0 = 0.0f, dn2 = 0.006f;               // 깊이 잡음 σ = 0 + 0.006·z² m (Dabai 데이터시트: 1 m 에서 6 mm, z² 법칙)
-  static constexpr float lat_n = 0.04f, ext_n = 0.05f;           // 옆·높이 잡음, 크기 잡음 σ m (R1 시뮬 기록 보정)
+  static constexpr float lat_n = LAT_N_V, ext_n = 0.05f;         // 옆·높이 잡음 σ m (LIMO 탐색 기록 보정: limo3 맞는 검출 중심 강건 σ 0.023, n 100), 크기 잡음 (R1 시뮬 기록 보정)
   // ---- (가정) ----
   static constexpr int img_w = 640, img_h = 400;                 // 깊이 영상 640×400 (Dabai 데이터시트), 정사각 화소(가정: 세로 FOV 45.6°, 사양 45.3°)
   static constexpr float wall_h = 2.5f;                          // 벽 높이(가정)

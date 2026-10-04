@@ -1,6 +1,10 @@
 // slam 자세 오차·가짜 검출 통계(보정용, 학습 경로 아님): 정해진 궤적을 G1 운동학으로 만들어 지도 단계(GPU DeviceMap, 또는
 // -DDRIFT_CPU_ONLY 빌드의 CpuMap — 둘은 비트 동일)에 넣고, 판마다 자세 오차 rms·max(xy, yaw)를 잰 뒤 판 평균을 낸다.
-//   map_drift [kind 1=탐색 비슷, 0=gt_move 대본] [판 수=256] [씨앗=1]
+//   map_drift [kind] [판 수=256] [씨앗=1]
+// kind 2: LIMO 탐색 비슷(첫 탐색 판 094010: 13.17 m) — kind 1 과 같은 동작, 길이 합 13.2 m, 직진 0.40 m/s, 회전 최대 0.8 rad/s
+//         (../map_calib/limo/tools/map_drift_limo.patch 의 궤적)
+// kind 3: limo4 비슷 — 제자리 한 바퀴(0.6 rad/s) 뒤 3.9 m
+// kind 4: LIMO 탐색 비슷 둘째 판(100358: 38.15 m, 3,100°) — kind 2 와 같은 동작, 길이 합 38.2 m
 // kind 1: G1 방(반치수 2–3.5 m) 안에서 무작위 목표로 돌고(최대 0.8 rad/s) 곧게 가기(0.45 m/s)를 길이 합 16.5 m 까지
 //         (../map_calib/tools/mpdrift.cpp 의 탐색 궤적과 같은 동작이되, 방 밖으로 나가지 않게 목표를 방 안에서 뽑고 굽음은 뺐다)
 // kind 0: gt_move 대본(90°×4, 1 m, 180°, 1 m, −90°, 0.8 m, 180°, 0.8 m, 90°; 0.6 rad/s, 0.27 m/s), 방 가운데에서.
@@ -73,15 +77,22 @@ static Traj make(int kind, float rhx, float rhy, uint64_t& r) {
     return S.T;
   }
   const float m = 0.6f;
-  S.x = (u01(r) * 2.f - 1.f) * (rhx - m); S.y = (u01(r) * 2.f - 1.f) * (rhy - m); S.th = (u01(r) * 2.f - 1.f) * (float)M_PI;
+  const float Lmax = kind == 1 ? 16.5f : kind == 2 ? 13.2f : kind == 4 ? 38.2f : 3.9f, vmax = kind == 1 ? 0.45f : 0.40f, wmax = 0.8f;
+  if (kind == 3) {   // limo4 비슷: 제자리 한 바퀴(0.6 rad/s) 뒤 돌기·가기
+    S.x = 0.f; S.y = 0.f; S.th = 0.f;
+    for (int i = 0; i < 10; ++i) S.ctrl(0.f, 0.f);
+    S.turn(2.f * (float)M_PI - 0.02f, 0.6f);
+  } else {
+    S.x = (u01(r) * 2.f - 1.f) * (rhx - m); S.y = (u01(r) * 2.f - 1.f) * (rhy - m); S.th = (u01(r) * 2.f - 1.f) * (float)M_PI;
+  }
   float L = 0.f;
-  while (L < 16.5f && S.T.x.size() < 5000) {
+  while (L < Lmax && S.T.x.size() < 5000) {
     float gx, gy, d;
     do { gx = (u01(r) * 2.f - 1.f) * (rhx - m); gy = (u01(r) * 2.f - 1.f) * (rhy - m); d = hypotf(gx - S.x, gy - S.y); } while (d < 0.5f);
-    S.turn(wrapf(atan2f(gy - S.y, gx - S.x) - S.th), 0.8f);
+    S.turn(wrapf(atan2f(gy - S.y, gx - S.x) - S.th), wmax);
     d = hypotf(gx - S.x, gy - S.y);
-    if (L + d > 16.5f) d = 16.5f - L + 0.01f;
-    L += S.drive(d, 0.45f);
+    if (L + d > Lmax) d = Lmax - L + 0.01f;
+    L += S.drive(d, vmax);
   }
   return S.T;
 }
