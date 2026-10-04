@@ -586,42 +586,41 @@ trainfmt/             (쓰는 쪽과 같이 쓰는 형식 크레이트, 4.6)
 
 ## 13. 구현 상태 (2026-10-04)
 
-코드: `training/viewer/`(서버 `trainview`, 형식 크레이트 `trainfmt/`, 도구 `fake_run`·`csv2run`, 화면 `assets/`). 학습기 쪽: `training/RL/ppo/driver/src/runfolder.rs`, `training/BC/driver/src/runfolder.rs`(각 `main.rs` 에는 기록 경로에 몇 줄만 더함). 확인한 값은 [viewer README](../../training/viewer/README.md) "확인한 것".
+코드: `training/viewer/`(서버 `trainview`, 형식 크레이트 `trainfmt/`, 도구 `tools/record_replay`·`tools/og2sg`·`fake_run`·`csv2run`, 화면 `assets/`). 학습기 쪽: `training/RL/ppo/driver/src/runfolder.rs`, `training/BC/driver/src/runfolder.rs`. 쓰는 법·확인한 값은 [viewer README](../../training/viewer/README.md).
 
-| 단계 | 상태 | 비고 |
+| 단계 | 상태 | 지금 있는 것 |
 |---|---|---|
-| V0 `trainfmt` + `fake_run` | **됨** | 되감기(trim 없는 재개), 반쪽 줄, 줄기, labs, .trp(프레임·f16 슬롯·MAP_RECT 지도), 평가 표, 씨앗 묶음. `"synthetic": true` |
-| V1 서버(목록·메타·이어 읽기·열 저장소) + 학습 탭(카드·곡선) | **됨** | 되감긴 줄 걷기, 반쪽 줄 안 받음, ino·길이로 새 파일 판정(sig), 64 KB 넘으면 gzip, 10 분 안 본 실행 내림 |
-| V2 성공 표 + 고장 무늬 검사 | **됨** | 표 숫자 = 직접 센 값. 검사 8 개, 못 잰 검사는 이유와 함께 따로 |
-| V3 재생 탭 | **됨 — sgview 화면 그대로 + 진짜 판** | 재생 탭은 sgview 페이지를 고치지 않고 iframe 으로 띄우고 서버가 sgview 실시간 경로(/stream 등)를 판 재생으로 흉내(`src/sg.rs`). OmniGibson LIMO 탐사 판은 `tools/og2sg`(rec.bin → scenemap 재실행 → sgview 스트림 + 메모리 폴더), BEHAVIOR 집 배치는 `og2sg --layout`, GPU 판(.trp)은 서버가 같은 프레임으로 바꿈. 바탕 층(RASC v3 방·벽·가구·놓을 곳·집을 것) 켜고 끔. 예전 3D 그리기는 `3D classic` |
-| (옛) `.trp` 3D 재생 | **됨 — 진짜 판·진짜 장면** | 학습 뒤 기록 도구 `training/viewer/tools/record_replay`(`record_ppo`·`record_bc`, 학습기 공개 헤더로 체크포인트를 돌림)가 A2 교사·G5 영상 학생 판을 `s_eval/` 에 씀: 참 장면(방 벽·가구·컵), 자라는 지도(G2 로그 오즈 → MAP_RECT), 지도 벽 선분, 물체 기억 칸, 참/slam 자세, 팔 관절, 목표, 학생 카메라 JPEG. BEHAVIOR 장면 배치(`scene_b1k`, RASC)도 봄. 학습 중 판 기록은 남은 일 |
-| V4 SSE 실시간 + 비교 탭 | **됨** | 실제 `ppo_run` 짧은 실행으로 화면 갱신 확인. 씨앗 묶음 평균 ± σ 띠 |
-| V5 평가 표·영상 칸 | **됨** | `bc_run` 평가마다 `evals/*.json`. 영상 칸은 `record_bc` 가 학생이 본 카메라 2 장(2 Hz JPEG)을 씀. FP8 묶음은 키가 오면 그림(지금 학습기는 `fp8/*` 감시 값을 안 냄) |
+| V0 `trainfmt` + `fake_run` | **됨** | 실행 폴더 쓰개, 키 별칭(옛 → 표준), `.trp`, 재생 자동 기록 hook. `fake_run` = 시험 자료(`"synthetic": true`, 기본 숨김) |
+| V1 서버 + 학습 탭 | **됨** | 이어 읽기·되감기·반쪽 줄·gzip, 카드·곡선(표준 이름) |
+| V2 성공 표 + 고장 무늬 검사 | **됨** | 표 = 직접 센 값, 검사 8 개(못 잰 것은 이유와 함께) |
+| V3 재생 탭 | **됨 — sgview 화면 그대로** | sgview 페이지를 iframe 으로, 서버가 실시간 경로를 판 재생으로 흉내. 판: GPU 환경(체크포인트마다 자동 `record_ppo`/`record_bc` → **진짜 scenemap** 점구름·장면 그래프, 정책이 본 G2 지도는 `policy map` 겹침), OmniGibson LIMO 탐사(`og2sg`), BEHAVIOR 집 배치(`og2sg --layout`). 체크포인트 고르기·학습 진행 막대 |
+| V4 SSE + 비교 탭 | **됨** | 진행·판·학습 상태 불(training / stalled / finished / crashed, REC) 실시간. 씨앗 묶음 평균 ± σ |
+| V5 평가 표·영상 칸 | **됨** | `bc_run` 평가마다 `evals/*.json`; 학생 체크포인트마다 재생 판 |
+| 실행 고르기 | **됨** | pipelines(학생 ← 교사 체크포인트), teachers, BEHAVIOR, archive(v2 이전·csv, 기본 숨김), test data(synthetic, 기본 숨김) |
 
 학습기가 지금 쓰는 것(4절 중):
 
 | 파일 | `ppo_run` | `bc_run` |
 |---|---|---|
-| `run.json`(schema·kind·group·seed·pid·pid_start·segments·git·config·refs·curriculum) | ✓ | ✓ |
-| `latest.txt` | ✓ | ✓ |
-| `progress.jsonl`(≤ 1 줄/s 합침, 안 잰 키 뺌) | ✓ 기록 스레드 | ✓ `Run::drain`(끝난 기록 꺼낼 때) |
+| `run.json`(schema·kind·group·seed·pid·pid_start·segments·git·config·refs·curriculum·teacher·replays) | ✓ | ✓ |
+| `latest.txt`, `progress.jsonl`(≤ 1 줄/s) | ✓ | ✓ |
 | 재개 trim + segments | ✓ | — (bc_run 에 재개 없음) |
 | `evals/` | — | ✓ |
-| `episodes.jsonl`, `replays/*.trp`, `s_<줄기>/` | — | — |
+| `s_eval/replays/*.sg` + `s_eval/episodes_eval.jsonl`(체크포인트마다 자동) | ✓ | ✓ |
+| 본 줄기 `episodes.jsonl`(학습 판마다) | — | — |
 
 설계와 다르게 한 것:
-- 키 이름과 화면 말은 표준 RL 도구 이름(SB3 logger, TensorBoard·W&B 화면 말)으로 바꿨다(2026-10-04). 옛 이름 → 새 이름 표와 출처는 viewer README "용어". 이 문서 4.2 표는 새 이름이다.
-- `.trp` 확장(되돌림 호환): 덧붙인 섹션 `[u32 frame][u32 len][바이트]`(`segs` = 지도 벽 선분 n × (x0, y0, x1, y1) f32), 머리 `scene`(상자·방), `slot_z`, `source`. 실제 G1 판의 열은 4.4 표와 조금 다르다(`wl`·`wr` 바퀴 각, `r_total`, `completion`·`map_seen`·`goal_known`).
-- 곡선은 **축 하나**다. 6.2 의 "오른쪽 축에 겹침"(보상 항목 + 리턴·성공률, EV + 가치 손실)은 그림을 나눴다(이중 축은 눈금이 서로를 속인다).
-- SSE 는 연결마다 한 스레드가 1 초마다 stat 한다(5.8 의 감시 스레드 하나 + 방송 대신). 클라이언트마다 줄 커서가 따로라 다시 붙어도 줄이 빠지거나 겹치지 않는다.
-- 실행 찾기는 뿌리 밑 깊이 4 까지(`~/ra_ppoout/g5/t4/on_s1` 같은 지금의 실행 나무를 그대로 `--root` 로 볼 수 있게). 실행 이름 = `<뿌리 이름>/<상대 경로>`.
-- PPO 는 `kind` 를 설정의 `"kind"`(없으면 teacher)로, `group` 은 설정의 `"group"`(없으면 설정 파일 이름)으로 정한다. BC 는 DAgger 바퀴가 있으면 `dagger`, 없으면 `bc`.
-- 판마다 줄이 없는 학습기라 `rollout/success/<스킬>` 등은 장치 링의 바퀴 합계(모집단)다. DAgger 의 교사 몬 판은 줄기 폴더 대신 `rollout_teacher/*` 키로 갈랐다(판 줄이 없으므로).
+- 키 이름과 화면 말은 표준 RL 도구 이름(SB3 logger, TensorBoard·W&B). 옛 이름 → 새 이름 표와 출처는 viewer README "용어"; 서버가 옛 키를 새 이름으로 읽음.
+- 재생 판은 `.trp` 대신 sgview 판 폴더(`<판>.sg/`: scenemap 스트림 + 메모리 + 정책 지도 `episode.trp`). `.trp` 만 있는 옛 판도 같은 화면.
+- 곡선은 축 하나(이중 축 안 씀). SSE 는 연결마다 한 스레드가 1 초마다 stat. 실행 찾기는 뿌리 밑 깊이 4.
+- 판마다 줄이 없는 학습기라 `rollout/success/<스킬>` 등은 장치 링의 바퀴 합계(모집단). DAgger 교사 판은 `rollout_teacher/*` 키.
+
+지운 것(2026-10-04 정리): `scene_b1k`(→ `og2sg --layout`), 실행 무리 `labs`(→ test data), 기본 화면의 예전 3D 그리기(`?debug=1` 에서만 — 보상 띠·`.trp` 카메라 JPEG 용), 일회용 시험 실행(v2 이전 smoke, 상태 불·처리량 시험 실행).
 
 남은 일:
-1. **학습 중** 장치 쪽 판 기록(판 끝마다 줄, 고른 환경의 프레임 링) → 본 줄기 `episodes.jsonl`·`.trp`. CUDA·그래프 변경이라 하지 않음. 지금은 학습 뒤 `record_replay` 로 평가 판(`s_eval/`)만.
-2. PPO 장치 기록에 없는 키: `train/explained_variance`, `log/*_dropped`, `reward/<스킬>/<항>`, 접촉 수, `fp8/*` 감시 값.
-3. 환경 스텝이 보상 합만 내서 `.trp` 의 보상 항목은 `r_total` 하나. 큰 progress 첫 읽기의 "읽는 중 n %", 그리퍼 → 두 관절 식(URDF 확인), training/README 의 `args.json` → `run.json` 정리(12절)는 README 에 한 줄 더함.
+1. **학습 중** 판마다 기록(본 줄기 `episodes.jsonl`) — CUDA 장치 링 변경이라 하지 않음.
+2. PPO 장치 기록에 없는 키: `train/explained_variance`, `log/*_dropped`, `reward/<스킬>/<항>`, 접촉 수, `fp8/*`.
+3. BEHAVIOR 장면에서 우리 정책이 도는 판 — E2(B 단계) 체크포인트가 생기면 같은 자동 기록으로.
 
 ## 출처
 

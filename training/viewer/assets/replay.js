@@ -64,6 +64,8 @@ export class Replay {
     const $ = id => document.getElementById(id);
     this.$ = $;
     this.mode = "sg";
+    // 예전 3D 그리기("3D classic")는 디버그로만(?debug=1): sgview 화면이 기본·전부이고, 3D classic 은 판마다 보상 띠와 .trp 안 카메라 JPEG 를 보는 데만 남김
+    if (/[?&]debug=1/.test(location.search)) $("rp_mode").hidden = false;
     this.sg = new SgPanel({ api, host: $("rp_sg") });
     $("rp_mode").onchange = e => { this.mode = e.target.value; const f = this.file; if (f) this.open(f); };
     $("rp_ul").onchange = e => this.sg.setUnderlay(e.target.checked);
@@ -224,8 +226,10 @@ export class Replay {
     this.$("rp_sg").hidden = !on;
     this.$("rp_view").classList.toggle("sgmode", on);
     if (this.renderer) this.renderer.domElement.style.display = on ? "none" : "";
-    this.$("rp_strip").style.display = on ? "none" : "";
-    this.$("rp_legend").style.display = on ? "none" : "";
+    for (const id of ["rp_strip", "rp_legend"]) this.$(id).style.display = on ? "none" : "";
+    // 3D classic 전용 조작은 sgview 화면에서 숨김(sgview 자체 패널에 시점·궤적 켜고 끔이 있음)
+    for (const id of ["rp_camsel", "rp_ee", "rp_slam"]) { const el = this.$(id); (el.closest("label") || el).style.display = on ? "none" : ""; }
+    for (const id of ["rp_ul", "rp_pmap"]) { const el = this.$(id); el.closest("label").style.display = on ? "" : "none"; }
     if (!on) this.sg.close();
   }
   async open(file) {

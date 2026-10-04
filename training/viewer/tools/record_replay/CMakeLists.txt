@@ -58,7 +58,3 @@ if(WITH_BC)
   target_link_libraries(record_bc bc scenemap ${TRPC_LINK})
   set_target_properties(record_bc PROPERTIES BUILD_RPATH "$<TARGET_FILE_DIR:bc>")
 endif()
-
-add_executable(scene_b1k scene_b1k.cpp)
-target_include_directories(scene_b1k PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${TR}/RL/tools/b1kconv/cpp)
-target_link_libraries(scene_b1k ${TRPC_LINK})

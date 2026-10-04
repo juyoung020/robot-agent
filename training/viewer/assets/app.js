@@ -43,7 +43,7 @@ const replay = new Replay({ api, getCursorIter: () => cursorIter() });
 function shortName(r) { return r.id.split("/").slice(1).join("/") || r.id; }
 async function loadRuns() {
   let j;
-  try { j = await api("/api/runs"); } catch (e) { setText("conn", "서버 없음"); return; }
+  try { j = await api("/api/runs"); } catch (e) { setText("conn", "server offline"); return; }
   S.runs = j.runs; S.byId = Object.fromEntries(j.runs.map(r => [r.id, r])); S.latest = j.latest;
   for (const r of j.runs) if (r.status) S.status[r.id] = r.status;
   // 줄: pipelines(학생 ← 교사), teachers(학생 없는 교사), BEHAVIOR, labs, archive(옛 v2 이전, 끔), test data(가짜, 끔)
