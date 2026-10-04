@@ -62,6 +62,7 @@ int main() {
   in.grid_res = 0.1; in.grid_w = w; in.grid_h = h;
   in.cells = cells.data();
   in.graph = view;
+  in.events = {ObjEvent{4.0, 7, 6, {2, 2, 0.8}}, ObjEvent{5.0, 7, 7, {2, 2, 0.8}}};   // 다시 보임, 병합(objmap 이 7 로 기록)
   const fs::path dir = fs::temp_directory_path() / "sm_test_scene_json";
   fs::remove_all(dir);
   CHECK(saveScene(in, dir.string()) == 0, "saveScene");
@@ -72,6 +73,8 @@ int main() {
   CHECK(sj.find("mesh") == std::string::npos, "no mesh fields");
   CHECK(sj.find("BUILDINGS") == std::string::npos && vj.find("\"building\"") == std::string::npos, "no building layer");
   CHECK(sj.find("real_place") == std::string::npos && sj.find("num_basis_points") == std::string::npos, "no GVD place fields");
+  CHECK(vj.find("\"kind\":\"seen_again\"") != std::string::npos && vj.find("\"kind\":\"merged\"") != std::string::npos &&
+            vj.find("\"kind\":\"?\"") == std::string::npos, "event names (7 = merged)");
 
 #ifdef SM_TEST_SPARK_DSG
   using namespace spark_dsg;

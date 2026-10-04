@@ -62,7 +62,7 @@ struct sgrt {
   bool save_req = false, save_quit = false, save_busy = false;
   int32_t n_save_skipped = 0;
   // 실시간 스트림(SGRT_STREAM=host:port): 자세·지도 변화분은 sm_push_* 안에서 링에 바로 들어가고, 물체·방·그래프 요약은 이 스레드가
-  // SGRT_STREAM_HZ(기본 5)로 만든다 — 스텝 스레드는 아무것도 기다리지 않는다. 파일 저장(위 saver)과 별개.
+  // SGRT_STREAM_HZ(기본 60, 0.5–240 으로 자름)로 만든다 — 스텝 스레드는 아무것도 기다리지 않는다. 파일 저장(위 saver)과 별개.
   std::thread viewer;
   std::atomic<bool> view_quit{false};
   sgrt_clip::ClipMem clip;          // 물체 영상 임베딩(SGRT_CLIP 이면 켜짐)

@@ -14,7 +14,7 @@ target_include_directories(scenemap PUBLIC include ../da/include)
 find_package(ZLIB REQUIRED)   # best view PNG(deflate·crc32)
 target_link_libraries(scenemap PUBLIC ZLIB::ZLIB)
 # Spark-DSG(저장, scene.json). 우리 수정본 src/scene_graph/spark_dsg 를 먼저 쓰고(병목을 고치려고 가져옴, OUR_CHANGES.md),
-# 없으면 설치본(~/.local). 둘 다 없으면 view.json·map.pgm 만 쓴다.
+# 없으면 설치본(~/.local). 둘 다 없어도 scene.json 은 빠른 쓰기(sceneJsonFast, 같은 형식)로 쓴다 — 라이브러리는 SM_DSG_SAVE=spark 비교·시험 읽기용.
 set(SM_SPARK_DSG_DIR "${CMAKE_CURRENT_LIST_DIR}/../spark_dsg")
 if(NOT TARGET spark_dsg::spark_dsg AND EXISTS "${SM_SPARK_DSG_DIR}/CMakeLists.txt")
   set(SPARK_DSG_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -36,7 +36,7 @@ if(spark_dsg_FOUND)
   target_compile_definitions(scenemap PRIVATE SM_HAVE_SPARK_DSG)
   message(STATUS "scenemap: Spark-DSG 저장 켬")
 else()
-  message(STATUS "scenemap: Spark-DSG 없음 — scene.json 없이 view.json·map.pgm 만")
+  message(STATUS "scenemap: Spark-DSG 없음 — scene.json 은 빠른 쓰기로만(SM_DSG_SAVE=spark 비교 없음)")
 endif()
 set_target_properties(scenemap PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_options(scenemap PRIVATE -Wall -Wextra)
@@ -97,7 +97,14 @@ target_link_libraries(rooms_pgm scenemap)
 
 add_executable(test_walls tests/test_walls.cpp)
 target_link_libraries(test_walls scenemap)
-add_test(NAME walls COMMAND test_walls ${WALLS_REF_CELLS} ${WALLS_REF_JSON})
+# 파이썬(viewer/walls2d.py) 기준과 비교하려면 -DWALLS_REF_CELLS=<cells.bin> -DWALLS_REF_JSON=<ref.json>. 비우면 합성 격자로 속도만
+set(WALLS_REF_CELLS "" CACHE FILEPATH "test_walls 기준 격자(cells.bin), 비우면 비교 없음")
+set(WALLS_REF_JSON "" CACHE FILEPATH "test_walls 기준 값(walls2d.py json), 비우면 비교 없음")
+if(WALLS_REF_CELLS AND WALLS_REF_JSON)
+  add_test(NAME walls COMMAND test_walls ${WALLS_REF_CELLS} ${WALLS_REF_JSON})
+else()
+  add_test(NAME walls COMMAND test_walls)
+endif()
 
 add_executable(test_da_merge ../da/tests/test_merge.cpp)
 target_link_libraries(test_da_merge scenemap)

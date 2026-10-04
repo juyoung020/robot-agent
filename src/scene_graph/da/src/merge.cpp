@@ -21,16 +21,26 @@ double boxOverlap(const double alo[3], const double ahi[3], const double blo[3],
 
 namespace {
 
-bool mergeable(const MapObject& a, const MapObject& b, const std::vector<uint8_t>* kinds) {
-  (void)kinds;
-  return a.confirmed && b.confirmed && a.cls == b.cls && a.held_by < 0 && b.held_by < 0 && a.state != SM_GONE && b.state != SM_GONE;
+// 큰 가구(고정 종류이거나 한 변 > big)면 상자 합집합으로 합친다
+bool bigPair(const MapObject& a, const MapObject& b, const ObjParams& op, const std::vector<uint8_t>* kinds) {
+  const bool stat = kinds && a.cls >= 0 && size_t(a.cls) < kinds->size() && (*kinds)[a.cls] == kKindStatic;
+  const double ext_max = std::max({a.hi[0] - a.lo[0], a.hi[1] - a.lo[1], b.hi[0] - b.lo[0], b.hi[1] - b.lo[1]});
+  return stat || ext_max > op.big;
+}
+
+// 같은 이름 번호(= 같은 종류)끼리만. 합집합이 될 쌍은 한 변이 max_ext 를 넘으면 안 합침(objmap 상자 키우기와 같은 한도)
+bool mergeable(const MapObject& a, const MapObject& b, const ObjParams& op, const std::vector<uint8_t>* kinds) {
+  if (!(a.confirmed && b.confirmed && a.cls == b.cls && a.held_by < 0 && b.held_by < 0 && a.state != SM_GONE && b.state != SM_GONE))
+    return false;
+  if (bigPair(a, b, op, kinds))
+    for (int k = 0; k < 3; ++k)
+      if (std::max(a.hi[k], b.hi[k]) - std::min(a.lo[k], b.lo[k]) > op.max_ext) return false;
+  return true;
 }
 
 // b 를 a 에 합친다(a 가 남음)
 void absorb(MapObject& a, MapObject& b, const ObjParams& op, double stamp, const std::vector<uint8_t>* kinds) {
-  const bool stat = kinds && a.cls >= 0 && size_t(a.cls) < kinds->size() && (*kinds)[a.cls] == kKindStatic;
-  const double ext_max = std::max({a.hi[0] - a.lo[0], a.hi[1] - a.lo[1], b.hi[0] - b.lo[0], b.hi[1] - b.lo[1]});
-  const bool big = stat || ext_max > op.big;
+  const bool big = bigPair(a, b, op, kinds);
   const double wa = std::max<double>(a.n_obs, 1), wb = std::max<double>(b.n_obs, 1);
   for (int k = 0; k < 3; ++k) {
     if (big) {
@@ -84,7 +94,7 @@ std::vector<MergeResult> mergeDuplicates(std::vector<MapObject>& objs, const Mer
     int bi = -1, bj = -1;
     for (size_t i = 0; i < objs.size(); ++i)
       for (size_t j = i + 1; j < objs.size(); ++j) {
-        if (!mergeable(objs[i], objs[j], kinds)) continue;
+        if (!mergeable(objs[i], objs[j], op, kinds)) continue;
         const double ov = boxOverlap(objs[i].lo, objs[i].hi, objs[j].lo, objs[j].hi, mp.min_ext);
         if (ov >= mp.overlap_min && ov > best) { best = ov; bi = int(i); bj = int(j); }
       }

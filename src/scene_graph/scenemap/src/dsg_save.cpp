@@ -38,8 +38,8 @@ const char* stateName(int s) {
 }
 
 const char* eventName(int k) {
-  static const char* n[] = {"candidate", "confirmed", "moved", "gone", "picked", "placed", "seen_again"};
-  return k >= 0 && k < 7 ? n[k] : "?";
+  static const char* n[] = {"candidate", "confirmed", "moved", "gone", "picked", "placed", "seen_again", "merged"};
+  return k >= 0 && k < 8 ? n[k] : "?";
 }
 
 // JSON 문자열 이스케이프(이름은 프롬프트 표 — 따옴표·역슬래시만 막으면 된다)

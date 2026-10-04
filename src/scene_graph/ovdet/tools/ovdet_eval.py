@@ -30,7 +30,7 @@ import time
 import numpy as np
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..'))   # repository root
-sys.path.insert(0, os.path.join(ROOT, 'src', 'scenemap', 'eval'))
+sys.path.insert(0, os.path.join(ROOT, 'src', 'scene_graph', 'scenemap', 'eval'))
 import demo_data as dp  # noqa: E402
 import gt_scene  # noqa: E402
 

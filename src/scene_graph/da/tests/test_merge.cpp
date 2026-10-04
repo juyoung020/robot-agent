@@ -53,6 +53,18 @@ int main() {
     for (const auto& o : v) { lo = std::min(lo, o.lo[0]); hi = std::max(hi, o.hi[0]); }
     CHECK(lo < 1.45 && hi > 3.55, "union box lost the extent: %.2f..%.2f", lo, hi);
   }
+  {  // 큰 가구 둘이 겹치지만 합집합이 한 변 max_ext(4 m)를 넘음 → 그대로(objmap 상자 키우기와 같은 한도)
+    std::vector<MapObject> v = {obj(1, 3, 1.5, 1, 0.4, 3.0, 0.9, 0.8), obj(2, 3, 2.7, 1, 0.4, 3.6, 0.9, 0.8)};   // x 0..3, 0.9..4.5
+    CHECK(da::mergeDuplicates(v, mp, op, 20.0).empty() && v.size() == 2, "merged past max_ext");
+    ObjParams wide = op; wide.max_ext = 5.0;
+    CHECK(da::mergeDuplicates(v, mp, wide, 20.0).size() == 1 && v.size() == 1 && v[0].hi[0] - v[0].lo[0] > 4.4, "within max_ext not merged");
+  }
+  {  // 고정 종류(kinds)는 작아도 합집합으로 보므로 같은 한도: 작은 상자 평균이면 4 m 안이어도, 고정 종류의 합집합이 넘으면 안 합침
+    std::vector<MapObject> v = {obj(1, 2, 1.5, 1, 0.4, 0.3, 0.3, 4.0), obj(2, 2, 1.5, 1, 0.8, 0.3, 0.3, 4.0)};   // z -1.6..2.4, -1.2..2.8
+    const std::vector<uint8_t> kinds = {0, 0, kKindStatic};
+    CHECK(da::mergeDuplicates(v, mp, op, 20.0, &kinds).empty() && v.size() == 2, "static kind merged past max_ext");
+    CHECK(da::mergeDuplicates(v, mp, op, 20.0).size() == 1, "small objects (averaged) not merged");
+  }
   {  // 병합 끄기
     std::vector<MapObject> v = {obj(1, 3, 2, 1, 0.4, 1, 1, 1), obj(2, 3, 2, 1, 0.4, 1, 1, 1)};
     da::MergeParams off = mp; off.enable = false;
