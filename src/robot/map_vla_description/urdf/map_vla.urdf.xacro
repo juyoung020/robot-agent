@@ -43,6 +43,16 @@
     <origin xyz="0.09193 -0.0016 0" rpy="0 0 0"/>
   </joint>
   <link name="omx_end_effector_link"/>
+  <!-- ===== Grasp point: where an object actually sits between the closed fingers (E0, robot-agent 66fe1ee,
+       docs/map_vla/CURRICULUM_BEHAVIOR2026.md 5.3; src/robot/og/e0/results/verify_eef_kp1e6.json get_eef_in_link5).
+       omx_link5 x = 0.08003, i.e. 0.0119 m behind omx_end_effector_link along the finger axis; same as OmniGibson
+       get_eef_position(). scenemap's LIMO grasp rule / FK tables (gen_limo_fk_table) use this frame. -->
+  <joint name="grasp_point_joint" type="fixed">
+    <parent link="omx_link5"/>
+    <child link="grasp_point"/>
+    <origin xyz="0.08003 -0.0016 0" rpy="0 0 0"/>
+  </joint>
+  <link name="grasp_point"/>
   <!-- ===== Manipulator wrist camera: the RGB camera already modelled in the OMX-F link5 mesh (no depth) =====
        The OMX-F mesh (follower_06_pan_Revised.stl, link5) contains a camera module. Pose measured from that mesh
        (link5 frame): the lens front is a 14 mm disc centred at (0.0498, 0, 0.0351); the camera plate normal /
