@@ -128,3 +128,27 @@ API(뷰어·학습기용, 뒤로 맞음 — 예전 호출은 그대로):
 ## 목표 점(2026-10-05)
 `BCurr::p_point`·`p_goto`(0 이면 예전 난수 흐름 = 같은 판), 상태 `F_B_GPX..Z`(놓을 점)·`F_B_PD3`·`I_B_GMODE`(bsc::GoalMode), `Entry::ppt`·`ppt_ok`(호스트가 짝마다 고른 놓을 점), `SceneSet::ncombo`·`iblocks`(지시문 표 v2 묶음). 판·보상·성공은 POLICY 4.6, 고르기·잰 값은 CURRICULUM_BEHAVIOR2026 3.2.
 - `env_verify ... --point p_point,p_goto`(대본 판은 점으로 가기 B3 면 점 둘레로), 끝에 목표 꼴 × 단계별 끝 수. 잰 값: `2048 600 --stage 3 --follow` 비트 동일 + 대본 판 B1/B2/B3 성공 407/312/241(앞과 같음), `--point 0.5,0.5` 비트 동일(점으로 가기 성공 B1 186·B3 95), `--strict` 비트 동일, `--negative` 실패(정상). `pnp_check` 놓을 점 독립 확인 위반 0(면 3,987·바닥 7,705·용기 0), GPU == CPU 고르기 비트 동일.
+
+## E6 — 잡기 물리(B4 집기·B5 놓기·B6 가져오기) + 대본 특권 교사 (2026-10-05)
+계획서 [CURRICULUM_BEHAVIOR2026](../../../docs/map_vla/CURRICULUM_BEHAVIOR2026.md) 5.5절(모형·가정·잰 값 전부), 판정·보상 [POLICY](../../../docs/map_vla/POLICY.md) 4.8. 예전 판(상자 방·B1–B3)은 바이트 그대로(아래 검증).
+
+| 파일 | 내용 |
+|---|---|
+| `include/grasp.h` | 장면과 무관한 기하: 상수 `KG`(가정 값 한 곳), 그리퍼 틈 ↔ 각 표, 손 축(잡는 점·a·n·b), `grasp_width`(손가락 사이에 드나), `payload_max`(그리퍼·팔 한도), 평면 역기구학 `ik_planar`·`ik_grasp`(행동 범위 안), `act_of_q` |
+| `include/env_pnp.h` | 물체 상태 `PState`(SoA `F_O_*`·`I_O_*`), 팔 충돌(점 8 + 든 물체, 제어 스텝마다 모은 후보), 받침 찾기·내려앉기, 놓을 목표·`at_goal`, 시작 `reset_pnp_start`, 서브스텝 `substeps_pnp`, 스텝 `step_core_pnp`(보상·판정) |
+| `include/teacher.h` | 대본 특권 교사 `teacher_step`: 서는 자리 찾기(잡기·놓기 계획이 되는 베이스 자세), 거리장/직선 다가가기 + 막힘 지킴이, 잡기 전 → 내려가기 → 닫기 → 들기 → 나르기 → 놓기 전 → 내리기 → 열기 → 물러나기, 떨어뜨리면 다시 잡기·막힌 자리면 옆에. 기억은 SoA `I_T_*`·`F_T_*` |
+| `tools/grasp_e7.cpp` | E7: 같은 모형을 E0 OmniGibson 잡기 시험 경우(`src/robot/og/e7/e0_cases.py` CSV)에 대 봄 |
+
+```
+cmake --build ~/ra_envbuild -j4
+~/ra_envbuild/env_verify 2048 600 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher --fail 0.005,0.3   # GPU == CPU(교사 행동 포함)
+~/ra_envbuild/env_verify 2048 600 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --arm --negative-grasp     # 실패해야 정상
+~/ra_envbuild/env_verify 1024 200 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher --negative-armcoll
+~/ra_envbuild/env_bench 200 3 4096 --pnp 1,0,0 --mix 0,0 [--teacher]
+~/ra_envbuild/pnp_check 10000 [--strict] [--emit-e7 cases.json]   # 끝에 "E6 grasp model" 줄 = 잡을 수 있음(정보)
+python3 src/robot/og/e7/e0_cases.py > cases.csv && ~/ra_envbuild/grasp_e7 cases.csv [max_w grip_top]
+```
+
+API(뒤로 맞음): `bsc::BCurr` 끝에 `p4, p5, p6, p_slip, p_occ, phys`(0 이면 예전 난수 흐름 = 같은 판), `EntKind` `EK_B4..EK_B6`(`N_EK` 7), `Entry` 끝에 `mass, st[2], src_top, dst_st[2], oyaw, odim[3]`, SoA 끝에 `F_O_*`·`F_OC_*`·`F_T_*`·`I_O_*`·`I_B_SKIP`·`I_T_*`, `DeviceEnv::teacher(act)`·`CpuEnv::teacher`. BEHAVIOR 스텝은 커널 둘(`step_kernel_beh` = 예전 판, `step_kernel_pnp` = 잡기 판 — `I_B_SKIP` 로 판마다 한 번).
+
+잰 값(5.5절): 예전 설정 끝 수·비트 그대로(A1 8,907/3,420/1,543, A2 `--arm` 21/22,170/586, stage 3 `--follow --point 0.5,0.5` 바꾸기 전 빌드와 같음). 새 판 비트 동일(위 첫 줄, 교사 행동 0 다름), 음성 대조 14,462,536·3,726,624 다름. 처리량 N 4,096: B1–B3 0.38–0.39 ms/스텝(그대로), B4 1.72, 섞음 1.74, 교사 커널 13.5 ms/스텝.

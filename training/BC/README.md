@@ -470,3 +470,7 @@ X0 464(목표 칸 2 × 16, VLA_INPUT 2.1), 토큰마다 학생의 GOAL 묶음 16
 영상 학생의 그림 2 → **3**(`IMG_NCAM`, 토큰마다 학생 L 150 → 214, IMG 묶음 192 토큰·종류 임베딩 3, arch 0 IMG_W 3,072). 셋째 그림 = map `topview.h` 의 지금 믿는 지도 그림(VLA_INPUT 1.1) — 롤아웃 스텝마다 `DeviceMap::topstate` → 기록 `d_top`(표본마다 4,448 B 더) → 모을 때·롤아웃 때 `tv_render` → 같은 얼린 SigLIP 2(`Encoder::patchify` 셋째 자리). 학생 목표 감추기와 같은 열쇠로 그림의 물체 목표 색도 감춤. 깃발 0 이면 기록 안 하고 빈 그림(상수). **주의(시험용)**: 얼린 탑이 합성 지도 그림을 잘 못 볼 수 있다 — 효과는 켬/끔 비교 학습으로 재야 함(아직 안 함).
 - 검증: `bc_verify v5 --act8` 35/35·`--arch1 --act8 --gdrop` 4/4 — 기록 = 본 것(셋째 그림 포함 38,535,168 낱말 0 다름, 셋째 그림 안 본 칸 0.875·빈칸 0.110·장애물 0.014), V6 `--arch1 --aug --raug --act8 --gdrop` 0, V7 arch1 0 / 5,132,959, `--lite` 24/24·`--negative --lite`·V6·V7·reseed 통과, `tf_verify all` 84/84. `BC_NO_TOPVIEW=1` 이면 빈 그림.
 - 잰 값(`bc_verify bench 1024 16 256 5 --arch1 --act8`, 다른 GPU 일 있음, 그림 둘 판과 번갈아): 갱신 109.7–123.6 → 162.3–163.6 ms/스텝(인코더 81 → 123–154 ms), 교사 롤아웃 + 기록 8.1 → 10.6 ms/스텝(그림 상태 만들기·기록).
+
+## E6 — 대본 특권 교사 라벨(`teacher_script`, 2026-10-05)
+- `BcConfig` 끝에 `b_p4, b_p5, b_p6, b_p_slip, b_p_occ, teacher_script`(실행기 `beh.pnp`·`beh.fail`·`teacher_script`). `teacher_script` 1 이면 롤아웃 그래프 안에서 환경의 대본 교사 커널(`env/include/teacher.h`)이 B4–B6 판의 교사 라벨(교사가 움직일 때 행동도)을 덮어쓴다(`script_label_k`, 다른 판은 체크포인트 교사). 교사 체크포인트 없이 써도 됨(`"teacher": ""`).
+- `config/bc_pnp_lite.json`(B4 0.6·B5 0.4, 지도 C0, student-lite MSE, 짧은 연결 시험): 그래프 잡힘, 교사 평가 0.153 성공(B4·B5 섞음), 기록 6 롤아웃 39 만 표본, BC 40 × 50 스텝 손실 0.242 → 0.015, DAgger 2 번 — 학생 성공 0(짧은 판이라 학습 효과는 아직 안 잼). 57 s.

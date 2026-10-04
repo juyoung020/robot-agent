@@ -535,3 +535,11 @@ X0 464 → **976**(교사 격자 16 × 16 × 2 = 512, `obs.h` 지도 값 ÷4, PO
 - snap(FNV-1a): N 1,024 T 32 3 바퀴 A1 `0d811c3c40224f56` · N 2,048 T 64 6 바퀴 A1 `--aug` `55302e302eb3295c` · N 4,096 A1 `c4f9085ecc7a98d6` · N 4,096 A2 use_map 2 `--a2 --act8 --aug` `16a7eedce65e2ed8` · env 3 use_map 2 `cd1093cc7e7a06e6` · 같은 것 `--point 0.5,0.5` `b36a77501c6eff6a`.
 - 같은 트리 검증: V4 33/33·음성 대조 실패, V5 36/36(기본 — 목표 칸 때의 35/36 이 입력이 바뀌자 36/36, 잡음 판단과 맞음)·`--g4data --a2 --act8 --aug` 36/36, V6 0(기본·`--stage 3 --point 0.5,0.5`), V7 0 / 4,077,820, obs 0(`--aug --act8 --a2`·`--stage 3 --aug --gdrop --point 0.5,0.5`) + 새 독립 검사 교사 격자 칸 = 토큰 ÷4(0 틀림), `obs --negative --aug` 다름, slotcols 0/5, switch 통과.
 - bench `4096 64 10 4 2 --stage 3`(다른 GPU 일 100 %, 목표 칸 판과 번갈아 두 번): 목표 칸 판 110.5–142.8 + 164.8–200.2 ms / 이 판 116.3–124.4 + 173.4–187.2 ms — 잡음 안.
+
+## E6 — 잡기 물리 판(B4·B5·B6) 연결 (2026-10-05)
+- `PpoBCurr` 끝에 `p4, p5, p6, p_slip, p_occ, phys`(= env `bsc::BCurr`, static_assert), 설정 `beh`/단계 `b` 의 `"pnp": [B4, B5, B6]`·`"fail": [p_slip, p_occ]`(실행기). 단계 표 줄 6–8 = B4/B5/B6(장치 커리큘럼 `metric` 6/7/8), `PpoLog` 끝에 `n_p, s_p, k_p`(36 B). BCurr 복사는 칸 셋으로(64 B).
+- 설정 `config/ppo_pnp.json`(B4 → B5 → B6 → 섞음, 행동 8, 모양 잡기 끔 — `config/README.md` "ppo_pnp").
+- **예전 해시 그대로**: `snap` 의 FNV-1a 는 기록을 E6 앞 배치(n_p 앞 + 그때의 끝 채움 4 B)로 넣어 예전과 견줌 — 여섯 판 `0d811c3c40224f56`·`55302e302eb3295c`·`c4f9085ecc7a98d6`·`16a7eedce65e2ed8`·`cd1093cc7e7a06e6`·`b36a77501c6eff6a`(앞 절과 같음, legacy-layout 도 같음). 새 기록 칸은 따로 `e6-log` 해시(예전 판 `e0fa5a0e1b0abba3`, N 1,024 판 `1a05d94e71a0f213`).
+- **새 해시**(`snap <파일> 2048 64 6 3 2 --act8 --pnp 0.25,0.25,0.25`): FNV-1a `33ed11b3acdde1b4`, legacy-layout `70ff6f388747116f`, e6-log `2ef03577444a98a1`(마지막 기록 B4/B5/B6 끝 100/7/0).
+- V6(그래프 == 즉시, `--stage 3 --act8 --pnp 0.2,0.1,0.03`) 0 낱말, V7 같은 씨앗 0 / 다른 씨앗 4,543,472, switch 6/6 같음.
+- 실행기 시험(1.5 분, `ppo_pnp.json`, N 4,096): 단계 B4 에서 188 바퀴, rollout 260–350 + update 180–230 ms/바퀴(B1–B3 약 110 + 180), B4 성공 0(처음부터 PPO — 예상대로, 대본 교사 시연으로 시작점이 필요).

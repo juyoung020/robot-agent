@@ -417,6 +417,8 @@ JSBSim 포팅의 방법: **정답의 한가운데 상태를 통째로 심고 한
 | G6 | FP8: 앞 → dgrad → wgrad 순서 | 9.1 통과 |
 | G7 | ~~BC 큰 VLA (얼린 Qwen FP8 가중치)~~ → **지도 VLA 파운데이션 모델(전부 학습, 단계 문장 + 행동)**. 사양·잰 GEMM/옵티마이저/PCIe 속도·메모리 계산·결정 목록은 [MAPVLA_SPEC.md](MAPVLA_SPEC.md) (2026-10-04, 구현 전 — 사용자 승인 대기). **M1–M3 됨(10-04, `training/vla`)**: Qwen3.5 앞·디코딩 HF 대비 끝 코사인 0.999992/하위 1 % 0.999921, 전체 학습 뒤 V5 101/101·유한 차분 4.4e-6·음성 대조 5/5·V6·V7 0 다름, 8 비트 Adam GPU == CPU, B 24 에 11.3 GB·24.2 표본/s, prefix 5.8 ms/표본, 디코딩 198 토큰/s | MAPVLA_SPEC 8절 M1–M3 (몸통 출력 코사인 평균 ≥ 0.999·하위 1 % ≥ 0.99, 탐욕 토큰 같음, V5–V7), 9.1 |
 
+- **E6 잡기 물리(2026-10-05, G1 의 연장)**: 집기·놓기 판(B4·B5·B6)과 대본 특권 교사가 같은 규칙(스레드 하나 = 판 하나, CPU 참조판 비트 동일, 음성 대조, 그래프 안·호스트 동기 0)으로 들어왔다 — CURRICULUM_BEHAVIOR2026 5.5. 예전 판 해시·끝 수 그대로. 비용: 잡기 판 환경 1.7 ms/스텝(N 4,096, B1–B3 의 약 4.5 배, 팔 충돌 점 검사), 교사 커널 13.5 ms/스텝(시연 모으기만).
+
 ## 12. 열린 문제
 
 - ~~FP8 혼합 형식~~ **(G6 에서 잼, 답)**: `mma.sync.aligned.kind::f8f6f4.m16n8k32.row.col.f32.e5m2.e4m3.f32` 가 **한 명령으로 된다**(CUDA 12.8, `sm_120a`). 무작위 16×8 출력이 CPU 정확값과 상대 7.3e-7 안(FP32 누산 수준)이고, dgrad(E5M2 dZ × E4M3 W)·wgrad 모양 V3 도 통과(`training/RL/network/tools/fp8_verify probe`·`gemm`). 같은 명령을 `sm_120`(접미사 없음)으로 빌드하면 ptxas 가 `Feature '.kind::f8f6f4' not supported on .target 'sm_120'` 로 거부한다.
