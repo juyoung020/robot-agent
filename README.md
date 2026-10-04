@@ -144,4 +144,4 @@ python3 -m pytest tests/  # 테스트 실행
 - spark_dsg — MIT 저작권 문구(`src/scene_graph/spark_dsg/LICENSE`)
 - 서브모듈 `src/behavior-2026` 은 그 저장소의 라이선스를 따른다.
 
-LOCI(지도 + VLA 파운데이션 모델, [사양](docs/map_vla/MAPVLA_SPEC.md))를 BEHAVIOR 자산으로 학습한 가중치는 비상업 연구용으로 공개한다.
+RecallVLA(지도 + VLA 파운데이션 모델, [사양](docs/map_vla/MAPVLA_SPEC.md))를 BEHAVIOR 자산으로 학습한 가중치는 비상업 연구용으로 공개한다.
