@@ -10,3 +10,13 @@
 | Tool calling 기반 Agent Loop | 물체 기억 조회, 이동, VLA 호출을 도구로 두고 LLM 이 골라 부른다 |
 | Agent State · Context 관리 | 물체 지도(JSON)와 진행 상황을 필요한 만큼만 골라 LLM 에 넣는다 |
 | Memory | 물체 기억(scene graph)을 장기 기억으로 쓰고, 대화 내용은 요약해 둔다 |
+
+## 도구 (만든 것)
+
+| 도구 | 하는 일 | 폴더 |
+|---|---|---|
+| `search_objects` | 물체 기억 찾기: 이름·동의어·상위어 → 없거나 약하면 이름 무시 생김새 재검색(벡터는 도구 안, LLM 에는 이름·속성·방·기준물·상태 글), 물을지 `ask_user` | [`tools/search_objects`](tools/search_objects/) |
+| `confirm_object` | 확인된 물체 이름 고치기(이름 사후 베이즈 갱신, 확인 기록 = 보정 데이터) | [`tools/search_objects`](tools/search_objects/) |
+| `move_robot` | 로봇 한 부분(베이스·몸통·팔·그리퍼) 직접 움직이기, 탐사 베이스 모드, VLA 실행기 | [`tools/move_robot`](tools/move_robot/) |
+
+전체 도구 설계(계획 포함)는 [`tools/README.md`](tools/README.md), [`plan.md`](plan.md) 3.3.

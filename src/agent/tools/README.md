@@ -2,11 +2,12 @@
 
 LLM 이 골라 부르는 도구를 둔다. 설계는 [`../plan.md`](../plan.md) 3.3절.
 
-원칙: id 로 말하고 좌표로 말하지 않는다, 인자는 enum·필수로 좁힌다, 결과는 짧은 JSON + `hint`, 실패는 오류 관찰값(예외로 루프를 죽이지 않음). LLM 에 보이는 도구는 8개 이하.
+원칙: id 로 말하고 좌표로 말하지 않는다, 인자는 enum·필수로 좁힌다, 결과는 짧은 JSON + `hint`, 실패는 오류 관찰값(예외로 루프를 죽이지 않음). LLM 에 보이는 도구는 8개 이하(10-05: `confirm_object` 로 9 개 — plan.md 3.3 메모).
 
 | 도구 | 하는 일 |
 |---|---|
-| `find_object` | 물체 기억에서 물체 찾기 (방·자리·마지막으로 본 시각·상태) |
+| `search_objects` | 물체 기억에서 찾기: ① 이름·동의어·상위어 → 없거나 약하면 ② 이름 무시 생김새 재검색(벡터는 도구 안, 결과는 글) — [`search_objects/`](search_objects/) |
+| `confirm_object` | 확인된 물체의 이름 고치기(이름 사후 베이즈 갱신 + 확인 기록) — [`search_objects/`](search_objects/) |
 | `describe_object` | 물체 크기·관측 수·움직인 거리, 선택하면 best view 사진 |
 | `list_place` | 방이나 가구 위·안의 물체 목록 |
 | `set_plan` | 스킬 단계 계획을 검증하고 π0.5 에게 줄 문장으로 바꾸기 |
@@ -14,6 +15,21 @@ LLM 이 골라 부르는 도구를 둔다. 설계는 [`../plan.md`](../plan.md) 
 | `ask_user` | 사용자에게 되묻기 (턴 끝냄) |
 | `report` | 진행·완료·실패 알리기 (턴 끝냄) |
 | `move_robot` | 로봇 한 부분(베이스·몸통·팔·그리퍼)을 직접 움직이고 멈출 때까지 기다리기 — [`move_robot/`](move_robot/) |
+
+## `search_objects` · `confirm_object` — 물체 찾기와 이름 고치기 (10-05)
+
+자세한 것: [`search_objects/README.md`](search_objects/README.md). LLM 은 글만 받으므로 벡터 찾기는 도구 안의 공용 물체 색인
+(behavior-2026 `src/scene_graph/clip/include/sgsearch.h`, RecallVLA 도 같은 색인)이 하고, 도구는 색인된 이름·속성과 기억의 자리 정보를 글로 준다.
+
+```json
+search_objects {"query": "라디오", "k": 5, "room": "kitchen", "state": "seen|moved|held|gone", "near": "O12"}   (query 만 필수)
+confirm_object {"id": "O27", "name": "radio", "source": "user|close_look"}                                       (셋 다 필수)
+```
+- 결과 한 후보: `id, name, name_p, alt[{name,p}], match_type(name|appearance), registered?, p_query·p_registered(appearance 일 때), attrs[색·재질·크기],
+  room, landmark{id,name,dist_m,dz_m}, state, last_seen_ago_s, dist_m, match`. 맨 위 `ask_user`(있으면 행동 전에 묻기)·`hint`·`searched`.
+  물체 사이 관계말(on/in)은 계산하지 않는다 — 기준물은 가장 가까운 고정 가구의 거리·높이 차이만.
+- 측정(BEHAVIOR 집 FastSAM 기억 283 물체): 이름만 R@5 0.22 → 이름 + 생김새 0.56, 이름으로 못 찾는 물체 R@5 0 → 0.33, 없는 물체 질의에 묻지 않고 행동할 만큼 나오는 것 0.03, 질의 ≈ 0.1 ms(자유 글 ≈ 1 ms).
+- `cargo test --release`(5개), `search-objects demo MEM 라디오`(각본), `search-objects llm MEM "라디오 가져와"`(KAU).
 
 ## `move_robot` — 관절·베이스 직접 움직이기
 

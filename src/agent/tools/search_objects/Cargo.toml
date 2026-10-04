@@ -1,0 +1,29 @@
+[package]
+name = "search_objects"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+description = "LLM 도구 search_objects · confirm_object: 물체 기억을 이름 → 생김새 순으로 찾고(벡터는 도구 안에서), 확인되면 이름을 고친다 (C ABI)"
+publish = false
+
+[lib]
+name = "search_objects"
+# rlib: 에이전트(Rust)가 그대로 쓴다. cdylib: 다른 언어(파이썬 ctypes 등)가 C ABI 로(libsearch_objects.so).
+crate-type = ["rlib", "cdylib"]
+
+[[bin]]
+name = "search-objects"
+path = "src/bin/search-objects.rs"
+
+[features]
+# `search-objects llm MEM "..."`: KAU Qwen 원형 도구 호출 루프 한 번(move_robot 과 같은 llm.rs 재사용).
+llm = ["dep:bagent"]
+
+[dependencies]
+serde_json = "1"
+bagent = { package = "behavior-agent", path = "../../../behavior-2026/src/agent/planner", optional = true }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

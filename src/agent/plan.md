@@ -156,7 +156,7 @@ skillspec (Rust, 순수 함수, 의존성 0)
 
 | 도구 | 인자 | 결과(요약) | 끝냄 |
 |---|---|---|---|
-| `search_objects` (10-05, 옛 `find_object`) | `query: string`(한국어 가능), `k: int=5`, `room?`, `state?` | 3 단계 중 ①② 를 도구 안에서: ① 이름·동의어·상위어 검색 → 없거나 약하면 ② **이름 무시 생김새 재검색**(물체별 시점 벡터로 P(질의어 \| 모습)). 결과는 글만: `[{id, name, name_p, alt:[{name,p}], match_type: name/appearance, registered?, attrs:[색·재질·크기], room, landmark, state, last_seen_ago_s, dist_m, match, ask_user?}]`, 없으면 `matches:[]` + `hint` | |
+| `search_objects` (10-05, 옛 `find_object`) | `query: string`(한국어 가능), `k: int=5`, `room?`, `state?` | 3 단계 중 ①② 를 도구 안에서: ① 이름·동의어·상위어 검색 → 없거나 약하면 ② **이름 무시 생김새 재검색**(물체별 시점 벡터로 P(질의어 \| 모습)). 결과는 글만: `{query, searched, ask_user?, hint?, matches:[{id, name, name_p, alt:[{name,p}], match_type: name/appearance, registered?, p_query·p_registered(appearance 일 때), attrs:[색·재질·크기], room, landmark{id,name,dist_m,dz_m}, state, last_seen_ago_s, dist_m, match}]}` — `ask_user` 는 후보마다가 아니라 결과 맨 위 하나(만든 것: [`tools/search_objects`](tools/search_objects/)), 없으면 `matches:[]` + `ask_user` + `hint` | |
 | `confirm_object` (10-05) | `id`, `name`, `source: enum(user, close_look)` | ③ 이름 고치기 — 물체 이름 사후에 강한 관측으로 반영, 다음부터 ① 에서 바로 찾음. 확인 기록은 보정 데이터 | |
 | `describe_object` | `id`, `with_image: bool=false` | 크기·높이·관측 수·처음 자리에서 움직인 거리 + (선택) best view RGB 256 px(`sm_snap_view`) | |
 | `list_place` | `place: string`(방 또는 가구 id) | 그 방/가구 위·안의 물체 표(최대 15) | |

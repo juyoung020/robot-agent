@@ -430,6 +430,39 @@
 | 에이전트 계획 바꾸기 | `src/agent` 프롬프트·`set_plan` | 집기·놓기 과제를 단계로 쪼개지 않고 목표 하나로 넘김. 단계 기록으로 사람에게 진행 보고 |
 | 단계 라벨 생성기 | GPU 시뮬(E2 샘플러) | 국면 열 → 단계 문장 표(영·한)와 표본마다 라벨 번호(M4) |
 
+## 공용 물체 찾기 (10-05)
+
+결정과 이유는 맨 앞 결정 기록 2026-10-05 "검색도 RecallVLA 가 한다 + 에이전트도 한다(같은 색인)" 줄. 여기는 만든 것의 세부만.
+
+**한 색인, 두 사용자** — behavior-2026 `src/scene_graph/clip/include/sgsearch.h`(C++, `libsgclip_c.so`, 커밋 `5b969e7`)
+
+| 사용자 | 질의 | 받는 것 |
+|---|---|---|
+| 에이전트 도구 [`search_objects`·`confirm_object`](../../src/agent/tools/search_objects/README.md) | 글(영·한) → 라벨 표 이름 또는 SigLIP 2 글 인코더(TensorRT, 0.8 ms) | `sgs_search_json` → 도구가 방·기준물·상태·경과·거리를 붙여 **글** |
+| RecallVLA 실행기(9절 실행기 접점 뒤) | 몸통이 낸 질의 벡터 q(768, SigLIP 2 글 공간) | `sgs_search_vec(q, K)` → 상위 K `{id, score = P_app(q\|물체), cos}` → 물체 칸 |
+
+**색인 형식**(기억 폴더 안, 상세 [clip README "물체 찾기"](../../src/behavior-2026/src/scene_graph/clip/README.md))
+- 물체 벡터(원본): A′ `objects/O<id>_views.f16`(n × 768 FP16) · `objects/O<id>_emb.f16`(μ). A′ 전 기억은 best view 사진을 영상 엔진으로 뽑아 `cache/objsearch/O<id>_view.f16`.
+- 이름: view.json `name`(등록), A′ `name_post`(들어오면). 확인 `confirmations.jsonl`(원본, 보정 데이터). `cache/objsearch/names.json` 은 다시 셀 수 있는 캐시.
+- 물체 안 상대 확률 `P_app(c|o) = softmax_c 평균_v log softmax_c(t · cos(z_v, 글_c))`(라벨 = main synset 3,244 + 이 기억의 이름), 이름 사후 = 바탕 × 등록 우도비 3 × 확인 우도비(user 50, close_look 10).
+
+**3 단계 재검색**: ① 이름(등록·확인 이름, 동의어, 아래말) → p_name 최고 < 0.5 면 자동으로 ② 이름 무시 생김새(`p_query ≥ 0.1`, 물체 안 질의 순위 1 — 등록 이름 빼고),
+이름으로 확실한 물체가 있으면 영상↔영상 cos 도 → ③ `confirm_object` 로 이름 사후 갱신, 다음엔 ① 에서. 생김새로만 찾은 후보·비슷한 후보 둘·약한 후보에는 `ask_user`.
+
+**측정**(BEHAVIOR 집 LIMO 탐사 기억, FastSAM-s + SigLIP 2, 283 물체 — 정답 종류 질의 18·없는 물체 질의 40):
+
+| | R@1 | R@5 | 이름으로 못 찾는 물체 R@5 | 없는 물체 헛찾음 (묻지 않고 행동) | 지연 |
+|---|---|---|---|---|---|
+| 이름만 | 0.11 | 0.22 | 0.00 | 0.05 (0.03) | ≈ 0.1 ms |
+| 이름 + 생김새 | 0.39 | 0.56 | 0.33 | 0.15 (0.03) | ≈ 0.1 ms, 자유 글 ≈ 1 ms |
+
+같은 장면 slam 자세 판(296 물체) 0.39·0.50·0.33·0.15 (0.05). 라디오 실제 사례: 4 조각 중 "speaker"·"bag" 로 등록된 둘이 생김새로 1·2 위, 확인 뒤 사후 0.13 → 0.88.
+VLA 질의 벡터 쪽(`sgs_search_vec`)은 학습된 q 가 없어 아직 재지 않았다(가짜 기억 시험만).
+
+**뒤 VLA 학습에 쓸 것**(구현 안 함 — 9절 후속): (1) 학습 장면에서 **일부 물체 이름을 일부러 틀리게**(다른 종류 이름·상위어·빈 이름) 넣어 물체 칸의 이름 확률보다
+생김새 벡터를 믿게, (2) 에이전트 **힌트 id 지우기(hint dropout)·틀린 힌트** 섞기 — 힌트가 없거나 틀려도 자기 검색 상위 K 로 찾게, (3) 검색 InfoNCE 의 음성으로
+같은 이름·다른 생김새 물체, (4) `confirmations.jsonl` 의 확인 기록(질의·등록 이름·그때 확률)을 우도비·문턱 보정과 검색 평가 자료로.
+
 ## 출처
 - 모델 파일: `training/model/Qwen3.5-2B`(sha256 `aa33250c…`, revision `15852e8`, 4,548,221,488 B), `training/model/Qwen3.5-0.8B`(sha256 `04b1c301…`, revision `2fc0636`, 1,746,942,600 B, 2026-10-04 받음), HF `transformers` 5.18 `models/qwen3_5/modeling_qwen3_5.py`.
 - 측정 도구(작업 디렉터리, 저장소 밖): `gemm_bench.cu`(RL `gemm.cuh` 를 include), `cpu_adam.cpp`, `pcie.cu`.
