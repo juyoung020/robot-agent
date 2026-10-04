@@ -133,7 +133,8 @@ set -a; . ~/.config/behavior-2026/kau.env; set +a              # 키는 환경�
 # 시뮬(OmniGibson, 머리 RGB-D, VRAM ≥ 9 GB·RAM ≥ 16 GB 될 때까지 기다림)
 cmake -S ../../../behavior-2026/src/scene_graph/runtime -B ~/sgrt_build_explore && cmake --build ~/sgrt_build_explore -j
 ../../../behavior-2026/src/sim/explore/run_explore.sh frontier bringing_water <tag>    # 또는 llm
-../../../behavior-2026/src/sim/explore/viewer_8080.sh <run dir>                        # 8080 뷰어를 이 판으로(하나만)
+../../../behavior-2026/src/sim/explore/viewer_8080.sh <run dir>                        # 8080 sgview 를 이 판으로(파일 모드, 하나만)
+# 실시간 뷰어(소켓 → SSE): 저장소 루트에서 tools/run_explore_live.sh frontier bringing_water <tag>  (LIMO: SGRT_ROBOT=limo_omx)
 ./target/release/decisions-agg ../../../behavior-2026/outputs/explore_*/ --by policy
 ```
 시뮬 판 기본은 `SGRT_POSE=slam`(실제 로봇과 같음 — 오도메트리 + 스캔 맞추기, 위치 오차까지 시험, 10-03 부터). 시뮬은 실제 로봇과 같은 방식으로 돌아야 하므로 성능·점수는 `slam` 판에서 잰다([계획](../../../../docs/plan.md)). 정답 자세(map = world)는 지도·탐사를 떼어 보는 확인용으로 `SGRT_POSE=gt` 를 줄 때만.

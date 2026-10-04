@@ -25,7 +25,7 @@
 | `ovdet/` | 열린 어휘 검출기 (YOLOE, TensorRT, C API) |
 | `clip/` | sgclip: 물체 조각 → SigLIP 2 B/32 영상 임베딩(TensorRT) + 라벨 표 찾기 (C++/CUDA, 작업 중). 후보 조사: [docs/clip_candidates.md](../docs/clip_candidates.md), 라벨 표·학습: [training/README.md](../training/README.md) |
 | `runtime/` | sgrt: 평가기(또는 로봇) 프로세스 안에서 물체 기억을 굴리는 C ABI 하나. 자세는 `SGRT_POSE` |
-| `sgview/` | 물체 기억 실시간 뷰어 (Rust 서버 + three.js) |
+| `sgview/` | **장면 그래프 뷰어 = sgview** (Spark-DSG 장면 그래프 보기, Rust 서버 + three.js, 실시간). 실행: `tools/run_sgview.sh <memory_dir> [--live]`, 탐사 + 뷰어 `tools/run_explore_live.sh`. [sgview/README.md](scene_graph/sgview/README.md) |
 | `spark_dsg/` | Spark-DSG 우리 사본(BSD-3, 바꾼 것은 `OUR_CHANGES.md`) |
 
-파이썬 뷰어 sgviz(Spark-DSG + viser)는 서브모듈의 `behavior-2026/src/scene_graph/viewer/` 에만 있다.
+옛 파이썬 뷰어 sgviz(Spark-DSG + viser, 서브모듈 `behavior-2026/src/scene_graph/viewer/`)는 파일 폴링이라 실시간이 아니고 **쓰지 않는다**(기록용). 뷰어는 sgview 하나다.

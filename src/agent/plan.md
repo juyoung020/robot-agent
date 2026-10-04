@@ -209,7 +209,7 @@ Pending ─▶ Approach(move to) ─▶ Acquire(보이나?) ─▶ Execute(VLA s
 | 리모 | **앱에서 사람이 2D 지도 위에 영역을 그리고 이름 붙임**(한 번) → `rooms.json` | 가장 정확·간단. 그리기 전에는 가구 규칙 추론 |
 
 - `RoomMap` 은 `(x, y) → RoomLabel{id, name_ko, name_en, source: gt/bddl/rule/user}`. 답에서 `source=rule` 이면 "부엌 쪽" 처럼 흐리게 말한다.
-- scenemap 팀 코드에 요청: `sm_set_rooms(ctx, grid, names)` 로 받아 DSG ROOMS 층과 `scene.json` 에 같이 저장(뷰어 sgviz 에도 보이게). 그 전까지는 `ragent` 쪽에서만 붙인다.
+- scenemap 팀 코드에 요청: `sm_set_rooms(ctx, grid, names)` 로 받아 DSG ROOMS 층과 `scene.json` 에 같이 저장(뷰어 sgview 에도 보이게). 그 전까지는 `ragent` 쪽에서만 붙인다.
 
 ### 3.6 기준물·관계 (`landmark.rs`)
 

@@ -76,7 +76,8 @@ robot-agent/
 │   ├── vla/         # ③ 작은 계획·행동 (VLA, π0.5)
 │   ├── app/         # 휴대폰 앱 (iOS·Android, 채팅으로 명령)
 │   └── behavior-2026/ # 서브모듈: BEHAVIOR Challenge 2026 (시뮬레이터에서 같은 구조를 시험)
-│       ├── src/scene_graph/ # 물체 기억 원본: scenemap·da·ovdet·clip(물체 영상 임베딩)·runtime(sgrt)·sgview·viewer
+│       ├── src/scene_graph/ # 물체 기억 원본: scenemap·da·ovdet·clip(물체 영상 임베딩)·runtime(sgrt)·sgview
+│       │                    #   뷰어 = sgview(Rust, 실시간): tools/run_sgview.sh · tools/run_explore_live.sh. viewer/(sgviz, Python)는 옛 뷰어(실시간 아님, 안 씀)
 │       │                    #   spark_dsg/: Spark-DSG 우리 수정본 (BSD-3, 층 3개로 줄임 · mesh/zmq 제거)
 │       ├── tools/   #   실행·측정·검증 스크립트
 │       └── archive/ #   지금 안 쓰는 모듈 (지우지 않고 옮겨 둠)

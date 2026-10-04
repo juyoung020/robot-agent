@@ -143,7 +143,7 @@
 
 - Hydra·Khronos 가 쓰는 형식이라 참고 코드의 도구를 그대로 쓸 수 있다. 층·방·물체 계층을 지원한다.
 - 기억 폴더: `scene.json`(Spark-DSG), `objects/`(물체마다 RGB·depth·마스크·점구름·임베딩 = 원본), `cache/`(이름·찾기 색인 = 지워도 다시 만듦). 지도 자세는 `SGRT_POSE`(`slam`·`odom`·`gt`, 시뮬은 `gt`)로 고른다.
-- 보기는 **2D 지도** 뷰어 sgviz(서브모듈 `src/behavior-2026/src/scene_graph/viewer`, Spark-DSG + viser). spark-dsg 의 웹 3D 뷰어는 안 쓴다(10-02).
+- 보기는 **2D 지도** 뷰어 **sgview**(Rust 서버 + three.js, `src/scene_graph/sgview`, 실행 `tools/run_sgview.sh`·`tools/run_explore_live.sh`, sgrt 소켓 → SSE 60 Hz 이상). spark-dsg 의 웹 3D 뷰어는 안 쓴다(10-02). 처음 쓰던 Python 뷰어 sgviz(서브모듈 `scene_graph/viewer`, Spark-DSG + viser)는 파일 폴링이라 실시간이 아니어서 기록용으로만 남겼다.
 
 agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 
