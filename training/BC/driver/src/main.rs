@@ -6,6 +6,7 @@
 // "dagger": false 면 같은 횟수를 교사가 움직이며 기록한다(자료 양·학습 양이 같은 대조 = BC + 교사 자료 더).
 // 단계 안에서는 그래프를 띄우고 끝난 기록을 이벤트로 꺼내기만 한다(기다리지 않음). 동기는 단계 경계(환경 다시 만들기, 표 읽기, 저장)뿐.
 use serde_json::{json, Value};
+mod runfolder; // 학습 뷰어 실행 폴더(run.json · progress.jsonl · evals, TRAIN_VIEWER.md 4절) — 기록 꺼낼 때만
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -106,6 +107,7 @@ struct Run {
     phase: String,
     t0: Instant,
     logs: Vec<BcLog>,
+    rf: Option<runfolder::RunFolder>,
 }
 impl Run {
     fn drain(&mut self) {
@@ -114,6 +116,7 @@ impl Run {
             writeln!(self.csv, "{},{:.2},{},{},{},{},{},{},{:.6},{:.4},{:.6},{},{:.4},{:.4},{:.4},{},{},{},{:.4},{:.4},{:.4},{:.3}",
                 self.phase, self.t0.elapsed().as_secs_f64(), l.seq, l.kind, l.actor, l.record, l.count, l.adam_t, l.loss, l.grad_norm, l.disagree,
                 l.n_eps as i64, l.succ, l.coll, l.tout, l.n_c[0] as i64, l.n_c[1] as i64, l.n_c[2] as i64, l.s_c[0], l.s_c[1], l.s_c[2], l.gpu_ms).unwrap();
+            if let Some(r) = self.rf.as_mut() { r.log(&self.phase, &l, self.t0.elapsed().as_secs_f64()); }
             self.logs.push(l);
         }
     }
@@ -252,7 +255,8 @@ fn main() {
     }
     let mut csv = fs::File::create(out.join("log.csv")).unwrap();
     writeln!(csv, "phase,wall_s,seq,kind,actor,record,count,adam_t,loss,grad_norm,disagree,n_eps,succ,coll,tout,n_c0,n_c1,n_c2,succ_c0,succ_c1,succ_c2,gpu_ms").unwrap();
-    let mut run = Run { h, csv, phase: String::new(), t0: Instant::now(), logs: vec![] };
+    let rf = runfolder::open(&out, &args[1], &v, &c, &teacher, dagger, nd, unsafe { bc_num_params(h) }, unsafe { bc_device_bytes(h) });
+    let mut run = Run { h, csv, phase: String::new(), t0: Instant::now(), logs: vec![], rf };
     println!("bc_run: N {} T {} mb {} K {} cap {} student params {} device {:.2} GB, teacher {}, dagger {} | vision {} text {} head {} (chunk {}, flow steps {}) render profile {}",
         c.n_env, c.horizon, c.mb, c.upd_steps, c.cap, unsafe { bc_num_params(h) }, unsafe { bc_device_bytes(h) } as f64 / 1e9, teacher, dagger,
         c.vision, c.text, if c.head != 0 { "flow" } else { "mse" }, c.chunk, c.flow_steps, c.render_profile);
@@ -272,6 +276,10 @@ fn main() {
             name, if actor == 0 { "teacher" } else { "student" }, a["success"].as_f64().unwrap(), a["collision"].as_f64().unwrap(), a["timeout"].as_f64().unwrap(),
             a["episodes"].as_f64().unwrap(), st["C0"]["success"].as_f64().unwrap(), st["C0"]["collision"].as_f64().unwrap(), st["C1"]["success"].as_f64().unwrap(),
             st["C1"]["collision"].as_f64().unwrap(), st["C2"]["success"].as_f64().unwrap(), st["C2"]["collision"].as_f64().unwrap(), t.elapsed().as_secs_f64());
+        if let Some(r) = run.rf.as_mut() {
+            let ck = if actor == 1 { Some(out.join(format!("student_{}.bin", name))) } else { None };
+            r.eval(name, actor, &tj, ck.as_deref(), run.t0.elapsed().as_secs_f64());
+        }
         results.insert(name.to_string(), tj);
         fs::write(out.join("results.json"), serde_json::to_string_pretty(&Value::Object(results.clone())).unwrap()).unwrap();
     };
@@ -318,5 +326,6 @@ fn main() {
         eval(&mut run, &nm, 1, &mut results);
     }
     println!("done: {:.1} s wall", run.t0.elapsed().as_secs_f64());
+    if let Some(r) = run.rf.as_mut() { r.finish(run.t0.elapsed().as_secs_f64()); }
     unsafe { bc_destroy(h) };
 }

@@ -8,6 +8,7 @@
 // 처음 지도(metric: 0 C0, 1 C1, 2 C2, -1 전체)의 에피소드 성공률(최근 window 바퀴 에피소드 가중) ≥ promote.
 // 지도 비율만 바뀌면 장치 값 복사 하나(ppo_set_map_curriculum — 동기·그래프 다시 잡기 없음), 환경 단계가 바뀌면 예전처럼 ppo_set_stage.
 use serde_json::Value;
+mod runfolder; // 학습 뷰어 실행 폴더(run.json · progress.jsonl, TRAIN_VIEWER.md 4절) — 기록 스레드에서만
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -212,10 +213,11 @@ enum Msg {
     Log(PpoLog, f64),
     Ckpt(Vec<u8>, PathBuf),
     Note(String),
+    Stage(usize, f64), // 커리큘럼 단계 번호(실행 폴더 기록용)
 }
 
 // 기록 스레드: CSV 한 줄씩 + print_every 마다 화면 요약, 체크포인트 파일 쓰기(임시 파일 → 이름 바꾸기)
-fn writer(rx: mpsc::Receiver<Msg>, out: PathBuf, n_per_iter: f64, print_every: i64) {
+fn writer(rx: mpsc::Receiver<Msg>, out: PathBuf, n_per_iter: f64, print_every: i64, mut rf: Option<runfolder::RunFolder>) {
     let mut csv = fs::File::create(out.join("log.csv")).expect("log.csv");
     writeln!(
         csv,
@@ -236,6 +238,7 @@ fn writer(rx: mpsc::Receiver<Msg>, out: PathBuf, n_per_iter: f64, print_every: i
                     l.goal_known
                 )
                 .unwrap();
+                if let Some(r) = rf.as_mut() { r.log(&l, wall, gpu_sps); }
                 if l.iter % print_every == 0 || l.iter == 1 {
                     println!(
                         "it {:5}  steps {:10.3e}  t {:6.0}s  A{}  succ {:.3} coll {:.3} tout {:.3}  C0/1/2 {:.2}/{:.2}/{:.2} (n {}/{}/{})  goal {:.2}  len {:5.1}  kl {:.4} lr {:.1e} σ {:.2}/{:.2}  roll {:.1}+upd {:.1} ms ({:.2e} st/s)",
@@ -248,14 +251,17 @@ fn writer(rx: mpsc::Receiver<Msg>, out: PathBuf, n_per_iter: f64, print_every: i
                 let tmp = p.with_extension("tmp");
                 fs::write(&tmp, &b).expect("ckpt write");
                 fs::rename(&tmp, &p).expect("ckpt rename");
+                if let Some(r) = rf.as_mut() { r.ckpt(&p); }
                 writeln!(notes, "checkpoint {}", p.display()).unwrap();
             }
             Msg::Note(s) => {
                 println!("{}", s);
                 writeln!(notes, "{}", s).unwrap();
             }
+            Msg::Stage(si, wall) => if let Some(r) = rf.as_mut() { r.stage(si, wall); },
         }
     }
+    if let Some(r) = rf.as_mut() { r.finish(0.0); }
 }
 
 fn main() {
@@ -304,7 +310,8 @@ fn main() {
     let n_per_iter = (c.n_env as f64) * (c.horizon as f64);
     let (tx, rx) = mpsc::channel::<Msg>();
     let out_w = out.clone();
-    let wt = std::thread::spawn(move || writer(rx, out_w, n_per_iter, print_every));
+    let rf = runfolder::open(&out, &args[1], &v, &c, &stages, window, resume.as_deref(), unsafe { ppo_num_params(h) }, unsafe { ppo_device_bytes(h) });
+    let wt = std::thread::spawn(move || writer(rx, out_w, n_per_iter, print_every, rf));
     unsafe {
         tx.send(Msg::Note(format!(
             "ppo_run: N={} T={} epochs={} minibatches={} params={} device {:.2} GB, goal_from_map {}, use_map {}, budget {} min, out {}\n  stages {:?}",
@@ -328,6 +335,7 @@ fn main() {
             ppo_set_map_curriculum(h, stages[si].p0, stages[si].p1, c.map_kmin, c.map_kmax, c.map_reveal_r);
         }
         tx.send(Msg::Note(format!("start at stage {} ({:?})", si, stages[si]))).unwrap();
+        tx.send(Msg::Stage(si, 0.0)).unwrap();
     }
 
     let t0 = Instant::now();
@@ -383,6 +391,7 @@ fn main() {
                     pending_env = true;   // 환경을 새로 만들어야 함: 띄운 바퀴가 다 끝난 뒤
                 } else {
                     si += 1;
+                    tx.send(Msg::Stage(si, t0.elapsed().as_secs_f64())).unwrap();
                     unsafe { ppo_set_map_curriculum(h, nx.p0, nx.p1, c.map_kmin, c.map_kmax, c.map_reveal_r) };
                     ignore_upto = unsafe { ppo_issued(h) };
                     tx.send(Msg::Note(format!("curriculum: now {} (first map C0 {:.2} C1 {:.2} C2 {:.2}: device value, no sync, no recapture; from iter {})",
@@ -410,6 +419,7 @@ fn main() {
         let idle = unsafe { ppo_inflight(h) } == 0;
         if pending_env && idle && !ckpt_pending {
             si += 1;
+            tx.send(Msg::Stage(si, t0.elapsed().as_secs_f64())).unwrap();
             let nx = &stages[si];
             let r = unsafe { ppo_set_stage(h, nx.env) };
             assert_eq!(r, 0);

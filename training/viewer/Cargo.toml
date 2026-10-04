@@ -1,0 +1,25 @@
+[package]
+name = "trainview"
+version = "0.1.0"
+edition = "2021"
+description = "학습 뷰어(TRAIN_VIEWER.md): 실행 폴더를 읽기만 하는 Rust 서버 + 순수 JS 화면(곡선·표·재생 3D·비교). sgview 틀(std TcpListener + 연결마다 스레드, SSE)."
+
+[dependencies]
+serde_json = "1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+trainfmt = { path = "trainfmt" }
+
+[[bin]]
+name = "trainview"
+path = "src/main.rs"
+
+[[bin]]
+name = "fake_run"
+path = "src/bin/fake_run.rs"
+
+[[bin]]
+name = "csv2run"
+path = "src/bin/csv2run.rs"
+
+[profile.release]
+opt-level = 3

@@ -1,6 +1,6 @@
 # 학습 뷰어 설계 — RL 교사·BC 학생·DAgger·RL 다듬기 (Rust 서버 + 브라우저)
 
-작성 2026-10-03. **설계 문서**다. 코드는 아직 없다.
+작성 2026-10-03. 설계 문서. **구현 상태는 13절**(2026-10-04: V0–V4 와 V5 의 평가 표 — 코드 `training/viewer/`, 사용법 [training/viewer/README.md](../../training/viewer/README.md)).
 - 무엇을 학습하나는 [POLICY.md](POLICY.md), 학습 고리·로그 링 버퍼는 [GPU_TRAINING.md](GPU_TRAINING.md), 입력은 [VLA_INPUT.md](VLA_INPUT.md), 실행 기록 위치는 [training/README.md](../../training/README.md).
 - 본보기 둘: 사용자의 전투기 RL 학습 뷰어(`~/aircombat-rl-private/student/viewer/`, 이하 **전투기 뷰어**)와 팀의 Rust 실시간 뷰어 [sgview](../../src/scene_graph/sgview/README.md).
 - 표기: **(추정)** = 재지 않은 숫자·판단. 지금 있는 코드에 대한 말은 직접 열어 보고 확인한 것만 적었다(파일 경로를 붙임).
@@ -583,6 +583,42 @@ trainfmt/             (쓰는 쪽과 같이 쓰는 형식 크레이트, 4.6)
 | 슬롯 정밀도 | f16 / f32 | f16 (16–32 m 에서 1.6 cm 단위, 4.4) |
 | 원격 보기 | 127.0.0.1 + SSH 터널 / 0.0.0.0 | 127.0.0.1 기본 |
 | std `TcpListener` 대기열 | Rust std 가 `listen` 에 주는 값 | 확인할 것. 작으면 전투기 뷰어처럼 연결 거부가 난다 |
+
+## 13. 구현 상태 (2026-10-04)
+
+코드: `training/viewer/`(서버 `trainview`, 형식 크레이트 `trainfmt/`, 도구 `fake_run`·`csv2run`, 화면 `assets/`). 학습기 쪽: `training/RL/ppo/driver/src/runfolder.rs`, `training/BC/driver/src/runfolder.rs`(각 `main.rs` 에는 기록 경로에 몇 줄만 더함). 확인한 값은 [viewer README](../../training/viewer/README.md) "확인한 것".
+
+| 단계 | 상태 | 비고 |
+|---|---|---|
+| V0 `trainfmt` + `fake_run` | **됨** | 되감기(trim 없는 재개), 반쪽 줄, 줄기, labs, .trp(프레임·f16 슬롯·MAP_RECT 지도), 평가 표, 씨앗 묶음. `"synthetic": true` |
+| V1 서버(목록·메타·이어 읽기·열 저장소) + 학습 탭(카드·곡선) | **됨** | 되감긴 줄 걷기, 반쪽 줄 안 받음, ino·길이로 새 파일 판정(sig), 64 KB 넘으면 gzip, 10 분 안 본 실행 내림 |
+| V2 성공 표 + 고장 무늬 검사 | **됨** | 표 숫자 = 직접 센 값. 검사 8 개, 못 잰 검사는 이유와 함께 따로 |
+| V3 `.trp` 재생 탭 | **화면은 됨, 쓰는 쪽은 fake_run 뿐** | 로봇(sgview 모델)·참/slam 궤적·손끝·물체 칸·자라는 지도·보상 띠·HUD·시점 4. 진짜 학습기의 판 기록은 남은 일 |
+| V4 SSE 실시간 + 비교 탭 | **됨** | 실제 `ppo_run` 짧은 실행으로 화면 갱신 확인. 씨앗 묶음 평균 ± σ 띠 |
+| V5 평가 표 | **됨(bc_run)** | `bc_run` 평가마다 `evals/*.json`. 영상 칸은 화면만(쓰는 쪽 없음), FP8 묶음은 키가 오면 그림(지금 학습기는 `fp8/*` 감시 값을 안 냄) |
+
+학습기가 지금 쓰는 것(4절 중):
+
+| 파일 | `ppo_run` | `bc_run` |
+|---|---|---|
+| `run.json`(schema·kind·group·seed·pid·pid_start·segments·git·config·refs·curriculum) | ✓ | ✓ |
+| `latest.txt` | ✓ | ✓ |
+| `progress.jsonl`(≤ 1 줄/s 합침, 안 잰 키 뺌) | ✓ 기록 스레드 | ✓ `Run::drain`(끝난 기록 꺼낼 때) |
+| 재개 trim + segments | ✓ | — (bc_run 에 재개 없음) |
+| `evals/` | — | ✓ |
+| `episodes.jsonl`, `replays/*.trp`, `s_<줄기>/` | — | — |
+
+설계와 다르게 한 것:
+- 곡선은 **축 하나**다. 6.2 의 "오른쪽 축에 겹침"(보상 항목 + 리턴·성공률, EV + 가치 손실)은 그림을 나눴다(이중 축은 눈금이 서로를 속인다).
+- SSE 는 연결마다 한 스레드가 1 초마다 stat 한다(5.8 의 감시 스레드 하나 + 방송 대신). 클라이언트마다 줄 커서가 따로라 다시 붙어도 줄이 빠지거나 겹치지 않는다.
+- 실행 찾기는 뿌리 밑 깊이 4 까지(`~/ra_ppoout/g5/t4/on_s1` 같은 지금의 실행 나무를 그대로 `--root` 로 볼 수 있게). 실행 이름 = `<뿌리 이름>/<상대 경로>`.
+- PPO 는 `kind` 를 설정의 `"kind"`(없으면 teacher)로, `group` 은 설정의 `"group"`(없으면 설정 파일 이름)으로 정한다. BC 는 DAgger 바퀴가 있으면 `dagger`, 없으면 `bc`.
+- 판마다 줄이 없는 학습기라 `rollout/success/<스킬>` 등은 장치 링의 바퀴 합계(모집단)다. DAgger 의 교사 몬 판은 줄기 폴더 대신 `rollout_teacher/*` 키로 갈랐다(판 줄이 없으므로).
+
+남은 일:
+1. 장치 쪽 판 기록(판 끝마다 줄, 고른 환경의 프레임 링) → `episodes.jsonl`·`.trp`·`s_eval/`. CUDA·그래프 변경이라 이번에 하지 않음(FP8 작업과 겹침).
+2. PPO 장치 기록에 없는 키: `train/explained_variance`, `log/*_dropped`, `reward/<스킬>/<항>`, 접촉 수, `fp8/*` 감시 값.
+3. 영상(JPEG) 쓰는 쪽, 큰 progress 첫 읽기의 "읽는 중 n %", 그리퍼 → 두 관절 식(URDF 확인), training/README 의 `args.json` → `run.json` 정리(12절)는 README 에 한 줄 더함.
 
 ## 출처
 

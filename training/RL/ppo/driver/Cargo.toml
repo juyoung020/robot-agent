@@ -6,3 +6,4 @@ description = "RL 교사 PPO 실행기(G3): 설정 읽기, 실행 순서, 커리
 
 [dependencies]
 serde_json = "1"
+trainfmt = { path = "../../../viewer/trainfmt" }   # 학습 뷰어 실행 폴더 규약(TRAIN_VIEWER.md 4절)

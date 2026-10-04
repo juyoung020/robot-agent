@@ -1,0 +1,8 @@
+[package]
+name = "trainfmt"
+version = "0.1.0"
+edition = "2021"
+description = "학습 실행 폴더 규약(TRAIN_VIEWER.md 4절): run.json · progress.jsonl · episodes.jsonl · evals · replays/*.trp. 쓰는 쪽(ppo_run·bc_run·fake_run)과 읽는 쪽(trainview)이 같이 쓴다."
+
+[dependencies]
+serde_json = "1"

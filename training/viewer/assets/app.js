@@ -1,0 +1,634 @@
+// trainview 화면 — 학습·재생·비교 탭 (TRAIN_VIEWER.md 6절). 순수 ES 모듈, 빌드 단계 없음.
+// DOM 은 한 번 짓고 바뀐 글자만 바꾼다. 캔버스는 내용 서명이 바뀔 때만 다시 그린다. 보이지 않는 탭은 그리지 않는다.
+import { Plot, ema, fmt, color, esc, hist, cssv } from "./charts.js";
+import { Replay } from "./replay.js";
+
+const $ = id => document.getElementById(id);
+const enc = encodeURIComponent;
+async function api(path, q = {}) {
+  const u = path + "?" + Object.entries(q).filter(([, v]) => v !== undefined && v !== null).map(([k, v]) => k + "=" + enc(v)).join("&");
+  const r = await fetch(u);
+  return r.json();
+}
+function setText(el, t) { if (typeof el === "string") el = $(el); if (el && el.textContent !== t) el.textContent = t; }
+function setHTML(el, h) { if (typeof el === "string") el = $(el); if (el && el._h !== h) { el.innerHTML = h; el._h = h; } }
+
+const S = {
+  runs: [], byId: {}, latest: null, sel: null, meta: null, d: null, keys: [], tab: "train",
+  xmode: "env_steps", ema: 0.6, cursorPos: 1000, es: null, poll: null, retry: null,
+  eps: 0, rep: 0, plots: [], built: "", epsRows: null, cmpSel: new Set(), cmpData: {}, cmpKeys: {},
+};
+const KIND_ROW = { teacher: "teacher", bc: "student", dagger: "student", rlft: "student", eval: "student", lab: "labs" };
+const STOPS = [10, 20, 50, 100, 200, 500, 0];
+const replay = new Replay({ api, getCursorIter: () => cursorIter() });
+
+// ---------------------------------------------------------------- 실행 목록
+function shortName(r) { return r.id.split("/").slice(1).join("/") || r.id; }
+async function loadRuns() {
+  let j;
+  try { j = await api("/api/runs"); } catch (e) { setText("conn", "서버 없음"); return; }
+  S.runs = j.runs; S.byId = Object.fromEntries(j.runs.map(r => [r.id, r])); S.latest = j.latest;
+  for (const row of ["teacher", "student", "labs"]) {
+    const rs = j.runs.filter(r => (r.lab ? "labs" : KIND_ROW[r.kind] || "teacher") === row);
+    const h = rs.map(r => `<span class="chip${r.id === S.sel ? " on" : ""}" data-id="${esc(r.id)}" title="${esc(r.id)}\n${esc(r.dir)}${r.synthetic ? "\n(synthetic — fake_run)" : ""}${r.imported_from ? "\n(imported from " + esc(r.imported_from) + ")" : ""}">${r.live ? '<span class="dot"></span>' : ""}${esc(shortName(r))}<span class="k">${esc(r.kind)}${r.synthetic ? " · syn" : ""}${r.imported_from ? " · csv" : ""}</span></span>`).join("") || '<span class="muted small">없음</span>';
+    setHTML("pick_" + row, h);
+  }
+  if (!S.sel) {
+    const want = new URLSearchParams(location.hash.slice(1)).get("run");
+    selectRun(want && S.byId[want] ? want : j.latest || (j.runs[0] && j.runs[0].id));
+  } else updateStatus();
+  buildCompareList();
+}
+document.addEventListener("click", e => {
+  const c = e.target.closest(".chip"); if (c && c.dataset.id) selectRun(c.dataset.id);
+});
+
+function updateStatus() {
+  const r = S.byId[S.sel]; if (!r) return;
+  setText("runname", r.id);
+  let b = "";
+  if (r.live) b += '<span class="badge live">training</span>';
+  b += `<span class="badge">${esc(r.kind)}</span>`;
+  if (r.synthetic) b += '<span class="badge syn" title="fake_run 이 만든 가짜 실행">synthetic</span>';
+  if (r.imported_from) b += `<span class="badge syn" title="${esc(r.imported_from)}">imported csv</span>`;
+  setHTML("badges", b);
+  const d = S.d;
+  const last = d && d.total ? lastAt("time/iter", d.total - 1) : null;
+  const age = r.age != null ? (r.age < 120 ? r.age.toFixed(0) + " s 전" : r.age < 7200 ? (r.age / 60).toFixed(0) + " 분 전" : (r.age / 3600).toFixed(1) + " 시간 전") : "—";
+  setText("status", `iter ${fmt(last)} · 줄 ${d ? d.total : 0}${d && d.rewound ? ` (되감김 ${d.rewound} 줄 뺌)` : ""} · 표본 판 ${r.eps} · 마지막 기록 ${age}`);
+}
+
+async function selectRun(id) {
+  if (!id) return;
+  S.sel = id; S.d = null; S.meta = null; S.built = ""; S.epsRows = null;
+  const h = new URLSearchParams(location.hash.slice(1)); h.set("run", id); history.replaceState(null, "", "#" + h.toString());
+  document.querySelectorAll(".chip").forEach(c => c.classList.toggle("on", c.dataset.id === id));
+  stopLive();
+  setHTML("groups", ""); setHTML("cards", ""); setHTML("checks", ""); setHTML("table", ""); setHTML("evals", "");
+  const [meta] = await Promise.all([api("/api/meta", { run: id })]);
+  if (S.sel !== id) return;
+  S.meta = meta.why ? null : meta;
+  S.xmode = S.meta && S.meta.x_default === "time/iter" ? "iter" : "env_steps"; $("xmode").value = S.xmode;
+  setText("metajson", JSON.stringify(meta, null, 1));
+  const r = S.byId[id] || {};
+  S.eps = r.eps || 0; S.rep = r.replays || 0;
+  replay.setRun(id, S.meta, r.streams || ["main"]);
+  fillTableControls(r);
+  await reloadProgress();
+  loadEvals(); loadEvents(); loadTable(); loadSample();
+  startLive();
+}
+
+// ---------------------------------------------------------------- progress
+async function reloadProgress() {
+  const id = S.sel;
+  const d = await api("/api/progress", { run: id, keys: "*", max_points: 4000 });
+  if (S.sel !== id) return;
+  S.d = d.total ? d : { total: 0, sig: d.sig || 0, x: {}, cols: {}, why: d.why };
+  S.keys = Object.keys(S.d.cols || {}).sort();
+  S.built = "";
+  render();
+}
+function merge(d) {
+  const D = S.d;
+  if (!D || d.sig !== D.sig || d.start > D.total) { reloadProgress(); return; }
+  const skip = D.total - d.start; if (d.total <= D.total) return;
+  for (const k of Object.keys(d.x)) { D.x[k] = (D.x[k] || []).concat(d.x[k].slice(skip)); }
+  let newKey = false;
+  for (const k of Object.keys(d.cols)) {
+    if (!D.cols[k]) { D.cols[k] = new Array(D.total).fill(null); newKey = true; }
+    D.cols[k] = D.cols[k].concat(d.cols[k].slice(skip));
+    if (D.lo && D.lo[k]) { D.lo[k] = D.lo[k].concat(new Array(d.total - D.total).fill(null)); D.hi[k] = D.hi[k].concat(new Array(d.total - D.total).fill(null)); }
+  }
+  const n = d.total;
+  for (const k of Object.keys(D.cols)) if (D.cols[k].length < n) D.cols[k] = D.cols[k].concat(new Array(n - D.cols[k].length).fill(null));
+  D.total = n; D.rewound = d.rewound; D.bad = d.bad;
+  if (newKey) { S.keys = Object.keys(D.cols).sort(); S.built = ""; }
+  render();
+}
+
+// ---------------------------------------------------------------- 실시간: SSE, 끊기면 3 초 폴링
+function stopLive() {
+  if (S.es) { S.es.close(); S.es = null; }
+  clearInterval(S.poll); S.poll = null; clearTimeout(S.retry);
+}
+function startLive() {
+  stopLive();
+  const id = S.sel, D = S.d || { total: 0, sig: 0 };
+  const es = new EventSource(`/api/live?runs=${enc(id)}&from=${D.total}&sig=${D.sig}&eps=${S.eps}&rep=${S.rep}`);
+  S.es = es;
+  es.onopen = () => { setText("conn", "live (SSE)"); $("conn").classList.add("ok"); clearInterval(S.poll); S.poll = null; };
+  es.addEventListener("progress", e => { const m = JSON.parse(e.data); if (m.run === S.sel) merge(m.data); });
+  es.addEventListener("reset", e => { const m = JSON.parse(e.data); if (m.run === S.sel) reloadProgress(); });
+  es.addEventListener("episodes", e => { const m = JSON.parse(e.data); if (m.run === S.sel && m.total !== S.eps) { S.eps = m.total; debounce("eps", () => { loadTable(); loadSample(); }, 1500); } });
+  es.addEventListener("replay", e => { const m = JSON.parse(e.data); if (m.run === S.sel) { S.rep = m.n; replay.refreshList(); } });
+  es.addEventListener("runs", () => loadRuns());
+  es.onerror = () => {
+    es.close(); if (S.es === es) S.es = null;
+    setText("conn", "polling 3 s"); $("conn").classList.remove("ok");
+    if (!S.poll) S.poll = setInterval(pollOnce, 3000);
+    S.retry = setTimeout(() => { if (S.sel === id) startLive(); }, 8000);
+  };
+}
+async function pollOnce() {
+  const id = S.sel, D = S.d; if (!D) return;
+  const d = await api("/api/progress", { run: id, keys: "*", from: D.total, sig: D.sig });
+  if (S.sel !== id) return;
+  if (d.sig !== D.sig) { reloadProgress(); return; }
+  if (d.total > D.total) merge(d);
+}
+const timers = {};
+function debounce(k, f, ms) { clearTimeout(timers[k]); timers[k] = setTimeout(f, ms); }
+setInterval(loadRuns, 10000);
+
+// ---------------------------------------------------------------- 값 꺼내기
+function col(k) { return S.d && S.d.cols ? S.d.cols[k] : null; }
+function lastAt(k, i) { const c = col(k); if (!c) return null; for (let j = Math.min(i, c.length - 1); j >= 0; j--) if (c[j] != null && isFinite(c[j])) return c[j]; return null; }
+function firstVal(k) { const c = col(k); if (!c) return null; for (const v of c) if (v != null && isFinite(v)) return v; return null; }
+function cursorRow() { const n = S.d ? S.d.total : 0; if (!n) return -1; return S.cursorPos >= 1000 ? n - 1 : Math.round(S.cursorPos / 1000 * (n - 1)); }
+function cursorIter() { const i = cursorRow(); return i < 0 || S.cursorPos >= 1000 ? null : S.d.x.iter[i]; }
+function xs() { if (!S.d || !S.d.x) return []; return S.xmode === "wall" ? S.d.x.wall : S.xmode === "iter" ? S.d.x.iter : S.d.x.env_steps; }
+function expand(pats) {
+  const out = [];
+  for (const p of pats) {
+    if (!p.includes("*")) { if (col(p)) out.push(p); continue; }
+    const re = new RegExp("^" + p.split("*").map(s => s.replace(/[.+?^${}()|[\]\\/]/g, "\\$&")).join("([^]*)") + "$");
+    for (const k of S.keys) if (re.test(k) && !out.includes(k)) out.push(k);
+  }
+  return out;
+}
+function metaNum(path) { let v = S.meta; for (const p of path.split(".")) { if (v == null) return null; v = v[p]; } return typeof v === "number" ? v : null; }
+function ref(key, label) { const v = S.meta && S.meta.refs ? S.meta.refs[key] : null; return v != null ? [{ y: v, label: label || key + " " + fmt(v) }] : []; }
+
+// ---------------------------------------------------------------- 곡선 묶음 (CHARTS 한 곳이 화면을 정한다)
+function chartsSpec() {
+  const skills = (S.meta && S.meta.skills) || [...new Set(S.keys.filter(k => k.startsWith("reward/")).map(k => k.split("/")[1]))];
+  const budget = sk => { const b = metaNum(`budget_s.${sk}`), hz = metaNum("ctrl_hz"); return b != null && hz != null ? [{ y: b * hz, label: `budget ${sk} ${b} s` }] : []; };
+  return [
+    { g: "결과 (모집단)", c: [
+      { t: "성공률 — 스킬별", k: ["rollout/success/*"], pct: 1 },
+      { t: "평가 성공률 (평가 줄기)", k: ["eval/*/success/*"], pct: 1 },
+      { t: "판 길이 (스텝)", k: ["rollout/ep_len_mean", "rollout/ep_len/*"], refs: () => skills.flatMap(budget) },
+      { t: "시간 초과·충돌·떨어뜨림 비율", k: ["rollout/timeout_rate", "rollout/collision_rate", "rollout/drop_rate"], pct: 1 },
+      { t: "교사가 몬 판 (따로 집계, 3.1)", k: ["rollout_teacher/success/*", "rollout_teacher/collision_rate", "rollout_teacher/timeout_rate"], pct: 1 },
+      { t: "판 수 / 업데이트", k: ["rollout/n_eps", "rollout_teacher/n_eps"] },
+    ]},
+    { g: "보상 항목", c: [
+      { t: "리턴 (판 합)", k: ["rollout/ep_ret_mean"] },
+      { t: "스텝 보상 평균", k: ["rollout/step_rew_mean"] },
+      ...skills.map(sk => ({ t: `보상 항목 — ${sk} (판당 합 평균)`, k: [`reward/${sk}/*`] })),
+    ]},
+    { g: "안전", c: [
+      { t: "판당 접촉", k: ["rollout/contacts_per_ep"] },
+      { t: "관절 한계 근처 스텝", k: ["rollout/joint_limit_steps"] },
+      { t: "거르개 개입", k: ["rollout/filter_rate"], pct: 1 },
+      { t: "최소 여유 거리 (m)", k: ["rollout/min_clear_m"] },
+    ]},
+    { g: "학습 건강", c: [
+      { t: "엔트로피", k: ["train/entropy"] },
+      { t: "log σ 평균 (탐색)", k: ["train/log_std_mean"] },
+      { t: "σ — 행동별", k: ["train/std/*"] },
+      { t: "approx KL", k: ["train/approx_kl"], refs: () => ref("train/approx_kl", "target_kl") },
+      { t: "clip 비율", k: ["train/clip_frac"], pct: 1 },
+      { t: "explained variance", k: ["train/explained_variance"] },
+      { t: "가치 손실", k: ["train/value_loss"] },
+      { t: "정책 손실", k: ["train/policy_loss"] },
+      { t: "기울기 노름", k: ["train/grad_norm"], refs: () => ref("train/grad_norm", "max_grad_norm") },
+      { t: "학습률", k: ["train/lr"] },
+      { t: "이득 표준편차 · 가치 평균", k: ["train/adv_std", "train/value_mean"] },
+    ]},
+    { g: "학생 (BC · DAgger · RL 다듬기)", c: [
+      { t: "BC 손실", k: ["bc/loss", "bc/flow_loss", "val/flow_loss"] },
+      { t: "행동 MSE (검증)", k: ["val/action_mse"] },
+      { t: "끝 신호 BCE", k: ["bc/end_bce"] },
+      { t: "학생 성공률 (학생이 몬 판)", k: ["rollout/success_start/*"], pct: 1 },
+      { t: "교사 기록 판 성공률 (처음 지도별)", k: ["rollout_teacher/success_start/*"], pct: 1 },
+      { t: "평가 — 완성도 칸별 성공률", k: ["eval/student/success_completion/*"], pct: 1 },
+      { t: "학생–교사 불일치", k: ["dagger/disagree", "dagger/agree"] },
+      { t: "DAgger β · 바퀴", k: ["dagger/beta", "dagger/round"] },
+      { t: "자료 표본 수", k: ["data/samples", "dagger/new_samples"] },
+      { t: "RL 다듬기", k: ["rlft/*"] },
+    ]},
+    { g: "지도 · 커리큘럼", c: [
+      { t: "처음 지도별 성공률 (C0 다 앎 · C1 일부 · C2 빈)", k: ["curr/success/*"], pct: 1 },
+      { t: "처음 지도별 충돌률", k: ["curr/collision/*"], pct: 1 },
+      { t: "단계 섞임 (판 비율)", k: ["curr/stage_frac/*"], pct: 1 },
+      { t: "커리큘럼 단계 번호", k: ["curr/stage_idx", "curr/env_stage"] },
+      { t: "시작 완성도 평균", k: ["curr/completion_start_mean"], pct: 1 },
+      { t: "목표를 앎 · 지도에 과제 물체 확정", k: ["curr/goal_known", "map/task_confirmed"], pct: 1 },
+    ]},
+    { g: "속도 · 자원", c: [
+      { t: "env steps/s", k: ["time/fps_env", "time/fps_gpu"] },
+      { t: "이터 시간 (ms, GPU 이벤트)", k: ["time/rollout_ms", "time/update_ms", "time/iter_ms"] },
+      { t: "BC 단계 GPU 시간 (ms)", k: ["time/update_gpu_ms", "time/rollout_gpu_ms", "time/eval_rollout_gpu_ms"] },
+      { t: "GPU 메모리 (MB)", k: ["gpu/mem_used_mb", "gpu/mem_reserved_mb"] },
+      { t: "로그 버림 (0 이어야 함)", k: ["log/*"] },
+      { t: "한 줄에 합친 업데이트 수", k: ["time/iters_in_row"] },
+    ]},
+    { g: "FP8", c: [
+      { t: "층별 amax", k: ["fp8/amax/*"] },
+      { t: "넘침 비율", k: ["fp8/overflow/*"], pct: 1 },
+      { t: "밑넘침 비율", k: ["fp8/underflow/*"], pct: 1 },
+      { t: "BF16 기울기와 코사인", k: ["fp8/grad_cos"], refs: () => [{ y: (S.meta && S.meta.refs && S.meta.refs["fp8/grad_cos"]) || 0.99, label: "0.99 (GPU_TRAINING 9.1)" }] },
+    ]},
+  ];
+}
+const WANT = { "결과 (모집단)": ["rollout/success/<skill>", "rollout/ep_len_mean", "rollout/timeout_rate"], "안전": ["rollout/contacts_per_ep", "rollout/min_clear_m"], "학습 건강": ["train/explained_variance"], "FP8": ["fp8/grad_cos"], "학생 (BC · DAgger · RL 다듬기)": ["bc/loss", "dagger/disagree"] };
+
+function buildCharts() {
+  const sig = S.sel + "|" + S.keys.join(",");
+  if (S.built === sig) return;
+  S.built = sig; S.plots = [];
+  const host = $("groups"); host.innerHTML = "";
+  for (const grp of chartsSpec()) {
+    const have = grp.c.map(c => ({ c, keys: expand(c.k) })).filter(x => x.keys.length);
+    const missing = grp.c.filter(c => !expand(c.k).length).flatMap(c => c.k);
+    const div = document.createElement("div"); div.className = "group";
+    const nl = have.length ? "" : `not logged: ${(WANT[grp.g] || missing.slice(0, 4)).map(k => "<code>" + esc(k) + "</code>").join(" ")}`;
+    div.innerHTML = `<h3>${esc(grp.g)} <span class="nl">${have.length ? `${have.length} 그림` : nl}</span></h3>`;
+    if (!have.length) { host.appendChild(div); continue; }
+    const box = document.createElement("div"); box.className = "charts"; div.appendChild(box);
+    for (const { c, keys } of have) {
+      const el = document.createElement("div"); el.className = "chart";
+      el.innerHTML = `<div class="ct"><span>${esc(c.t)}</span><span class="u mono"></span></div><canvas></canvas><div class="lg"></div><div class="cn"></div>`;
+      box.appendChild(el);
+      const p = new Plot(el.querySelector("canvas"));
+      S.plots.push({ c, keys, el, p, sig: "" });
+    }
+    host.appendChild(div);
+  }
+  // 판 기록 ⚠ 표본: 모집단에 없는 칸만(분포)
+  const div = document.createElement("div"); div.className = "group"; div.id = "sample_group";
+  div.innerHTML = `<h3>판 기록 <span class="warn-s">⚠ sample</span> <span class="nl" id="sample_note"></span></h3><div class="charts" id="sample_charts"></div>`;
+  host.appendChild(div);
+  if (S.eps) debounce("smp", loadSample, 100);
+}
+
+function label(keys, k) {
+  if (keys.length === 1) return k;
+  const parts = keys.map(x => x.split("/"));
+  let i = 0; while (parts.every(p => p.length > i + 1 && p[i] === parts[0][i])) i++;
+  return k.split("/").slice(i).join("/");
+}
+
+function drawCharts() {
+  if (!S.d || S.tab !== "train") return;
+  const x = xs(), n = S.d.total, crow = cursorRow();
+  const cx = S.cursorPos < 1000 && crow >= 0 ? x[crow] : null;
+  const xl = S.xmode === "wall" ? "s" : S.xmode;
+  const theme = matchMedia("(prefers-color-scheme: dark)").matches;
+  for (const P of S.plots) {
+    const w = P.el.clientWidth;
+    const sig = [n, S.xmode, S.ema, cx, w, theme].join("|");
+    if (P.sig === sig) continue;
+    P.sig = sig;
+    const series = P.keys.slice(0, 8).map((k, i) => {
+      const y = S.d.cols[k];
+      return { name: label(P.keys, k), x, y: ema(y, S.ema), lo: S.d.lo && S.ema === 0 ? S.d.lo[k] : null, hi: S.d.hi && S.ema === 0 ? S.d.hi[k] : null, color: color(i) };
+    });
+    const refs = P.c.refs ? P.c.refs() : [];
+    P.p.draw({ series, refs, pct: P.c.pct, cursor: cx, xlabel: xl, onPick: xv => setCursorX(xv) });
+    const last = series.map(s => { for (let i = s.y.length - 1; i >= 0; i--) if (s.y[i] != null) return s.y[i]; return null; });
+    setText(P.el.querySelector(".u"), series.length === 1 ? fmt(last[0], P.c.pct) : "");
+    setHTML(P.el.querySelector(".lg"), series.length > 1 ? series.map(s => `<span style="--c:${s.color}">${esc(s.name)}</span>`).join("") : "");
+    const notes = [];
+    if (P.keys.length > 8) notes.push(`${P.keys.length - 8} 키 더 있음(그림은 8 개까지)`);
+    if (P.c.refs && !refs.length) notes.push("기준선: run.json refs 에 값 없음 — 선을 안 그음");
+    if (S.d.agg) notes.push("긴 실행: 칸마다 최소·최대(띠, EMA 0 일 때) + 마지막 값");
+    setText(P.el.querySelector(".cn"), notes.join(" · "));
+  }
+}
+function setCursorX(xv) {
+  const x = xs(); if (!x.length) return;
+  let bi = 0, bd = Infinity; for (let i = 0; i < x.length; i++) { const d = Math.abs(x[i] - xv); if (d < bd) { bd = d; bi = i; } }
+  S.cursorPos = x.length > 1 ? Math.round(bi / (x.length - 1) * 999) : 1000; $("cursor").value = S.cursorPos; render(); loadTable();
+}
+
+// ---------------------------------------------------------------- 카드
+function card(t, v, s, bad) { return `<div class="card${bad ? " bad" : ""}"><div class="t">${t}</div><div class="v">${v}</div><div class="s">${s || ""}</div></div>`; }
+function renderCards() {
+  if (!S.d) return;
+  const i = cursorRow(), m = S.meta || {};
+  if (i < 0) { setHTML("cards", card("progress", "—", esc(S.d.why || "줄 없음"))); return; }
+  const g = k => lastAt(k, i);
+  const out = [];
+  out.push(card("iteration · env_steps", fmt(g("time/iter")), `${fmt(g("time/env_steps"))} env steps`));
+  const wall = g("time/wall");
+  out.push(card("env steps/s · 경과", fmt(g("time/fps_env") ?? g("time/fps_gpu")), `경과 ${wall != null ? (wall >= 3600 ? (wall / 3600).toFixed(2) + " h" : (wall / 60).toFixed(1) + " 분") : "—"}${g("time/fps_env") == null && g("time/fps_gpu") != null ? " · GPU 이벤트 기준" : ""}`));
+  const stages = m.curriculum && m.curriculum.stages;
+  const si = g("curr/stage_idx");
+  const stName = stages && si != null && stages[si] ? (stages[si].name || stages[si]) : m.stage || "—";
+  const mix = ["C0", "C1", "C2"].map(c => g("curr/stage_frac/" + c)).some(v => v != null) ? ["C0", "C1", "C2"].map(c => `${c} ${fmt(g("curr/stage_frac/" + c), 1)}`).join(" · ") : "";
+  out.push(card("단계", esc(`${m.kind || "?"} · ${stName}`), mix));
+  const sk = expand(["rollout/success/*"]);
+  if (sk.length) {
+    const bars = sk.map(k => { const v = g(k); return `<div class="minibar"><span>${esc(k.split("/").pop())}</span><span class="b"><i style="width:${v == null ? 0 : (v * 100).toFixed(1)}%"></i></span><span>${v == null ? "—" : (v * 100).toFixed(1)}</span></div>`; }).join("");
+    out.push(`<div class="card"><div class="t">성공률 (모집단, %)</div>${bars}</div>`);
+  } else out.push(card("성공률", "—", "not logged: <code>rollout/success/&lt;skill&gt;</code>"));
+  out.push(card("리턴 · 판 길이", fmt(g("rollout/ep_ret_mean")), `판 길이 ${fmt(g("rollout/ep_len_mean"))} 스텝`));
+  const ne = col("rollout/n_eps");
+  let pop = null; if (ne) { pop = 0; for (let j = 0; j <= i; j++) if (ne[j] != null) pop += ne[j]; }
+  out.push(card("판 수", fmt(pop), `모집단 / 표본 ${fmt(S.eps)} 판`));
+  const ls = g("train/log_std_mean"), ls0 = firstVal("train/log_std_mean");
+  out.push(card("탐색 log σ", fmt(ls), ls != null && ls0 != null ? `σ ${fmt(Math.exp(ls))} · 처음 대비 ${fmt(Math.exp(ls - ls0), 1)}` : "not logged"));
+  const kl = g("train/approx_kl"), tk = m.target_kl ?? (m.refs && m.refs["train/approx_kl"]);
+  out.push(card("KL · EV", fmt(kl), `${tk != null ? "target " + fmt(tk) : "target_kl 없음"} · EV ${g("train/explained_variance") != null ? fmt(g("train/explained_variance")) : "not logged"}`, kl != null && tk != null && kl > 1.5 * tk));
+  const mem = g("gpu/mem_used_mb");
+  out.push(card("GPU 메모리", mem != null ? fmt(mem / 1024) + " GB" : "—", mem != null ? `/ 16 GB (${fmt(mem / 16384, 1)})` : "not logged: <code>gpu/mem_used_mb</code>"));
+  const dk = expand(["log/*"]);
+  let drop = null; for (const k of dk) { const c = col(k); for (let j = 0; j <= i; j++) if (c[j] > 0) drop = (drop || 0) + c[j]; }
+  out.push(card("로그 버림", dk.length ? fmt(drop || 0) : "—", dk.length ? dk.map(k => k.split("/").pop()).join(", ") : "not logged: <code>log/*_dropped</code>", drop > 0));
+  if (S.sr) out.push(card("SR · SPL (표본)", fmt(S.sr.success, 1), `SPL ${fmt(S.sr.spl, 1)} · 충돌 ${fmt(S.sr.collision, 1)} · n ${S.sr.n}`));
+  const es = g("eval/student/success/approach") ?? expand(["eval/student/success/*"]).map(g).find(v => v != null);
+  const et = g("eval/teacher/success/approach") ?? expand(["eval/teacher/success/*"]).map(g).find(v => v != null);
+  if (es != null || et != null) out.push(card("평가 학생 / 교사", `${fmt(es, 1)}`, `교사 ${fmt(et, 1)}${es != null && et ? " · 비율 " + fmt(es / et, 1) : ""}`));
+  if (col("bc/loss")) out.push(card("BC 손실", fmt(g("bc/loss")), `불일치 ${fmt(g("dagger/disagree"))} · 바퀴 ${fmt(g("dagger/round"))}`));
+  setHTML("cards", out.join(""));
+}
+
+// ---------------------------------------------------------------- 고장 무늬 검사 (못 잰 것은 이유와 함께 따로)
+function slope(k, a, b) {
+  const c = col(k), x = S.d.x.env_steps; if (!c) return null;
+  let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (let i = a; i <= b; i++) { const v = c[i]; if (v == null || !isFinite(v)) continue; const xx = x[i]; n++; sx += xx; sy += v; sxx += xx * xx; sxy += xx * v; }
+  if (n < 5) return null;
+  const d = n * sxx - sx * sx; return d ? (n * sxy - sx * sy) / d : null;
+}
+function meanOf(k, a, b) { const c = col(k); if (!c) return null; let s = 0, n = 0; for (let i = a; i <= b; i++) if (c[i] != null && isFinite(c[i])) { s += c[i]; n++; } return n ? s / n : null; }
+function renderChecks() {
+  if (!S.d || !S.d.total) { setHTML("checks", '<span class="muted">progress 줄이 없어 검사 못 함</span>'); setText("checks_sum", ""); return; }
+  const b = cursorRow(), a = Math.max(0, b - Math.max(20, Math.floor((b + 1) * 0.2))), m = S.meta || {}, th = m.checks || {};
+  const R = [];
+  const add = (st, name, msg) => R.push({ st, name, msg });
+  // 꼼수 의심
+  const sks = expand(["rollout/success/*"]);
+  if (!col("rollout/ep_ret_mean") || !sks.length) add("na", "꼼수 의심", "not measurable: rollout/ep_ret_mean 와 rollout/success/<skill> 둘 다 필요");
+  else {
+    const sr = slope("rollout/ep_ret_mean", a, b);
+    const bad = sks.filter(k => { const s = slope(k, a, b); return sr != null && s != null && sr > 0 && s <= 0 && meanOf(k, a, b) < 0.98; });
+    if (sr == null) add("na", "꼼수 의심", "not measurable: 창 안 값이 5 개 미만");
+    else add(bad.length ? "warn" : "ok", "꼼수 의심", bad.length ? `리턴은 오르는데 성공률이 그대로/내림: ${bad.map(k => k.split("/").pop()).join(", ")}` : "리턴·성공률 기울기 같은 방향");
+  }
+  // 탐색 죽음
+  const ls = lastAt("train/log_std_mean", b), ls0 = firstVal("train/log_std_mean");
+  if (ls == null) add("na", "탐색 죽음", "not measurable: train/log_std_mean 없음");
+  else { const lim = th.explore_drop ?? 2.3; add(ls0 - ls > lim ? "warn" : "ok", "탐색 죽음", `log σ ${fmt(ls0)} → ${fmt(ls)} (문턱: ${lim} 넘게 내려감, 추정)`); }
+  // KL 넘침
+  const tk = m.target_kl ?? (m.refs && m.refs["train/approx_kl"]), kl = meanOf("train/approx_kl", a, b);
+  if (kl == null || tk == null) add("na", "KL 넘침", `not measurable: ${kl == null ? "train/approx_kl" : "run.json target_kl"} 없음`);
+  else add(kl > tk * 1.5 ? "warn" : "ok", "KL 넘침", `창 평균 ${fmt(kl)} 대 target ${fmt(tk)} × 1.5`);
+  // 가치 머리 포화
+  const ev = meanOf("train/explained_variance", a, b);
+  if (ev == null || kl == null) add("na", "가치 머리 포화", `not measurable: ${ev == null ? "train/explained_variance" : "train/approx_kl"} 없음`);
+  else add(ev >= 0.99 && kl < 0.001 ? "warn" : "ok", "가치 머리 포화", `EV ${fmt(ev)}, KL ${fmt(kl)}`);
+  // 안 움직임
+  const to = meanOf("rollout/timeout_rate", a, b);
+  if (to == null) add("na", "안 움직임", "not measurable: rollout/timeout_rate 없음");
+  else add(to >= 0.99 ? "warn" : "ok", "안 움직임", `시간 초과 ${fmt(to, 1)}`);
+  // 접촉 늘어남
+  const cs = slope("rollout/contacts_per_ep", a, b);
+  if (cs == null) add("na", "접촉 늘어남", "not measurable: rollout/contacts_per_ep 없음");
+  else add(cs > 0 && meanOf("rollout/contacts_per_ep", a, b) > 0.05 ? "warn" : "ok", "접촉 늘어남", `창 안 기울기 ${cs > 0 ? "+" : ""}${fmt(cs * 1e9)} / 1e9 스텝`);
+  // 로그 버림
+  const dk = expand(["log/*"]);
+  if (!dk.length) add("na", "로그 버림", "not measurable: log/*_dropped 를 찍지 않음");
+  else { let s = 0; for (const k of dk) { const c = col(k); for (let i = 0; i <= b; i++) if (c[i] > 0) s += c[i]; } add(s > 0 ? "warn" : "ok", "로그 버림", `합 ${fmt(s)}`); }
+  // FP8 위험
+  const ov = expand(["fp8/overflow/*"]), gc = meanOf("fp8/grad_cos", a, b);
+  const fp8on = m.precision && m.precision.fp8;
+  if (!ov.length && gc == null) add("na", "FP8 위험", fp8on ? "not measurable: fp8 켜졌지만 fp8/* 감시 값을 찍지 않음" : "FP8 끔(또는 감시 값 없음)");
+  else { const o = Math.max(...ov.map(k => meanOf(k, a, b) || 0)); const lim = th.fp8_overflow ?? 1e-3; add(o > lim || (gc != null && gc < 0.99) ? "warn" : "ok", "FP8 위험", `넘침 최대 ${fmt(o)} (문턱 ${lim}), 코사인 ${fmt(gc)}`); }
+  const ic = { ok: "✓", warn: "!", na: "?" };
+  setHTML("checks", R.map(r => `<div class="chk ${r.st}"><span class="ic">${ic[r.st]}</span><b>${r.name}</b> <span>${esc(r.msg)}</span></div>`).join(""));
+  const ok = R.filter(r => r.st !== "na").length, warn = R.filter(r => r.st === "warn").length;
+  setText("checks_sum", `확인 ${ok} (걸림 ${warn}) · 못 잰 ${R.length - ok} · 창 = 커서 앞 ${b - a + 1} 줄`);
+}
+
+function renderFirstNote() {
+  const n = $("note_first"), m = S.meta || {};
+  const ne = col("rollout/n_eps") || col("rollout_teacher/n_eps");
+  const any = ne && ne.some(v => v > 0);
+  if (!S.d || !S.d.total || any || !ne) { n.hidden = true; return; }
+  const tm = m.t_max ? Math.max(...Object.values(m.t_max)) : null;
+  n.hidden = false;
+  n.textContent = tm && m.ctrl_hz && m.rollout_T ? `아직 끝난 판이 없음 — 첫 판은 약 이터 ${Math.ceil(tm * m.ctrl_hz / m.rollout_T)} 에 끝남 (t_max × ctrl_hz / rollout_T). 빈 그래프 ≠ 고장.` : "아직 끝난 판이 없음 (run.json 에 t_max 가 없어 첫 판 이터를 못 셈)";
+}
+
+function render() {
+  if (!S.d) return;
+  updateStatus();
+  const i = cursorRow();
+  setText("cursor_v", S.cursorPos >= 1000 ? "끝(실시간)" : `iter ${fmt(S.d.x.iter[i])}`);
+  const m = S.meta || {};
+  const git = m.git && m.git.commit ? `git ${m.git.commit.slice(0, 7)}${m.git.dirty ? "+" : ""}` : "";
+  setHTML("metaline", [m.trainer, m.group ? `group <b>${esc(m.group)}</b>` : "", m.seed != null ? `seed ${m.seed}` : "", m.precision ? `fp8 ${m.precision.fp8}` : "", m.teacher ? `teacher ${esc(String(m.teacher).split("/").slice(-3).join("/"))}` : "", m.n_envs ? `N ${m.n_envs} × T ${m.rollout_T}` : "", git, m.logged && m.logged.why ? `<span title="${esc(m.logged.why)}">판 기록 없음(?)</span>` : ""].filter(Boolean).join(" · ") || esc(S.d.why || ""));
+  if (S.tab === "train") {
+    buildCharts(); drawCharts(); renderCards(); renderChecks(); renderFirstNote();
+  }
+}
+
+// ---------------------------------------------------------------- 성공 표 (표본)
+function fillTableControls(r) {
+  setHTML("t_stream", (r.streams || ["main"]).map(s => `<option>${esc(s)}</option>`).join(""));
+}
+async function loadTable() {
+  const id = S.sel; if (!id) return;
+  const last = STOPS[+$("t_last").value];
+  setText("t_last_v", last ? String(last) : "전체");
+  const q = { run: id, stream: $("t_stream").value || "main", rows: $("t_rows").value, cols: $("t_cols").value, last, home: $("t_home").value, stage: $("t_stage").value };
+  const ci = cursorIter(); if (ci != null) q.upto = S.d.x.env_steps[cursorRow()];
+  const [t, all] = await Promise.all([api("/api/table", q), api("/api/table", { run: id, stream: "main", rows: "all", cols: "all", last: 0, upto: q.upto })]);
+  if (S.sel !== id) return;
+  S.sr = all.cells && all.cells[0] ? { ...all.cells[0][0] } : null;
+  if (S.sr && !S.sr.n) S.sr = null;
+  renderCards();
+  if (t.why || !t.cells || !t.cells.length) { setHTML("table", `<span class="muted">${esc(t.why || "표 없음")} — ${S.meta && S.meta.logged && S.meta.logged.why ? esc(S.meta.logged.why) : "episodes.jsonl 이 있어야 그린다"}</span>`); setText("t_note", ""); return; }
+  for (const [sel, dim] of [["t_home", "home"], ["t_stage", "stage"]]) {
+    const cur = $(sel).value, opts = ['<option value="">전체</option>'].concat((t.dims[dim] || []).map(n => `<option${n === cur ? " selected" : ""}>${esc(n)}</option>`)).join("");
+    setHTML(sel, opts);
+  }
+  const met = $("t_metric").value, pct = ["success", "spl", "collision", "timeout"].includes(met);
+  const hue = met === "collision" || met === "timeout" ? "--s2" : "--s1";
+  const m = S.meta || {};
+  setText("t_note", `⚠ sample: log_envs ${m.log_envs ?? "?"} 개 환경의 모든 판 (표본 ${t.total} 판). 칸마다 최근 ${last || "전체"} 판${ci != null ? `, 커서 iter ${fmt(ci)} 까지` : ""}. n < 20 은 흐리게(표본 적음). 스킬 전체 성공률은 위 곡선(모집단)과 맞춰 볼 것.`);
+  let h = `<table class="t"><tr><th></th>${t.cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr>`;
+  t.rows.forEach((rn, ri) => {
+    h += `<tr><th>${esc(rn)}</th>`;
+    t.cols.forEach((cn, ci2) => {
+      const c = t.cells[ri][ci2];
+      if (!c.n) { h += `<td class="cell none">—</td>`; return; }
+      const v = c[met];
+      const a = pct && v != null ? Math.round(8 + 55 * Math.min(1, Math.max(0, v))) : 0;
+      h += `<td class="cell${c.n < 20 ? " low" : ""}" style="${a ? `background:color-mix(in srgb, var(${hue}) ${a}%, transparent)` : ""}" title="n ${c.n}${c.n < 20 ? " — 표본 적음" : ""}\nSR ${fmt(c.success, 1)} · SPL ${fmt(c.spl, 1)} · 충돌 ${fmt(c.collision, 1)} · 시간 초과 ${fmt(c.timeout, 1)}\n평균 t ${fmt(c.t)} s · 접촉 ${fmt(c.contacts)} · 리턴 ${fmt(c.ret)}"><b>${fmt(v, pct)}</b><span class="n">n ${c.n} · t ${fmt(c.t)} s</span></td>`;
+    });
+    h += "</tr>";
+  });
+  setHTML("table", h + "</table>");
+}
+["t_stream", "t_rows", "t_cols", "t_home", "t_stage", "t_metric"].forEach(id => $(id).addEventListener("change", loadTable));
+$("t_last").addEventListener("input", loadTable);
+
+async function loadSample() {
+  const id = S.sel; if (!id) return;
+  const host = $("sample_charts"); if (!host) return;
+  if (!S.eps) { setText("sample_note", "episodes.jsonl 없음 — " + (S.meta && S.meta.logged && S.meta.logged.why || "")); host.innerHTML = ""; return; }
+  const from = Math.max(0, S.eps - 20000);
+  const e = await api("/api/episodes", { run: id, from });
+  if (S.sel !== id || !e.rows) return;
+  setText("sample_note", `최근 ${e.rows.length} 판 (전체 ${e.total}${e.truncated ? ", 잘림 cap " + e.cap : ""}${e.ret_mismatch ? `, ret ≠ Σr 인 줄 ${e.ret_mismatch}` : ""}${e.bad ? `, 해석 못 한 줄 ${e.bad}` : ""})`);
+  const specs = [["판 길이 t (s)", r => r.t, "--s1"], ["최소 여유 거리 (m)", r => r.min_clear_m, "--s3"], ["끝 거리 (성공 판, m)", r => r.success ? r.final_dist : null, "--s7"], ["끝 에임 각 (성공 판, °)", r => r.success ? r.final_aim_deg : null, "--s4"]];
+  if (!host.children.length) host.innerHTML = specs.map(s => `<div class="chart"><div class="ct">${esc(s[0])}</div><canvas></canvas></div>`).join("");
+  specs.forEach((s, i) => hist(host.children[i].querySelector("canvas"), e.rows.map(s[1]), 30, "판", cssv(s[2])));
+}
+
+// ---------------------------------------------------------------- 평가 표 · 사건
+async function loadEvals() {
+  const id = S.sel, j = await api("/api/evals", { run: id }); if (S.sel !== id) return;
+  if (!j.evals.length) { setHTML("evals", `<span class="muted">${esc(j.why)}</span>`); return; }
+  setHTML("evals", j.evals.slice(-12).reverse().map(({ file, eval: e }) => {
+    const rows = e.rows || [];
+    const hasRef = rows.some(r => r.ref != null);
+    return `<div class="small" style="margin-top:8px"><b class="mono">${esc(file)}</b> ${e.iter != null ? "iter " + fmt(e.iter) : ""} ${e.driver ? "· " + esc(e.driver) : ""} ${e.ckpt ? '· <span class="mono muted">' + esc(String(e.ckpt).split("/").pop()) + "</span>" : ""}</div>
+      <table class="t"><tr><th>eval</th><th>split</th><th>n</th><th>성공</th><th>충돌</th><th>시간 초과</th>${hasRef ? "<th>기준</th>" : ""}</tr>${rows.map(r => `<tr><td class="l">${esc(r.eval)}</td><td class="l">${esc(r.split)}</td><td>${fmt(r.n)}</td><td class="${r.pass === true ? "pass" : r.pass === false ? "fail" : ""}">${fmt(r.success, 1)}${r.pass === true ? " ✓" : r.pass === false ? " ✗" : ""}</td><td>${fmt(r.collision, 1)}</td><td>${fmt(r.timeout, 1)}</td>${hasRef ? `<td>${fmt(r.ref, 1)}</td>` : ""}</tr>`).join("")}</table>`;
+  }).join(""));
+}
+async function loadEvents() {
+  const id = S.sel, j = await api("/api/events", { run: id }); if (S.sel !== id) return;
+  setText("events", j.lines.length ? j.lines.join("\n") : "events.txt 없음");
+}
+
+// ---------------------------------------------------------------- 탭 · 조작
+function setTab(t) {
+  S.tab = t;
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
+  document.querySelectorAll(".tab").forEach(s => s.classList.toggle("on", s.id === "tab_" + t));
+  const h = new URLSearchParams(location.hash.slice(1)); h.set("tab", t); history.replaceState(null, "", "#" + h.toString());
+  replay.show(t === "replay");
+  if (t === "train") { S.plots.forEach(p => p.sig = ""); render(); }
+  if (t === "compare") { buildCompareList(); drawCompare(); }
+}
+document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => setTab(b.dataset.tab));
+$("xmode").onchange = e => { S.xmode = e.target.value; render(); };
+$("ema").oninput = e => { S.ema = +e.target.value; setText("ema_v", S.ema.toFixed(2)); render(); };
+setText("ema_v", S.ema.toFixed(2));
+$("cursor").oninput = e => { S.cursorPos = +e.target.value; render(); debounce("tbl", loadTable, 250); replay.refreshList(); };
+$("cursor_off").onclick = () => { S.cursorPos = 1000; $("cursor").value = 1000; render(); loadTable(); replay.refreshList(); };
+addEventListener("resize", () => debounce("rs", () => { S.plots.forEach(p => p.sig = ""); render(); drawCompare(); }, 150));
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { S.plots.forEach(p => p.sig = ""); render(); drawCompare(); });
+
+// ---------------------------------------------------------------- 비교 탭
+const cmpCharts = [];
+function buildCompareList() {
+  const host = $("cmp_runs");
+  const groups = {};
+  for (const r of S.runs) (groups[r.group || r.id] ||= []).push(r);
+  const sig = S.runs.map(r => r.id).join(",") + [...S.cmpSel].join(",");
+  if (host._sig === sig) return; host._sig = sig;
+  if (!S.cmpSel.size && S.sel) S.cmpSel.add(S.sel);
+  const order = [...S.cmpSel];
+  host.innerHTML = Object.entries(groups).map(([g, rs]) => `<div class="grp">${esc(g)} <span class="muted">(${rs.length})</span></div>` + rs.map(r => {
+    const on = S.cmpSel.has(r.id), ci = order.indexOf(r.id);
+    return `<label class="run"><input type="checkbox" data-id="${esc(r.id)}"${on ? " checked" : ""}><span class="sw" style="background:${on ? color(ci) : "transparent"}"></span>${esc(shortName(r))}<span class="muted small">${esc(r.kind)}</span></label>`;
+  }).join("")).join("");
+  host.querySelectorAll("input").forEach(i => i.onchange = () => { if (i.checked) S.cmpSel.add(i.dataset.id); else S.cmpSel.delete(i.dataset.id); host._sig = ""; buildCompareList(); loadCompare(); });
+  loadCompare();
+}
+async function loadCompare() {
+  const ids = [...S.cmpSel];
+  await Promise.all(ids.filter(id => !S.cmpKeys[id]).map(async id => { const j = await api("/api/progress", { run: id }); S.cmpKeys[id] = (j.keys || []).map(k => k.k); }));
+  const union = [...new Set(ids.flatMap(id => S.cmpKeys[id] || []))].sort();
+  for (const [sel, pref] of [["cmp_a", ["rollout/success/approach", "rollout/success/pick"]], ["cmp_b", ["rollout/collision_rate", "bc/loss", "train/approx_kl"]]]) {
+    const cur = $(sel).value || pref.find(p => union.includes(p)) || union[0] || "";
+    setHTML(sel, union.map(k => `<option${k === cur ? " selected" : ""}>${esc(k)}</option>`).join(""));
+  }
+  const keys = [$("cmp_a").value, $("cmp_b").value].filter(Boolean);
+  const tableKeys = union.filter(k => /^(rollout\/success\/|curr\/success\/|eval\/.*\/success\/|rollout\/collision_rate$|rollout_teacher\/success\/)/.test(k));
+  const need = [...new Set([...keys, ...tableKeys, "time/wall"])];
+  await Promise.all(ids.map(async id => { S.cmpData[id] = await api("/api/progress", { run: id, keys: need.join(","), max_points: 1500 }); }));
+  S.cmpTableKeys = tableKeys;
+  drawCompare();
+}
+["cmp_a", "cmp_b"].forEach(id => $(id).onchange = loadCompare);
+["cmp_x", "cmp_group"].forEach(id => $(id).onchange = drawCompare);
+$("cmp_ema").oninput = drawCompare;
+
+function cmpX(d, mode) {
+  if (mode === "ts") return d.x.ts;
+  if (mode === "wall") return d.cols["time/wall"] || d.x.wall;
+  return d.x[mode];
+}
+function drawCompare() {
+  if (S.tab !== "compare") return;
+  const ids = [...S.cmpSel].filter(id => S.cmpData[id] && S.cmpData[id].total);
+  const keys = [$("cmp_a").value, $("cmp_b").value].filter(Boolean);
+  const host = $("cmp_charts");
+  while (cmpCharts.length < keys.length) {
+    const el = document.createElement("div"); el.className = "chart";
+    el.innerHTML = `<div class="ct"><span></span></div><canvas></canvas><div class="lg"></div><div class="cn"></div>`;
+    host.appendChild(el); cmpCharts.push({ el, p: new Plot(el.querySelector("canvas")) });
+  }
+  const mode = $("cmp_x").value, a = +$("cmp_ema").value, grp = $("cmp_group").checked;
+  const order = [...S.cmpSel];
+  keys.forEach((k, ki) => {
+    const C = cmpCharts[ki]; C.el.hidden = false;
+    setText(C.el.querySelector(".ct span"), k);
+    const pct = /success|rate|frac|timeout|collision/.test(k);
+    const series = [], missing = [];
+    const byGroup = {};
+    for (const id of ids) {
+      const d = S.cmpData[id], y = d.cols[k];
+      if (!y || !y.some(v => v != null)) { missing.push(id); continue; }
+      const g = (S.byId[id] && S.byId[id].group) || id;
+      (byGroup[g] ||= []).push(id);
+    }
+    const gi = Object.keys(byGroup);
+    for (const [g, members] of Object.entries(byGroup)) {
+      const dash = gi.indexOf(g) % 2 === 1;
+      if (grp && members.length > 1) {
+        // 평균 ± 표준편차 띠: 겹치는 x 구간을 200 칸으로 나눠 선형 보간
+        const curves = members.map(id => { const d = S.cmpData[id]; const x = cmpX(d, mode), y = ema(d.cols[k], a); const pts = []; for (let i = 0; i < x.length; i++) if (y[i] != null && x[i] != null) pts.push([x[i], y[i]]); return pts; }).filter(p => p.length > 1);
+        const lo = Math.max(...curves.map(p => p[0][0])), hi = Math.min(...curves.map(p => p[p.length - 1][0]));
+        if (curves.length > 1 && hi > lo) {
+          const X = [], M = [], L = [], H = [];
+          for (let j = 0; j <= 200; j++) {
+            const xv = lo + (hi - lo) * j / 200;
+            const vs = curves.map(p => { let i = p.findIndex(q => q[0] >= xv); if (i <= 0) return p[Math.max(0, i)][1]; const [x0, y0] = p[i - 1], [x1, y1] = p[i]; return y0 + (y1 - y0) * (xv - x0) / (x1 - x0 || 1); });
+            const m = vs.reduce((s, v) => s + v, 0) / vs.length, sd = Math.sqrt(vs.reduce((s, v) => s + (v - m) ** 2, 0) / Math.max(1, vs.length - 1));
+            X.push(xv); M.push(m); L.push(pct ? Math.max(0, m - sd) : m - sd); H.push(pct ? Math.min(1, m + sd) : m + sd);
+          }
+          series.push({ name: `${g} 평균 ± σ (씨앗 ${curves.length})`, x: X, y: M, lo: L, hi: H, color: color(order.indexOf(members[0])), dash });
+          continue;
+        }
+      }
+      for (const id of members) {
+        const d = S.cmpData[id];
+        series.push({ name: shortName(S.byId[id] || { id }), x: cmpX(d, mode), y: ema(d.cols[k], a), color: color(order.indexOf(id)), dash });
+      }
+    }
+    C.p.draw({ series, pct, xlabel: mode, xfmt: mode === "ts" ? (v => new Date(v * 1000).toLocaleTimeString()) : undefined, empty: "고른 실행에 이 키가 없음" });
+    setHTML(C.el.querySelector(".lg"), series.map(s => `<span class="${s.dash ? "dash" : ""}" style="--c:${s.color}">${esc(s.name)}</span>`).join(""));
+    setText(C.el.querySelector(".cn"), missing.length ? `없음: ${missing.map(id => shortName(S.byId[id] || { id })).join(", ")}` : "");
+  });
+  for (let i = keys.length; i < cmpCharts.length; i++) cmpCharts[i].el.hidden = true;
+  // 비교 표
+  const tk = S.cmpTableKeys || [];
+  let h = `<table class="t"><tr><th>실행</th><th>group</th><th>env_steps</th>${tk.map(k => `<th title="${esc(k)}">${esc(k.replace("rollout/", "").replace("success/", "SR "))}</th>`).join("")}</tr>`;
+  for (const id of [...S.cmpSel]) {
+    const d = S.cmpData[id]; if (!d) continue;
+    const n = d.total || 0, a0 = Math.floor(n * 0.9);
+    h += `<tr><td class="l">${esc(shortName(S.byId[id] || { id }))}</td><td class="l">${esc((S.byId[id] || {}).group || "")}</td><td>${fmt(d.x && d.x.env_steps ? d.x.env_steps[d.x.env_steps.length - 1] : null)}</td>`;
+    for (const k of tk) {
+      const c = d.cols && d.cols[k];
+      if (!c) { h += `<td class="none">없음</td>`; continue; }
+      let s = 0, m = 0; for (let i = Math.min(a0, c.length - 1); i < c.length; i++) if (c[i] != null) { s += c[i]; m++; }
+      h += `<td>${m ? fmt(s / m, 1) : "—"}</td>`;
+    }
+    h += "</tr>";
+  }
+  setHTML("cmp_table", h + "</table>");
+}
+
+// ---------------------------------------------------------------- 시작
+const h0 = new URLSearchParams(location.hash.slice(1));
+loadRuns().then(() => { if (h0.get("tab")) setTab(h0.get("tab")); });
+window.__trainview = S;

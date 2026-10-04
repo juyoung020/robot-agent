@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>trainview</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header id="top">
+  <div class="row1">
+    <b class="brand">trainview</b>
+    <nav id="tabs">
+      <button data-tab="train" class="on">학습</button>
+      <button data-tab="replay">재생</button>
+      <button data-tab="compare">비교</button>
+    </nav>
+    <span id="runname" class="mono"></span>
+    <span id="badges"></span>
+    <span class="grow"></span>
+    <span id="status" class="muted mono"></span>
+    <span id="conn" class="pill" title="실시간 연결(SSE). 끊기면 3 초 폴링">—</span>
+  </div>
+  <div id="pickers">
+    <div class="pick"><span class="lab">teacher</span><div id="pick_teacher" class="chips"></div></div>
+    <div class="pick"><span class="lab">student</span><div id="pick_student" class="chips"></div></div>
+    <div class="pick"><span class="lab">labs</span><div id="pick_labs" class="chips"></div></div>
+  </div>
+</header>
+
+<main>
+<!-- ============================== 학습 ============================== -->
+<section id="tab_train" class="tab on">
+  <div id="metaline" class="muted"></div>
+  <div id="cards" class="cards"></div>
+  <div class="bar">
+    <label>x 축 <select id="xmode"><option value="iter">iteration</option><option value="env_steps" selected>env_steps</option><option value="wall">벽시계(s)</option></select></label>
+    <label>EMA <input id="ema" type="range" min="0" max="0.99" step="0.01" value="0.6"><span id="ema_v" class="mono"></span></label>
+    <label class="grow">시점 커서 <input id="cursor" type="range" min="0" max="1000" value="1000" class="grow"><span id="cursor_v" class="mono"></span></label>
+    <button id="cursor_off" title="커서를 끝으로">끝</button>
+  </div>
+  <details id="checks_box" open><summary>고장 무늬 검사 <span id="checks_sum" class="muted"></span></summary><div id="checks"></div></details>
+  <div id="note_first" class="note" hidden></div>
+  <div id="groups"></div>
+  <section class="panel">
+    <h3>성공 표 — <span id="tab_title">스킬 × 시작 지도 완성도</span> <span class="warn-s">⚠ sample</span></h3>
+    <div class="bar">
+      <label>줄기 <select id="t_stream"></select></label>
+      <label>행 <select id="t_rows"><option>skill</option><option>home</option><option>stage</option><option>map_mode</option><option>driver</option></select></label>
+      <label>열 <select id="t_cols"><option value="bin">완성도 칸</option><option>map_mode</option><option>stage</option><option>home</option><option>driver</option><option value="all">전체</option></select></label>
+      <label>집 <select id="t_home"><option value="">전체</option></select></label>
+      <label>단계 <select id="t_stage"><option value="">전체</option></select></label>
+      <label>값 <select id="t_metric"><option value="success">성공률 SR</option><option value="spl">SPL</option><option value="collision">충돌률</option><option value="timeout">시간 초과율</option><option value="t">평균 t (s)</option><option value="ret">리턴</option><option value="contacts">접촉</option></select></label>
+      <label>칸마다 최근 <input id="t_last" type="range" min="0" max="6" step="1" value="3"><span id="t_last_v" class="mono"></span> 판</label>
+    </div>
+    <div id="t_note" class="muted"></div>
+    <div id="table" class="tablewrap"></div>
+  </section>
+  <section class="panel">
+    <h3>평가 표 <span class="muted">evals/*.json</span></h3>
+    <div id="evals"></div>
+  </section>
+  <details class="panel"><summary>사건 기록 <span class="muted">events.txt</span></summary><pre id="events" class="mono small"></pre></details>
+  <details class="panel"><summary>run.json</summary><pre id="metajson" class="mono small"></pre></details>
+</section>
+
+<!-- ============================== 재생 ============================== -->
+<section id="tab_replay" class="tab">
+  <div class="replay">
+    <aside id="rp_side">
+      <div class="muted small">실행 <b id="rp_run" class="mono"></b></div>
+      <div class="bar wrap">
+        <label>줄기 <select id="rp_stream"></select></label>
+        <label>스킬 <select id="rp_skill"><option value="">전체</option></select></label>
+        <label>결과 <select id="rp_outcome"><option value="">전체</option></select></label>
+        <label>집 <select id="rp_home"><option value="">전체</option></select></label>
+        <label><input type="checkbox" id="rp_near"> 커서 이터 근처</label>
+      </div>
+      <div id="rp_note" class="muted small"></div>
+      <div id="rp_list" class="list"></div>
+    </aside>
+    <div id="rp_main">
+      <div id="rp_view"><div id="rp_hud" class="hud mono"></div><div id="rp_cams" class="cams"></div><div id="rp_empty" class="empty">왼쪽 목록에서 판을 고르세요</div></div>
+      <div class="bar">
+        <button id="rp_play">▶</button>
+        <button id="rp_prev" title="한 프레임 뒤 (←)">◀︎|</button>
+        <button id="rp_next" title="한 프레임 앞 (→)">|▶︎</button>
+        <input id="rp_time" type="range" min="0" max="0" value="0" class="grow">
+        <span id="rp_tlabel" class="mono"></span>
+        <select id="rp_speed"><option>0.25</option><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select>
+        <select id="rp_camsel" title="시점 (숫자 키 1–4)"><option value="1">1 지도 위</option><option value="2">2 따라감</option><option value="3">3 손목</option><option value="4" selected>4 자유</option></select>
+        <label><input type="checkbox" id="rp_ee" checked> 손끝 궤적</label>
+        <label><input type="checkbox" id="rp_slam" checked> slam 궤적</label>
+      </div>
+      <canvas id="rp_strip" height="110"></canvas>
+      <div id="rp_legend" class="legend small"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== 비교 ============================== -->
+<section id="tab_compare" class="tab">
+  <div class="cmp">
+    <aside id="cmp_side">
+      <div class="muted small">실행을 여럿 고르세요. 같은 <code>group</code>(씨앗만 다름)은 평균 ± 표준편차 띠로 묶을 수 있습니다.</div>
+      <div id="cmp_runs" class="list"></div>
+    </aside>
+    <div id="cmp_main">
+      <div class="bar wrap">
+        <label>지표 A <select id="cmp_a"></select></label>
+        <label>지표 B <select id="cmp_b"></select></label>
+        <label>x 축 <select id="cmp_x"><option value="env_steps">env_steps</option><option value="wall">처음부터 지난 시간(s)</option><option value="ts">벽시계</option><option value="iter">iteration</option></select></label>
+        <label><input type="checkbox" id="cmp_group" checked> 씨앗 묶음 띠</label>
+        <label>EMA <input id="cmp_ema" type="range" min="0" max="0.99" step="0.01" value="0.6"></label>
+      </div>
+      <div id="cmp_charts"></div>
+      <h3>비교 표 <span class="muted small">실행마다 마지막 10 % 줄 평균</span></h3>
+      <div id="cmp_table" class="tablewrap"></div>
+    </div>
+  </div>
+</section>
+</main>
+<div id="tip" class="tip" hidden></div>
+<script src="/three.min.js"></script>
+<script src="/OrbitControls.js"></script>
+<script src="/GLTFLoader.js"></script>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

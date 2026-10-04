@@ -7,6 +7,7 @@ name = "bc_run"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "trainfmt",
 ]
 
 [[package]]
@@ -90,6 +91,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "trainfmt"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
