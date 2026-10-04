@@ -1,0 +1,34 @@
+cmake_minimum_required(VERSION 3.22)
+# 계획서 GPU_TRAINING.md 5.2: GPU 지도 근사판(../map, 잡음 끔 빌드) 대 진짜 scenemap(behavior-2026 서브모듈, CPU, C ABI).
+# 근사판 소스는 고치지 않고 -DMAP_NOISE_V=0 으로 따로 빌드한다(기본 빌드와 비트 같음은 ../map 의 map_verify 가 확인).
+if(NOT CMAKE_CUDA_COMPILER AND EXISTS /usr/local/cuda-12.8/bin/nvcc)
+  set(CMAKE_CUDA_COMPILER /usr/local/cuda-12.8/bin/nvcc)
+endif()
+project(map_cmp LANGUAGES CXX CUDA)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CUDA_STANDARD 17)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+set(CMAKE_CUDA_ARCHITECTURES 120)
+set(CMAKE_CXX_FLAGS_RELEASE "-O2 -ffp-contract=off")
+set(CMAKE_CUDA_FLAGS_RELEASE "-O3 --fmad=false -prec-div=true -prec-sqrt=true -ftz=false")
+find_package(CUDAToolkit REQUIRED)
+find_package(OpenMP REQUIRED)
+
+set(RL_DIR ${CMAKE_CURRENT_LIST_DIR}/.. CACHE PATH "training/RL (env·map 소스, 기본 이 저장소)")
+add_library(cmp_env STATIC ${RL_DIR}/env/src/env_kernel.cu ${RL_DIR}/env/src/env_ref.cpp)
+target_include_directories(cmp_env PUBLIC ${RL_DIR}/env/include)
+
+# 근사판, 잡음 끔(오도메트리·놓침·틀린 이름·유령·깊이/옆/크기 잡음)
+add_library(gmap_noiseoff STATIC ${RL_DIR}/map/src/map_kernel.cu ${RL_DIR}/map/src/map_ref.cpp)
+target_include_directories(gmap_noiseoff PUBLIC ${RL_DIR}/map/include)
+target_compile_definitions(gmap_noiseoff PUBLIC MAP_NOISE_V=0)
+target_link_libraries(gmap_noiseoff PUBLIC cmp_env CUDA::cudart OpenMP::OpenMP_CXX)
+
+# 진짜 scenemap(읽기 전용 서브모듈 소스를 이 빌드 폴더에 빌드)
+set(SCENEMAP_DIR ${RL_DIR}/../../src/behavior-2026/src/scene_graph/scenemap CACHE PATH "scenemap source (LIMO 지원판)")
+add_subdirectory(${SCENEMAP_DIR} ${CMAKE_BINARY_DIR}/scenemap EXCLUDE_FROM_ALL)
+
+add_executable(map_cmp tools/map_cmp.cpp)
+target_link_libraries(map_cmp gmap_noiseoff scenemap OpenMP::OpenMP_CXX)
