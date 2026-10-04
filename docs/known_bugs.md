@@ -1,22 +1,22 @@
 # 알려진 버그 (코드)
 
 문서를 코드와 맞추다가 찾은, **코드 쪽** 문제를 모은다. 고치면 이 표에서 지우거나 "고침" 으로 적는다.
-처음 정리 2026-10-03. 경로는 이 저장소 기준(서브모듈은 `src/behavior-2026/...`).
+처음 정리 2026-10-03. 2026-10-04 1·2·4–6·8–12 고침(behavior-2026 커밋은 서브모듈 포인터를 아직 안 올림). 경로는 이 저장소 기준(서브모듈은 `src/behavior-2026/...`).
 
 | # | 어디 | 무엇 | 영향 | 고치는 법 |
 |---|---|---|---|---|
-| 1 | `src/behavior-2026/src/scene_graph/ovdet/tools/ovdet_eval.py:33` (동기화 사본 `src/scene_graph/ovdet/tools/ovdet_eval.py` 도 같음) | `sys.path` 에 옛 경로 `src/scenemap/eval` 을 넣는다. 폴더 개편 뒤 경로는 `src/scene_graph/scenemap/eval` | ovdet 평가 스크립트가 `gt_scene` 을 못 불러와 실패할 것으로 보임 | `os.path.join(ROOT, 'src', 'scene_graph', 'scenemap', 'eval')` 로. 서브모듈에서 고친 뒤 `tools/sync_scene_graph.sh` |
-| 2 | `src/agent/skills/explore/src/bin/explore.rs:91` | 주석은 몸통 원 0.28 m 인데 코드(같은 파일 115 줄)는 0.37 m | 동작은 0.37 m. 주석만 틀림 | 주석을 0.37 m 로 |
-| 3 | 서브모듈 스크립트 약 80 개 (아래 목록) | 저장소 경로를 `/mnt/c/behavior-2026` 으로 박아 둠(Windows·WSL 시절 경로) | 작업 PC `jy-desktop` 에서는 심볼릭 링크 `/mnt/c/behavior-2026` → 서브모듈 이 있어서 돈다(서브모듈 `docs/Linux_설치.md` 3.1). 링크가 없는 PC(학교 4090 등)에서는 실패 | 스크립트 위치에서 저장소 뿌리를 찾거나(`$(cd "$(dirname "$0")/../.." && pwd)`) 환경 변수로 받는다. `tools/README.md` 의 리눅스판 스크립트가 이미 이렇게 한다 |
-| 4 | `src/behavior-2026/src/sim/integ/build_simlink.sh:4,8` | 사용 예가 `wsl.exe -d Ubuntu-22.04 ...`, 본문이 `cd /mnt/c/behavior-2026/...` | 3 과 같음 | 3 과 같이 |
-| 5 | `src/behavior-2026/src/agent/planner/src/main.rs:214` | `build-assets --root` 기본값이 `/mnt/c/behavior-2026` | `--root` 를 안 주면 3 과 같음 | 기본값을 실행 파일 위치나 현재 폴더 기준으로 |
-| 6 | `src/behavior-2026/tools/check_agent_hook.py:16` | `sys.path` 에 `/mnt/c/behavior-2026/tools` | 3 과 같음 | 파일 위치 기준(`Path(__file__).parent`) |
-| 7 | `src/behavior-2026/src/scene_graph/scenemap/src/dsg_save.cpp` (`sceneJsonFast`), `tests/test_scene_json.cpp`, `include/scenemap.h` | 그래프는 물체 + 방 2 층(장소는 백엔드에서 계산)으로 정했는데, scene.json 쓰기가 아직 장소(층 3)·agent 노드를 쓰고, 시험이 `numLayers() == 3`·PLACES 층을 확인한다. `scenemap.h` 층 목록도 OBJECTS/AGENTS/PLACES/ROOMS/BUILDINGS | 저장 파일·시험이 2 층 결정과 다름 | scene.json 에서 장소 층을 빼고 시험·헤더를 2 층으로 |
-| 8 | `src/behavior-2026/src/scene_graph/scenemap/CMakeLists.txt` 메시지, `include/scenemap.h` 주석 | "Spark-DSG 가 없으면 scene.json 을 안 쓴다" 고 적혀 있지만 빠른 쓰기(`sceneJsonFast`)가 늘 쓴다 | 주석·메시지만 틀림 | 문구를 고친다 |
-| 9 | `src/behavior-2026/src/scene_graph/runtime/src/sgrt.cpp` | `SGRT_STREAM_HZ` 주석은 기본 5 인데 코드는 60(0.5–240 으로 자름) | 주석만 틀림 | 주석을 60 으로 |
-| 10 | `src/behavior-2026/src/scene_graph/da/include/da/merge.hpp`·`da/src/merge.cpp` | 주석은 `max_ext` 를 넘는 쌍은 병합 안 한다는데 `merge.cpp` 가 `max_ext` 를 확인하지 않는다. `mergeable()` 이 `kinds` 를 안 본다 | 큰 물체끼리, 다른 종류끼리 병합될 수 있음 | `max_ext`·`kinds` 확인을 넣거나 주석을 고친다 |
-| 11 | `src/behavior-2026/src/scene_graph/scenemap/src/objmap.cpp`, `dsg_save.cpp` (`eventName`) | 병합을 이벤트 7 로 기록하는데 `eventName` 은 0–6 만 안다 | 기록·뷰어에 "?" 로 보임 | `eventName` 에 7(병합) 추가 |
-| 12 | `src/behavior-2026/src/scene_graph/scenemap/CMakeLists.txt` (`walls` 시험) | `${WALLS_REF_CELLS}`·`${WALLS_REF_JSON}` 를 넘기지만 어디서도 정하지 않는다 | ctest 가 파이썬 기준 비교 없이 돈다 | 변수를 정하거나 인자를 뺀다 |
+| 1 | `src/behavior-2026/src/scene_graph/ovdet/tools/ovdet_eval.py:33` (동기화 사본 `src/scene_graph/ovdet/tools/ovdet_eval.py` 도 같음) | `sys.path` 에 옛 경로 `src/scenemap/eval` 을 넣는다. 폴더 개편 뒤 경로는 `src/scene_graph/scenemap/eval` | ovdet 평가 스크립트가 `gt_scene` 을 못 불러와 실패할 것으로 보임 | **고침** behavior-2026 `057689b`(시험: 고치기 전 `ModuleNotFoundError: demo_data`, 뒤 `--help` 됨). 동기화 사본 `src/scene_graph/...` 은 서브모듈 포인터 올린 뒤 `tools/sync_scene_graph.sh` 로. `os.path.join(ROOT, 'src', 'scene_graph', 'scenemap', 'eval')` 로. 서브모듈에서 고친 뒤 `tools/sync_scene_graph.sh` |
+| 2 | `src/agent/skills/explore/src/bin/explore.rs:91` | 주석은 몸통 원 0.28 m 인데 코드(같은 파일 115 줄)는 0.37 m | 동작은 0.37 m. 주석만 틀림 | **고침** robot-agent `f139dfe`. 주석을 0.37 m 로 |
+| 3 | 서브모듈 스크립트 약 80 개 (아래 목록) | 저장소 경로를 `/mnt/c/behavior-2026` 으로 박아 둠(Windows·WSL 시절 경로) | 작업 PC `jy-desktop` 에서는 심볼릭 링크 `/mnt/c/behavior-2026` → 서브모듈 이 있어서 돈다(서브모듈 `docs/Linux_설치.md` 3.1). 링크가 없는 PC(학교 4090 등)에서는 실패 | **보류**: 84 파일 일괄(작은 고침 아님). 4·5·6 만 고침. 스크립트 위치에서 저장소 뿌리를 찾거나(`$(cd "$(dirname "$0")/../.." && pwd)`) 환경 변수로 받는다. `tools/README.md` 의 리눅스판 스크립트가 이미 이렇게 한다 |
+| 4 | `src/behavior-2026/src/sim/integ/build_simlink.sh:4,8` | 사용 예가 `wsl.exe -d Ubuntu-22.04 ...`, 본문이 `cd /mnt/c/behavior-2026/...` | 3 과 같음 | **고침** behavior-2026 `0c392f7`(스크립트 위치 기준 `cd`). 3 과 같이 |
+| 5 | `src/behavior-2026/src/agent/planner/src/main.rs:214` | `build-assets --root` 기본값이 `/mnt/c/behavior-2026` | `--root` 를 안 주면 3 과 같음 | **고침** behavior-2026 `0c392f7`(기본 = 크레이트 `../../..`, 시험 `repo_root_is_this_checkout`). 기본값을 실행 파일 위치나 현재 폴더 기준으로 |
+| 6 | `src/behavior-2026/tools/check_agent_hook.py:16` | `sys.path` 에 `/mnt/c/behavior-2026/tools` | 3 과 같음 | **고침** behavior-2026 `0c392f7`(`Path(__file__).resolve().parent`). 파일 위치 기준(`Path(__file__).parent`) |
+| 7 | `src/behavior-2026/src/scene_graph/scenemap/src/dsg_save.cpp` (`sceneJsonFast`), `tests/test_scene_json.cpp`, `include/scenemap.h` | 그래프는 물체 + 방 2 층(장소는 백엔드에서 계산)으로 정했는데, scene.json 쓰기가 아직 장소(층 3)·agent 노드를 쓰고, 시험이 `numLayers() == 3`·PLACES 층을 확인한다. `scenemap.h` 층 목록도 OBJECTS/AGENTS/PLACES/ROOMS/BUILDINGS | 저장 파일·시험이 2 층 결정과 다름 | **보류**: 사용자 결정(2 층 확정) 필요. scene.json 에서 장소 층을 빼고 시험·헤더를 2 층으로 |
+| 8 | `src/behavior-2026/src/scene_graph/scenemap/CMakeLists.txt` 메시지, `include/scenemap.h` 주석 | "Spark-DSG 가 없으면 scene.json 을 안 쓴다" 고 적혀 있지만 빠른 쓰기(`sceneJsonFast`)가 늘 쓴다 | 주석·메시지만 틀림 | **고침** behavior-2026 `057689b`(문구). 문구를 고친다 |
+| 9 | `src/behavior-2026/src/scene_graph/runtime/src/sgrt.cpp` | `SGRT_STREAM_HZ` 주석은 기본 5 인데 코드는 60(0.5–240 으로 자름) | 주석만 틀림 | **고침** behavior-2026 `057689b`(주석 60, 0.5–240). 주석을 60 으로 |
+| 10 | `src/behavior-2026/src/scene_graph/da/include/da/merge.hpp`·`da/src/merge.cpp` | 주석은 `max_ext` 를 넘는 쌍은 병합 안 한다는데 `merge.cpp` 가 `max_ext` 를 확인하지 않는다. `mergeable()` 이 `kinds` 를 안 본다 | 큰 물체끼리, 다른 종류끼리 병합될 수 있음 | **고침** behavior-2026 `057689b`: 합집합이 될 쌍(큰 가구·고정 종류)은 한 변이 `ObjParams::max_ext` 넘으면 안 합침. `kinds` 는 같은 이름 번호면 같아서 따로 볼 것 없음(주석). 시험 `test_merge` 2 경우 추가(고치기 전 실패). 실제 경로 `da/include/da/merge.hpp`·`da/src/merge.cpp`. `max_ext`·`kinds` 확인을 넣거나 주석을 고친다 |
+| 11 | `src/behavior-2026/src/scene_graph/scenemap/src/objmap.cpp`, `dsg_save.cpp` (`eventName`) | 병합을 이벤트 7 로 기록하는데 `eventName` 은 0–6 만 안다 | 기록·뷰어에 "?" 로 보임 | **고침** behavior-2026 `057689b`(`merged`, 시험 `test_scene_json` 이벤트 이름 — 고치기 전 실패). `eventName` 에 7(병합) 추가 |
+| 12 | `src/behavior-2026/src/scene_graph/scenemap/CMakeLists.txt` (`walls` 시험) | `${WALLS_REF_CELLS}`·`${WALLS_REF_JSON}` 를 넘기지만 어디서도 정하지 않는다 | ctest 가 파이썬 기준 비교 없이 돈다 | **고침** behavior-2026 `057689b`: `WALLS_REF_CELLS`·`WALLS_REF_JSON` 캐시 변수(기본 빈 값), 둘 다 있을 때만 인자로. 변수를 정하거나 인자를 뺀다 |
 | 13 | `src/agent/tools/move_robot/src/lib.rs` (`Motion::Base`) | **버그 아님(메모)**: `SGRT_POSE=gt` 로 정답 자세를 넣어도 base delta 의 도착 판정·결과 `state`·`error` 는 바퀴 속도(base_qvel) 적분이다. 지도·go_to·probe·`moved_m` 만 정답 자세 | 실제 로봇에는 정답 자세가 없어 delta 는 오도메트리로 판정한다 → 시뮬에서도 같은 방식으로 시험하는 것이 맞다 | 그대로 둔다 |
 
 ## 3 번 목록 (`/mnt/c/behavior-2026` 을 쓰는 실행 줄이 있는 파일, 주석만 있는 것은 뺌)
