@@ -1,4 +1,4 @@
-// da/merge 시험: 중복은 합치고, 따로 있는 물체·다른 이름·들고 있는 것은 건드리지 않는다.
+// da/merge 시험: 중복은 합치고, 따로 있는 물체·다른 이름(상자가 거의 같지 않으면)·들고 있는 것은 건드리지 않는다.
 #include <cstdio>
 #include <vector>
 
@@ -32,9 +32,18 @@ int main() {
     std::vector<MapObject> v = {obj(1, 5, 1.0, 1.0, 0.45, 0.5, 0.5, 0.9), obj(2, 5, 1.6, 1.0, 0.45, 0.5, 0.5, 0.9)};
     CHECK(da::mergeDuplicates(v, mp, op, 20.0).empty() && v.size() == 2, "adjacent chairs merged");
   }
-  {  // 겹치지만 이름이 다름 → 그대로
+  {  // 이름이 다르고 상자가 거의 같음: 이름 모으기를 끄면 그대로, 켜면(기본) 한 물체가 이름 둘로 따로 생긴 것 → 합침, 이름 표도 합침
     std::vector<MapObject> v = {obj(1, 3, 2, 1, 0.4, 1.0, 0.8, 0.8), obj(2, 4, 2, 1, 0.4, 1.0, 0.8, 0.8)};
-    CHECK(da::mergeDuplicates(v, mp, op, 20.0).empty(), "different classes merged");
+    v[0].votes = {{3, 2.f}};
+    v[1].votes = {{4, 1.f}};
+    ObjParams nv = op; nv.name_vote = false;
+    CHECK(da::mergeDuplicates(v, mp, nv, 20.0).empty(), "different classes merged with name_vote off");
+    CHECK(da::mergeDuplicates(v, mp, op, 20.0).size() == 1 && v.size() == 1, "same box, two names not merged");
+    CHECK(v[0].votes.size() == 2 && v[0].cls == 3, "votes %zu cls %d", v[0].votes.size(), v[0].cls);
+  }
+  {  // 이름이 다르고 한 상자가 다른 상자 안(탁자 위 컵, IoU 작음) → 그대로
+    std::vector<MapObject> v = {obj(1, 3, 2, 1, 0.4, 1.0, 0.8, 0.8), obj(2, 4, 2, 1, 0.5, 0.1, 0.1, 0.12)};
+    CHECK(da::mergeDuplicates(v, mp, op, 20.0).empty(), "cup on table merged");
   }
   {  // 납작한 러그(두께 ~0)가 겹쳐 둘로 확정 → 합침
     std::vector<MapObject> v = {obj(1, 8, 3, 3, 0.01, 1.4, 0.9, 0.002), obj(2, 8, 3.05, 3.02, 0.012, 1.3, 0.9, 0.003)};

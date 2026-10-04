@@ -2,23 +2,35 @@
 //
 // docs/scenemap_설계.md 3.2. 규칙 요약
 //   종류   : 이름 번호마다 물체 / 구조물(벽·바닥·천장·문·창·기둥·칸막이·계단·난간·걸레받이 — 물체가 안 되고 격자만) /
-//            고정(가구·가전·붙박이 — 물체 노드지만 movable=false, 사라짐 판정 안 함). 표는 capi(sm_set_kind_names)가 정함
+//            고정(가구·가전·붙박이 — 물체 노드지만 movable=false, 사라짐은 큰 것 기준으로 판정). 표는 capi(sm_set_kind_names)가 정함
 //   위치   : 마스크를 1 칸 깎은 안쪽 깊이 점(map)의 축별 중앙값, 크기 = 10~90 백분위 폭.
 //            그 전에 카메라 깊이가 마스크 안 중앙값에서 max(mad_k·1.4826·MAD, mad_floor) 넘게 떨어진 점은 버림(뒤 벽이 비친 것)
-//   거르기 : 점 min_points 미만 버림. 점의 hand_frac 이상이 팔 끝 hand_r 안이면(손에 든 것) 버림
-//   같은 것: 같은 이름 번호끼리만. 중심 거리 < max(da_min, da_k·큰 쪽 크기) 이거나 map 축 상자 사이 틈 < da_gap.
-//            틈(겹치면 0)·중심 거리 순으로 1:1(탐욕). 큰 가구(한 변 > big 또는 고정 종류)는 상자를 합집합으로 키우고
-//            위치 = 상자 중심 — 단 keyframe 마다 면마다 grow_max 까지만, 한 변 max_ext 넘게는 안 키움
+//   거르기 : 점 min_points 미만 버림. 점의 hand_frac 이상이 팔 끝 hand_r 안이면(손에 든 것) 버림. 점의 90 백분위 높이 < floor_h 면
+//            바닥 조각(바닥에 깔리는 이름 — 러그·카펫·매트 — 은 둠)
+//   이름   : 물체마다 이름 표(이름 번호별 점수 합). 이름 = 최댓값(지금 이름보다 name_switch 배 넘어야 바뀜)
+//   같은 것: 이름이 같거나 관측 이름이 물체 이름 표에서 name_share 이상. 중심 거리 < max(da_min, da_k·큰 쪽 크기) 이거나
+//            map 축 상자 사이 틈 < da_gap. (틈 + 이름 다르면 0.02)·중심 거리 순으로 1:1(탐욕). 큰 가구(한 변 > big 또는 고정 종류)는
+//            상자를 합집합으로 키우고 위치 = 상자 중심 — 단 keyframe 마다 면마다 grow_max 까지만, 한 변 max_ext 넘게는 안 키움
 //   확정   : 서로 다른 keyframe 에서 confirm 번 보이면 물체. 후보가 prune_s 동안 다시 안 보이면 버림
-//   옮겨짐 : 확정 물체가 moved_d 넘게 떨어진 자리에서 보이면 그 자리로 옮기고 이력을 남김
-//   사라짐 : (작은 물체만, 한 변 ≤ big 이고 고정 종류 아님) 시야 안·가림 없음(깊이가 물체보다 occl 이상 가깝지 않음)·
-//            팔 끝 hand_r+0.1 밖인데 안 보이면 +1, gone_misses 번 연속이고 첫 놓침에서 시뮬 gone_min_s 넘게 지나야 사라짐.
-//            통 안에 붙은 것은 안 봄
+//   움직임 : 관측 중심(영상 가장자리에 닿지 않은 것, 카메라가 move_max_cam_w 보다 천천히 돌 때)이 move_n 번 잇달아 move_v 넘게
+//            같은 쪽으로 가고 쉬던 상자를 벗어나면 평균 대신 관측 자리로 바로 따라감(옮겨짐 상태)
+//   사라짐 : 확정·안 든·통에 안 넣은 물체(큰 것·고정 종류 포함). 물체 점(구름, 없으면 상자 격자)을 투영해 시야 안·안 가림 비율 ≥
+//            absent_vis, 보이는 부분 ≥ absent_min_px, 카메라 거리 ≤ 이 물체를 검출한 가장 먼 거리·absent_det_k + 0.2, 팔 끝
+//            hand_r+0.1 밖인데 검출이 없으면 놓침 +1 — 단 지난 놓침 뒤 카메라가 gone_step_d·gone_step_deg 넘게 바뀌었거나 자리 너머가
+//            보일 때만(같은 영상 되풀이는 안 셈), 물체 상자 안에 전에 그 물체 이름 표에 있던 다른 이름 관측이 있으면 안 셈.
+//            필요한 놓침 수 = max(gone_misses(큰 것 gone_misses_big), 검출률 p 로 (1−p)^k < gone_eps 인 k), 그리고 첫 놓침에서
+//            gone_min_s(큰 것 gone_min_s_big) 지났거나 카메라가 gone_view_d 넘게 옮김. 관측이 spurious_obs 보다 적던 것은 지움(헛검출)
+//   옮겨짐 : 사라진 m ↔ 새로 나타난 n(같은 이름, n 확정·관측 link_min_obs 이상, n 처음 > m 마지막, 거리 ≤ min(link_max_d,
+//            link_d0 + link_v·시간 차), n 자리를 처음 검출한 거리 이하에서 link_view_gap_s 넘게 전에 본 적 있음, n 에 더 가까운 같은
+//            이름 물체가 n 이후 아직 안 보였으면 link_wait_s 까지 기다림) 를 가까운 쌍부터 이어 n 을 m 의 id 로(relink)
 //   들기   : 그리퍼가 닫히는 순간 팔 끝 grasp_r 안 가장 가까운 확정 물체를 든 것으로 — 드는 동안 팔 끝을 따라가고,
 //            열리는 순간 그 자리에 놓는다(moved_d 넘게 옮겼으면 옮겨짐). 놓은 점 아래에 xy 가 겹치는(0.1 m 여유) 다른 물체
 //            상자가 있으면 그중 윗면이 가장 높은 것(떨어져 닿을 받침)에 붙인다 — 들고 있는 쓰레기통에 넣은 캔이 통을 따라가게
 #pragma once
+#include <array>
 #include <cstdint>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "scenemap.h"
@@ -58,6 +70,48 @@ struct ObjParams {
   bool merge = true;
   double merge_overlap = 0.35;
   double merge_min_ext = 0.05;
+  // ---- 바뀜 판정(10-04, dynamic-object-mapping-benchmark 로 고침 — README "바뀜 규칙") ----
+  // 바닥 조각: 관측 점의 90 백분위 높이가 이보다 낮으면(map z, 바닥 = 0) 물체가 아님
+  double floor_h = 0.05;
+  // 이름 모으기: 물체마다 이름 번호별 점수 합(표). 이름 = 표의 최댓값(지금 이름보다 name_switch 배 넘어야 바꿈).
+  // 관측 이름이 표에서 name_share 이상이면 같은 물체 후보. 병합(da)은 이름이 달라도 상자가 거의 같으면(name_merge_iou) 합침
+  // 조각 합치기: 이번 관측 상자 안에 다른 같은 이름 물체 상자가 이 비율(축별 겹침 곱) 넘게 들어 있고 더 작으면 한 물체로(0 = 끔)
+  double frag_overlap = 0.0;      // 켜면 0.6 정도. 10-04 실제 검출에서 끈 쪽이 조금 나음(static 0.697 vs 0.684) — 기본 끔
+  bool name_vote = true;
+  double name_share = 0.2;
+  double name_switch = 1.25;
+  double name_merge_iou = 0.5;
+  // 사라짐(보임 근거): 물체 점(구름, 없으면 상자 격자) absent_samples 개를 투영해 시야 안·안 가림 비율이 absent_vis 이상,
+  // 보이는 부분 화소 크기 ≥ absent_min_px, 카메라 거리 ≤ 이 물체를 검출했던 가장 먼 거리·absent_det_k + 0.2 일 때만 놓침 +1.
+  // 큰 것(한 변 > big)·고정 종류도 판정하되 gone_misses_big 번·gone_min_s_big 초. 시간 대신 카메라가 gone_view_d 넘게 옮긴 시점의 놓침도 됨
+  int absent_samples = 48;
+  double absent_vis = 0.5;
+  double absent_min_px = 12;
+  double absent_det_k = 1.15;
+  int gone_misses_big = 6;
+  double gone_min_s_big = 4.0;
+  int spurious_obs = 5;            // 관측이 이보다 적은 확정 물체가 사라짐이 되면 헛검출로 보고 지움
+  double gone_view_d = 0.5;
+  double gone_step_d = 0.10, gone_step_deg = 5.0;   // 새 놓침 근거: 지난 놓침 뒤 카메라가 이만큼 옮기거나 돌았을 때(또는 자리 너머가 보일 때)만 셈
+  double gone_eps = 0.02;         // 검출률 p 인 물체가 있는데 연속 k 번 놓칠 확률 (1−p)^k 가 이보다 작아야 사라짐(k 하한)       // 또는 첫 놓침 자리에서 카메라가 이만큼(m) 옮긴 뒤에도 놓침이면(다른 시점의 근거) 시간을 안 기다림
+  // 옮겨짐 잇기(다시 잇기): '사라짐' m 과 새로 나타난 같은 이름 물체 n 을 잇는다(n 의 관측을 m 의 id 로). 조건
+  //   시간: n 을 처음 본 때 > m 을 마지막으로 본 때, n 이 확정·관측 link_min_obs 번 이상
+  //   거리: |n − m| ≤ min(link_max_d, link_d0 + link_v·(n 처음 − m 마지막))
+  //   나타남: n 자리(view_cell 칸)를 n 을 처음 보기 link_view_gap_s 넘게 전에, n 을 처음 검출한 거리(수평, + view_cell) 이하에서
+  //           본 적 있음(그때 있었으면 검출했을 것). 처음 가 본 곳에서 찾은 것은 새 물체(잇지 않음)
+  //   애매함: n 에 더 가까운 같은 이름 물체가 n 이후로 아직 안 보였으면(사라졌을지 모름) link_wait_s 까지 기다림
+  double link_v = 1.0, link_d0 = 1.0, link_max_d = 8.0;
+  int link_min_obs = 3;
+  double link_wait_s = 30.0;
+  double link_window_s = 180.0;   // n 을 처음 본 뒤 이만큼 지나면 더는 잇기 후보가 아님(새 물체로 자리 잡음)
+  double link_view_gap_s = 5.0;
+  double view_cell = 0.5;
+  // 움직이는 중: 관측 중심이 move_n 번 잇달아 move_v(m/s) 넘게 같은 쪽으로 가고 쉬던 자리에서 move_min_d 넘게(또는 상자 반 폭)
+  // 벗어나면 관측 자리로 바로 따라감(평균 안 함). 마지막으로 그렇게 따라간 뒤 1 s 안이면 '움직이는 중'(moving_t). 0 = 끔
+  int move_n = 3;
+  double move_v = 0.3, move_min_d = 0.25;
+  double move_max_cam_w = 0.6;    // 카메라 광축이 이보다 빨리(rad/s) 돌면 그 keyframe 은 움직임 근거로 안 씀(자세 오차가 물체를 쓸어 감).
+                                  // 상자가 영상 가장자리에 닿은 관측(잘림)도 안 씀
 };
 
 struct ObjEvent {
@@ -79,13 +133,23 @@ struct MapObject {
   bool moved = false;
   int misses = 0;
   double first_miss = 0;          // 연속 놓침이 시작된 시각
+  double miss_cam[3] = {0, 0, 0}; // 그때 카메라 자리(map)
+  double last_miss_cam[3] = {0, 0, 0}, last_miss_fwd[3] = {0, 0, 0};   // 마지막으로 센 놓침의 카메라 자리·광축
+  uint32_t n_vis_miss = 0;
+  double trk_pos[3] = {0, 0, 0}, trk_t = 0, trk_step[2] = {0, 0};   // 마지막 관측 중심(날 것)·시각·한 걸음
+  int mv_cnt = 0;                 // 잇달아 빠르게 같은 쪽으로 간 관측 수
+  double moving_t = -1e300, move_from_t = 0;   // 마지막으로 움직임을 따라간 시각, 이번 움직임 시작 시각        // 보일 만한데 검출이 없던 keyframe 수(평생) — 검출률 추정
   int held_by = -1;               // 0 왼손, 1 오른손
   double held_rel[3] = {0, 0, 0}, grasp_pos[3] = {0, 0, 0};   // held_rel: 팔 끝 → 물체, 베이스 축(로봇이 돌면 같이 돔)
   uint32_t parent = 0;            // 놓을 때 다른 물체(들고 있는 통·탁자) 위·안이면 그 물체에 붙어 같이 움직임
   double parent_rel[3] = {0, 0, 0};
   float score = 0;
   double last_kf = -1;
-  ObjCloud cloud;                 // 모양(점 구름): 옮겨짐 잇기(사라짐 → 다른 자리)면 비우고 새로, 들기·받침은 org 를 옮김
+  ObjCloud cloud;                 // 모양(점 구름): 옮겨짐 잇기(사라짐 → 다른 자리)면 새 자리 물체의 것으로, 들기·받침은 org 를 옮김
+  std::vector<std::pair<int32_t, float>> votes;   // 이름 표: (이름 번호, 점수 합)
+  double max_det_z = 0;           // 이 물체를 검출한 가장 먼 카메라 깊이(사라짐 판정은 이 거리 안에서만)
+  double gone_t = 0;              // 사라짐 판정 시각
+  bool appeared = false;          // 전에 본 자리에 새로 나타남(옮겨짐 잇기 후보)
 };
 
 // 이름 번호의 종류
@@ -125,7 +189,9 @@ struct ObsPoints {
 
 class ObjectMap {
  public:
-  explicit ObjectMap(const ObjParams& p = {}) : p_(p) {}
+  // 진단: 환경 변수 SM_OBJ_PARAMS="key=val,key=val"(바뀜 판정 매개변수 이름 — objmap.cpp kEnvKeys)이 있으면 덮어씀
+  explicit ObjectMap(const ObjParams& p = {}) : p_(p) { envOverrides(&p_); }
+  static void envOverrides(ObjParams* p);
   void update(const ObjFrame& f);
   // 팔 끝·그리퍼만 바뀐 스텝(영상 없음)에도 들고 있는 물체를 따라가게
   void updateHands(double stamp, const double eef[2][3], const float grip[2], double base_yaw);
@@ -134,6 +200,11 @@ class ObjectMap {
   // 이름 번호 → 종류(ClassKind). 표 밖 번호는 물체
   void setClassKinds(std::vector<uint8_t> k) { kinds_ = std::move(k); }
   int kindOf(int cls) const { return cls >= 0 && size_t(cls) < kinds_.size() ? kinds_[cls] : int(kKindObject); }
+  // 바닥에 깔리는 이름(러그·카펫·매트): 바닥 조각 거르기(floor_h)에서 뺌. 표 밖 번호는 아님
+  void setFloorClasses(std::vector<uint8_t> f) { floor_cls_ = std::move(f); }
+  bool floorLevel(int cls) const { return cls >= 0 && size_t(cls) < floor_cls_.size() && floor_cls_[cls]; }
+  // 이름 표에서 cls 의 몫(0..1). 표가 비면 cls == m.cls 일 때 1
+  static double nameShare(const MapObject& m, int cls);
   // 마지막 update 의 검출별 짝(크기 = dets->n, 검출 순서)
   const std::vector<DetAssoc>& lastAssoc() const { return assoc_; }
   std::vector<ObsPoints>& lastPoints() { return points_; }
@@ -147,18 +218,30 @@ class ObjectMap {
 
  private:
   void event(double t, const MapObject& o, int kind);
+  void vote(MapObject& m, int cls, float w) const;
+  bool nameOk(const MapObject& m, int cls) const;
+  bool isBig(const MapObject& m) const;
+  // 사라짐 근거: 2 = 안 보이고 자리 너머가 보임, 1 = 보여야 하는데 안 보임(놓침), 0 = 판단 못 함(시야 밖·가림·멀다·작다)
+  int absentEvidence(const MapObject& m, const ObjFrame& f) const;
+  void markView(const ObjFrame& f);
+  double firstView(double x, double y, double range) const;   // range(수평 m) 이하에서 처음 본 시각(없으면 1e300)
+  void relink(double t);
+  void remapId(uint32_t from, uint32_t to);
   ObjParams p_;
   std::vector<MapObject> objs_;
   std::vector<ObjEvent> ev_;
   std::vector<DetAssoc> assoc_;
   std::vector<ObsPoints> points_;
-  std::vector<uint8_t> kinds_;
+  std::vector<uint8_t> kinds_, floor_cls_;
   uint32_t next_id_ = 1;
   bool closed_[2] = {false, false};
   // update 작업 버퍼(keyframe 마다 재사용)
   std::vector<double> wx_, wy_, wz_, wzc_, wzs_;
   std::vector<int32_t> wpu_, wpv_, wcol_;
   VoxelIndex wseen_;
+  double last_cam_t_ = -1e300, last_cam_fwd_[3] = {0, 0, 0};
+  static constexpr int kViewBands = 5;                 // 거리 띠 1..5 m
+  std::unordered_map<int64_t, std::array<double, kViewBands>> view_first_;   // 칸 → 띠마다 처음 본 시각(-1e300 = 아직)
 };
 
 }  // namespace scenemap

@@ -213,12 +213,13 @@ static void testStructures() {
   CHECK(as2[2] != 0 && as2[5] == 0, "custom list: door %u cup %u", as2[2], as2[5]);
   sm_set_kind_names(g.c, SM_KIND_STRUCTURE, nullptr, -1);   // 기본값으로
   std::printf("  nodes %zu (wall/floor/door 없음)\n", s.objs().size());
-  // COCO-80 이름(닫힌 어휘 YOLO-seg): person 은 노드 아님, dining table·couch·tv 는 고정, cup·chair 는 옮길 수 있음
+  // COCO-80 이름(닫힌 어휘 YOLO-seg): person 은 노드 아님, dining table·couch·tv 는 고정, cup·chair 는 옮길 수 있음.
+  // (평면 사각형이라 영상 아래쪽에 두면 바닥 높이가 되어 바닥 조각으로 걸러짐 — 소파·탁자는 가운데 높이에)
   const std::vector<const char*> coco = {"person", "cup", "chair", "couch", "dining table", "tv", "potted plant"};
   Rig c(coco);
   std::vector<Rect> cr = {R(0, 40, 220, 120, 560, 2.5f, 200, 160, 120), R(1, 300, 300, 340, 340, 1.5f, 250, 0, 0),
-                          R(2, 160, 300, 260, 460, 2.0f, 90, 60, 30),   R(3, 400, 420, 700, 560, 2.2f, 30, 30, 160),
-                          R(4, 280, 480, 380, 600, 1.8f, 120, 80, 40),  R(5, 500, 220, 600, 300, 2.9f, 10, 10, 10),
+                          R(2, 160, 300, 260, 460, 2.0f, 90, 60, 30),   R(3, 400, 310, 700, 400, 1.7f, 30, 30, 160),
+                          R(4, 280, 360, 380, 460, 1.8f, 120, 80, 40),  R(5, 500, 220, 600, 300, 2.9f, 10, 10, 10),
                           R(6, 620, 220, 700, 300, 2.9f, 10, 200, 10)};
   for (int k = 0; k < 3; ++k) c.kf(0.2 * k, cr);
   Snap cs(c.c);
@@ -232,6 +233,8 @@ static void testStructures() {
     const sm_object* o = cs.byName(n);
     bad += !o || sm_snap_movable(cs.s, o->id) != 1;
   }
+  if (bad)
+    for (const sm_object& o : cs.objs()) std::printf("    node %s pos %.2f %.2f %.2f movable %d\n", o.name, o.pos[0], o.pos[1], o.pos[2], sm_snap_movable(cs.s, o.id));
   CHECK(bad == 0, "coco kinds wrong %d", bad);
   std::printf("  COCO: person 노드 없음, 가구·tv·화분 고정, cup·chair 옮길 수 있음 (노드 %zu)\n", cs.objs().size());
 }
@@ -280,12 +283,12 @@ static void testGone() {
   std::printf("[gone]\n");
   Rig g(kLabels);
   const Rect cup = R(C_CUP, 300, 300, 340, 340, 1.5f, 250, 0, 0);
-  const Rect sofa = R(C_SOFA, 100, 400, 620, 560, 2.0f, 30, 30, 160);
+  const Rect sofa = R(C_SOFA, 100, 350, 620, 440, 1.7f, 30, 30, 160);
   double t = 0;
-  for (int k = 0; k < 4; ++k, t += 0.2) g.kf(t, {cup, sofa});
+  for (int k = 0; k < 6; ++k, t += 0.2) g.kf(t, {cup, sofa});   // 관측 6 번(spurious_obs 5 이상: 헛검출로 지우지 않음)
   // 이제 둘 다 없음(뒤는 3 m 벽 — 가림 없음). 0.2 s 마다
   const double t_miss = t;
-  double gone_at = -1;
+  double gone_at = -1, sofa_gone_at = -1;
   int state_1s = -1;
   for (; t < t_miss + 6.0; t += 0.2) {
     g.kf(t, {});
@@ -294,11 +297,14 @@ static void testGone() {
     if (c && t - t_miss < 1.0 + 1e-9) state_1s = c->state;
     if (c && c->state == SM_GONE && gone_at < 0) gone_at = t - t_miss;
     const sm_object* so = s.byName("sofa");
-    CHECK(so && so->state != SM_GONE, "sofa gone at %.1f", t - t_miss);
+    CHECK(so, "sofa missing at %.1f", t - t_miss);
+    if (so && so->state == SM_GONE && sofa_gone_at < 0) sofa_gone_at = t - t_miss;
   }
-  std::printf("  cup: 1 s 안 상태 %d(0=seen), 사라짐 판정 %.1f s 뒤\n", state_1s, gone_at);
+  // 큰 가구도 사라짐 판정을 하지만 근거를 더 모은다(gone_misses_big 6 번, 서 있는 카메라면 gone_min_s_big 4 s)
+  std::printf("  cup: 1 s 안 상태 %d(0=seen), 사라짐 판정 %.1f s 뒤; sofa(큰 것) %.1f s 뒤\n", state_1s, gone_at, sofa_gone_at);
   CHECK(state_1s == SM_SEEN, "cup state within 1 s = %d", state_1s);
   CHECK(gone_at >= 2.0 - 1e-6 && gone_at < 3.0, "cup gone after %.2f s", gone_at);
+  CHECK(sofa_gone_at >= 4.0 - 1e-6 && sofa_gone_at < 5.0, "sofa gone after %.2f s", sofa_gone_at);
 }
 
 // ---- 4. best view ----
@@ -443,8 +449,8 @@ static void testSave(const std::string& dir) {
   std::printf("[save] %s\n", dir.c_str());
   fs::remove_all(dir);
   Rig g(kLabels);
-  std::vector<Rect> rs = {R(C_CUP, 300, 300, 340, 340, 1.5f, 250, 0, 0), R(C_BOOK, 420, 300, 480, 380, 1.8f, 0, 0, 250),
-                          R(C_SOFA, 60, 420, 660, 600, 2.2f, 30, 30, 160), R(C_WALL, 0, 0, 720, 200, 3.0f, 200, 200, 200)};
+  std::vector<Rect> rs = {R(C_CUP, 300, 300, 340, 340, 1.5f, 250, 0, 0), R(C_BOOK, 420, 270, 480, 345, 1.8f, 0, 0, 250),
+                          R(C_SOFA, 60, 350, 660, 440, 1.7f, 30, 30, 160), R(C_WALL, 0, 0, 720, 200, 3.0f, 200, 200, 200)};
   double kf_ms = 0;
   int nkf = 0;
   for (int k = 0; k < 4; ++k, ++nkf) kf_ms += g.kf(0.2 * k, rs);
@@ -694,24 +700,31 @@ static void testCloud() {
     CHECK(o && o->state == SM_HELD, "held state");
     CHECK(std::fabs(mean[0] - before[0] - 0.3) < 1e-3 && std::fabs(mean[1] - before[1]) < 1e-3, "held cloud follows hand");
   }
-  // (d) 사라짐 → 구름 유지, 다른 자리에서 다시 찾음(옮겨짐 잇기) → 비우고 새 자리 점만
+  // (d) 사라짐 → 구름 유지, 다른 자리(전에 본 곳)에 나타난 같은 이름 물체를 다시 이음(옮겨짐) → 새 자리 점만.
+  //     잇기는 새 물체가 link_min_obs 번 보이고, 그 자리를 link_view_gap_s(5 s) 넘게 전에 본 적 있어야
   {
     Rig g(kLabels);
     const Rect a = R(C_CUP, 300, 300, 340, 340, 1.5f, 250, 0, 0);
     const Rect b = R(C_CUP, 520, 300, 560, 340, 1.5f, 250, 0, 0);
     double t = 0;
-    for (int k = 0; k < 4; ++k, t += 0.2) g.kf(t, {a});
+    for (int k = 0; k < 6; ++k, t += 0.2) g.kf(t, {a});
     int n_gone = -1;
-    for (; t < 3.0; t += 0.2) g.kf(t, {});
+    for (; t < 6.0; t += 0.2) g.kf(t, {});
     {
       Snap s(g.c);
       const sm_object* o = s.byName("cup");
       sm_cloud cl{};
       if (o && o->state == SM_GONE && sm_snap_points(s.s, o->id, &cl) == 1) n_gone = cl.n;
     }
-    g.kf(t, {b});
+    uint32_t gone_id = 0;
+    {
+      Snap s0(g.c);
+      if (const sm_object* o0 = s0.byName("cup")) gone_id = o0->id;
+    }
+    for (int k = 0; k < 3; ++k, t += 0.2) g.kf(t, {b});
     Snap s(g.c);
     const sm_object* o = s.byName("cup");
+    CHECK(o && o->id == gone_id && s.objs().size() == 1, "relinked id %u (gone %u), objects %zu", o ? o->id : 0, gone_id, s.objs().size());
     sm_view v{};
     CloudCheck c;
     if (o && sm_snap_view(s.s, o->id, &v) == 1) c = checkCloud(s.s, o->id, v.cam_T, b);
@@ -727,8 +740,8 @@ static void testCloud() {
 // keyframe 시간: slam2d 만(검출 없음) / slam2d + objmap + best view(검출 6, 호스트 RGBA 자르기)
 static void testTiming() {
   std::printf("[timing]\n");
-  std::vector<Rect> rs = {R(C_CUP, 300, 300, 340, 340, 1.5f, 250, 0, 0), R(C_BOOK, 420, 300, 480, 380, 1.8f, 0, 0, 250),
-                          R(C_SOFA, 60, 420, 660, 600, 2.2f, 30, 30, 160), R(C_WALL, 0, 0, 720, 200, 3.0f, 200, 200, 200),
+  std::vector<Rect> rs = {R(C_CUP, 300, 300, 340, 340, 1.5f, 250, 0, 0), R(C_BOOK, 420, 270, 480, 345, 1.8f, 0, 0, 250),
+                          R(C_SOFA, 60, 350, 660, 440, 1.7f, 30, 30, 160), R(C_WALL, 0, 0, 720, 200, 3.0f, 200, 200, 200),
                           R(C_FRAME, 500, 220, 600, 300, 2.9f, 10, 200, 10), R(C_RUG, 200, 610, 520, 700, 2.0f, 200, 10, 10)};
   double a = 0, b = 0;
   const int N = 30;

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <string>
 #include <tuple>
 
 namespace scenemap {
@@ -61,6 +62,7 @@ struct Obs {
   int sk;                         // 훑은 화소 간격
   double zmed;                    // 카메라 깊이 중앙값
   int cls;
+  bool trunc;                     // 상자가 영상 가장자리에 닿음(잘려 보임 — 중심을 움직임 판단에 안 씀)
   float score;
   double pos[3], ext[3], lo[3], hi[3];
   int n;
@@ -70,6 +72,260 @@ struct Obs {
 
 void ObjectMap::event(double t, const MapObject& o, int kind) {
   ev_.push_back(ObjEvent{t, o.id, kind, {o.pos[0], o.pos[1], o.pos[2]}});
+  static const bool log_ev = std::getenv("SM_OBJ_LOG") != nullptr;
+  if (log_ev)
+    std::fprintf(stderr, "[ev] t=%.1f id=%u kind=%d cls=%d pos=%.2f %.2f %.2f ext=%.2f %.2f %.2f nobs=%u\n", t, o.id, kind, o.cls,
+                 o.pos[0], o.pos[1], o.pos[2], o.ext[0], o.ext[1], o.ext[2], o.n_obs);
+}
+
+void ObjectMap::envOverrides(ObjParams* p) {
+  const char* e = std::getenv("SM_OBJ_PARAMS");
+  if (!e || !*e) return;
+  struct K { const char* n; double* d; int* i; bool* b; };
+  const K keys[] = {{"floor_h", &p->floor_h, nullptr, nullptr},          {"name_vote", nullptr, nullptr, &p->name_vote},
+                    {"name_share", &p->name_share, nullptr, nullptr},    {"name_switch", &p->name_switch, nullptr, nullptr},
+                    {"name_merge_iou", &p->name_merge_iou, nullptr, nullptr}, {"frag_overlap", &p->frag_overlap, nullptr, nullptr},
+                    {"absent_samples", nullptr, &p->absent_samples, nullptr}, {"absent_vis", &p->absent_vis, nullptr, nullptr},
+                    {"absent_min_px", &p->absent_min_px, nullptr, nullptr}, {"absent_det_k", &p->absent_det_k, nullptr, nullptr},
+                    {"gone_misses", nullptr, &p->gone_misses, nullptr},  {"gone_min_s", &p->gone_min_s, nullptr, nullptr},
+                    {"gone_misses_big", nullptr, &p->gone_misses_big, nullptr}, {"gone_min_s_big", &p->gone_min_s_big, nullptr, nullptr},
+                    {"gone_view_d", &p->gone_view_d, nullptr, nullptr},  {"gone_eps", &p->gone_eps, nullptr, nullptr},  {"gone_step_d", &p->gone_step_d, nullptr, nullptr},
+                    {"gone_step_deg", &p->gone_step_deg, nullptr, nullptr},  {"spurious_obs", nullptr, &p->spurious_obs, nullptr},
+                    {"link_v", &p->link_v, nullptr, nullptr},            {"link_d0", &p->link_d0, nullptr, nullptr},
+                    {"link_max_d", &p->link_max_d, nullptr, nullptr},    {"link_min_obs", nullptr, &p->link_min_obs, nullptr},
+                    {"link_wait_s", &p->link_wait_s, nullptr, nullptr},  {"link_window_s", &p->link_window_s, nullptr, nullptr},  {"link_view_gap_s", &p->link_view_gap_s, nullptr, nullptr},
+                    {"view_cell", &p->view_cell, nullptr, nullptr},      {"confirm", nullptr, &p->confirm, nullptr},  {"move_v", &p->move_v, nullptr, nullptr},
+                    {"move_n", nullptr, &p->move_n, nullptr},  {"move_min_d", &p->move_min_d, nullptr, nullptr},  {"move_max_cam_w", &p->move_max_cam_w, nullptr, nullptr},
+                    {"da_min", &p->da_min, nullptr, nullptr},            {"da_k", &p->da_k, nullptr, nullptr},
+                    {"merge_overlap", &p->merge_overlap, nullptr, nullptr}};
+  std::string s(e);
+  size_t a = 0;
+  while (a < s.size()) {
+    size_t b = s.find(',', a);
+    if (b == std::string::npos) b = s.size();
+    const std::string kv = s.substr(a, b - a);
+    a = b + 1;
+    const size_t q = kv.find('=');
+    if (q == std::string::npos) continue;
+    const std::string k = kv.substr(0, q);
+    const double v = std::atof(kv.c_str() + q + 1);
+    bool ok = false;
+    for (const K& x : keys)
+      if (k == x.n) {
+        if (x.d) *x.d = v;
+        if (x.i) *x.i = int(v);
+        if (x.b) *x.b = v != 0;
+        ok = true;
+      }
+    std::fprintf(stderr, "[objmap] SM_OBJ_PARAMS %s = %g%s\n", k.c_str(), v, ok ? "" : " (unknown key)");
+  }
+}
+
+double ObjectMap::nameShare(const MapObject& m, int cls) {
+  double tot = 0, mine = 0;
+  for (const auto& [c, w] : m.votes) {
+    tot += w;
+    if (c == cls) mine = w;
+  }
+  return tot > 0 ? mine / tot : (cls == m.cls ? 1.0 : 0.0);
+}
+
+void ObjectMap::vote(MapObject& m, int cls, float w) const {
+  w = std::max(w, 1e-3f);
+  bool found = false;
+  for (auto& [c, v] : m.votes)
+    if (c == cls) { v += w; found = true; break; }
+  if (!found) m.votes.emplace_back(cls, w);
+  if (!p_.name_vote) return;
+  // 이름 = 표의 최댓값. 지금 이름보다 name_switch 배 넘게 많아야 바꿈(흔들림 막기)
+  float cur = 0, best = 0;
+  int bc = m.cls;
+  for (const auto& [c, v] : m.votes) {
+    if (c == m.cls) cur = v;
+    if (v > best) { best = v; bc = c; }
+  }
+  if (bc != m.cls && best > p_.name_switch * cur) m.cls = bc;
+}
+
+bool ObjectMap::nameOk(const MapObject& m, int cls) const {
+  if (m.cls == cls) return true;
+  return p_.name_vote && nameShare(m, cls) >= p_.name_share;
+}
+
+bool ObjectMap::isBig(const MapObject& m) const {
+  return kindOf(m.cls) == kKindStatic || std::max({m.hi[0] - m.lo[0], m.hi[1] - m.lo[1], m.hi[2] - m.lo[2]}) > p_.big;
+}
+
+namespace {
+inline int64_t cellKey(double x, double y, double cell) {
+  const int64_t i = int64_t(std::floor(x / cell)), j = int64_t(std::floor(y / cell));
+  return (i << 32) ^ (j & 0xffffffffll);
+}
+}  // namespace
+
+// 본 곳(2D 칸): 깊이를 성기게(가로 32 점) 훑어 카메라 → 점 수평 선분이 지나는 칸에, 거리 띠(1·2·3·4·5 m 이하)마다 처음 본 시각
+void ObjectMap::markView(const ObjFrame& f) {
+  if (!(f.depth_m || f.depth_mm) || f.w <= 0 || f.h <= 0) return;
+  const double* T = f.T_mc;
+  const double cell = std::max(0.05, p_.view_cell);
+  const int stp = std::max(1, f.w / 32);
+  for (int v = stp / 2; v < f.h; v += stp)
+    for (int u = stp / 2; u < f.w; u += stp) {
+      const size_t i = size_t(v) * f.w + u;
+      const float z = f.depth_m ? f.depth_m[i] : f.depth_mm[i] * 1e-3f;
+      if (!(z > p_.zmin && z < p_.zmax)) continue;
+      const double xc = (u - f.cx) / f.fx * z, yc = (v - f.cy) / f.fy * z;
+      const double px = T[0] * xc + T[1] * yc + T[2] * z + T[3];
+      const double py = T[4] * xc + T[5] * yc + T[6] * z + T[7];
+      const double dx = px - T[3], dy = py - T[7];
+      const double L = std::sqrt(dx * dx + dy * dy), Lm = std::min(L, double(kViewBands));
+      if (L < 1e-6) continue;
+      const int ns = int(std::ceil(Lm / (0.5 * cell)));
+      for (int s = 0; s <= ns; ++s) {
+        const double r = Lm * s / std::max(1, ns);
+        auto [it, fresh] = view_first_.try_emplace(cellKey(T[3] + r / L * dx, T[7] + r / L * dy, cell));
+        auto& e = it->second;
+        if (fresh) e.fill(-1e300);   // 새 칸: 아직 못 봄
+        for (int b = std::max(0, int(std::ceil(r)) - 1); b < kViewBands; ++b)
+          if (e[size_t(b)] < -1e299) e[size_t(b)] = f.stamp;
+      }
+    }
+}
+
+double ObjectMap::firstView(double x, double y, double range) const {
+  auto it = view_first_.find(cellKey(x, y, std::max(0.05, p_.view_cell)));
+  if (it == view_first_.end()) return 1e300;
+  const int b = std::clamp(int(std::ceil(range)) - 1, 0, kViewBands - 1);
+  return it->second[size_t(b)] < -1e299 ? 1e300 : it->second[size_t(b)];
+}
+
+int ObjectMap::absentEvidence(const MapObject& m, const ObjFrame& f) const {
+  const double* T = f.T_mc;
+  auto toCam = [&](const double p[3], double c[3]) {
+    const double d[3] = {p[0] - T[3], p[1] - T[7], p[2] - T[11]};
+    c[0] = T[0] * d[0] + T[4] * d[1] + T[8] * d[2];
+    c[1] = T[1] * d[0] + T[5] * d[1] + T[9] * d[2];
+    c[2] = T[2] * d[0] + T[6] * d[1] + T[10] * d[2];
+  };
+  // 검출할 수 있는 거리 안인가: 이 물체를 검출했던 가장 먼 깊이 기준
+  double cc[3];
+  toCam(m.pos, cc);
+  if (cc[2] < 0.3 || cc[2] > p_.zmax) return 0;
+  if (m.max_det_z > 0 && cc[2] > p_.absent_det_k * m.max_det_z + 0.2) return 0;
+  auto depthAt = [&](int u, int v) -> float {
+    const size_t i = size_t(v) * f.w + u;
+    return f.depth_m ? f.depth_m[i] : f.depth_mm[i] * 1e-3f;
+  };
+  // 표본 점: 구름(물체 겉면)이 있으면 고른 간격으로, 없으면 상자 3×3×3 격자
+  thread_local std::vector<double> S;
+  S.clear();
+  const size_t nc = m.cloud.size();
+  const int K = std::max(8, p_.absent_samples);
+  if (nc >= 8) {
+    const auto& pts = m.cloud.data->pts;
+    const size_t stride = std::max<size_t>(1, nc / size_t(K));
+    for (size_t i = 0; i < nc && S.size() < size_t(3 * K); i += stride)
+      S.insert(S.end(), {m.cloud.org[0] + pts[i].x, m.cloud.org[1] + pts[i].y, m.cloud.org[2] + pts[i].z});
+  } else {
+    for (int a = 0; a < 3; ++a)
+      for (int b = 0; b < 3; ++b)
+        for (int c = 0; c < 3; ++c)
+          S.insert(S.end(), {m.lo[0] + 0.5 * a * (m.hi[0] - m.lo[0]), m.lo[1] + 0.5 * b * (m.hi[1] - m.lo[1]),
+                             m.lo[2] + 0.5 * c * (m.hi[2] - m.lo[2])});
+  }
+  const int n = int(S.size() / 3);
+  int vis = 0, thru = 0;
+  double u0 = 1e9, v0 = 1e9, u1 = -1e9, v1 = -1e9;
+  for (int i = 0; i < n; ++i) {
+    double c[3];
+    toCam(&S[3 * size_t(i)], c);
+    if (c[2] < 0.2) continue;
+    const double uf = f.fx * c[0] / c[2] + f.cx, vf = f.fy * c[1] / c[2] + f.cy;
+    const int u = int(uf), v = int(vf);
+    if (u < 2 || v < 2 || u >= f.w - 2 || v >= f.h - 2) continue;
+    const float d = depthAt(u, v);
+    if (!(d > 0)) continue;
+    if (d < c[2] - p_.occl) continue;   // 앞에 다른 것이 있음(가림)
+    ++vis;
+    if (d > c[2] + std::max(p_.occl, 0.1)) ++thru;   // 물체 자리 너머가 보임
+    u0 = std::min(u0, uf); u1 = std::max(u1, uf); v0 = std::min(v0, vf); v1 = std::max(v1, vf);
+  }
+  static const long dbg_id = std::getenv("SM_ABS_LOG") ? std::atol(std::getenv("SM_ABS_LOG")) : -1;
+  if (long(m.id) == dbg_id)
+    std::fprintf(stderr, "[abs] t=%.1f O%u z=%.2f maxz=%.2f n=%d vis=%d px=%.1f misses=%d\n", f.stamp, m.id, cc[2], m.max_det_z, n, vis,
+                 std::sqrt(std::max(0.0, u1 - u0) * std::max(0.0, v1 - v0)), m.misses);
+  if (vis < std::max(3, int(p_.absent_vis * n + 0.5))) return 0;
+  if (std::sqrt(std::max(0.0, u1 - u0) * std::max(0.0, v1 - v0)) < p_.absent_min_px) return 0;
+  return thru * 10 >= vis * 3 ? 2 : 1;   // 2: 보이는 점의 30 % 이상에서 그 너머가 보임(자리가 비었음)
+}
+
+void ObjectMap::remapId(uint32_t from, uint32_t to) {
+  for (DetAssoc& as : assoc_) if (as.obj_id == from) as.obj_id = to;
+  for (ObsPoints& op : points_) if (op.obj_id == from) op.obj_id = to;
+  for (MapObject& o : objs_) if (o.parent == from) o.parent = to;
+}
+
+// 옮겨짐 잇기: 사라진 m ↔ 새로 나타난 n(같은 이름). 가까운 쌍부터 1:1. n 의 관측·모양을 m 의 id 로 옮기고 n 은 지운다
+void ObjectMap::relink(double t) {
+  std::vector<std::tuple<double, uint32_t, uint32_t>> pairs;
+  for (const MapObject& n : objs_) {
+    if (!n.appeared || !n.confirmed || n.held_by >= 0 || n.state == SM_GONE || int(n.n_obs) < p_.link_min_obs) continue;
+    if (t - n.first_seen > p_.link_window_s) continue;   // 오래 자리 잡은 새 물체는 더 잇지 않음
+    for (const MapObject& m : objs_) {
+      if (&m == &n || m.state != SM_GONE || !m.confirmed || m.held_by >= 0 || (!m.moved && int(m.n_obs) < p_.spurious_obs)) continue;
+      if (m.cls != n.cls && !(p_.name_vote && (nameShare(m, n.cls) >= p_.name_share || nameShare(n, m.cls) >= p_.name_share))) continue;
+      if (!(n.first_seen > m.last_seen)) continue;   // 둘이 같이 있던 적이 있으면 다른 물체
+      const double d = dist3(n.pos, m.pos);
+      if (d > std::min(p_.link_max_d, p_.link_d0 + p_.link_v * (n.first_seen - m.last_seen))) continue;
+      // 애매함: n 에 더 가까운 같은 이름 물체가 n 이 나타난 뒤로 아직 안 보였으면 그것이 사라졌는지 알 때까지 기다림
+      bool wait = false;
+      if (t - n.first_seen < p_.link_wait_s)
+        for (const MapObject& q : objs_) {
+          if (&q == &n || &q == &m || !q.confirmed || q.held_by >= 0 || q.state == SM_GONE || q.cls != n.cls) continue;
+          if (q.last_seen < n.first_seen && dist3(q.pos, n.pos) < d) { wait = true; break; }
+        }
+      static const long dbg_n = std::getenv("SM_LINK_LOG") ? std::atol(std::getenv("SM_LINK_LOG")) : -1;
+      if (long(n.id) == dbg_n) std::fprintf(stderr, "[relink] t=%.1f n=O%u m=O%u d=%.2f wait=%d\n", t, n.id, m.id, d, int(wait));
+      if (!wait) pairs.emplace_back(d, m.id, n.id);
+    }
+  }
+  if (pairs.empty()) return;
+  std::sort(pairs.begin(), pairs.end());
+  std::vector<uint32_t> used;
+  for (auto& [d, mid, nid] : pairs) {
+    if (std::find(used.begin(), used.end(), mid) != used.end() || std::find(used.begin(), used.end(), nid) != used.end()) continue;
+    used.push_back(mid);
+    used.push_back(nid);
+    auto mi = std::find_if(objs_.begin(), objs_.end(), [&](const MapObject& o) { return o.id == mid; });
+    auto ni = std::find_if(objs_.begin(), objs_.end(), [&](const MapObject& o) { return o.id == nid; });
+    MapObject& m = *mi;
+    MapObject& n = *ni;
+    static const bool log_link = std::getenv("SM_OBJ_LOG") != nullptr;
+    if (log_link)
+      std::fprintf(stderr, "[link] t=%.1f O%u <- O%u d=%.2f cls=%d from %.2f %.2f last %.1f to %.2f %.2f first %.1f\n", t, m.id, n.id, d,
+                   m.cls, m.pos[0], m.pos[1], m.last_seen, n.pos[0], n.pos[1], n.first_seen);
+    for (int k = 0; k < 3; ++k) { m.pos[k] = n.pos[k]; m.ext[k] = n.ext[k]; m.lo[k] = n.lo[k]; m.hi[k] = n.hi[k]; }
+    m.cloud = n.cloud;   // 새 자리의 모양
+    m.cloud.version = std::max(m.cloud.version, n.cloud.version) + 1;
+    m.n_obs += n.n_obs;
+    m.last_seen = n.last_seen;
+    m.last_kf = n.last_kf;
+    m.score = std::max(m.score, n.score);
+    for (const auto& [c, w] : n.votes) vote(m, c, w);
+    m.max_det_z = std::max(m.max_det_z, n.max_det_z);
+    for (int k = 0; k < 3; ++k) m.trk_pos[k] = n.trk_pos[k];
+    m.trk_t = n.trk_t;
+    m.mv_cnt = 0;
+    m.appeared = false;
+    m.moved = true;
+    m.state = SM_MOVED;
+    m.misses = 0;
+    m.parent = 0;
+
+    remapId(nid, mid);
+    event(t, m, 2);
+    objs_.erase(ni);
+  }
 }
 
 void ObjectMap::updateHands(double t, const double eef[2][3], const float grip[2], double yaw) {
@@ -167,11 +423,19 @@ void ObjectMap::addPoints(uint32_t id, const float* xyz, const uint8_t* rgb, int
 void ObjectMap::update(const ObjFrame& f) {
   updateHands(f.stamp, f.eef, f.grip, f.base_yaw);
   const double* T = f.T_mc;
-  auto depthAt = [&](int u, int v) -> float {
-    if (u < 0 || v < 0 || u >= f.w || v >= f.h) return 0.f;
-    const size_t i = size_t(v) * f.w + u;
-    return f.depth_m ? f.depth_m[i] : f.depth_mm[i] * 1e-3f;
-  };
+  // 카메라가 빨리 돌 때는 움직임 근거를 안 씀(자세 오차가 물체를 쓸어 가는 것처럼 보이게 함)
+  double cam_w = 0;
+  {
+    const double fwd[3] = {T[2], T[6], T[10]};
+    const double dt = f.stamp - last_cam_t_;
+    if (last_cam_t_ > -1e299 && dt > 1e-6) {
+      const double c = std::clamp(fwd[0] * last_cam_fwd_[0] + fwd[1] * last_cam_fwd_[1] + fwd[2] * last_cam_fwd_[2], -1.0, 1.0);
+      cam_w = std::acos(c) / dt;
+    }
+    for (int k = 0; k < 3; ++k) last_cam_fwd_[k] = fwd[k];
+    last_cam_t_ = f.stamp;
+  }
+  const bool cam_steady = cam_w <= p_.move_max_cam_w;
   // 1. 검출 → 관측
   std::vector<Obs> obs;
   const sm_detections* D = f.dets;
@@ -270,6 +534,7 @@ void ObjectMap::update(const ObjFrame& f) {
       if (np < p_.min_points) continue;
       if (near_hand >= p_.hand_frac * np) continue;   // 손에 든 것
       o.det = k;
+      o.trunc = D->img_w > 0 && D->img_h > 0 && (b[0] <= 2 || b[1] <= 2 || b[2] >= D->img_w - 3 || b[3] >= D->img_h - 3);
       o.zmed = zmed;
       o.sk = sk;
       o.cls = D->cls[k];
@@ -284,15 +549,17 @@ void ObjectMap::update(const ObjFrame& f) {
         o.lo[a] = lo;
         o.hi[a] = hi;
       }
+      // 바닥 조각(점이 거의 다 바닥 높이): 물체 아님. 바닥에 깔리는 이름(러그·카펫·매트 — setFloorClasses)은 둠
+      if (o.hi[2] < p_.floor_h && !floorLevel(o.cls)) continue;
       obs.push_back(std::move(o));
     }
   }
-  // 2. 같은 물체: 같은 이름 번호끼리 가까운 쌍부터 1:1
+  // 2. 같은 물체: 같은 이름(이름 표에서 name_share 이상인 이름 포함)끼리 가까운 쌍부터 1:1. 이름이 표 최댓값과 다르면 조금 뒤로
   std::vector<std::tuple<double, int, int>> pairs;
   for (int a = 0; a < int(obs.size()); ++a)
     for (int b = 0; b < int(objs_.size()); ++b) {
       const MapObject& m = objs_[b];
-      if (m.cls != obs[a].cls || m.held_by >= 0) continue;
+      if (m.held_by >= 0 || !nameOk(m, obs[a].cls)) continue;
       const double e = std::max({obs[a].ext[0], obs[a].ext[1], obs[a].ext[2], m.ext[0], m.ext[1], m.ext[2]});
       const double thr = std::max(p_.da_min, p_.da_k * e);
       const double d = dist3(obs[a].pos, m.pos);
@@ -302,7 +569,7 @@ void ObjectMap::update(const ObjFrame& f) {
         gap2 += gk * gk;
       }
       const double gap = std::sqrt(gap2);
-      if (d < thr || gap < p_.da_gap) pairs.emplace_back(gap + 1e-3 * d, a, b);
+      if (d < thr || gap < p_.da_gap) pairs.emplace_back(gap + 1e-3 * d + (m.cls != obs[a].cls ? 0.02 : 0.0), a, b);
     }
   std::sort(pairs.begin(), pairs.end());
   std::vector<int> obs_to(obs.size(), -1), obj_hit(objs_.size(), 0);
@@ -326,7 +593,52 @@ void ObjectMap::update(const ObjFrame& f) {
       m.last_kf = f.stamp;
       const double w = std::min<double>(m.n_obs, 20);
       const bool big = kindOf(m.cls) == kKindStatic || std::max({m.hi[0] - m.lo[0], m.hi[1] - m.lo[1], o.ext[0], o.ext[1]}) > p_.big;
-      for (int k = 0; k < 3; ++k) {
+      // 움직이는 중(사람이 옮김): 관측 중심(날 것)이 잇달아 move_v 넘는 빠르기로 같은 쪽으로 가고 쉬던 자리에서 move_min_d(또는 상자
+      // 반 폭) 넘게 벗어나면 그동안 평균·합집합 대신 관측 자리로 바로 옮긴다(평균이 뒤처져 놓치지 않게)
+      bool snap = false;
+      if (p_.move_n > 0 && m.trk_t > 0 && m.held_by < 0 && !o.trunc && cam_steady) {
+        const double dt = f.stamp - m.trk_t;
+        const double sx = o.pos[0] - m.trk_pos[0], sy = o.pos[1] - m.trk_pos[1];
+        const double sp = dt > 1e-6 && dt <= 0.6 ? std::sqrt(sx * sx + sy * sy) / dt : 0.0;
+        const bool same_dir = sx * m.trk_step[0] + sy * m.trk_step[1] > 0;
+        m.mv_cnt = sp > p_.move_v && (same_dir || m.mv_cnt == 0) ? m.mv_cnt + 1 : 0;
+        m.trk_step[0] = sx;
+        m.trk_step[1] = sy;
+        const double rx = o.pos[0] - m.pos[0], ry = o.pos[1] - m.pos[1];
+        const double away = std::sqrt(rx * rx + ry * ry);
+        const bool moving = f.stamp - m.moving_t < 1.0;
+        // 시작: 관측 상자가 쉬던 상자와 거의 안 겹쳐야(부분만 보여 중심이 흔들리는 것은 같은 상자 안)
+        const bool left = away > std::max(p_.move_min_d, 0.5 * std::max(o.ext[0], o.ext[1])) &&
+                          da::boxOverlap(o.lo, o.hi, m.lo, m.hi, p_.merge_min_ext) < 0.1;
+        if (m.mv_cnt >= p_.move_n && (moving || left)) {
+          if (!moving) m.move_from_t = f.stamp;
+          m.moving_t = f.stamp;
+          snap = true;
+        } else if (moving && sp > 0.5 * p_.move_v) {
+          snap = true;   // 움직이는 중에는 조금 느려져도 따라감
+          m.moving_t = f.stamp;
+        }
+      }
+      if (!o.trunc) {
+        for (int k = 0; k < 3; ++k) m.trk_pos[k] = o.pos[k];
+        m.trk_t = f.stamp;
+      }
+      static const long dbg_mv = std::getenv("SM_MOVE_LOG") ? std::atol(std::getenv("SM_MOVE_LOG")) : -1;
+      if (snap && (dbg_mv == 0 || long(m.id) == dbg_mv))
+        std::fprintf(stderr, "[move] t=%.1f O%u cls=%d from %.2f %.2f %.2f to %.2f %.2f %.2f ext %.2f %.2f %.2f cnt %d\n", f.stamp, m.id, m.cls,
+                     m.pos[0], m.pos[1], m.pos[2], o.pos[0], o.pos[1], o.pos[2], o.ext[0], o.ext[1], o.ext[2], m.mv_cnt);
+      if (snap) {
+        double d3[3];
+        for (int k = 0; k < 3; ++k) {
+          d3[k] = o.pos[k] - m.pos[k];
+          m.pos[k] = o.pos[k]; m.ext[k] = o.ext[k]; m.lo[k] = o.lo[k]; m.hi[k] = o.hi[k];
+        }
+        m.cloud.translate(d3, f.stamp);
+        if (dist3(m.pos, m.first_pos) > p_.moved_d) m.moved = true;
+        if (m.moved && m.state == SM_SEEN) m.state = SM_MOVED;
+        m.parent = 0;
+      }
+      for (int k = 0; k < 3 && !snap; ++k) {
         if (big) {
           // 합집합, 단 keyframe 마다 면마다 grow_max 까지·한 변 max_ext 까지(이상값·잘못 붙은 관측이 끝없이 키우지 않게)
           const double lo = std::max(std::min(m.lo[k], o.lo[k]), m.lo[k] - p_.grow_max);
@@ -345,6 +657,8 @@ void ObjectMap::update(const ObjFrame& f) {
         }
       }
       m.score = std::max(m.score, o.score);
+      vote(m, o.cls, o.score);
+      m.max_det_z = std::max(m.max_det_z, o.zmed);
       m.last_seen = f.stamp;
       m.misses = 0;
       if (m.state == SM_GONE) {
@@ -357,37 +671,22 @@ void ObjectMap::update(const ObjFrame& f) {
       }
       continue;
     }
-    // 안 맞은 관측: 같은 이름의 확정 물체가 '사라짐'이면 그것이 옮겨진 것으로 잇는다(Khronos 식 이력)
-    MapObject* moved_from = nullptr;
-    double best = 1e9;
-    for (auto& m : objs_) {
-      if (m.cls != o.cls || !m.confirmed || m.held_by >= 0 || obj_hit[&m - objs_.data()]) continue;
-      if (m.state != SM_GONE) continue;   // 사라짐으로 판정된 것만(같은 이름이 새로 하나 더 생긴 것과 헷갈리지 않게)
-      const double d = dist3(o.pos, m.pos);
-      if (d < best) { best = d; moved_from = &m; }
-    }
-    if (moved_from) {
-      MapObject& m = *moved_from;
-      as.obj_id = m.id;
-      m.cloud.clear(f.stamp);   // 다른 자리에서 다시 찾음: 옛 구름은 비우고 새 관측으로 다시 쌓음
-      for (int k = 0; k < 3; ++k) { m.pos[k] = o.pos[k]; m.ext[k] = o.ext[k]; m.lo[k] = o.lo[k]; m.hi[k] = o.hi[k]; }
-      m.moved = true;
-      m.state = SM_MOVED;
-      m.misses = 0;
-      m.last_seen = f.stamp;
-      m.last_kf = f.stamp;
-      ++m.n_obs;
-      obj_hit[moved_from - objs_.data()] = 1;
-      event(f.stamp, m, 2);
-      continue;
-    }
+    // 안 맞은 관측: 새 후보. 전에 (view_r 안에서) 본 자리에 새로 나타났으면 옮겨짐 잇기 후보(relink)
     MapObject m;
     m.id = next_id_++;
     m.cls = o.cls;
     for (int k = 0; k < 3; ++k) { m.pos[k] = m.first_pos[k] = o.pos[k]; m.ext[k] = o.ext[k]; m.lo[k] = o.lo[k]; m.hi[k] = o.hi[k]; }
     m.n_obs = 1;
     m.first_seen = m.last_seen = m.last_kf = f.stamp;
+    for (int k = 0; k < 3; ++k) m.trk_pos[k] = o.pos[k];
+    m.trk_t = f.stamp;
     m.score = o.score;
+    vote(m, o.cls, o.score);
+    m.max_det_z = o.zmed;
+    {   // 처음 검출한 거리(수평) 이하에서 그 자리를 link_view_gap_s 넘게 전에 본 적 있으면 '나타남'
+      const double hx = o.pos[0] - T[3], hy = o.pos[1] - T[7];
+      m.appeared = firstView(o.pos[0], o.pos[1], std::sqrt(hx * hx + hy * hy) + p_.view_cell) < f.stamp - p_.link_view_gap_s;
+    }
     m.confirmed = p_.confirm <= 1;
     as.obj_id = m.id;
     objs_.push_back(m);
@@ -405,48 +704,114 @@ void ObjectMap::update(const ObjFrame& f) {
     q.px = std::move(o.cpx);
     points_.push_back(std::move(q));
   }
-  // 4. 부재 확인(확정·안 든 것·이번에 안 맞은 것)
+  // 3b. 조각 합치기: 이번 관측 하나(검출 하나 = 물체 하나)의 상자 안에 다른 같은 이름 물체가 거의 다 들어 있으면 같은 물체의 조각
+  if (p_.frag_overlap > 0) {
+    std::vector<std::pair<uint32_t, uint32_t>> fr;   // (남김, 지움)
+    for (int a = 0; a < int(obs.size()); ++a) {
+      const uint32_t keep = assoc_[obs[a].det].obj_id;
+      if (!keep) continue;
+      const Obs& o = obs[a];
+      const double oext = std::max({o.ext[0], o.ext[1], o.ext[2]});
+      for (size_t c = 0; c < objs_.size(); ++c) {
+        const MapObject& q = objs_[c];
+        if (q.id == keep || obj_hit[c] || q.held_by >= 0 || !nameOk(q, o.cls)) continue;
+        bool inside = true;
+        for (int k = 0; k < 3; ++k) inside = inside && q.pos[k] >= o.lo[k] - 0.05 && q.pos[k] <= o.hi[k] + 0.05;
+        if (!inside || std::max({q.ext[0], q.ext[1], q.ext[2]}) > oext) continue;
+        if (da::boxOverlap(q.lo, q.hi, o.lo, o.hi, p_.merge_min_ext) < p_.frag_overlap) continue;
+        fr.emplace_back(keep, q.id);
+      }
+    }
+    std::vector<std::pair<uint32_t, uint32_t>> gone_to;   // 지운 id → 남은 id
+    auto cur = [&](uint32_t id) {
+      for (bool ch = true; ch;) {
+        ch = false;
+        for (auto& [g, t] : gone_to) if (g == id) { id = t; ch = true; break; }
+      }
+      return id;
+    };
+    for (auto [kid, did] : fr) {
+      kid = cur(kid);
+      did = cur(did);
+      if (kid == did) continue;
+      auto ki = std::find_if(objs_.begin(), objs_.end(), [&](const MapObject& x) { return x.id == kid; });
+      auto di = std::find_if(objs_.begin(), objs_.end(), [&](const MapObject& x) { return x.id == did; });
+      if (ki == objs_.end() || di == objs_.end()) continue;
+      if (di->n_obs > ki->n_obs || (di->n_obs == ki->n_obs && did < kid)) {   // 관측이 많은(같으면 먼저 본) 쪽 id 를 남김
+        std::swap(ki, di);
+        std::swap(kid, did);
+      }
+      gone_to.emplace_back(did, kid);
+      da::absorbObject(*ki, *di, p_, f.stamp, &kinds_);
+      ki->confirmed = ki->confirmed || di->confirmed;
+      const size_t dpos = size_t(di - objs_.begin());
+      obj_hit.erase(obj_hit.begin() + long(dpos));
+      objs_.erase(di);
+      remapId(did, kid);
+      for (const MapObject& x : objs_) if (x.id == kid) { event(f.stamp, x, 7); break; }
+    }
+  }
+  // 4. 부재 확인(확정·안 든 것·이번에 안 맞은 것): 물체 점을 투영해 보일 만큼 보이는데 검출이 없으면 놓침
   if (f.depth_m || f.depth_mm) {
     for (size_t b = 0; b < objs_.size(); ++b) {
       MapObject& m = objs_[b];
       if (!m.confirmed || m.held_by >= 0 || obj_hit[b] || m.state == SM_GONE) continue;
       if (m.parent) continue;   // 통 안에 넣은 것은 안 보여도 그대로 있다고 본다
-      if (kindOf(m.cls) == kKindStatic) continue;   // 가구·가전·붙박이는 사라지지 않음
-      // 큰 가구(한 변 > big)는 사라짐 판정을 하지 않는다: 부분만 보이고 중심 한 점으로 가림을 판단하기 어렵고, 과제 중 없어지지 않는다
-      if (std::max({m.hi[0] - m.lo[0], m.hi[1] - m.lo[1], m.hi[2] - m.lo[2]}) > p_.big) continue;
       // 손 가까이는 판단하지 않는다: 손에 든 관측은 거르므로(위) 잡으러 다가가는 동안 '안 보임'으로 셈하면 안 됨
       if (dist3(m.pos, f.eef[0]) < p_.hand_r + 0.1 || dist3(m.pos, f.eef[1]) < p_.hand_r + 0.1) continue;
-      // map → 카메라
-      const double d[3] = {m.pos[0] - T[3], m.pos[1] - T[7], m.pos[2] - T[11]};
-      const double xc = T[0] * d[0] + T[4] * d[1] + T[8] * d[2];
-      const double yc = T[1] * d[0] + T[5] * d[1] + T[9] * d[2];
-      const double zc = T[2] * d[0] + T[6] * d[1] + T[10] * d[2];
-      if (zc < 0.3 || zc > p_.zmax) continue;
-      const int u = int(f.fx * xc / zc + f.cx), v = int(f.fy * yc / zc + f.cy);
-      const double size_px = f.fx * std::max({m.ext[0], m.ext[1], m.ext[2]}) / zc;
-      if (size_px < p_.min_px || u < 2 || v < 2 || u >= f.w - 2 || v >= f.h - 2) continue;
-      // 3×3 깊이 중앙값이 물체보다 occl 넘게 가까우면 가려진 것
-      float ds[9];
-      int nd = 0;
-      for (int dv = -1; dv <= 1; ++dv)
-        for (int du = -1; du <= 1; ++du) {
-          const float z = depthAt(u + du, v + dv);
-          if (z > 0) ds[nd++] = z;
-        }
-      if (nd < 5) continue;
-      std::nth_element(ds, ds + nd / 2, ds + nd);
-      if (ds[nd / 2] < zc - p_.occl) continue;
-      if (m.misses++ == 0) m.first_miss = f.stamp;
-      if (m.misses >= p_.gone_misses && f.stamp - m.first_miss >= p_.gone_min_s - 1e-9) {
+      const int ev = absentEvidence(m, f);
+      if (!ev) continue;
+      // 다른 이름으로 검출됨: 이 물체 상자 안에 중심이 있는 관측의 이름이 이 물체 이름 표에 있으면(전에 그 이름으로도 불림)
+      // 이름 흔들림이지 없어진 것이 아니다. 표에 없던 이름이면(다른 물체가 그 자리에 놓임) 놓침으로 센다
+      bool renamed = false;
+      for (const Obs& o : obs) {
+        if (o.cls == m.cls || nameShare(m, o.cls) <= 0) continue;
+        bool in = true;
+        for (int k = 0; k < 3; ++k) in = in && o.pos[k] >= m.lo[k] - 0.1 && o.pos[k] <= m.hi[k] + 0.1;
+        if (in) { renamed = true; break; }
+      }
+      if (renamed) continue;
+      // 새 근거만 센다: 지난 놓침 뒤 카메라가 gone_step_d 넘게 옮기거나 gone_step_deg 넘게 돌았거나, 자리 너머가 보일 때.
+      // 서 있는 카메라의 같은 영상을 되풀이해 세지 않는다(검출기는 같은 영상에서 같은 것을 놓친다)
+      const double cam_now[3] = {T[3], T[7], T[11]}, fwd[3] = {T[2], T[6], T[10]};
+      if (m.misses > 0 && ev != 2) {
+        const double cosang = fwd[0] * m.last_miss_fwd[0] + fwd[1] * m.last_miss_fwd[1] + fwd[2] * m.last_miss_fwd[2];
+        if (dist3(cam_now, m.last_miss_cam) < p_.gone_step_d && cosang > std::cos(p_.gone_step_deg * M_PI / 180.0)) continue;
+      }
+      for (int k = 0; k < 3; ++k) { m.last_miss_cam[k] = cam_now[k]; m.last_miss_fwd[k] = fwd[k]; }
+      const bool big = isBig(m);
+      ++m.n_vis_miss;
+      if (m.misses++ == 0) {
+        m.first_miss = f.stamp;
+        for (int k = 0; k < 3; ++k) m.miss_cam[k] = T[4 * k + 3];
+      }
+      // 검출률을 아는 만큼: 보일 때 검출된 비율 p(관측 수 / (관측 수 + 보이는데 놓친 수), 라플라스)로 '있는데 k 번 연속 놓칠'
+      // 확률 (1 − p)^k 가 gone_eps 아래가 되는 k 이상 놓쳐야(검출이 드문 물체일수록 더 기다림)
+      const double pr = (double(m.n_obs) + 1.0) / (double(m.n_obs) + double(m.n_vis_miss) + 2.0);
+      const int k_rate = pr >= 1.0 ? 0 : int(std::ceil(std::log(p_.gone_eps) / std::log(1.0 - pr)));
+      const int need = std::min(std::max(big ? p_.gone_misses_big : p_.gone_misses, k_rate), 60);
+      const double need_s = big ? p_.gone_min_s_big : p_.gone_min_s;
+      // 놓침이 서로 다른 근거여야: 첫 놓침부터 need_s 넘게 지났거나 카메라가 gone_view_d 넘게 옮겨 다른 자리에서도 안 보임
+      const double cam[3] = {T[3], T[7], T[11]};
+      const bool indep = f.stamp - m.first_miss >= need_s - 1e-9 || dist3(cam, m.miss_cam) >= p_.gone_view_d;
+      if (m.misses >= need && indep) {
         m.state = SM_GONE;
+        m.gone_t = f.stamp;
+        m.n_vis_miss -= uint32_t(std::min<int>(m.misses, int(m.n_vis_miss)));   // 이 연속 놓침은 진짜 없음이었다(검출률에서 뺌)
         event(f.stamp, m, 3);
       }
     }
   }
+  relink(f.stamp);
   // 5. 오래된 후보 버리기
   objs_.erase(std::remove_if(objs_.begin(), objs_.end(),
-                             [&](const MapObject& m) { return !m.confirmed && f.stamp - m.last_seen > p_.prune_s; }),
+                             [&](const MapObject& m) {
+                               if (!m.confirmed) return f.stamp - m.last_seen > p_.prune_s;
+                               // 몇 번 안 보이고 사라진 것은 헛검출(조각)로 보고 지움 — 옮겨짐 잇기 후보가 되지 않게
+                               return m.state == SM_GONE && !m.moved && int(m.n_obs) < p_.spurious_obs;
+                             }),
               objs_.end());
+  markView(f);
   // 6. 중복 병합(da): 한 프레임에 일부만 보였거나 마스크가 쪼개져 따로 확정된 같은 물체를 하나로
   static const bool no_merge = std::getenv("SM_NO_MERGE") != nullptr;   // A/B 비교용
   static const bool log_merge = std::getenv("SM_MERGE_LOG") != nullptr;

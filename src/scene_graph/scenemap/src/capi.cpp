@@ -56,6 +56,9 @@ const char* const kStaticNames[] = {
     "picture frame", "picture", "painting", "mirror", "rug", "carpet", "curtain", "blind", "radiator", "heater",
     "light switch", "electric outlet", "outlet", "socket", "vent", "fixture", "appliance"};
 
+// 바닥에 깔리는 물체: objmap 바닥 조각 거르기(점이 거의 다 바닥 높이 floor_h 아래면 물체 아님)에서 뺀다
+const char* const kFloorLevelNames[] = {"rug", "carpet", "mat", "doormat", "floor mat", "bath mat"};
+
 std::string normName(std::string t) {
   // ".n.01" 같은 WordNet 꼬리 버림, '_' → ' ', 소문자, 앞뒤 공백 정리
   const size_t p = t.find(".n.");
@@ -170,6 +173,12 @@ struct sm_ctx {
           if (kinds[i] == SM_KIND_OBJECT && headMatch(n, e)) kinds[i] = uint8_t(k);
     }
     om.setClassKinds(kinds);
+    std::vector<uint8_t> fl(labels.size(), 0);   // 바닥에 깔리는 것(바닥 조각 거르기에서 뺌)
+    for (size_t i = 0; i < labels.size(); ++i) {
+      const std::string n = normName(labels[i]);
+      for (const char* e : kFloorLevelNames) fl[i] = fl[i] || headMatch(n, e);
+    }
+    om.setFloorClasses(std::move(fl));
   }
 };
 
@@ -551,7 +560,7 @@ int sm_reset(sm_ctx* c) {
   std::lock_guard<std::mutex> g(c->mu);
   c->slam = Slam2D(c->params);
   c->om = ObjectMap(c->oparams);
-  c->om.setClassKinds(c->kinds);
+  c->applyKinds();   // 종류·바닥에 깔리는 이름 표
   c->handled.clear();
   c->pending.clear();
   c->have_used = false;

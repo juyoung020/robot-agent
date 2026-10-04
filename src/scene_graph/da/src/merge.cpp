@@ -29,9 +29,22 @@ bool bigPair(const MapObject& a, const MapObject& b, const ObjParams& op, const 
 }
 
 // 같은 이름 번호(= 같은 종류)끼리만. 합집합이 될 쌍은 한 변이 max_ext 를 넘으면 안 합침(objmap 상자 키우기와 같은 한도)
+// 이름이 다르면(이름 모으기 켬): 상자가 거의 같아야(두 상자의 IoU ≥ name_merge_iou) — 한 물체가 프레임마다 다른 이름으로 따로 생긴 것
+double boxIou(const MapObject& a, const MapObject& b, double min_ext) {
+  double ia = 1, va = 1, vb = 1;
+  for (int k = 0; k < 3; ++k) {
+    const double ea = std::max(a.hi[k] - a.lo[k], min_ext), eb = std::max(b.hi[k] - b.lo[k], min_ext);
+    const double ca = 0.5 * (a.lo[k] + a.hi[k]), cb = 0.5 * (b.lo[k] + b.hi[k]);
+    const double ov = std::min(ca + 0.5 * ea, cb + 0.5 * eb) - std::max(ca - 0.5 * ea, cb - 0.5 * eb);
+    if (ov <= 0) return 0.0;
+    ia *= ov; va *= ea; vb *= eb;
+  }
+  return ia / (va + vb - ia);
+}
+
 bool mergeable(const MapObject& a, const MapObject& b, const ObjParams& op, const std::vector<uint8_t>* kinds) {
-  if (!(a.confirmed && b.confirmed && a.cls == b.cls && a.held_by < 0 && b.held_by < 0 && a.state != SM_GONE && b.state != SM_GONE))
-    return false;
+  if (!(a.confirmed && b.confirmed && a.held_by < 0 && b.held_by < 0 && a.state != SM_GONE && b.state != SM_GONE)) return false;
+  if (a.cls != b.cls && !(op.name_vote && boxIou(a, b, 0.05) >= op.name_merge_iou)) return false;
   if (bigPair(a, b, op, kinds))
     for (int k = 0; k < 3; ++k)
       if (std::max(a.hi[k], b.hi[k]) - std::min(a.lo[k], b.lo[k]) > op.max_ext) return false;
@@ -63,8 +76,21 @@ void absorb(MapObject& a, MapObject& b, const ObjParams& op, double stamp, const
   a.last_seen = std::max(a.last_seen, b.last_seen);
   a.last_kf = std::max(a.last_kf, b.last_kf);
   a.score = std::max(a.score, b.score);
+  for (const auto& [c, w] : b.votes) {   // 이름 표 합치기(이름 = 최댓값)
+    bool f = false;
+    for (auto& [ac, aw] : a.votes)
+      if (ac == c) { aw += w; f = true; break; }
+    if (!f) a.votes.emplace_back(c, w);
+  }
+  if (op.name_vote) {
+    float best = -1;
+    for (const auto& [c, w] : a.votes)
+      if (w > best) { best = w; a.cls = c; }
+  }
+  a.max_det_z = std::max(a.max_det_z, b.max_det_z);
   a.moved = a.moved || b.moved;
   a.misses = std::min(a.misses, b.misses);
+  a.n_vis_miss += b.n_vis_miss;
   if (a.state != SM_SEEN && b.state == SM_SEEN) a.state = SM_SEEN;
   if (!a.parent) { a.parent = b.parent; for (int k = 0; k < 3; ++k) a.parent_rel[k] = b.parent_rel[k]; }
   // 점 구름: b 의 점(org + 점)을 a 에 넣는다
@@ -83,6 +109,10 @@ void absorb(MapObject& a, MapObject& b, const ObjParams& op, double stamp, const
 }
 
 }  // namespace
+
+void absorbObject(MapObject& keep, MapObject& drop, const ObjParams& op, double stamp, const std::vector<uint8_t>* kinds) {
+  absorb(keep, drop, op, stamp, kinds);
+}
 
 std::vector<MergeResult> mergeDuplicates(std::vector<MapObject>& objs, const MergeParams& mp, const ObjParams& op, double stamp,
                                          const std::vector<uint8_t>* kinds) {

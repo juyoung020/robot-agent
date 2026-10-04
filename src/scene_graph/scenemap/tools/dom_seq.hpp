@@ -14,6 +14,7 @@
 #include <zlib.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -306,16 +307,26 @@ class Runner {
     std::string cur, body;
     char line[512];
     live_ = 0;
+    std::map<uint32_t, std::array<double, 3>> cur_pos;
     for (int k = 0; k < m; ++k) {
       if (ob[k].state == SM_GONE) continue;
       ++live_;
       std::string lab = ob[k].name ? ob[k].name : "";
       std::replace(lab.begin(), lab.end(), ',', ' ');
+      // moving: 든 것, 또는 옮겨짐 상태이고 지난 프레임보다 중심이 kMoveStep 넘게 바뀐 것(scenemap 은 움직이는 동안 관측 자리로
+      // 바로 따라가고 쉬는 물체는 평균이라 프레임마다 거의 안 바뀜). 지도 출력만으로 정함
+      auto pit = prev_pos_.find(ob[k].id);
+      const bool stepped = pit != prev_pos_.end() && std::hypot(pit->second[0] - ob[k].pos[0], pit->second[1] - ob[k].pos[1]) > kMoveStep;
+      // 두 프레임 잇달아 옮겨 가야(옮겨짐 잇기·병합의 한 번 뜀은 움직임이 아님)
+      const bool stepped2 = stepped && pit->second[2] > 0;
+      const int moving = ob[k].state == SM_HELD || (ob[k].state == SM_MOVED && stepped2);
+      cur_pos[ob[k].id] = {ob[k].pos[0], ob[k].pos[1], stepped ? 1.0 : 0.0};
       const int n = std::snprintf(line, sizeof(line), "%u,%.3f,%.3f,%.3f,%s,%d\n", ob[k].id, ob[k].pos[0], ob[k].pos[1], ob[k].pos[2],
-                                  lab.c_str(), int(ob[k].state == SM_HELD));
+                                  lab.c_str(), moving);
       body.append(line, size_t(n));
       cur += std::to_string(frame) + "," + std::string(line, size_t(n));
     }
+    prev_pos_.swap(cur_pos);
     if (cur.empty()) {
       cur = std::to_string(frame) + ",,,,,,\n";
       body = "empty";
@@ -366,6 +377,8 @@ class Runner {
   std::vector<float> prop_;
   std::string prev_ = "\x01";
   std::map<uint32_t, Shape> shape_;
+  std::map<uint32_t, std::array<double, 3>> prev_pos_;   // 지난 프레임 중심(x, y), 그때 옮겨 갔나(1/0)
+  static constexpr double kMoveStep = 0.03;              // m/프레임(10 Hz 에서 0.3 m/s)
   int n_snap_ = 0, live_ = 0;
   double max_split_err_ = 0;
 };

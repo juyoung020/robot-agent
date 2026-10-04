@@ -161,7 +161,7 @@ int sm_robot_fk(int32_t robot, const float* proprio, int32_t n_proprio, sm_body_
 /* ---- 이름 종류(추가 ABI) ----
  * 구조물(SM_KIND_STRUCTURE): 물체 노드가 안 되고 2D 격자만(기본: wall, floor, ceiling, door, doorway, door frame, window,
  *   pillar, column, partition, staircase, stairs, stair, railing, baseboard, 그리고 person — 시뮬에 사람은 없고 로봇 팔·몸 오검출).
- * 고정(SM_KIND_STATIC): 가구·가전·붙박이 — 물체 노드지만 movable = false, 사라짐 판정 안 함, 상자는 한도 있는 합집합
+ * 고정(SM_KIND_STATIC): 가구·가전·붙박이 — 물체 노드지만 movable = false, 사라짐은 큰 물체 기준(근거를 더 모음), 상자는 한도 있는 합집합
  *   (기본: table, desk, counter, sofa, shelf, cabinet, bed, refrigerator, oven, sink, lamp, plant, picture frame, rug,
  *   curtain, radiator, light switch, electric outlet ... — capi.cpp kStaticNames).
  * 나머지는 옮길 수 있는 물체(SM_KIND_OBJECT). 이름 비교는 정규화(".n.NN" 버림, '_'→' ', 소문자) 뒤 머리 명사:

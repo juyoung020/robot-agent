@@ -65,7 +65,7 @@ cmake -S src/scene_graph/scenemap -B ~/scenemap_build && cmake --build ~/scenema
 | `objmap_eval <ep.bin> <det.bin> <out prefix> [--gt-pose] [--min-cells N]` | '완벽한 검출'(`eval/export_gtdet.py`)로 물체 지도를 만들어 물체 표·사건을 씀. 채점은 `eval/score_objmap.py` |
 | `capi_replay <ep.bin> <est.bin>` | 같은 판을 C ABI 로 넣고 keyframe 자세를 `slam2d_eval` 결과와 비교, 격자 크기·reachable |
 | `map_timeline <ep.bin> <det.bin> <out dir> [--min-cells N]` | 팀 벤치마크 형식 지도 시간표 `map_timeline.csv`, 물체 점 `map_points.npz` |
-| `dom_bench <seq dir> <pred root> [--min-px 100] [--every 1] [--bench-static]` | dynamic-object-mapping-benchmark 시퀀스(toolkit 배치)를 '완벽한 검출'(정답 인스턴스 마스크 + 범주)로 넣어 `<pred root>/<seq>/map_timeline.csv`·`map_points.npz`. 카메라만 있는 기록은 `sm_set_cam_extrinsic`(베이스 = 카메라 바닥 투영, GT 자세 모드)으로 넣는다(`tools/dom_seq.hpp`, libpng 있을 때만 빌드). 실제 검출판은 `../runtime/tools/dom_bench_det.cpp` |
+| `dom_bench <seq dir> <pred root> [--min-px 100] [--every 1] [--bench-static]` | dynamic-object-mapping-benchmark 시퀀스(toolkit 배치)를 '완벽한 검출'(정답 인스턴스 마스크 + 범주)로 넣어 `<pred root>/<seq>/map_timeline.csv`·`map_points.npz`. 카메라만 있는 기록은 `sm_set_cam_extrinsic`(베이스 = 카메라 바닥 투영, GT 자세 모드)으로 넣는다(`tools/dom_seq.hpp`, libpng 있을 때만 빌드). 실제 검출판은 `../runtime/tools/dom_bench_det.cpp`(`--dump dets.gz` 로 검출·이름을 남기고 `--load` 로 GPU 없이 scenemap 만 다시 돌림 — 규칙 비교용). `moving` 열 = 든 것, 또는 옮겨짐 상태이고 두 프레임 잇달아 중심이 3 cm/프레임 넘게 옮겨 간 것(지도 출력만으로). 점수는 아래 "물체 바뀜 규칙" |
 | `sm_bench <rec.bin> [--pose slam\|odom\|gt] [--lag 0\|1] [--policy 0\|1] …` | sgrt 기록(`SGRT_RECORD`)을 C ABI 로 재생: 자세 모드 비교(떠밀림), 단계별 µs 표. `--robot limo_omx`(또는 `--sm-config '<json>'`)로 LIMO 기록 — 기록에는 로봇이 안 적히므로 sgrt 의 `SGRT_ROBOT` 과 같게 준다(없으면 R1) |
 | `stage_bench <rec.bin> [--loops K] [--frames N]` | 같은 기록을 내부 C++ API 로 재생해 fk·scan·match·insert·objmap 단계 µs(옛 판 소스로도 빌드되게 오래된 모양만 씀) |
 | `rooms_pgm <memory dir> [출력 dir] [되풀이 수]` | 저장된 기억(map.pgm·map.yaml·view.json)에서 방을 나눠 표, `rooms.pgm`, `rooms_color.ppm`. 되풀이 수를 주면 시간 중앙값 |
@@ -99,6 +99,9 @@ cmake -S src/scene_graph/scenemap -B ~/scenemap_build && cmake --build ~/scenema
 | `SM_WALLS_CHECK` | 있으면 벽 증분 계산을 처음부터 계산한 것과 비교 |
 | `SM_KEEP` | `test_scene_json` 이 출력 폴더를 지우지 않음 |
 | `SM_SLAM_LOG=<파일>` | keyframe 마다 slam2d 예측·맞춤·정답·점 수 CSV(아래 LIMO SLAM) |
+| `SM_OBJ_PARAMS="key=val,…"` | objmap 바뀜 판정 매개변수 덮어쓰기(이름은 `ObjParams` 그대로 — `objmap.cpp` `envOverrides`, 모르는 이름은 stderr 에 알림). A/B 비교용 |
+| `SM_OBJ_LOG` | 있으면 objmap 사건(후보·확정·옮겨짐·사라짐·병합 …)과 옮겨짐 잇기(`[link]`)를 stderr 에 |
+| `SM_ABS_LOG=<id>` · `SM_LINK_LOG=<id>` · `SM_MOVE_LOG=<id\|0>` | 물체 하나의 사라짐 근거(보인 표본 수·화소 크기·놓침) / 새 물체 하나의 잇기 후보 / 움직임 따라가기(0 = 전부) |
 
 sgrt 쪽 `SGRT_*` 변수는 [../runtime/README.md](../runtime/README.md).
 
@@ -107,7 +110,7 @@ sgrt 쪽 `SGRT_*` 변수는 [../runtime/README.md](../runtime/README.md).
 | 시험 | 확인 |
 |---|---|
 | `fk` | 순기구학이 시연 robot2cam 자세를 재현 |
-| `objmem` | C ABI 만으로 합성 RGB-D + 검출: 구조물·movable, 상자 이상값, 큰 가구 상자 자람 한도, 사라짐, best view, PNG(자체 디코더로 화소 비교)·scene.json 다시 읽기, 점 구름(자리·색·한도·들기·옮겨짐), 시간 |
+| `objmem` | C ABI 만으로 합성 RGB-D + 검출: 구조물·movable, 상자 이상값, 큰 가구 상자 자람 한도, 사라짐(컵 2 s, 큰 소파 4 s), 다른 자리에 나타난 같은 이름을 사라진 물체 id 로 다시 잇기, best view, PNG(자체 디코더로 화소 비교)·scene.json 다시 읽기, 점 구름(자리·색·한도·들기·옮겨짐), 시간 |
 | `rooms` | 두 방 + 문, ㄱ자, 복도 + 방 셋, 잡음, 크기 다른 방, 이상한 설정, 자람(id 유지), 물체 배정·이름, 외부 이름, 저장, C ABI, 600 × 600 시간 |
 | `posemap` | 자세 원천(GT/SLAM/ODOM), 서 있을 때 장애물이 생기고 없어지는 것(사건 기반 넣기), 단계 시간 |
 | `relations` | 물체끼리 on/in/near 변이 없음, 물체 부모는 방·place 만 |
@@ -118,6 +121,53 @@ sgrt 쪽 `SGRT_*` 변수는 [../runtime/README.md](../runtime/README.md).
 | `stream` | 루프백 TCP 로 프레임 내용, 다시 붙을 때 전체 상태 재전송, 스텝 스레드 비용 |
 | `limo_fk` | LIMO 순기구학(깊이·손목 카메라 광학, 팔 끝)이 URDF 독립 계산(`tests/gen_limo_fk_ref.py`, 15 자세)과 위치 1e-5 m·회전 원소 1e-6 안, C ABI `sm_robot_fk` = 내부 값, R1 `sm_robot_fk` 머리 = `T_head` |
 | `limo_e2e` | C ABI 만으로 LIMO proprio(odom 원점 ≠ map) + 합성 깊이(벽 둘·바닥·컵) + 컵 마스크: 벽 칸 점유·앞 빈칸·뒤 모름·몸 위 점유 없음, 컵 자리, 0.5 m·14° 주행 뒤 자세(twist 를 일부러 틀려도 오도메트리 자세 차로), 그리퍼 닫기 → 듦 → 따라감 → 놓기(옮겨짐) |
+
+## 물체 바뀜 규칙 (10-04, dynamic-object-mapping-benchmark 로 고침)
+
+벤치마크 어댑터(`dom_bench`·`dom_bench_det`)로 진단한 실패를 objmap 규칙에서 고쳤다. 모든 값은 `ObjParams` 기본값이라 로봇(sgrt·sm_bench, R1·LIMO)도
+같은 규칙을 쓴다(벤치마크 전용 설정 없음). 규칙 요약은 `include/scenemap/objmap.hpp` 머리말.
+
+| 고친 것 | 전 | 후 |
+|---|---|---|
+| 사라짐 → 옮겨짐 잇기 | 안 맞은 관측이 나오는 순간 같은 이름 '사라짐' 중 가장 가까운 것과 이음(거리·시간 문턱 없음) | `relink`: 새 물체 n 이 확정·3 번 이상 보이고, n 처음 > m 마지막, 거리 ≤ min(8 m, 1 m + 1 m/s·시간 차), n 자리를 처음 검출한 거리 이하에서 5 s 넘게 전에 본 적 있음(처음 가 본 곳에서 찾은 것은 새 물체 — 2D 0.5 m 칸 × 거리 띠 1..5 m 의 처음 본 시각), n 에 더 가까운 같은 이름 물체가 n 이후 안 보였으면 30 s 기다림. 가까운 쌍부터 1:1, n 의 자리·모양·관측을 m 의 id 로 옮기고 n 은 지움. n 은 처음 본 뒤 180 s 까지만 후보 |
+| 새 자리를 옛 자리보다 먼저 봄 | 새 id(옮겨짐이 추가 + 사라짐) | 새 자리는 먼저 새 id 로 생기고, 옛 자리가 사라짐이 되면 위 규칙으로 다시 이음(re-association) |
+| 큰 것(한 변 > 0.5 m)·고정 종류 사라짐 | 판정 안 함 | 판정함. 놓침 6 번, 첫 놓침에서 4 s 또는 카메라 0.5 m 이동 |
+| 사라짐 근거 | 물체 중심 한 점 + 3×3 깊이 | 구름 점(없으면 상자 27 점) 48 개 투영: 시야 안·안 가림 ≥ 50 %, 보이는 부분 ≥ 12 px, 카메라 거리 ≤ 이 물체를 검출한 가장 먼 거리 × 1.15 + 0.2 m. 새 근거만 셈(지난 놓침 뒤 카메라 0.1 m·5° 넘게 바뀜, 또는 자리 너머가 보임 — 서 있는 카메라의 같은 영상을 되풀이해 세지 않음). 물체 상자 안에 그 물체 이름 표에 있던 다른 이름 관측이 있으면 안 셈(이름 흔들림). 필요한 놓침 = max(3, 검출률 p 로 (1−p)^k < 0.02 인 k). 첫 놓침에서 2 s 또는 카메라 0.5 m 이동 |
+| 헛검출 | 사라짐으로 남음 | 관측 5 번 미만이던 것이 사라짐이 되면 지움(잇기 후보가 안 되게) |
+| 이름 | 관측마다 이름 하나, 같은 이름끼리만 이음 | 물체마다 이름 표(점수 합), 이름 = 최댓값(1.25 배 넘어야 바뀜). 관측 이름이 표에서 20 % 이상이면 짝 후보(이름 다르면 0.02 뒤로). 병합(da)은 이름이 달라도 3D IoU ≥ 0.5 면 합침 |
+| 바닥 조각 | 물체로 만듦 | 점의 90 백분위 높이 < 0.05 m(map, 바닥 = 0)면 버림. 러그·카펫·매트(`capi.cpp kFloorLevelNames`)는 둠 |
+| 움직이는 중 | 로봇이 든 것만 | 관측 중심이 3 번 잇달아 0.3 m/s 넘게 같은 쪽으로 가고 쉬던 상자를 벗어나면(상자 겹침 < 0.1, 0.25 m 또는 반 폭 넘게) 평균 대신 관측 자리로 따라감. 영상 가장자리에 닿은 관측·카메라가 0.6 rad/s 넘게 도는 keyframe 은 근거로 안 씀 |
+| 조각 합치기(`frag_overlap`) | 없음 | 코드는 있으나 기본 끔(실제 검출에서 끈 쪽이 조금 나음) |
+
+**점수**(세 시퀀스 합, class-agnostic 기본 채점, F1. 재현: `docs/map_vla/MAP_STATE_PLAN.md` §6 의 명령 — 로봇 에이전트 저장소)
+
+| 입력 | static | change | moved | removed | added | swapped | dynamic | static 시퀀스 거짓 변화 |
+|---|---|---|---|---|---|---|---|---|
+| 완벽한 검출, 전 | 0.919 | 0.275 | 0.154 | 0.286 | 0.444 | 0 | 0 | 1 |
+| 완벽한 검출, 후 | **0.928** | **0.591** | 0.667 | 0.600 | 0.800 | 0 | **0.431** | 1 |
+| FastSAM-s + SigLIP 2 이름, 전 | 0.414 | 0.047 | 0 | 0.102 | 0.083 | 0 | 0 | 186 |
+| FastSAM-s + SigLIP 2 이름, 후 | **0.687** | **0.152** | 0.195 | 0.063 | 0.203 | 0 | 0 | 48 |
+| (참고) ConceptGraphs | 0.621 | 0.143 | 0 | 0 | | | | |
+
+실제 검출 후: static P/R 0.675/0.699(전 0.299/0.670), 지도 FP(static 시퀀스) phantom 228 → 16, duplicate 99 → 28.
+떼어 보기(실제 검출, 10-04 중간판 기준): 바닥 조각 거르기를 끄면 static 0.555·change 0.110, 이름 모으기를 끄면 static 0.688·change 0.156.
+`gone_eps = 0.1` 이면 실제 검출 static 0.697·change 0.187 이지만 R1 에서 맞은 물체가 3 개 줄어 기본은 0.02.
+swapped 는 여전히 0: 같은 이름 쌍(의자 ↔ 의자, 스탠드 둘 ↔ 모니터 둘)은 생김새 없이 구별이 안 되고, 9–20 m 떨어진 교환은 잇기 거리 8 m 밖.
+
+**R1 회귀**(sgrt 기록 3 개 × 자세 slam·gt·odom, `sm_bench --labels yolo26s-seg 이름` 과 `sgrt_replay` 결과 같음): keyframe 자세 CSV·`map.pgm` 은 바이트까지 같다(objmap 만 바뀜).
+물체는 바뀐다. 9 판 합(전 → 후): 확정 물체 275 → 249, 살아 있는 것 254 → 236, 사라짐 21 → 13, 옮겨짐 9 → 22(odom 판의 떠밀린 자리 다시 잇기가 대부분),
+정답(`gt.csv.objects.json`, 같은 장면) 비교: 이름이 맞는 짝 49 → 49, 느슨한 짝 14 → 13, 다른 물체 위 59 → 52, 아무 물체에도 없음 132 → 122, 찾은 정답 물체 63 → 62
+(빠진 하나는 의자 조각이 'bench' 이름 물체에 병합된 것). objmap 단계 평균 257 → 374 µs/keyframe.
+
+**GPU 근사판(`training/RL/map`)에 옮길 것** — `map.h` 가 지금 따르는 objmap 규칙 중 바뀐 것:
+1. 짝짓기(`map.h` 3c, `S.cls != D.cls`): 같은 이름 대신 이름 표 몫 ≥ `name_share` 0.2, 이름 다르면 키 +0.02. 칸에 이름 표(이름 번호별 점수 합)와 표 최댓값 이름(1.25 배 문턱) 필요.
+2. 관측 거르기: 점 90 백분위 높이 < `floor_h` 0.05 m 면 버림(러그·카펫·매트 이름 제외).
+3. 안 맞은 관측의 옮겨짐 잇기(`map.h` 1148–1160 근처, 사라짐 중 가장 가까운 것과 바로 이음): 없앰. 새 후보로 만들고 `appeared`(자리를 처음 검출한 거리 이하에서 5 s 넘게 전에 본 적 — 2D 0.5 m 칸 × 거리 띠 1..5 m 처음 본 시각) 표시, keyframe 끝에 `relink`(위 표의 조건)로 잇기.
+4. 부재 확인(`map.h` 1194–1208): 고정 종류·큰 것도 판정(놓침 6, 4 s), 중심 광선 하나 대신 물체 점 48 개(근사판은 상자 27 점) 투영 — 시야 안·안 가림 ≥ 50 %, 보이는 부분 ≥ 12 px, 거리 ≤ 검출한 가장 먼 거리 × 1.15 + 0.2. 새 근거만(카메라 0.1 m·5° 또는 자리 너머가 보임), 다른 이름 관측 예외, 검출률 k(`gone_eps` 0.02), 시간 대신 카메라 0.5 m 이동도 됨. 칸에 `max_det_z`·`n_vis_miss`·마지막 놓침 카메라 자리·광축·첫 놓침 카메라 자리 필요.
+5. 사라짐 때 관측 < 5 인 것은 지움(`spurious_obs`).
+6. 움직임 따라가기(위 표). 칸에 마지막 관측 중심·시각·걸음·연속 수·`moving_t` 필요.
+7. 병합(da): 이름이 달라도 3D IoU ≥ 0.5 면 합침, 이름 표 합.
+8. 값은 그대로: `min_points`·`confirm`·`prune_s`·`moved_d`·`gone_misses` 3·`gone_min_s` 2·`occl`·`da_*`·`big`·`grow_max`·`max_ext`.
 
 ## LIMO + OMX-F
 

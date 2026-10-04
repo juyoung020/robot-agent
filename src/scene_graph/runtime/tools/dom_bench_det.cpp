@@ -8,7 +8,11 @@
 //   같은 이름끼리만 같은 물체로 잇는다. --classify 없이는 sgrt 와 같다: 모든 검출 cls 0 'object'(위치만으로 잇기).
 //
 //   dom_bench_det <seq dir> <pred root> [--engine plan] [--conf 0.25] [--every 1] [--frames N]
-//                 [--classify] [--clip plan] [--labels dir]
+//                 [--classify] [--clip plan] [--labels dir] [--dump dets.gz | --load dets.gz]
+//     --dump  검출·이름(이름 표 포함)을 프레임마다 gzip 파일로 남김. --load 는 그것을 읽어 GPU 없이 scenemap 만 다시 돌림
+//             (objmap 규칙 고치기·매개변수 비교용 — 검출은 같은 것)
+#include <zlib.h>
+
 #include <chrono>
 
 #include "dom_seq.hpp"
@@ -37,11 +41,84 @@ const Prompt kPrompts[] = {
 };
 }  // namespace
 
+static constexpr int32_t kDumpMagic = 0x44424431;   // 'DBD1'
+static void putI(gzFile z, int32_t v) { gzwrite(z, &v, 4); }
+static bool getI(gzFile z, int32_t* v) { return gzread(z, v, 4) == 4; }
+static size_t maskWords(const sm_detections& D) { return (size_t(D.mask_w) * D.mask_h + 31) / 32; }
+
+// 프레임 하나: fi n img_w img_h | cls[n] score[n] box[4n] mask_w mask_h sx sy ox oy bits[n·words]
+static void writeDets(gzFile z, int fi, const sm_detections& D) {
+  putI(z, fi); putI(z, D.n); putI(z, D.img_w); putI(z, D.img_h);
+  if (D.n <= 0) return;
+  gzwrite(z, D.cls, unsigned(4 * D.n));
+  std::vector<float> sc(size_t(D.n), 1.f);
+  if (D.score) std::copy(D.score, D.score + D.n, sc.begin());
+  gzwrite(z, sc.data(), unsigned(4 * D.n));
+  gzwrite(z, D.box, unsigned(16 * D.n));
+  putI(z, D.mask_w); putI(z, D.mask_h);
+  const float ms[4] = {D.mask_sx, D.mask_sy, D.mask_ox, D.mask_oy};
+  gzwrite(z, ms, 16);
+  gzwrite(z, D.mask_bits, unsigned(4 * maskWords(D) * size_t(D.n)));
+}
+
+static int replayDump(const dom::Seq& seq, const char* pred_root, const std::string& path, int max_frames) {
+  gzFile z = gzopen(path.c_str(), "rb");
+  int32_t magic = 0, nl = 0;
+  if (!z || !getI(z, &magic) || magic != kDumpMagic || !getI(z, &nl)) { std::fprintf(stderr, "bad dump %s\n", path.c_str()); return 1; }
+  std::vector<std::string> labels(static_cast<size_t>(nl));
+  for (auto& l : labels) {
+    int32_t k = 0;
+    getI(z, &k);
+    l.resize(size_t(k));
+    gzread(z, l.data(), unsigned(k));
+  }
+  dom::Runner run(seq, (std::filesystem::path(pred_root) / seq.name).string(), labels, nullptr);
+  const int W = seq.w, H = seq.h;
+  std::vector<uint16_t> dmm;
+  std::vector<float> dm, score, box;
+  std::vector<int32_t> cls;
+  std::vector<uint32_t> bits;
+  const auto t0 = std::chrono::steady_clock::now();
+  int fi = 0, n_det = 0, n_kf = 0;
+  const int nf = std::min<int>(int(seq.frames.size()), max_frames);
+  int32_t rec = -1, n = 0, iw = 0, ih = 0;
+  bool have = getI(z, &rec);
+  for (; fi < nf; ++fi) {
+    const dom::Frame& f = seq.frames[size_t(fi)];
+    if (!dom::readU16(f.depth, W, H, &dmm)) { std::fprintf(stderr, "depth %s\n", f.depth.c_str()); return 1; }
+    dom::depthToM(dmm, &dm);
+    if (!have || rec != fi) { run.step(f, dm, nullptr, nullptr); continue; }
+    getI(z, &n); getI(z, &iw); getI(z, &ih);
+    sm_detections D{};
+    D.stamp = f.stamp_ns * 1e-9; D.cam = 0; D.img_w = iw; D.img_h = ih; D.n = n;
+    if (n > 0) {
+      cls.resize(size_t(n)); score.resize(size_t(n)); box.resize(size_t(4 * n));
+      gzread(z, cls.data(), unsigned(4 * n)); gzread(z, score.data(), unsigned(4 * n)); gzread(z, box.data(), unsigned(16 * n));
+      getI(z, &D.mask_w); getI(z, &D.mask_h);
+      float ms[4];
+      gzread(z, ms, 16);
+      D.mask_sx = ms[0]; D.mask_sy = ms[1]; D.mask_ox = ms[2]; D.mask_oy = ms[3];
+      bits.resize(maskWords(D) * size_t(n));
+      gzread(z, bits.data(), unsigned(4 * bits.size()));
+      D.cls = cls.data(); D.score = score.data(); D.box = box.data(); D.mask_bits = bits.data();
+    }
+    run.step(f, dm, nullptr, &D);
+    n_det += n;
+    ++n_kf;
+    have = getI(z, &rec);
+  }
+  gzclose(z);
+  const double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  std::printf("%s (replay %s): frames %d, keyframes %d, detections %d, snapshots %d, npz %d, final objects %d, %.1f s\n", seq.name.c_str(),
+              path.c_str(), nf, n_kf, n_det, run.snapshots(), run.npzEntries(), run.liveObjects(), sec);
+  return 0;
+}
+
 int main(int argc, char** argv) {
   if (argc < 3) {
     std::fprintf(stderr,
                  "usage: dom_bench_det <seq dir> <pred root> [--engine plan] [--conf 0.25] [--every K] [--frames N] [--classify] "
-                 "[--clip plan] [--labels dir]\n");
+                 "[--clip plan] [--labels dir] [--dump dets.gz | --load dets.gz]\n");
     return 2;
   }
   const std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
@@ -51,6 +128,7 @@ int main(int argc, char** argv) {
   float conf = 0.25f;
   int every = 1, max_frames = 1 << 30;
   bool classify = false;
+  std::string dump_path, load_path;
   for (int i = 3; i < argc; ++i) {
     auto next = [&]() { return std::string(argv[++i]); };
     if (!std::strcmp(argv[i], "--engine") && i + 1 < argc) engine = next();
@@ -60,10 +138,13 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--classify")) classify = true;
     else if (!std::strcmp(argv[i], "--clip") && i + 1 < argc) clip_plan = next();
     else if (!std::strcmp(argv[i], "--labels") && i + 1 < argc) labels_dir = next();
+    else if (!std::strcmp(argv[i], "--dump") && i + 1 < argc) dump_path = next();
+    else if (!std::strcmp(argv[i], "--load") && i + 1 < argc) load_path = next();
     else { std::fprintf(stderr, "unknown %s\n", argv[i]); return 2; }
   }
   dom::Seq seq;
   if (!dom::loadSeq(argv[1], &seq)) { std::fprintf(stderr, "cannot read sequence %s\n", argv[1]); return 1; }
+  if (!load_path.empty()) return replayDump(seq, argv[2], load_path, max_frames);
   char err[1024] = {0};
   OvdConfig oc;
   ovd_default_config(&oc);
@@ -109,6 +190,14 @@ int main(int argc, char** argv) {
   }
 
   dom::Runner run(seq, (std::filesystem::path(argv[2]) / seq.name).string(), labels, nullptr);
+  gzFile dz = nullptr;
+  if (!dump_path.empty()) {
+    dz = gzopen(dump_path.c_str(), "wb1");
+    if (!dz) { std::fprintf(stderr, "cannot write %s\n", dump_path.c_str()); return 1; }
+    putI(dz, kDumpMagic);
+    putI(dz, int32_t(labels.size()));
+    for (auto& l : labels) { putI(dz, int32_t(l.size())); gzwrite(dz, l.data(), unsigned(l.size())); }
+  }
   const int W = seq.w, H = seq.h;
   std::vector<uint16_t> dmm;
   std::vector<float> dm;
@@ -171,6 +260,7 @@ int main(int argc, char** argv) {
       clip_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tb).count();
     }
     D.cls = cls.data();
+    if (dz) writeDets(dz, fi, D);
     run.step(f, dm, nullptr, &D);
     n_det += D.n;
     ++n_kf;
@@ -186,6 +276,7 @@ int main(int argc, char** argv) {
     for (auto& [c, n] : label_hist) std::printf(" %s %d", labels[size_t(c)].c_str(), n);
     std::printf("\n");
   }
+  if (dz) gzclose(dz);
   if (enc) sgc_destroy(enc);
   if (lt) sgc_labels_close(lt);
   ovd_destroy(det);
