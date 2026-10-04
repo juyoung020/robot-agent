@@ -18,6 +18,7 @@
 #include "net_ref.h"
 #include "obs.h"
 #include "trainer.h"
+#include "slot_fused.cuh"
 
 using namespace net;
 using ppo::Trainer;
@@ -637,6 +638,135 @@ static int run_eval(const char* path, int stage, int iters, int N, int use_map, 
 
 // 관측 모으기 CPU == GPU(v2: 정규화·얼린 표·흔들기·행동 8): 롤아웃 끝 스텝 T 의 assemble 결과(X0·칸 줄·채운 칸 비트)를
 // 같은 G1 관측·지도 토큰·표·열쇠로 CPU 가 다시 만들어 비트 비교. --negative: CPU 쪽 흔들기 열쇠의 스텝을 하나 틀리게(반드시 달라야 함)
+// ---- 칸 줄 304 칸이 뜻한 자리에서 왔는가(VLA_INPUT 3절: [숫자 33 | 이름 표 행 128 | 생김새 표 행 128 | 1 | 0 × 14]) ----
+// 실제 롤아웃 토큰에 칸마다 이름·생김새 표 행을 덮어씀(첫 행·끝 행·무작위·없음 섞음). 흔들기 끔. 다섯 길을 칸마다 뜻한 값과 견줌:
+//   CPU assemble 304 줄 / CPU 줄인 줄 + slot_col / GPU assemble 304 줄 / GPU 줄인 줄 + slot_expand 커널 / GPU 줄인 줄 + 묶음 커널 펼치기(SlotTab 타일)
+__global__ void slotcols_asm_k(const float* obs_row, const gmap::MapTok* tok, int N, uint16_t* x0, uint16_t* sin, uint16_t* sc, obsv::VecTab vt) {
+  const int e = blockIdx.x * 8 + threadIdx.x / 16, lane = threadIdx.x % 16;
+  if (e >= N) return;
+  obsv::assemble(obs_row + (size_t)e * N_OBS_G1, 1, 0, tok[e], x0 + (size_t)e * X0_W, sin + (size_t)e * KSLOT * SLOT_IN, 1, 0, lane, 16, vt);
+  __syncwarp();
+  obsv::assemble(obs_row + (size_t)e * N_OBS_G1, 1, 0, tok[e], x0 + (size_t)e * X0_W, sc + (size_t)e * KSLOT * SLOT_C, 1, 0, lane, 16, vt, nullptr, 0, 0, true);
+}
+__global__ void __launch_bounds__(256) slotcols_tile_k(net::SlotTab g, int rows, uint16_t* out) {
+  __shared__ __align__(128) uint16_t sC[net::SK_R * SLOT_C];
+  __shared__ __align__(128) uint16_t sIn[net::SK_R * net::SK_LI];
+  const int r0 = blockIdx.x * net::SK_R, tid = threadIdx.x;
+  g.stage(sC, r0, rows, tid);
+  net::cp_commit();
+  net::cp_wait<0>();
+  __syncthreads();
+  net::SlotTab::Pre pre;
+  g.issue(pre, sC, tid);
+  g.finish(sIn, pre, sC, tid);
+  __syncthreads();
+  for (int q = tid; q < net::SK_R * SLOT_IN; q += 256) {
+    const int r = q / SLOT_IN, c = q % SLOT_IN;
+    if (r0 + r < rows) out[(size_t)(r0 + r) * SLOT_IN + c] = sIn[r * net::SK_LI + c];
+  }
+}
+static int run_slotcols() {
+  PpoConfig c = small_cfg(5, 0);
+  ppo::Trainer tr(c);
+  for (int k = 0; k < 2; ++k) tr.iterate();
+  VCK(cudaDeviceSynchronize());
+  PpoLog L;
+  while (tr.poll(&L)) {}
+  const int N = tr.N, T = tr.T, rows = N * KSLOT;
+  const std::vector<float> obs = dl(tr.obs_rows + (size_t)T * N_OBS_G1 * N, (size_t)N_OBS_G1 * N);
+  std::vector<gmap::MapTok> tok(N);
+  VCK(cudaMemcpy(tok.data(), tr.tok->at(T), sizeof(gmap::MapTok) * N, cudaMemcpyDeviceToHost));
+  const obsv::VecTab vh = tr.vt.host();
+  const int nn = vh.n_name, na = vh.n_app;
+  // 표 행 고르기: 첫·끝 행을 자주, 나머지는 무작위, 가끔 없음(−1)
+  uint64_t rs = 12345;
+  long nfirst = 0, nlast = 0, nnone = 0, nlive = 0;
+  for (int e = 0; e < N; ++e)
+    for (int b = 0; b < KSLOT; ++b) {
+      const int k = (int)(dm::rand01(rs) * 8);
+      tok[e].name_id[b] = (int16_t)(k == 0 ? 0 : k == 1 ? nn - 1 : k == 2 ? -1 : (int)(dm::rand01(rs) * nn) % nn);
+      const int ka = (int)(dm::rand01(rs) * 8);
+      tok[e].app_id[b] = (int16_t)(ka == 0 ? 0 : ka == 1 ? na - 1 : ka == 2 ? -1 : (int)(dm::rand01(rs) * na) % na);
+    }
+  // 뜻한 값
+  std::vector<uint16_t> want((size_t)rows * SLOT_IN, 0);
+  std::vector<uint32_t> mks(N);
+  {
+    std::vector<uint16_t> x0(X0_W);
+    for (int e = 0; e < N; ++e) {
+      const uint32_t mk = obsv::assemble(obs.data() + (size_t)e * N_OBS_G1, 1, 0, tok[e], x0.data(), nullptr, 1, 0, 0, 1, vh);
+      mks[e] = mk;
+      for (int b = 0; b < KSLOT; ++b) {
+        if (!((mk >> b) & 1u)) continue;
+        ++nlive;
+        uint16_t* w = &want[((size_t)e * KSLOT + b) * SLOT_IN];
+        const int n = tok[e].name_id[b], a = tok[e].app_id[b];
+        nfirst += (n == 0) + (a == 0); nlast += (n == nn - 1) + (a == na - 1); nnone += (n < 0) + (a < 0);
+        for (int q = 0; q < SLOT_VALS; ++q) w[q] = f2bf(obsv::slot_num(tok[e], b, q));
+        for (int q = 0; q < VEC_D; ++q) {
+          w[SLOT_NAME + q] = n >= 0 ? vh.name[(size_t)n * VEC_D + q] : (uint16_t)0;
+          w[SLOT_APP + q] = a >= 0 ? vh.app[(size_t)a * VEC_D + q] : (uint16_t)0;
+        }
+        w[SLOT_BIAS] = f2bf(1.f);
+      }
+    }
+  }
+  // CPU 두 길
+  std::vector<uint16_t> cfull((size_t)rows * SLOT_IN, 0), cc((size_t)rows * SLOT_C, 0), cexp((size_t)rows * SLOT_IN, 0);
+  {
+    std::vector<uint16_t> x0(X0_W);
+    for (int e = 0; e < N; ++e) {
+      obsv::assemble(obs.data() + (size_t)e * N_OBS_G1, 1, 0, tok[e], x0.data(), &cfull[(size_t)e * KSLOT * SLOT_IN], 1, 0, 0, 1, vh);
+      obsv::assemble(obs.data() + (size_t)e * N_OBS_G1, 1, 0, tok[e], x0.data(), &cc[(size_t)e * KSLOT * SLOT_C], 1, 0, 0, 1, vh, nullptr, 0, 0, true);
+    }
+    for (long long r = 0; r < rows; ++r)
+      for (int q = 0; q < SLOT_IN; ++q) cexp[(size_t)r * SLOT_IN + q] = slot_col(&cc[(size_t)r * SLOT_C], vh.name, vh.app, q);
+  }
+  // GPU 세 길
+  gmap::MapTok* dtok = nullptr;
+  float* dobs = nullptr;
+  uint16_t *dx0 = nullptr, *dsin = nullptr, *dsc = nullptr, *dexp = nullptr, *dtile = nullptr;
+  VCK(cudaMalloc(&dtok, sizeof(gmap::MapTok) * N));
+  VCK(cudaMalloc(&dobs, sizeof(float) * obs.size()));
+  VCK(cudaMalloc(&dx0, 2ull * N * X0_W));
+  VCK(cudaMalloc(&dsin, 2ull * rows * SLOT_IN));
+  VCK(cudaMalloc(&dsc, 2ull * rows * SLOT_C));
+  VCK(cudaMalloc(&dexp, 2ull * rows * SLOT_IN));
+  VCK(cudaMalloc(&dtile, 2ull * rows * SLOT_IN));
+  VCK(cudaMemcpy(dtok, tok.data(), sizeof(gmap::MapTok) * N, cudaMemcpyHostToDevice));
+  VCK(cudaMemcpy(dobs, obs.data(), sizeof(float) * obs.size(), cudaMemcpyHostToDevice));
+  slotcols_asm_k<<<(N + 7) / 8, 128>>>(dobs, dtok, N, dx0, dsin, dsc, tr.vt.dev());
+  const net::SlotC sc{dsc, tr.vt.d_name, tr.vt.d_app};
+  net::slot_expand(sc, rows, dexp, 0);
+  slotcols_tile_k<<<(rows + net::SK_R - 1) / net::SK_R, 256>>>(net::SlotTab{dsc, tr.vt.d_name, tr.vt.d_app}, rows, dtile);
+  VCK(cudaDeviceSynchronize());
+  const std::vector<uint16_t> gfull = dl(dsin, (size_t)rows * SLOT_IN), gexp = dl(dexp, (size_t)rows * SLOT_IN), gtile = dl(dtile, (size_t)rows * SLOT_IN);
+  for (void* p : {(void*)dtok, (void*)dobs, (void*)dx0, (void*)dsin, (void*)dsc, (void*)dexp, (void*)dtile}) cudaFree(p);
+  std::printf("== slotcols: %d envs, %ld live slots (name/app rows: first %ld, last %ld, none %ld; tables %d / %d rows)\n", N, nlive, nfirst, nlast, nnone, nn, na);
+  int fails = 0;
+  auto cmp = [&](const char* nm, const std::vector<uint16_t>& got) {
+    long bad[5] = {0, 0, 0, 0, 0};   // 숫자, 이름, 생김새, 편향, 0 꼬리
+    int firstc = -1;
+    for (size_t i = 0; i < want.size(); ++i)
+      if (got[i] != want[i]) {
+        const int q = (int)(i % SLOT_IN);
+        ++bad[q < SLOT_NAME ? 0 : q < SLOT_APP ? 1 : q < SLOT_BIAS ? 2 : q == SLOT_BIAS ? 3 : 4];
+        if (firstc < 0) firstc = q;
+      }
+    const long tot = bad[0] + bad[1] + bad[2] + bad[3] + bad[4];
+    fails += tot != 0;
+    std::printf("  %-34s %8ld wrong words (nums %ld, name %ld, app %ld, bias %ld, pad %ld)%s%s\n", nm, tot, bad[0], bad[1], bad[2], bad[3], bad[4],
+                tot ? "  first bad col " : "", tot ? std::to_string(firstc).c_str() : "");
+  };
+  cmp("CPU assemble 304", cfull);
+  cmp("CPU compact + slot_col", cexp);
+  cmp("GPU assemble 304", gfull);
+  cmp("GPU compact + slot_expand", gexp);
+  cmp("GPU compact + SlotTab tile (fused)", gtile);
+  std::printf("slotcols: %s (%d / 5 paths wrong)\n", fails ? "FAIL" : "PASS", fails);
+  return fails ? 1 : 0;
+}
+
 static int run_obs(bool neg) {
   PpoConfig c = small_cfg(5, 0);
   ppo::Trainer tr(c);
@@ -690,6 +820,7 @@ int main(int argc, char** argv) {
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--act8")) g_act8 = true;
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--aug")) g_aug = true;
   if (m == "obs") return run_obs(neg);
+  if (m == "slotcols") return run_slotcols();
   if (m == "bench") return run_bench(argc > 2 ? std::atoi(argv[2]) : 4096, argc > 3 ? std::atoi(argv[3]) : 64, argc > 4 ? std::atoi(argv[4]) : 20,
                                      argc > 5 ? std::atoi(argv[5]) : 4, argc > 6 ? std::atoi(argv[6]) : 1);
   if (m == "v4" || m == "v5") {

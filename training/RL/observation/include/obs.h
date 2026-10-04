@@ -285,24 +285,21 @@ NDEV uint32_t assemble(const float* obs, int stride, int i, const gmap::MapTok& 
       const int b = q / (net::SLOT_IN / 8), c0 = (q % (net::SLOT_IN / 8)) * 8;
       uint16_t h[8];
       const bool live = (mk >> b) & 1u;
-      int vrow = -1;
-      const uint16_t* vsrc = nullptr;
-      if (live && c0 >= net::SLOT_NAME && c0 < net::SLOT_APP) {
-        const int nr = aug_name(aug, vt, tok.name_id[b], k0, k1, b);
-        if (nr >= 0) { vrow = nr; vsrc = vt.name + (size_t)vrow * net::VEC_D + (c0 - net::SLOT_NAME); }
-      } else if (live && c0 >= net::SLOT_APP && c0 < net::SLOT_BIAS) {
-        const int ar2 = tok.app_id[b];
-        if (ar2 >= 0 && ar2 < vt.n_app) vsrc = vt.app + (size_t)ar2 * net::VEC_D + (c0 - net::SLOT_APP);
-      }
+      // 칸마다 출처를 칸 번호로 고른다(16 B 덩이가 표 경계 33·161 에 걸쳐도 맞게 — v2 첫 판은 덩이 단위로 골라 칸 33..39 가 0,
+      // 161..167 이 이름 표 다음 행이었음, README)
+      const bool has_n = live && c0 + 8 > net::SLOT_NAME && c0 < net::SLOT_APP, has_a = live && c0 + 8 > net::SLOT_APP && c0 < net::SLOT_BIAS;
+      const int nr = has_n ? aug_name(aug, vt, tok.name_id[b], k0, k1, b) : -1;
+      const int ar2 = has_a ? tok.app_id[b] : -1;
+      const uint16_t* nsrc = nr >= 0 ? vt.name + (size_t)nr * net::VEC_D : nullptr;
+      const uint16_t* asrc = ar2 >= 0 && ar2 < vt.n_app ? vt.app + (size_t)ar2 * net::VEC_D : nullptr;
       for (int e = 0; e < 8; ++e) {
         const int c = c0 + e;
-        float v = 0.f;
         uint16_t hb = 0;
         if (live) {
           if (c < net::SLOT_VALS) hb = f2bf(slot_num(tok, b, c));
-          else if (c < net::SLOT_BIAS) hb = vsrc ? vsrc[e] : (uint16_t)0;
+          else if (c < net::SLOT_APP) hb = nsrc ? nsrc[c - net::SLOT_NAME] : (uint16_t)0;
+          else if (c < net::SLOT_BIAS) hb = asrc ? asrc[c - net::SLOT_APP] : (uint16_t)0;
           else if (c == net::SLOT_BIAS) hb = f2bf(1.f);
-          else hb = f2bf(v);
         }
         h[e] = hb;
       }

@@ -216,12 +216,12 @@ void slot_bwd(const float* dpool, const uint16_t* s2o, const uint16_t* s1o, cons
 }
 void slot_fwd_c(const SlotC& in, const uint32_t* mask, const uint16_t* W1, const uint16_t* W2, int M, uint16_t* s1o, uint16_t* s2o, uint16_t* x0,
                 uint8_t* amax, cudaStream_t st) {
-  slot_fwd_t(SlotTab{in.sc, in.name, in.app, in.n_name}, mask, W1, W2, M, s1o, s2o, x0, amax, st);
+  slot_fwd_t(SlotTab{in.sc, in.name, in.app}, mask, W1, W2, M, s1o, s2o, x0, amax, st);
 }
 void slot_bwd_c(const float* dpool, const uint16_t* s2o, const uint16_t* s1o, const SlotC& in, const uint32_t* mask, const uint8_t* amax,
                 const uint16_t* W2, int M, int kchunk, float* ws2, float* ws1, uint16_t* dz2_out, uint16_t* dz1_out, cudaStream_t st) {
   if (kchunk % SK_R) { std::fprintf(stderr, "slot_bwd_c: kchunk %d not a multiple of %d\n", kchunk, SK_R); std::abort(); }
-  slot_bwd_t(dpool, s2o, s1o, SlotTab{in.sc, in.name, in.app, in.n_name}, mask, amax, W2, M, kchunk, ws2, ws1, dz2_out, dz1_out, st);
+  slot_bwd_t(dpool, s2o, s1o, SlotTab{in.sc, in.name, in.app}, mask, amax, W2, M, kchunk, ws2, ws1, dz2_out, dz1_out, st);
 }
 #ifdef SK_PROF
 void slot_prof_print() {
@@ -246,7 +246,7 @@ __global__ void slot_expand_k(SlotC in, long long rows, uint16_t* sin) {
   const uint16_t* c = in.sc + r * SLOT_C;
   uint32_t w[4];
   for (int e = 0; e < 4; ++e)
-    w[e] = (uint32_t)slot_col(c, in.name, in.app, in.n_name, c0 + 2 * e) | ((uint32_t)slot_col(c, in.name, in.app, in.n_name, c0 + 2 * e + 1) << 16);
+    w[e] = (uint32_t)slot_col(c, in.name, in.app, c0 + 2 * e) | ((uint32_t)slot_col(c, in.name, in.app, c0 + 2 * e + 1) << 16);
   *reinterpret_cast<uint4*>(sin + r * SLOT_IN + c0) = make_uint4(w[0], w[1], w[2], w[3]);
 }
 void slot_expand(const SlotC& in, long long rows, uint16_t* sin, cudaStream_t st) {

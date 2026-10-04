@@ -112,7 +112,7 @@ struct Trainer {
   void optimizer();
   void gae();
   void log_iter();
-  net::SlotC slot_c() const { return net::SlotC{sc, vt.d_name, vt.d_app, vt.n_name}; }
+  net::SlotC slot_c() const { return net::SlotC{sc, vt.d_name, vt.d_app}; }
   uint16_t* sin_full(int rows);   // 검증: 줄인 칸 줄 rows·16 개를 304 칸 줄로 펼쳐 sin 에(장치 포인터)
 
   template <class T_>

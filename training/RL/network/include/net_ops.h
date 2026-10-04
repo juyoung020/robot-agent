@@ -80,7 +80,7 @@ void slot_fwd(const uint16_t* sin, const uint32_t* mask, const uint16_t* W1, con
 void slot_bwd(const float* dpool, const uint16_t* s2o, const uint16_t* s1o, const uint16_t* sin, const uint32_t* mask, const uint8_t* amax,
               const uint16_t* W2, int M, int kchunk, float* ws2, float* ws1, uint16_t* dz2_out, uint16_t* dz1_out, cudaStream_t st);
 // 줄인 칸 줄(net.h SLOT_C) + 얼린 이름·생김새 표(장치 bf16 [행][128]) — 묶음 커널이 공유 메모리에서 304 칸 줄로 펼침(같은 값 → 같은 결과)
-struct SlotC { const uint16_t* sc; const uint16_t* name; const uint16_t* app; int n_name; };
+struct SlotC { const uint16_t* sc; const uint16_t* name; const uint16_t* app; };
 void slot_fwd_c(const SlotC& in, const uint32_t* mask, const uint16_t* W1, const uint16_t* W2, int M, uint16_t* s1o, uint16_t* s2o, uint16_t* x0,
                 uint8_t* amax, cudaStream_t st);
 void slot_bwd_c(const float* dpool, const uint16_t* s2o, const uint16_t* s1o, const SlotC& in, const uint32_t* mask, const uint8_t* amax,

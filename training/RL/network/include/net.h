@@ -141,17 +141,11 @@ NDEV float elu(float z) {
 }
 NDEV float elu_grad_from_y(float y) { return y > 0.f ? 1.f : y + 1.f; }   // y = elu(z) 로 dy/dz
 
-// 줄인 칸 줄 c[SLOT_C] → 304 칸 줄의 col 번째 bf16 (이름·생김새 표 bf16 [행][128], 이름 행 수 n_name).
-// v2 obsv::assemble(304 칸 줄)과 비트가 같게 그 경계 동작을 그대로 따른다: 16 B 덩이가 표 경계(33·161)에 걸친 곳에서
-//   칸 33..39 = 0(이름 차원 0..6 이 빠짐), 칸 161..167 = 이름 표 다음 행(nr + 1)의 차원 0..6(생김새 차원 0..6 자리).
-//   (고치면 입력이 바뀌어 체크포인트·결과 비트가 달라짐 — 이 커밋 범위 밖, README)
-NDEV uint16_t slot_col(const uint16_t* c, const uint16_t* name, const uint16_t* app, int n_name, int col) {
+// 줄인 칸 줄 c[SLOT_C] → 304 칸 줄의 col 번째 bf16 (이름·생김새 표 bf16 [행][128]) — obsv::assemble 의 304 칸 줄과 같은 값
+NDEV uint16_t slot_col(const uint16_t* c, const uint16_t* name, const uint16_t* app, int col) {
   if (col < SLOT_VALS) return c[col];
-  const int n = c[SC_NAME], a = c[SC_APP];
-  if (col < SLOT_VALS + 7) return 0;
-  if (col < SLOT_APP) return n ? name[(size_t)(n - 1) * VEC_D + (col - SLOT_NAME)] : (uint16_t)0;
-  if (col < SLOT_APP + 7) return (n && n < n_name) ? name[(size_t)n * VEC_D + (col - SLOT_APP)] : (uint16_t)0;
-  if (col < SLOT_BIAS) return a ? app[(size_t)(a - 1) * VEC_D + (col - SLOT_APP)] : (uint16_t)0;
+  if (col < SLOT_APP) { const int n = c[SC_NAME]; return n ? name[(size_t)(n - 1) * VEC_D + (col - SLOT_NAME)] : (uint16_t)0; }
+  if (col < SLOT_BIAS) { const int a = c[SC_APP]; return a ? app[(size_t)(a - 1) * VEC_D + (col - SLOT_APP)] : (uint16_t)0; }
   return col == SLOT_BIAS ? c[SC_BIAS] : (uint16_t)0;
 }
 

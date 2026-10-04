@@ -38,13 +38,13 @@ struct SinBuf {
   __device__ __forceinline__ void finish(uint16_t*, const Pre&, const uint16_t*, int) const {}
 };
 // 줄인 칸 줄 + 얼린 표에서. 세 단계: stage(줄인 줄 → 공유 sC, cp.async) → issue(표 덩이를 레지스터로, 기다리지 않음) → finish(밀어 붙여 공유 sIn 에).
-// 스레드 하나 = 행 하나(tid >> 3)의 덩이 5 개(tid & 7 → 덩이 5p..5p+4). 덩이 j(5 ≤ j ≤ 36) = 가상 덩이 W[j−4] 의 끝 낱말 + W[j−3] 의 앞 7 낱말,
-// W[1..16] = 이름 표 행, W[17..32] = 생김새 표 행, W[33] = (편향, 0 × 7). 덩이 0..3 = 숫자 0..31, 37 = 0.
-// v2 assemble 의 경계 덩이(net::slot_col 주석): 덩이 4 = (숫자 32, 0 × 7), 덩이 20 = (이름 127, 이름 다음 행 차원 0..6 — 덩이 X)
+// 스레드 하나 = 행 하나(tid >> 3)의 덩이 5 개(tid & 7 → 덩이 5p..5p+4). 덩이 j(4 ≤ j ≤ 36) = 가상 덩이 W[j−4] 의 끝 낱말 + W[j−3] 의 앞 7 낱말,
+// W[0] = (0 × 7, 숫자 32), W[1..16] = 이름 표 행, W[17..32] = 생김새 표 행, W[33] = (편향, 0 × 7). 덩이 0..3 = 숫자 0..31, 37 = 0.
+// 펼친 값 = net::slot_col = obsv::assemble 304 칸 줄(ppo_verify slotcols 가 304 칸 모두 출처와 견줌)
 struct SlotTab {
-  const uint16_t* sc; const uint16_t* name; const uint16_t* app; int n_name;
+  const uint16_t* sc; const uint16_t* name; const uint16_t* app;
   static constexpr bool kStaged = true;
-  struct Pre { uint4 w[6]; uint4 x; };
+  struct Pre { uint4 w[6]; };
   static_assert(SLOT_IN == 304 && SLOT_C == 40 && SLOT_NAME == 33 && SLOT_APP == 161 && SLOT_BIAS == 289 && VEC_D == 128, "SlotTab layout");
   __device__ __forceinline__ void tile(uint16_t*, int, int, int) const {}
   __device__ __forceinline__ void stage(uint16_t* sC, int r0, int rlim, int tid) const {
@@ -61,13 +61,12 @@ struct SlotTab {
     for (int k = 0; k < 6; ++k) {
       const int m = 5 * part - 4 + k;
       uint4 w = make_uint4(0u, 0u, 0u, 0u);
-      if (m >= 1 && m <= 16) { if (ni) w = __ldg(reinterpret_cast<const uint4*>(name + (size_t)(ni - 1) * VEC_D) + (m - 1)); }
+      if (m == 0) w.w = (uint32_t)c[SLOT_VALS - 1] << 16;
+      else if (m >= 1 && m <= 16) { if (ni) w = __ldg(reinterpret_cast<const uint4*>(name + (size_t)(ni - 1) * VEC_D) + (m - 1)); }
       else if (m >= 17 && m <= 32) { if (ai) w = __ldg(reinterpret_cast<const uint4*>(app + (size_t)(ai - 1) * VEC_D) + (m - 17)); }
       else if (m == 33) w.x = c[SC_BIAS];
       p.w[k] = w;
     }
-    p.x = make_uint4(0u, 0u, 0u, 0u);
-    if (part == 4 && ni && ni < n_name) p.x = __ldg(reinterpret_cast<const uint4*>(name + (size_t)ni * VEC_D));
   }
   __device__ __forceinline__ void finish(uint16_t* dst, const Pre& p, const uint16_t* sC, int tid) const {
     const int r = tid >> 3, part = tid & 7;
@@ -78,9 +77,8 @@ struct SlotTab {
       if (j >= SK_NCH) break;
       uint4 o = make_uint4(0u, 0u, 0u, 0u);
       if (j < 4) o = *reinterpret_cast<const uint4*>(c + j * 8);
-      else if (j == 4) o.x = c[SLOT_VALS - 1];
       else if (j <= 36) {
-        const uint4 A = p.w[jj], B = j == 20 ? p.x : p.w[jj + 1];
+        const uint4 A = p.w[jj], B = p.w[jj + 1];
         o.x = __funnelshift_r(A.w, B.x, 16);
         o.y = __funnelshift_r(B.x, B.y, 16);
         o.z = __funnelshift_r(B.y, B.z, 16);
