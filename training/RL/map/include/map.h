@@ -13,6 +13,20 @@
 #pragma once
 #include "env.h"
 #include "env_soa.h"
+// 맞춤 값(README "보정"). map_drift 로 다시 맞출 때만 -D 로 바꾼다
+#ifndef KF_CORR_XY_V
+#define KF_CORR_XY_V 0.025f
+#endif
+#ifndef KF_CORR_YAW_V
+#define KF_CORR_YAW_V 0.7f
+#endif
+#ifndef N_GHOST_V
+#define N_GHOST_V 3
+#endif
+#ifndef P_GHOST_V
+#define P_GHOST_V 1.0f
+#endif
+
 
 namespace gmap {
 using namespace dm;
@@ -46,7 +60,7 @@ constexpr int M_SCN = 8;                // 장면 상자(가구 5 + 작은 물�
 constexpr int N_PRIM = M_SCN + 1;       // + 컵(과제 물체, 0 번)
 constexpr int NPT = 9;                  // 물체마다 보임 광선 점(중심 + 0.8 배 줄인 모서리 8)
 constexpr int KSLOT = 16;               // 물체 기억 칸 (가정; 계획서 8절 예는 64)
-constexpr int MAXDET = N_PRIM + 1;      // 한 keyframe 검출 최대(참 물체 + 가짜 1)
+constexpr int MAXDET = N_PRIM + N_GHOST_V;   // 한 keyframe 검출 최대(참 물체 + 유령 자리)
 constexpr int NCLS = 6;
 constexpr int N_MET = 6;
 enum Met { M_TASK, M_OBJ, M_SEEN, M_ERR_XY, M_ERR_YAW, M_KF };
@@ -56,29 +70,44 @@ enum State { S_SEEN = 0, S_GONE = 1, S_MOVED = 2, S_HELD = 3 };   // scenemap.h 
 DEV constexpr int qround(float x) { return x >= 0.f ? (int)(x * 256.f + 0.5f) : -(int)(-x * 256.f + 0.5f); }   // lround(x · kQ)
 
 // ---- 상수(한 곳) --------------------------------------------------------------------------------------------------------
+// 출처 표시: (scenemap) 기본값, (Dabai 데이터시트) Orbbec DaBai Datasheet V1.5 2.1.2 절, (R1 시뮬 기록 보정) ../map_calib(101b36a,
+// BEHAVIOR 의 R1 기록 — LIMO 가 아님), (맞춤) 아래 모형으로 R1 탐색 판 SLAM 잔차에 맞춘 값(README), (가정) 근거 없음.
 struct MP {
-  // grid.hpp GridParams + OccGrid::kQ = 256
+  // grid.hpp GridParams + OccGrid::kQ = 256 (scenemap)
   static constexpr int q_hit = qround(0.85f), q_miss = qround(-0.4f), q_min = qround(-4.f), q_max = qround(4.f);
-  // scan.hpp ScanParams (광학 z 범위, 높이 띠)
-  static constexpr float zmin = 0.3f, zmax = 8.0f, band_lo = 0.10f, band_hi = 1.80f;
-  // slam2d.hpp SlamParams (움직임 거르기 update_policy 0, 제자리 규칙)
+  // 깊이 범위(Dabai 데이터시트: 0.3–3.0 m). 높이 띠는 scan.hpp ScanParams (scenemap)
+  static constexpr float zmin = 0.3f, zmax = 3.0f, band_lo = 0.10f, band_hi = 1.80f;
+  static constexpr float depth_hfov = 1.18508f;                  // 깊이 가로 FOV 67.9° (Dabai 데이터시트). env 의 cam_hfov 71° 는 컬러 FOV
+  // slam2d.hpp SlamParams (움직임 거르기 update_policy 0, 제자리 규칙) (scenemap)
   static constexpr float mf_xy = 0.05f, mf_yaw = 0.034906585f /*2도*/, still_v = 0.01f, still_w = 0.01f;
   static constexpr int mf_kf = 50;
-  // objmap.hpp ObjParams
+  // objmap.hpp ObjParams (scenemap). ozmax 만 Dabai 깊이 범위 3.0 m (Dabai 데이터시트; scenemap 기본 5)
   static constexpr int min_points = 20, min_px = 6, confirm = 2, gone_misses = 3;
-  static constexpr float ozmin = 0.15f, ozmax = 5.0f, da_min = 0.30f, da_k = 0.5f, da_gap = 0.10f, big = 0.5f;
+  static constexpr float ozmin = 0.15f, ozmax = 3.0f, da_min = 0.30f, da_k = 0.5f, da_gap = 0.10f, big = 0.5f;
   static constexpr float moved_d = 0.15f, occl = 0.10f, grow_max = 0.25f, max_ext = 4.0f;
   static constexpr int prune_steps = 100, gone_min_steps = 20;   // prune_s 10 s, gone_min_s 2 s (제어 10 Hz, 영상 = 제어 스텝 (가정))
+  // ---- 오도메트리·slam ----
+  // 걸음마다 랜덤워크: 이동 σ = odo_t·거리, 회전 σ = odo_rr·|dθ| + odo_rt·거리 (R1 시뮬 기록 보정, calib.json 맞춤 B)
+  static constexpr float odo_t = 0.15f, odo_rr = 0.035f, odo_rt = 0.03f;
+  // 판마다 뽑는 배율 치우침(판 리셋 때 가우스, 판 안에서 고정): 이동 배율 σ 3.0 %, 회전 배율 σ 13 %, 직진 중 yaw σ 1.78 °/m
+  // (R1 시뮬 기록 보정: 원 오도메트리 대 GT 구간 분석. R1 은 회전을 늘 +13 % 더 셌다. LIMO 는 부호를 모르므로 ± 대칭으로 뽑는다)
+  static constexpr float odo_bt = 0.030f, odo_br = 0.13f, odo_bw = 0.031066f;
+  // keyframe 맞추기가 되돌리는 오차 비율, xy 와 yaw 따로 (맞춤)
+  static constexpr float kf_corr_xy = KF_CORR_XY_V, kf_corr_yaw = KF_CORR_YAW_V;
+  // ---- 검출 ----
+  // 놓침 확률, 카메라–물체 중심 거리별 계단(R1 시뮬 기록 보정: < 1.5 m 0.15, 1.5–2.5 m 0.10, ≥ 2.5 m 0.79. 거리 무관 평균은 0.21)
+  static constexpr float miss_d1 = 1.5f, miss_d2 = 2.5f, p_miss_near = 0.15f, p_miss_mid = 0.10f, p_miss_far = 0.79f;
+  static constexpr float p_conf = 0.07f;                         // 틀린 이름 (R1 시뮬 기록 보정)
+  // 가짜 물체: 판마다 정해진 유령 자리 n_ghost 개가 시야에 들면 keyframe 마다 p_ghost 로 다시 검출된다(R1 시뮬 기록 보정:
+  // keyframe 의 76 % 에 가짜가 하나 이상, 평균 1.46 개, 같은 자리에 되풀이). 개수·확률은 G1 판에서 그 비율에 맞춘 값 (맞춤)
+  static constexpr int n_ghost = N_GHOST_V;
+  static constexpr float p_ghost = P_GHOST_V;
+  static constexpr float dn0 = 0.0f, dn2 = 0.006f;               // 깊이 잡음 σ = 0 + 0.006·z² m (Dabai 데이터시트: 1 m 에서 6 mm, z² 법칙)
+  static constexpr float lat_n = 0.04f, ext_n = 0.05f;           // 옆·높이 잡음, 크기 잡음 σ m (R1 시뮬 기록 보정)
   // ---- (가정) ----
-  static constexpr int img_w = 640, img_h = 400;                 // 깊이 영상 크기(가정: Orbbec Dabai 깊이 640×400), 정사각 화소
+  static constexpr int img_w = 640, img_h = 400;                 // 깊이 영상 640×400 (Dabai 데이터시트), 정사각 화소(가정: 세로 FOV 45.6°, 사양 45.3°)
   static constexpr float wall_h = 2.5f;                          // 벽 높이(가정)
   static constexpr int min_hits = 5;                             // 맞추기 최소 맞은 줄 (가정: min_inliers 50 / 720 칸 × 64 줄 ≈ 5)
-  static constexpr float kf_corr = 0.5f;                         // keyframe 맞추기가 되돌리는 오차 비율(가정)
-  static constexpr float odo_t = 0.02f;                          // 이동 잡음 σ = 2 % × 거리(가정)
-  static constexpr float odo_rr = 0.05f, odo_rt = 0.01f;         // 회전 잡음 σ = 0.05·|dθ| + 0.01 rad/m·거리(가정)
-  static constexpr float p_miss = 0.10f, p_fp = 0.05f, p_conf = 0.03f;   // 놓침·가짜(keyframe 당)·틀린 이름 확률(가정)
-  static constexpr float dn0 = 0.005f, dn2 = 0.004f;             // 깊이 잡음 σ = 0.005 + 0.004·z² m (가정)
-  static constexpr float lat_n = 0.01f, ext_n = 0.02f;           // 옆·높이 잡음, 크기 잡음 σ m (가정)
   static constexpr float cup_h = 2.f * env::K::tgt_z;            // 컵 높이 0.10 m (가정: tgt_z 를 중심 높이로 봄)
 };
 DEV bool is_static(int cls) { return cls == C_TABLE || cls == C_CABINET; }   // capi.cpp kStaticNames 의 table·cabinet
@@ -92,15 +121,22 @@ struct Slot {   // 물체 기억 한 칸 (scenemap.h sm_object / objmap.hpp MapO
   int valid, id, cls, n_obs, last_seen, last_kf, state, confirmed, moved, misses, first_miss;   // 시각 = 판 시작 뒤 제어 스텝
   float pos[3], ext[3], first_pos[3], score;
 };
+struct Ghost {  // 판마다 정해진 가짜 물체 자리(유령): 시야에 들면 keyframe 마다 p_ghost 로 검출된다
+  int cls;
+  float pos[3], sz;
+};
 struct MapCore {
   uint64_t rng;
   int ep, t, first, since, n_kf, n_kf_total, next_id, room_cells, n_seen_room, n_task_conf, n_obj_conf, n_dropped, kf_flag, n_fp_total;
+  int n_kf_fp;             // 가짜 검출이 하나라도 있던 keyframe 수(누적, 판 리셋에 안 지움 — n_fp_total·n_kf_total 처럼)
   float ex, ey, eyaw;      // slam 이 믿는 자세(참 + 오차)
   float px, py, pyaw;      // 지난 스텝 참 자세(오도메트리 증분)
-  float lx, ly, lyaw;      // 지난 keyframe 자세(움직임 거르기)
+  float lx, ly, lyaw;      // 지난 keyframe 의 참 자세(움직임 거르기는 참 운동으로)
   float vmax, wmax;        // 지난 keyframe 뒤 속도 최대(제자리 규칙)
   float rhx, rhy;          // 방 반치수(완성도 계산)
+  float bt, br, bw;        // 이 판의 오도메트리 치우침: 이동 배율 −1, 회전 배율 −1, 직진 중 yaw rad/m
   Prim prim[N_PRIM];
+  Ghost ghost[N_GHOST_V];
   Slot slot[KSLOT];
 };
 static_assert(sizeof(MapCore) % 8 == 0, "MapCore must be whole 8-byte words (no tail padding)");
@@ -142,11 +178,11 @@ DEV EnvView read_env(const env::Soa& s, int i) {
   return e;
 }
 
-// ---- 카메라(깊이): 베이스 앞 cam_x, 높이 cam_z, 기울기 0 (가정), 가로 시야 = env 의 71 도 -------------------------------
+// ---- 카메라(깊이): 베이스 앞 cam_x, 높이 cam_z, 기울기 0 (가정), 가로 시야 = 깊이 FOV 67.9° (MP::depth_hfov) ----------------------
 struct Cam { float tanh, tanv, fx, cxp, cyp; };
 DEV Cam cam_consts() {
   float s, c;
-  sincosf_d(0.5f * env::K::cam_hfov, &s, &c);
+  sincosf_d(0.5f * MP::depth_hfov, &s, &c);
   Cam k;
   k.tanh = s / c;
   k.tanv = k.tanh * (float)MP::img_h / (float)MP::img_w;
@@ -314,6 +350,19 @@ DEV void reset_core(MapCore& m, const EnvView& e) {
     for (int j = 0; j < (int)(sizeof(Slot) / 4); ++j) w[j] = 0u;
   }
   make_scene(m, e);
+  // 이 판의 오도메트리 치우침(판 안에서 고정): 이동 배율, 회전 배율, 직진 중 yaw 표류
+  m.bt = gauss(m.rng) * MP::odo_bt;
+  m.br = gauss(m.rng) * MP::odo_br;
+  m.bw = gauss(m.rng) * MP::odo_bw;
+  // 유령 자리: 방 안 아무 데나, 높이·크기·이름은 예전 가짜 물체와 같은 범위(가정)
+  for (int g = 0; g < MP::n_ghost; ++g) {
+    Ghost& G = m.ghost[g];
+    G.pos[0] = rand_range(m.rng, -e.rhx + 0.3f, e.rhx - 0.3f);
+    G.pos[1] = rand_range(m.rng, -e.rhy + 0.3f, e.rhy - 0.3f);
+    G.pos[2] = rand_range(m.rng, 0.05f, 0.5f);
+    G.sz = rand_range(m.rng, 0.05f, 0.2f);
+    G.cls = (int)(rand01(m.rng) * (float)NCLS);
+  }
   int nx = 0, ny = 0;
   for (int l = 0; l < GW; ++l) {
     const float cc = ((float)(l + GX0) + 0.5f) * RES;
@@ -332,7 +381,7 @@ DEV int phase_begin(MapCore& m, const EnvView& e, int force_kf) {
     reset_core(m, e);
     reset = B_RESET;
   } else {
-    // 참 증분(지난 참 자세 기준 몸 좌표) → 잡음 → 믿는 자세에 붙임 (slam2d pushVelocity 적분의 오차 흉내)
+    // 참 증분(지난 참 자세 기준 몸 좌표) → 이 판의 배율 치우침 + 걸음마다 잡음 → 믿는 자세에 붙임 (slam2d pushVelocity 적분의 오차 흉내)
     float s0, c0;
     sincosf_d(m.pyaw, &s0, &c0);
     const float dxw = e.x - m.px, dyw = e.y - m.py;
@@ -340,9 +389,9 @@ DEV int phase_begin(MapCore& m, const EnvView& e, int force_kf) {
     const float dth = wrap_pi(e.yaw - m.pyaw);
     const float dist = sqrtf(dxb * dxb + dyb * dyb);
     const float n1 = gauss(m.rng), n2 = gauss(m.rng), n3 = gauss(m.rng);
-    const float sx = MP::odo_t * dist;
-    const float nxb = dxb + n1 * sx, nyb = dyb + n2 * sx;
-    const float nth = dth + n3 * (MP::odo_rr * absf(dth) + MP::odo_rt * dist);
+    const float sx = MP::odo_t * dist, st = 1.f + m.bt;
+    const float nxb = dxb * st + n1 * sx, nyb = dyb * st + n2 * sx;
+    const float nth = dth * (1.f + m.br) + m.bw * dist + n3 * (MP::odo_rr * absf(dth) + MP::odo_rt * dist);
     float se, ce;
     sincosf_d(m.eyaw, &se, &ce);
     m.ex = m.ex + (ce * nxb - se * nyb);
@@ -353,10 +402,12 @@ DEV int phase_begin(MapCore& m, const EnvView& e, int force_kf) {
   m.px = e.x; m.py = e.y; m.pyaw = e.yaw;
   m.vmax = maxf(m.vmax, absf(e.v));
   m.wmax = maxf(m.wmax, absf(e.w));
-  // slam2d insertStage update_policy 0: 처음, 또는 mf_xy·mf_yaw 넘게 움직임, 또는 mf_kf 번째
+  // slam2d insertStage update_policy 0: 처음, 또는 mf_xy·mf_yaw 넘게 움직임, 또는 mf_kf 번째.
+  // 움직임은 **참 자세**로 잰다(lx·ly·lyaw = 지난 keyframe 의 참 자세). 믿는 자세로 재면 회전 중 yaw 잡음이 참 회전을 지워
+  // keyframe 이 빠지고 보정도 빠진다(map_calib README 2.3). 실제 slam 은 맞춘 자세로 거르므로 참 운동에 더 가깝다
   m.since += 1;
-  const float dx = m.ex - m.lx, dy = m.ey - m.ly;
-  const bool moved = dx * dx + dy * dy >= MP::mf_xy * MP::mf_xy || absf(wrap_pi(m.eyaw - m.lyaw)) >= MP::mf_yaw;
+  const float dx = e.x - m.lx, dy = e.y - m.ly;
+  const bool moved = dx * dx + dy * dy >= MP::mf_xy * MP::mf_xy || absf(wrap_pi(e.yaw - m.lyaw)) >= MP::mf_yaw;
   const int kf = (m.first || force_kf || moved || m.since >= MP::mf_kf) ? 1 : 0;
   m.kf_flag = kf;
   return (kf ? B_KF : 0) | reset;
@@ -498,16 +549,33 @@ DEV void obj_pre(const MapCore& m, Scratch& sh, int tid, int nt) {
   }
 }
 
-// 3a·3b(스레드 0): 자세 보정, 검출(난수 순서 그대로), 가짜 물체
+// 놓침 확률: 카메라–물체 중심 거리 계단 (MP 참고)
+DEV float p_miss_at(float d) { return d < MP::miss_d1 ? MP::p_miss_near : d < MP::miss_d2 ? MP::p_miss_mid : MP::p_miss_far; }
+
+// 검출 하나를 지도에: 참 몸 좌표의 앞·옆·위(fwd, left, up, 수평 거리 rh)에 깊이·옆·높이 잡음을 넣고, 본 순간의 믿는 자세로 세계에 놓는다
+DEV void put_det(Det& D, uint64_t& rng, float fwd, float left, float up, float rh, const float ext[3], float o2, float ex, float ey, float ec, float es) {
+  const float sig_d = MP::dn0 + MP::dn2 * fwd * fwd;
+  const float gd = gauss(rng) * sig_d, gl = gauss(rng) * MP::lat_n, gz = gauss(rng) * MP::lat_n;
+  // 몸 좌표의 수평 시선 단위(fwd, left)/rh 와 그 수직
+  const float bu = fwd / rh, bv = left / rh;
+  const float f2 = fwd + bu * gd - bv * gl, l2 = left + bv * gd + bu * gl;
+  const float bx = env::K::cam_x + f2, by = l2;
+  D.pos[0] = ex + (ec * bx - es * by);
+  D.pos[1] = ey + (es * bx + ec * by);
+  D.pos[2] = o2 + up + gz;
+  for (int a = 0; a < 3; ++a) D.ext[a] = maxf(0.01f, ext[a] + gauss(rng) * MP::ext_n);
+}
+
+// 3a·3b(스레드 0): 자세 보정, 검출(난수 순서 그대로), 유령 자리
 DEV void obj_detect(MapCore& m, Scratch& sh, const EnvView& e, int nt) {
-  // 3a. keyframe 맞추기: 맞은 줄이 충분하고 제자리가 아니면 오차를 kf_corr 만큼 되돌림(slam2d keyframe 의 보정 흉내)
+  // 3a. keyframe 맞추기: 맞은 줄이 충분하고 제자리가 아니면 오차를 xy 는 kf_corr_xy, yaw 는 kf_corr_yaw 만큼 되돌림(slam2d keyframe 의 보정 흉내)
   const int n_hits = sum_part(sh, nt);
   const bool still = !m.first && m.vmax < MP::still_v && m.wmax < MP::still_w;
   if (!m.first && !still && n_hits >= MP::min_hits) {
-    const float keep = 1.f - MP::kf_corr;
-    m.ex = e.x + (m.ex - e.x) * keep;
-    m.ey = e.y + (m.ey - e.y) * keep;
-    m.eyaw = wrap_pi(e.yaw + wrap_pi(m.eyaw - e.yaw) * keep);
+    const float kxy = 1.f - MP::kf_corr_xy, kyaw = 1.f - MP::kf_corr_yaw;
+    m.ex = e.x + (m.ex - e.x) * kxy;
+    m.ey = e.y + (m.ey - e.y) * kxy;
+    m.eyaw = wrap_pi(e.yaw + wrap_pi(m.eyaw - e.yaw) * kyaw);
   }
   float es, ec;
   sincosf_d(m.eyaw, &es, &ec);
@@ -516,7 +584,7 @@ DEV void obj_detect(MapCore& m, Scratch& sh, const EnvView& e, int nt) {
   const float ex = m.ex, ey = m.ey;
   uint64_t rng = m.rng;   // 레지스터에(공유 메모리 sh.det 쓰기와 겹칠까 봐 매번 다시 읽지 않게)
 
-  // 3b. 검출: 판정(det_prefilter + 보이는 점 비율) → 놓침 → 잡음(본 순간의 slam 오차를 물려받음) → 틀린 이름
+  // 3b. 검출: 판정(det_prefilter + 보이는 점 비율) → 거리별 놓침 → 잡음(본 순간의 slam 오차를 물려받음) → 틀린 이름
   int nd = 0;
   for (int p = 0; p < N_PRIM; ++p) {
     if (!sh.pcand[p]) continue;
@@ -525,41 +593,34 @@ DEV void obj_detect(MapCore& m, Scratch& sh, const EnvView& e, int nt) {
     for (int q = 0; q < NPT; ++q) nv += (int)((sh.vism[p] >> q) & 1u);
     if (nv == 0) continue;
     if (g.af * ((float)nv / (float)NPT) < (float)MP::min_points) continue;   // 깊이 점 수(간격 1)
-    if (rand01(rng) < MP::p_miss) continue;
-    const float fwd = g.fwd, left = g.left, rh = g.rh;
-    const float sig_d = MP::dn0 + MP::dn2 * fwd * fwd;
-    const float gd = gauss(rng) * sig_d, gl = gauss(rng) * MP::lat_n, gz = gauss(rng) * MP::lat_n;
-    // 몸 좌표의 수평 시선 단위(fwd, left)/rh 와 그 수직
-    const float bu = fwd / rh, bv = left / rh;
-    const float f2 = fwd + bu * gd - bv * gl, l2 = left + bv * gd + bu * gl;
-    const float bx = env::K::cam_x + f2, by = l2;
+    if (rand01(rng) < p_miss_at(sqrtf(g.rh * g.rh + g.up * g.up))) continue;
     Det& D = sh.det[nd++];
-    D.pos[0] = ex + (ec * bx - es * by);
-    D.pos[1] = ey + (es * bx + ec * by);
-    D.pos[2] = o2 + g.up + gz;
-    for (int a = 0; a < 3; ++a) D.ext[a] = maxf(0.01f, g.ext[a] + gauss(rng) * MP::ext_n);
+    put_det(D, rng, g.fwd, g.left, g.up, g.rh, g.ext, o2, ex, ey, ec, es);
     int cls = m.prim[p].cls;
     if (rand01(rng) < MP::p_conf) cls = (cls + 1 + (int)(rand01(rng) * (float)(NCLS - 1))) % NCLS;
     D.cls = cls;
     D.score = 0.9f;
   }
-  // 가짜 물체: 맞은 줄 하나 위에 작은 상자(가정)
-  if (rand01(rng) < MP::p_fp) {
-    const int col = (int)(rand01(rng) * (float)NCOL);
-    const float zc = rand_range(rng, 0.05f, 0.5f), sz = rand_range(rng, 0.05f, 0.2f);
-    const int cls = (int)(rand01(rng) * (float)NCLS);
-    if (sh.colt[col] != 0 && nd < MAXDET) {
-      const float bx = sh.colx[col], by = sh.coly[col];
-      Det& D = sh.det[nd++];
-      D.pos[0] = ex + (ec * bx - es * by);
-      D.pos[1] = ey + (es * bx + ec * by);
-      D.pos[2] = zc;
-      D.ext[0] = sz; D.ext[1] = sz; D.ext[2] = sz;
-      D.cls = cls;
-      D.score = 0.4f;
-      m.n_fp_total += 1;
-    }
+  // 유령 자리(가짜 물체): 중심이 깊이 범위·시야 안이면 p_ghost 로 검출된다. 가림은 보지 않는다(비침·잘못 분할 흉내)
+  const Cam k = cam_consts();
+  const float c = sh.tc, s = sh.ts;
+  int nfp = 0;
+  for (int gi = 0; gi < MP::n_ghost; ++gi) {
+    const Ghost& G = m.ghost[gi];
+    const float rx = G.pos[0] - sh.to[0], ry = G.pos[1] - sh.to[1], up = G.pos[2] - o2;
+    const float fwd = c * rx + s * ry, left = -s * rx + c * ry;
+    if (!(fwd >= MP::ozmin && fwd <= MP::ozmax)) continue;
+    if (absf(left / fwd) > k.tanh || absf(up / fwd) > k.tanv) continue;
+    if (!(rand01(rng) < MP::p_ghost)) continue;
+    const float ext[3] = {G.sz, G.sz, G.sz};
+    Det& D = sh.det[nd++];
+    put_det(D, rng, fwd, left, up, sqrtf(rx * rx + ry * ry), ext, o2, ex, ey, ec, es);
+    D.cls = G.cls;
+    D.score = 0.4f;
+    ++nfp;
   }
+  m.n_fp_total += nfp;
+  m.n_kf_fp += nfp > 0;
   sh.nd = nd;
   m.rng = rng;
 }
@@ -902,7 +963,7 @@ DEV void phase_apply(const MapCore& m, Scratch& sh, int16_t* L, uint32_t* seen, 
 #endif
 }
 
-DEV void phase_finish(MapCore& m, const Scratch& sh, int nt) {
+DEV void phase_finish(MapCore& m, const Scratch& sh, const EnvView& e, int nt) {
   const int s = sum_part(sh, nt);
   int n_obj = 0;
   for (int p = 0; p < N_PRIM; ++p) n_obj += sh.found[p];
@@ -913,7 +974,7 @@ DEV void phase_finish(MapCore& m, const Scratch& sh, int nt) {
   m.n_kf_total += 1;
   m.first = 0;
   m.since = 0;
-  m.lx = m.ex; m.ly = m.ey; m.lyaw = m.eyaw;
+  m.lx = e.x; m.ly = e.y; m.lyaw = e.yaw;   // 움직임 거르기는 참 자세로
   m.vmax = 0.f; m.wmax = 0.f;
 }
 
@@ -969,7 +1030,7 @@ DEV void map_keyframe(MapCore& m, Scratch& sh, const EnvView& e, int16_t* L, uin
   phase_apply(m, sh, L, seen, tid, nt);
   sync();
   PROF_MARK(P_APPLY);
-  if (tid == 0) phase_finish(m, sh, nt);
+  if (tid == 0) phase_finish(m, sh, e, nt);
 }
 
 // 시작 단계 뒤의 나머지(flags = phase_begin 결과): 리셋이면 격자 비움, keyframe 이면 갱신, 마지막에 완성도 쓰기.

@@ -39,3 +39,7 @@ target_compile_definitions(gmap_prof PUBLIC MAP_PROF)
 target_link_libraries(gmap_prof PUBLIC env_core CUDA::cudart OpenMP::OpenMP_CXX)
 add_executable(map_prof tools/map_bench.cu)
 target_link_libraries(map_prof gmap_prof)
+
+# 보정용: 정해진 궤적에서 slam 자세 오차·가짜 검출 통계(GPU 지도). 학습 경로 아님
+add_executable(map_drift tools/map_drift.cpp)
+target_link_libraries(map_drift gmap)
