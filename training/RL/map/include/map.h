@@ -197,6 +197,8 @@ struct MapCurr {
 // 기본 = 모두 C2(빈 지도): G2·G3 와 같은 지도
 constexpr MapCurr kCurrEmpty = {0.f, 0.f, 3, 6, 1.5f, 0};
 DEV bool is_static(int cls) { return cls == C_TABLE || cls == C_CABINET; }   // capi.cpp kStaticNames 의 table·cabinet
+// BEHAVIOR 판(MapCore::init_pad = 1)은 종류 = 이름 표 행이라 고정 종류 목록을 쓰지 않는다(큰 것 > big 규칙만)
+#define is_static_m(m, cls) ((m).init_pad == 0 && is_static(cls))
 
 // ---- 판마다 지도 상태 -------------------------------------------------------------------------------------------------
 struct Prim {   // 정적 장면 상자(축 정렬), 바닥에 놓임
@@ -286,7 +288,8 @@ static_assert(offsetof(Scratch, hitb) >= sizeof(uint32_t) * NWORD, "occupancy co
 DEV uint32_t* scr_occ(Scratch& sh) { return reinterpret_cast<uint32_t*>(&sh); }   // 점유 비트 사본(GPU, 격자 표시 뒤) = WallScratch::occ
 
 // furn: A2 가구 상자(환경 SoA 의 이 판 자리, 줄 간격 N). 판 리셋 때만 읽는다. nullptr(손으로 만든 EnvView) 이면 가구 없음
-struct EnvView { float x, y, yaw, v, w, tx, ty, rhx, rhy; float q[env::N_Q]; int ep; const float* fb; const int* fi; int fs; };
+struct EnvView { float x, y, yaw, v, w, tx, ty, rhx, rhy; float q[env::N_Q]; int ep; const float* fb; const int* fi; int fs;
+                 int bkind, bscene, bent; float bwx, bwy; };   // BEHAVIOR 판(E2): 단계(0 = 상자 방), 장면, 시작 조건 번호, 창 가운데(세계)
 DEV EnvView read_env(const env::Soa& s, int i) {
   const int N = s.N;
   EnvView e;
@@ -299,7 +302,49 @@ DEV EnvView read_env(const env::Soa& s, int i) {
   e.fb = s.f + (size_t)env::F_FB0 * N + i;
   e.fi = s.iv + (size_t)env::I_NF * N + i;
   e.fs = N;
+  e.bkind = s.iv[env::I_B_KIND * N + i];
+  e.bscene = s.iv[env::I_B_SCENE * N + i];
+  e.bent = s.iv[env::I_B_ENT * N + i];
+  e.bwx = s.f[env::F_B_WX * N + i];
+  e.bwy = s.f[env::F_B_WY * N + i];
   return e;
+}
+
+// ---- BEHAVIOR 장면 판(E2): 판마다 작은 덧붙임(BMapEnv, 장치 배열 [N]) + 장면 묶음(bsc::SceneSet, 모든 판이 같이) -------------------------
+// 상자 방(A0–A2) 판은 on = 0 이라 아래 코드를 하나도 지나지 않는다(예전 결과 그대로). 판 좌표 = 환경의 창 좌표(env_beh.h) = 지도 창.
+// 지도 물체(prim) = 시작 조건 표의 물체 9(목표 + 과제 물체 + 가구, 이름 = vla_v1 이름 표 행). 정적 가구 물체는 정적 상자(회전)와 같은 것이라
+// 광선은 정적 상자로 맞히고(prim 상자는 검출 판정·지도 칸 크기에만), 과제 물체(움직이는 상자)만 prim 상자로 맞힌다.
+constexpr int NO_PRIM_Z = -10;   // 빈 prim 자리: 바닥 밑 먼 곳(어떤 광선·검출에도 안 걸림)
+struct BMapEnv {
+  int on, scene, ent, nprim;
+  float wx, wy;                  // 창 가운데(세계)
+  int c0, r0;                    // 창 칸 (0, 0) = 장면 칸 (c0, r0)
+  int nroom, ndoor, room_cells, kind;
+  int16_t sbox[N_PRIM];          // prim 의 정적 상자 번호(−1 = 과제 물체)
+  int16_t pad16;
+  int8_t lut[32];                // 장면 방 번호 → 창 방 번호(−1 = 창에 없음)
+  int16_t rid[bsc::MAXBR];       // 창 방 → 장면 방
+  int rcells[bsc::MAXBR], rseen[bsc::MAXBR];
+  int rcnt[32];                  // 리셋 때 장면 방별 칸 수(원자 덧셈 작업 공간)
+  float dx[bsc::MAXBD], dy[bsc::MAXBD];   // 창 안 문(창 좌표)
+  int8_t da[bsc::MAXBD], db[bsc::MAXBD];  // 문 양쪽 창 방(−1 = 없음/창 밖)
+};
+struct BCtx {   // 한 판의 BEHAVIOR 맥락(값으로). on = 0 이면 상자 방
+  int on;
+  const bsc::SceneSet* ss;
+  const bsc::SceneDev* sd;
+  BMapEnv* bm;
+  float wx, wy;
+};
+DEV BCtx bctx(const bsc::SceneSet* ss, BMapEnv* bm) {
+  BCtx x;
+  x.on = 0; x.ss = ss; x.sd = nullptr; x.bm = bm; x.wx = 0.f; x.wy = 0.f;
+  if (ss && bm && bm->on) { x.on = 1; x.sd = &ss->sc[bm->scene]; x.wx = bm->wx; x.wy = bm->wy; }
+  return x;
+}
+DEV int broom_local(const BCtx& bx, float x, float y) {   // 창 좌표 점 → 창 방 번호(−1)
+  const int r = bsc::room_at(*bx.sd, x + bx.wx, y + bx.wy);
+  return (r >= 0 && r < 32) ? (int)bx.bm->lut[r] : -1;
 }
 
 // ---- 카메라(깊이): 베이스 앞 cam_x, 높이 cam_z, 기울기 0 (가정), 가로 시야 = 깊이 FOV 67.9° (MP::depth_hfov) ----------------------
@@ -410,6 +455,32 @@ DEV float cast(const MapCore& m, const float o[3], const float d[3]) {
   for (int p = 0; p < N_PRIM; ++p) t = minf(t, ray_box_inv(o, d, inv, m.prim[p]));
   return t;
 }
+// ---- BEHAVIOR 판 광선: 바닥·천장 평면 + 정적 회전 상자(1 m 묶음 걷기, 세계) + 과제 물체 상자(prim, 창 좌표) ----
+// 회전 상자 3D: xy 는 상자 축으로 돌린 판, z 판은 그대로. o 는 세계, 들어가는 t(> 0), 없으면 kInf
+DEV float ray_obb_inv(const float o[3], const float d[3], const bsc::SBox& b) {
+  const float rx = o[0] - b.cx, ry = o[1] - b.cy;
+  const float lx = b.c * rx + b.s * ry, ly = -b.s * rx + b.c * ry;
+  const float ux = b.c * d[0] + b.s * d[1], uy = -b.s * d[0] + b.c * d[1];
+  const float ix = absf(ux) < 1e-12f ? 0.f : 1.f / ux, iy = absf(uy) < 1e-12f ? 0.f : 1.f / uy, iz = absf(d[2]) < 1e-12f ? 0.f : 1.f / d[2];
+  float t0 = -kInf, t1 = kInf;
+  if (!slab(lx, ux, ix, -b.hx, b.hx, t0, t1) || !slab(ly, uy, iy, -b.hy, b.hy, t0, t1) || !slab(o[2], d[2], iz, b.z0, b.z1, t0, t1)) return kInf;
+  return slab_end(t0, t1);
+}
+DEV float ray_planes(const float o[3], const float d[3]) {   // 바닥(0)·천장(wall_h)
+  return d[2] < 0.f ? -o[2] / d[2] : d[2] > 0.f ? (MP::wall_h - o[2]) / d[2] : kInf;
+}
+DEV bool prim_dyn(const BCtx& bx, int p) { return p < bx.bm->nprim && bx.bm->sbox[p] < 0; }
+DEV float cast_beh(const BCtx& bx, const MapCore& m, const float o[3], const float d[3]) {
+  float inv[3];
+  ray_inv(d, inv);
+  float t = ray_planes(o, d);
+  const float ow[3] = {o[0] + bx.wx, o[1] + bx.wy, o[2]};
+  const bsc::SceneDev& sd = *bx.sd;
+  bsc::bin_walk(sd, ow[0], ow[1], d[0], d[1], [&](int j, float) { t = minf(t, ray_obb_inv(ow, d, sd.box[j])); }, [&]() { return t; });
+  for (int p = 0; p < N_PRIM; ++p) if (prim_dyn(bx, p)) t = minf(t, ray_box_inv(o, d, inv, m.prim[p]));
+  return t;
+}
+
 DEV void cam_world(float x, float y, float c, float s, float o[3]) {
   o[0] = x + c * env::K::cam_x;
   o[1] = y + s * env::K::cam_x;
@@ -550,7 +621,33 @@ DEV void init_core(MapCore& m, uint64_t seed, int i) {
   m.ep = -1;   // 첫 스텝에서 리셋
 }
 
-DEV void reset_core(MapCore& m, const EnvView& e) {
+// BEHAVIOR 판 장면(판 리셋 때, 스레드 하나): prim = 시작 조건 표의 물체, 빈 자리는 바닥 밑 먼 곳. BMapEnv 머리(방 세기는 map_rest 리셋 갈래가)
+DEV void make_scene_beh(MapCore& m, const EnvView& e, const bsc::SceneSet& ss, BMapEnv& bm) {
+  const bsc::Entry& E = ss.ent[e.bent];
+  const bsc::SceneDev& d = ss.sc[e.bscene];
+  bm.on = 1; bm.scene = e.bscene; bm.ent = e.bent; bm.nprim = E.nprim; bm.kind = e.bkind;
+  bm.wx = e.bwx; bm.wy = e.bwy;
+  bm.c0 = (int)floorf((e.bwx - bsc::WIN_HALF - d.ox) / bsc::CELL + 0.5f);
+  bm.r0 = (int)floorf((e.bwy - bsc::WIN_HALF - d.oy) / bsc::CELL + 0.5f);
+  for (int p = 0; p < N_PRIM; ++p) {
+    Prim& P = m.prim[p];
+    if (p < E.nprim) {
+      const bsc::BPrim& B = E.prim[p];
+      P.cls = B.name;
+      for (int a = 0; a < 3; ++a) { P.lo[a] = B.lo[a]; P.hi[a] = B.hi[a]; }
+      bm.sbox[p] = B.sbox;
+    } else {
+      P.cls = -1;
+      P.lo[0] = 1e4f; P.lo[1] = 1e4f; P.lo[2] = (float)NO_PRIM_Z;
+      P.hi[0] = 1e4f; P.hi[1] = 1e4f; P.hi[2] = (float)NO_PRIM_Z;
+      bm.sbox[p] = -1;
+    }
+  }
+}
+
+DEV void reset_core(MapCore& m, const EnvView& e, const bsc::SceneSet* ss = nullptr, BMapEnv* bm = nullptr) {
+  const bool beh = ss != nullptr && bm != nullptr && e.bkind != 0;
+  if (bm) bm->on = 0;
   m.ep = e.ep;
   m.t = 0; m.first = 1; m.since = 0; m.n_kf = 0; m.next_id = 1;
   m.n_seen_room = 0; m.n_task_conf = 0; m.n_obj_conf = 0; m.n_dropped = 0;
@@ -563,7 +660,8 @@ DEV void reset_core(MapCore& m, const EnvView& e) {
     uint32_t* w = reinterpret_cast<uint32_t*>(&m.slot[k]);
     for (int j = 0; j < (int)(sizeof(Slot) / 4); ++j) w[j] = 0u;
   }
-  make_scene(m, e);
+  if (beh) make_scene_beh(m, e, *ss, *bm); else make_scene(m, e);
+  m.init_pad = beh ? 1 : 0;   // BEHAVIOR 판 표시(종류 = 이름 표 행)
   // 이 판의 오도메트리 치우침(판 안에서 고정): 이동 배율, 회전 배율, 직진 중 yaw 표류
   m.bt = (MP::noise ? gauss(m.rng) : 0.f) * MP::odo_bt;
   m.br = (MP::noise ? gauss(m.rng) : 0.f) * MP::odo_br;
@@ -575,7 +673,7 @@ DEV void reset_core(MapCore& m, const EnvView& e) {
     G.pos[1] = rand_range(m.rng, -e.rhy + 0.3f, e.rhy - 0.3f);
     G.pos[2] = rand_range(m.rng, 0.05f, 0.5f);
     G.sz = rand_range(m.rng, 0.05f, 0.2f);
-    G.cls = (int)(rand01(m.rng) * (float)NCLS);
+    G.cls = (int)(rand01(m.rng) * (float)(beh ? ss->nname : NCLS));   // BEHAVIOR: 아무 이름 표 행
   }
   int nx = 0, ny = 0;
   for (int l = 0; l < GW; ++l) {
@@ -589,7 +687,13 @@ DEV void reset_core(MapCore& m, const EnvView& e) {
   for (int a = 0; a < 3; ++a) { m.eef_b[a] = 0.f; m.eef_m[a] = 0.f; m.held_rel[a] = 0.f; m.grasp_pos[a] = 0.f; }
   m.plen = 0.f; m.prot = 0.f;
   m.nseg_h = 0; m.nseg_v = 0; m.wnrect = -1; m.conf_mask = 0;
-  make_rooms(m, e);
+  if (beh) {   // 방은 map_rest 리셋 갈래(블록)가 장면 방 격자로 센다(room_setup_beh). 그전까지 방 하나·안 드러남
+    m.raxis = 0; m.n_room = 1; m.rrev = 0;
+    for (int k = 0; k < MAXROOM; ++k) { m.rtype[k] = N_RTYPE; m.rcells[k] = 0; m.rseen[k] = 0; }
+    for (int k = 0; k < MAXROOM - 1; ++k) { m.rcut[k] = 0.f; m.rdoor[k] = 0.f; }
+  } else {
+    make_rooms(m, e);
+  }
 }
 
 // ---- 1. 시작(판마다 한 스레드): 리셋, 오도메트리 표류, 움직임 거르기 -------------------------------------------------------------
@@ -667,10 +771,10 @@ DEV int hands_step(MapCore& m, const EnvView& e) {
   return ev;
 }
 
-DEV int phase_begin(MapCore& m, const EnvView& e, int force_kf) {
+DEV int phase_begin(MapCore& m, const EnvView& e, int force_kf, const bsc::SceneSet* ss = nullptr, BMapEnv* bm = nullptr) {
   int reset = 0;
   if (e.ep != m.ep) {
-    reset_core(m, e);
+    reset_core(m, e, ss, bm);
     reset = B_RESET;
   } else {
     // 참 증분(지난 참 자세 기준 몸 좌표) → 이 판의 배율 치우침 + 걸음마다 잡음 → 믿는 자세에 붙임 (slam2d pushVelocity 적분의 오차 흉내)
@@ -717,7 +821,7 @@ DEV void clear_grid(int16_t* L, uint32_t* seen, uint32_t* occ, int tid, int nt) 
 // ---- 2. 광선(모든 스레드): 깊이 줄 + 물체 점 보임. 참 장면·참 카메라에서 쏜다 ----------------------------------------------
 // 물체 pi 의 보임 광선 q: 시야로 자른 실루엣(정규화 화면 좌표 xr × yr) 안 점 방향으로 쏴서, 자기 상자에 먼저 닿고(다른 상자가 가리지 않고)
 // 그 깊이가 [ozmin, ozmax] 안이면 보임. 실루엣은 상자 모서리의 투영 범위로 어림한다(모서리 사이로 빗나가면 안 보임으로 셈)
-DEV int vis_point(const MapCore& m, const float o[3], float c, float s, const DetGeo& g, int pi, int q) {
+DEV int vis_point(const MapCore& m, const float o[3], float c, float s, const DetGeo& g, int pi, int q, const BCtx& bx) {
   const float xc = 0.5f * (g.xr[0] + g.xr[1]), yc = 0.5f * (g.yr[0] + g.yr[1]);
   const float hx = 0.4f * (g.xr[1] - g.xr[0]), hy = 0.4f * (g.yr[1] - g.yr[0]);
   const float xn = xc + (q == 1 ? -hx : q == 2 ? hx : 0.f), yn = yc + (q == 3 ? -hy : q == 4 ? hy : 0.f);
@@ -725,6 +829,20 @@ DEV int vis_point(const MapCore& m, const float o[3], float c, float s, const De
   pix_dir(c, s, xn, yn, d);
   float inv[3];
   ray_inv(d, inv);
+  if (bx.on) {   // BEHAVIOR: 자기 상자(정적이면 회전 상자) 앞을 정적 상자·다른 과제 물체가 가리나
+    const bsc::SceneDev& sd = *bx.sd;
+    const float ow[3] = {o[0] + bx.wx, o[1] + bx.wy, o[2]};
+    const int own = bx.bm->sbox[pi];
+    const float t = own >= 0 ? ray_obb_inv(ow, d, sd.box[own]) : ray_box_inv(o, d, inv, m.prim[pi]);
+    if (!(t >= MP::ozmin && t <= MP::ozmax)) return 0;
+    bool occ = false;
+    bsc::bin_walk(sd, ow[0], ow[1], d[0], d[1], [&](int j, float) { if (!occ && j != own && ray_obb_inv(ow, d, sd.box[j]) < t) occ = true; },
+                  [&]() { return occ ? -1.f : t; });
+    if (occ) return 0;
+    for (int j = 0; j < N_PRIM; ++j)
+      if (j != pi && prim_dyn(bx, j) && ray_box_inv(o, d, inv, m.prim[j]) < t) return 0;
+    return 1;
+  }
   const float t = ray_box_inv(o, d, inv, m.prim[pi]);   // 광학 깊이(d 의 앞 성분 = 1)
   if (!(t >= MP::ozmin && t <= MP::ozmax)) return 0;
   for (int j = 0; j < N_PRIM; ++j)
@@ -831,7 +949,7 @@ DEV void row_yn(const Cam& k, float yn[NROWC]) {
   yn[NROW] = (vs - cy) / k.fx;
 }
 
-DEV void phase_cast(const MapCore& m, Scratch& sh, const EnvView& e, int tid, int nt) {
+DEV void phase_cast(const MapCore& m, Scratch& sh, const EnvView& e, int tid, int nt, const BCtx& bx) {
   for (int p = tid; p < N_PRIM; p += nt) sh.vism[p] = 0u;   // 보임 점 비트(obj_pre 가 동기 뒤에 OR)
   const Cam k = cam_consts();
   float s, c;
@@ -853,24 +971,15 @@ DEV void phase_cast(const MapCore& m, Scratch& sh, const EnvView& e, int tid, in
   for (int col = tid; col < NCOL; col += nt) {
     const float xn = ((float)(2 * col + 1 - NCOL) / (float)NCOL) * k.tanh;
     const float d0 = c + s * xn, d1 = s - c * xn;   // pix_dir
-    float txy = kInf;
-    if (d0 > 0.f) txy = minf(txy, (m.rhx - o[0]) / d0); else if (d0 < 0.f) txy = minf(txy, (-m.rhx - o[0]) / d0);
-    if (d1 > 0.f) txy = minf(txy, (m.rhy - o[1]) / d1); else if (d1 < 0.f) txy = minf(txy, (-m.rhy - o[1]) / d1);
     float tr[NROWC];
     uint32_t vert = 0u;   // 줄마다 수직면에 맞았나
-    for (int r = 0; r < NROWC; ++r) { tr[r] = minf(txy, troomz[r]); vert |= (txy < troomz[r] ? 1u : 0u) << r; }
-    float trmax = tr[0];
-    for (int r = 1; r < NROWC; ++r) trmax = maxf(trmax, tr[r]);
-    const float inv0 = absf(d0) < 1e-12f ? 0.f : 1.f / d0, inv1 = absf(d1) < 1e-12f ? 0.f : 1.f / d1;
-    for (int p = 0; p < N_PRIM; ++p) {
-      const Prim& b = m.prim[p];
-      float t0 = -kInf, t1 = kInf;
-      if (!slab(o[0], d0, inv0, b.lo[0], b.hi[0], t0, t1) || !slab(o[1], d1, inv1, b.lo[1], b.hi[1], t0, t1)) continue;
-      if (t0 > t1) continue;   // z 판은 구간을 좁히기만 하므로 이미 비면 어느 줄도 안 맞음
-      if (t0 >= trmax) continue;  // 들어가는 t ≥ 모든 줄의 지금 값: 어느 줄도 줄일 수 없음(minf 결과 같음)
+    // 상자 하나(xy 판 구간 [t0, t1], z 범위)를 모든 줄에 — 줄마다 z 판만(상자 방·BEHAVIOR 같은 식)
+    auto box_rows = [&](float t0, float t1, float z0, float z1, float& trmax) {
+      if (t0 > t1) return;      // z 판은 구간을 좁히기만 하므로 이미 비면 어느 줄도 안 맞음
+      if (t0 >= trmax) return;  // 들어가는 t ≥ 모든 줄의 지금 값: 어느 줄도 줄일 수 없음(minf 결과 같음)
       for (int r = 0; r < NROWC; ++r) {
         float u0 = t0, u1 = t1;
-        if (!slab(o[2], -yn[r], invz[r], b.lo[2], b.hi[2], u0, u1)) continue;
+        if (!slab(o[2], -yn[r], invz[r], z0, z1, u0, u1)) continue;
         const float te = slab_end(u0, u1);
         if (te < tr[r]) {
           tr[r] = te;
@@ -879,6 +988,45 @@ DEV void phase_cast(const MapCore& m, Scratch& sh, const EnvView& e, int tid, in
       }
       trmax = tr[0];
       for (int r = 1; r < NROWC; ++r) trmax = maxf(trmax, tr[r]);
+    };
+    if (bx.on) {   // BEHAVIOR: 바닥·천장 + 정적 회전 상자(묶음 걷기, 깊이 범위 zmax 넘는 것은 결과가 같아 안 봄) + 과제 물체 상자
+      for (int r = 0; r < NROWC; ++r) tr[r] = troomz[r];
+      float trmax = tr[0];
+      for (int r = 1; r < NROWC; ++r) trmax = maxf(trmax, tr[r]);
+      const bsc::SceneDev& sd = *bx.sd;
+      const float ow0 = o[0] + bx.wx, ow1 = o[1] + bx.wy;
+      bsc::bin_walk(sd, ow0, ow1, d0, d1, [&](int j, float) {
+        const bsc::SBox& b = sd.box[j];
+        const float rx = ow0 - b.cx, ry = ow1 - b.cy;
+        const float lx = b.c * rx + b.s * ry, ly = -b.s * rx + b.c * ry;
+        const float ux = b.c * d0 + b.s * d1, uy = -b.s * d0 + b.c * d1;
+        const float ix = absf(ux) < 1e-12f ? 0.f : 1.f / ux, iy = absf(uy) < 1e-12f ? 0.f : 1.f / uy;
+        float t0 = -kInf, t1 = kInf;
+        if (!slab(lx, ux, ix, -b.hx, b.hx, t0, t1) || !slab(ly, uy, iy, -b.hy, b.hy, t0, t1)) return;
+        box_rows(t0, t1, b.z0, b.z1, trmax);
+      }, [&]() { return minf(trmax, MP::zmax); });
+      const float inv0 = absf(d0) < 1e-12f ? 0.f : 1.f / d0, inv1 = absf(d1) < 1e-12f ? 0.f : 1.f / d1;
+      for (int p = 0; p < N_PRIM; ++p) {
+        if (!prim_dyn(bx, p)) continue;
+        const Prim& b = m.prim[p];
+        float t0 = -kInf, t1 = kInf;
+        if (!slab(o[0], d0, inv0, b.lo[0], b.hi[0], t0, t1) || !slab(o[1], d1, inv1, b.lo[1], b.hi[1], t0, t1)) continue;
+        box_rows(t0, t1, b.lo[2], b.hi[2], trmax);
+      }
+    } else {
+    float txy = kInf;
+    if (d0 > 0.f) txy = minf(txy, (m.rhx - o[0]) / d0); else if (d0 < 0.f) txy = minf(txy, (-m.rhx - o[0]) / d0);
+    if (d1 > 0.f) txy = minf(txy, (m.rhy - o[1]) / d1); else if (d1 < 0.f) txy = minf(txy, (-m.rhy - o[1]) / d1);
+    for (int r = 0; r < NROWC; ++r) { tr[r] = minf(txy, troomz[r]); vert |= (txy < troomz[r] ? 1u : 0u) << r; }
+    float trmax = tr[0];
+    for (int r = 1; r < NROWC; ++r) trmax = maxf(trmax, tr[r]);
+    const float inv0 = absf(d0) < 1e-12f ? 0.f : 1.f / d0, inv1 = absf(d1) < 1e-12f ? 0.f : 1.f / d1;
+    for (int p = 0; p < N_PRIM; ++p) {
+      const Prim& b = m.prim[p];
+      float t0 = -kInf, t1 = kInf;
+      if (!slab(o[0], d0, inv0, b.lo[0], b.hi[0], t0, t1) || !slab(o[1], d1, inv1, b.lo[1], b.hi[1], t0, t1)) continue;
+      box_rows(t0, t1, b.lo[2], b.hi[2], trmax);
+    }
     }
     float best = kInf, hit_t = 0.f, floor_r = 0.f, floor_t = 0.f, dv0 = 0.f, dv1 = 0.f;
     for (int r = 0; r < NROWC; ++r) {
@@ -909,7 +1057,7 @@ DEV void phase_cast(const MapCore& m, Scratch& sh, const EnvView& e, int tid, in
 // 순서가 있는 일(난수 뽑기, 새 칸 고르기)만 스레드 0 이 하고, 판정·짝 열쇠·최솟값 찾기·부재 확인·완성도는 스레드가 나눠 한다.
 // 나눈 일은 서로 다른 칸만 쓰고, 최솟값은 (열쇠, 번호) 순으로 골라 스레드 수와 무관하게 같은 답이다(CPU nt = 1 과 비트 같음).
 // 3-0(모든 스레드): 맞은 열 수 부분합, 후보 물체(det_prefilter 통과)의 보임 점만 쏜다
-DEV void obj_pre(const MapCore& m, Scratch& sh, int tid, int nt) {
+DEV void obj_pre(const MapCore& m, Scratch& sh, int tid, int nt, const BCtx& bx) {
   int nh = 0;
   for (int col = tid; col < NCOL; col += nt) nh += sh.colt[col] == 1;
   put_part(sh, tid, nh);
@@ -920,7 +1068,7 @@ DEV void obj_pre(const MapCore& m, Scratch& sh, int tid, int nt) {
   for (int i = tid; i < ncand * NPT; i += nt) {
     int p = 0;
     for (int j = i / NPT; ; ++p) if (sh.pcand[p] && j-- == 0) break;   // (i / NPT) 번째 후보
-    if (vis_point(m, o, c, s, sh.geo[p], p, i % NPT)) or_bits(&sh.vism[p], 1u << (i % NPT));   // vism 은 phase_cast 가 비움
+    if (vis_point(m, o, c, s, sh.geo[p], p, i % NPT, bx)) or_bits(&sh.vism[p], 1u << (i % NPT));   // vism 은 phase_cast 가 비움
   }
 }
 
@@ -953,7 +1101,7 @@ DEV void put_det(Det& D, uint64_t& rng, const float med[3], const float bc[3], c
 }
 
 // 3a·3b(스레드 0): 자세 보정, 검출(난수 순서 그대로), 유령 자리
-DEV void obj_detect(MapCore& m, Scratch& sh, const EnvView& e, int nt) {
+DEV void obj_detect(MapCore& m, Scratch& sh, const EnvView& e, int nt, const BCtx& bx) {
   // 3a. keyframe 맞추기: 맞은 줄이 충분하고 제자리가 아니면 오차를 xy 는 kf_corr_xy, yaw 는 kf_corr_yaw 만큼 되돌림(slam2d keyframe 의 보정 흉내)
   const int n_hits = sum_part(sh, nt);
   const bool still = !m.first && m.vmax < MP::still_v && m.wmax < MP::still_w;
@@ -983,7 +1131,15 @@ DEV void obj_detect(MapCore& m, Scratch& sh, const EnvView& e, int nt) {
     Det& D = sh.det[nd++];
     put_det(D, rng, g.med, g.bc, g.pe, o2, ex, ey, ec, es);
     int cls = m.prim[p].cls;
-    if (MP::noise && rand01(rng) < MP::p_conf) cls = (cls + 1 + (int)(rand01(rng) * (float)(NCLS - 1))) % NCLS;
+    if (MP::noise && rand01(rng) < MP::p_conf) {
+      if (bx.on) {   // BEHAVIOR: 이름 표의 비슷한 다른 이름 3 중 하나(같은 난수 수)
+        const int k = (int)(rand01(rng) * 3.f);
+        const int alt = bx.ss->sim3[cls * 3 + (k > 2 ? 2 : k)];
+        cls = alt >= 0 ? alt : cls;
+      } else {
+        cls = (cls + 1 + (int)(rand01(rng) * (float)(NCLS - 1))) % NCLS;
+      }
+    }
     D.cls = cls;
     D.src = p;
     D.score = 0.9f;
@@ -1108,7 +1264,7 @@ DEV void obj_update_matched(MapCore& m, Scratch& sh, int tid, int nt, int bug) {
     if (S.last_kf != t) S.n_obs += 1;
     S.last_kf = t;
     const float w = (float)(S.n_obs < 20 ? S.n_obs : 20);
-    const bool bigo = is_static(S.cls) || maxf(maxf(S.ext[0], S.ext[1]), maxf(D.ext[0], D.ext[1])) > MP::big;
+    const bool bigo = is_static_m(m, S.cls) || maxf(maxf(S.ext[0], S.ext[1]), maxf(D.ext[0], D.ext[1])) > MP::big;
     for (int q = 0; q < 3; ++q) {
       if (bigo) {   // 합집합, keyframe 마다 면마다 grow_max·한 변 max_ext 까지
         float mlo = S.pos[q] - 0.5f * S.ext[q], mhi = S.pos[q] + 0.5f * S.ext[q];
@@ -1152,7 +1308,7 @@ DEV void obj_update_new(MapCore& m, Scratch& sh, int bug) {
     }
     if (mf >= 0) {
       Slot& S = m.slot[mf];
-      const bool bigd = is_static(D.cls) || maxf(D.ext[0], D.ext[1]) > MP::big;   // 큰 것: 자리 = 상자 중심(근사판 칸은 상자를 자리 ± 크기/2 로 둠)
+      const bool bigd = is_static_m(m, D.cls) || maxf(D.ext[0], D.ext[1]) > MP::big;   // 큰 것: 자리 = 상자 중심(근사판 칸은 상자를 자리 ± 크기/2 로 둠)
       for (int q = 0; q < 3; ++q) { S.pos[q] = bigd ? D.bc[q] : D.pos[q]; S.meas[q] = S.pos[q]; S.ext[q] = D.ext[q]; }
       S.moved = best > MP::moved_d * MP::moved_d ? 1 : S.moved;   // 짝 문턱(≥ 0.30 m) 밖이라 사실상 항상 옮겨짐
       S.state = S.moved ? S_MOVED : S_SEEN;
@@ -1170,7 +1326,7 @@ DEV void obj_update_new(MapCore& m, Scratch& sh, int bug) {
     if (fs < 0) { m.n_dropped += 1; continue; }   // 칸이 다 참(가정: 버림)
     Slot& S = m.slot[fs];
     S.valid = 1; S.id = m.next_id++; S.cls = D.cls;
-    const bool bigd = is_static(D.cls) || maxf(D.ext[0], D.ext[1]) > MP::big;   // 큰 것: 자리 = 백분위 상자 중심(다음 합집합과 같은 상자)
+    const bool bigd = is_static_m(m, D.cls) || maxf(D.ext[0], D.ext[1]) > MP::big;   // 큰 것: 자리 = 백분위 상자 중심(다음 합집합과 같은 상자)
     for (int q = 0; q < 3; ++q) { S.pos[q] = bigd ? D.bc[q] : D.pos[q]; S.first_pos[q] = S.pos[q]; S.meas[q] = S.pos[q]; S.ext[q] = D.ext[q]; }
     S.n_obs = 1; S.last_seen = t; S.last_kf = t; S.score = D.score;
     S.held = 0; S.src = D.src; S.seen_len = m.plen; S.seen_rot = m.prot;
@@ -1183,7 +1339,7 @@ DEV void obj_update_new(MapCore& m, Scratch& sh, int bug) {
 // 3e. 부재 확인(objmap.cpp 4) + 3f. 오래된 후보 버리기. 칸마다 따로(모든 스레드, 칸마다 한 스레드)
 //     확정·이번에 안 맞음·사라짐 아님·고정 종류 아님·작은 것. 믿는 자세로 화소에 투영하고
 //     그 화소의 깊이(참 장면)가 물체보다 occl 넘게 가까우면 가려짐. 아니면 놓침 +1
-DEV void obj_absence(MapCore& m, const Scratch& sh, const EnvView& e, int tid, int nt) {
+DEV void obj_absence(MapCore& m, const Scratch& sh, const EnvView& e, int tid, int nt, const BCtx& bx) {
   const Cam k = cam_consts();
   const float ec = sh.ec, es = sh.es;
   const float c = sh.tc, s = sh.ts, o[3] = {sh.to[0], sh.to[1], sh.to[2]};
@@ -1191,7 +1347,7 @@ DEV void obj_absence(MapCore& m, const Scratch& sh, const EnvView& e, int tid, i
   for (int b = tid; b < KSLOT; b += nt) {
     Slot& S = m.slot[b];
     // 든 것·팔 끝 hand_r + 0.1 안은 판단하지 않음(objmap.cpp 4)
-    if (S.valid && S.confirmed && !S.held && !sh.hit[b] && S.state != S_GONE && !is_static(S.cls) && !(max3(S.ext) > MP::big) &&
+    if (S.valid && S.confirmed && !S.held && !sh.hit[b] && S.state != S_GONE && !is_static_m(m, S.cls) && !(max3(S.ext) > MP::big) &&
         !(dist3(S.pos, m.eef_m) < MP::hand_r + 0.1f)) {
       const float rx = S.pos[0] - (m.ex + ec * env::K::cam_x), ry = S.pos[1] - (m.ey + es * env::K::cam_x);
       const float zc = ec * rx + es * ry, left = -es * rx + ec * ry, up = S.pos[2] - env::K::cam_z;
@@ -1202,7 +1358,7 @@ DEV void obj_absence(MapCore& m, const Scratch& sh, const EnvView& e, int tid, i
         if (!(size_px < (float)MP::min_px || u < 2.f || v < 2.f || u >= (float)(MP::img_w - 2) || v >= (float)(MP::img_h - 2))) {
           float d[3];
           pix_dir(c, s, xn, yn, d);
-          const float tz = cast(m, o, d);
+          const float tz = bx.on ? cast_beh(bx, m, o, d) : cast(m, o, d);
           if (tz >= MP::zmin && tz <= MP::zmax && !(tz < zc - MP::occl)) {   // 깊이 있음, 가려지지 않음
             if (S.misses++ == 0) S.first_miss = t;
             if (S.misses >= MP::gone_misses && t - S.first_miss >= MP::gone_min_steps) S.state = S_GONE;
@@ -1341,13 +1497,28 @@ DEV void phase_mark(const MapCore& m, Scratch& sh, const int16_t* L, const uint3
 
 // ---- 5. 격자 갱신(모든 스레드, 낱말마다 한 스레드): 맞음 우선, 정수 덧셈 + 자르기, 본 적 표시, 방 안 새로 본 칸 수 ------------
 // 점유 비트(occ, 벽 상태용): 로그 오즈 ≥ q_occ(= export8 ≥ 65 %). 바뀐 칸만 다시 씀. 새로 본 방 칸은 방마다 센다(방 1 | 방 2 << 16 은 part2)
-DEV void count_new_seen(const MapCore& m, int idx, int& cnt, int& cnt2) {
+DEV void count_new_seen(const MapCore& m, int idx, int& cnt, int& cnt2, const BCtx& bx) {
   const float cxw = ((float)(idx % GW + GX0) + 0.5f) * RES, cyw = ((float)(idx / GW + GX0) + 0.5f) * RES;
+  if (bx.on) {   // BEHAVIOR: 장면 방 격자(창 칸 = 장면 칸). 방마다 수는 BMapEnv 에 정수 원자 덧셈(순서 무관)
+    const int sc = bx.bm->c0 + idx % GW, sr = bx.bm->r0 + idx / GW;
+    const bsc::SceneDev& sd = *bx.sd;
+    if (sc < 0 || sr < 0 || sc >= sd.W || sr >= sd.H) return;
+    const int r = (int)sd.room[(size_t)sr * sd.W + sc] - 1;
+    const int k = (r >= 0 && r < 32) ? (int)bx.bm->lut[r] : -1;
+    if (k < 0) return;
+    cnt += 1;
+#ifdef __CUDA_ARCH__
+    atomicAdd(&bx.bm->rseen[k], 1);
+#else
+    bx.bm->rseen[k] += 1;
+#endif
+    return;
+  }
   const int k = room_of(m, cxw, cyw);
   cnt += k >= 0;
   cnt2 += k == 1 ? 1 : k == 2 ? (1 << 16) : 0;
 }
-DEV void phase_apply(const MapCore& m, Scratch& sh, int16_t* L, uint32_t* seen, uint32_t* occ, int tid, int nt) {
+DEV void phase_apply(const MapCore& m, Scratch& sh, int16_t* L, uint32_t* seen, uint32_t* occ, int tid, int nt, const BCtx& bx) {
   int cnt = 0, cnt2 = 0;
 #ifdef __CUDA_ARCH__
   // GPU: 워프가 낱말 32 개씩 훑어 표시된 낱말만 골라(ballot), 그 낱말의 칸 32 개를 레인 32 개가 맡는다(로그 오즈 64 B 를 한 번에 읽음).
@@ -1387,7 +1558,7 @@ DEV void phase_apply(const MapCore& m, Scratch& sh, int16_t* L, uint32_t* seen, 
         if (aa[j] & bit) {
           Lv = (hh[j] & bit) ? (Lv + MP::q_hit < MP::q_max ? Lv + MP::q_hit : MP::q_max) : (Lv + MP::q_miss > MP::q_min ? Lv + MP::q_miss : MP::q_min);
           L[(size_t)w * 32 + lane] = (int16_t)Lv;
-          if (!(oo[j] & bit)) count_new_seen(m, w * 32 + lane, cnt, cnt2);   // 새로 본 칸 중 방 안
+          if (!(oo[j] & bit)) count_new_seen(m, w * 32 + lane, cnt, cnt2, bx);   // 새로 본 칸 중 방 안
         }
         const uint32_t ob = __ballot_sync(0xffffffffu, (aa[j] & bit) && Lv >= MP::q_occ);
         if (lane == 0) {
@@ -1418,7 +1589,7 @@ DEV void phase_apply(const MapCore& m, Scratch& sh, int16_t* L, uint32_t* seen, 
       Lv = (h & bit) ? (Lv + MP::q_hit < MP::q_max ? Lv + MP::q_hit : MP::q_max) : (Lv + MP::q_miss > MP::q_min ? Lv + MP::q_miss : MP::q_min);
       L[idx] = (int16_t)Lv;
       if (Lv >= MP::q_occ) ob |= bit;
-      if (nw & bit) count_new_seen(m, idx, cnt, cnt2);   // 새로 본 칸 중 방 안
+      if (nw & bit) count_new_seen(m, idx, cnt, cnt2, bx);   // 새로 본 칸 중 방 안
     }
     const uint32_t no = (occ[w] & ~any) | ob;
     if (no != occ[w]) sh.occ_chg = 1;
@@ -1429,14 +1600,22 @@ DEV void phase_apply(const MapCore& m, Scratch& sh, int16_t* L, uint32_t* seen, 
 #endif
 }
 
-DEV void phase_finish(MapCore& m, const Scratch& sh, const EnvView& e, int nt) {
+// 방 드러냄: 본 넓이 ≥ min_room_m2 이고 방 칸의 room_reveal 이상(한 번 드러나면 그대로). BEHAVIOR 는 창 방(BMapEnv)
+DEV void reveal_beh(MapCore& m, const BCtx& bx) {
+  const BMapEnv& b = *bx.bm;
+  for (int k = 0; k < b.nroom; ++k)
+    if (!((m.rrev >> k) & 1) && (float)b.rseen[k] * (RES * RES) >= MP::min_room_m2 && (float)b.rseen[k] >= MP::room_reveal * (float)b.rcells[k])
+      m.rrev |= 1 << k;
+}
+DEV void phase_finish(MapCore& m, const Scratch& sh, const EnvView& e, int nt, const BCtx& bx) {
   const int s = sum_part(sh, nt);
   int n_obj = 0;
   for (int p = 0; p < N_PRIM; ++p) n_obj += sh.found[p];
   m.n_obj_conf = n_obj;
   m.n_task_conf = sh.found[0];
   m.n_seen_room += s;
-  {  // 방마다 본 칸 → 드러냄: 본 넓이 ≥ min_room_m2 이고 방 칸의 room_reveal 이상(한 번 드러나면 그대로)
+  if (bx.on) reveal_beh(m, bx);
+  else {  // 방마다 본 칸 → 드러냄: 본 넓이 ≥ min_room_m2 이고 방 칸의 room_reveal 이상(한 번 드러나면 그대로)
     const int s2 = sum_part2(sh, nt), r1 = s2 & 0xffff, r2 = s2 >> 16;
     m.rseen[0] += s - r1 - r2;
     m.rseen[1] += r1;
@@ -1458,10 +1637,10 @@ DEV void phase_finish(MapCore& m, const Scratch& sh, const EnvView& e, int nt) {
   m.vmax = 0.f; m.wmax = 0.f;
 }
 
-DEV void write_metrics(const MapCore& m, const EnvView& e, float* met, int N, int i) {
+DEV void write_metrics(const MapCore& m, const EnvView& e, float* met, int N, int i, int nprim = N_PRIM) {
   const float dx = m.ex - e.x, dy = m.ey - e.y;
   met[M_TASK * N + i] = (float)m.n_task_conf;
-  met[M_OBJ * N + i] = (float)m.n_obj_conf / (float)N_PRIM;
+  met[M_OBJ * N + i] = (float)m.n_obj_conf / (float)nprim;
   met[M_SEEN * N + i] = m.room_cells > 0 ? (float)m.n_seen_room / (float)m.room_cells : 0.f;
   met[M_ERR_XY * N + i] = sqrtf(dx * dx + dy * dy);
   met[M_ERR_YAW * N + i] = absf(wrap_pi(m.eyaw - e.yaw));
@@ -1780,14 +1959,15 @@ DEV void phase_walls(MapCore& m, WallScratch& ws, const uint32_t* occ_g, int16_t
 // ---- 한 판 한 스텝. Sync = GPU __syncthreads / CPU 아무것도 안 함(tid 0, nt 1) --------------------------------------------------
 // keyframe 갱신 본체(시작 단계 뒤, B_KF 일 때만). 블록(GPU) 또는 스레드 하나(CPU)
 template <class Sync>
-DEV void map_keyframe(MapCore& m, Scratch& sh, const EnvView& e, int16_t* L, uint32_t* seen, uint32_t* occ, int tid, int nt, int bug, const Sync& sync) {
-  phase_cast(m, sh, e, tid, nt);
+DEV void map_keyframe(MapCore& m, Scratch& sh, const EnvView& e, int16_t* L, uint32_t* seen, uint32_t* occ, int tid, int nt, int bug, const Sync& sync,
+                      const BCtx& bx) {
+  phase_cast(m, sh, e, tid, nt, bx);
   sync();
   PROF_MARK(P_CAST);
-  obj_pre(m, sh, tid, nt);
+  obj_pre(m, sh, tid, nt, bx);
   sync();
   PROF_MARK(P_OBJPRE);
-  if (tid == 0) obj_detect(m, sh, e, nt);
+  if (tid == 0) obj_detect(m, sh, e, nt, bx);
   sync();
   PROF_MARK(P_POSE_DET);
   obj_keys(m, sh, tid, nt);
@@ -1809,23 +1989,23 @@ DEV void map_keyframe(MapCore& m, Scratch& sh, const EnvView& e, int16_t* L, uin
   if (tid == 0) obj_update_new(m, sh, bug);
   sync();
   PROF_MARK(P_ASSOC);
-  obj_absence(m, sh, e, tid, nt);
+  obj_absence(m, sh, e, tid, nt, bx);
   sync();
   PROF_MARK(P_ABSENCE);
   obj_complete(m, sh, tid, nt);
   phase_mark(m, sh, L, seen, occ, tid, nt, sync);
   sync();
   PROF_MARK(P_MARK);
-  phase_apply(m, sh, L, seen, occ, tid, nt);
+  phase_apply(m, sh, L, seen, occ, tid, nt, bx);
   sync();
   PROF_MARK(P_APPLY);
-  if (tid == 0) phase_finish(m, sh, e, nt);
+  if (tid == 0) phase_finish(m, sh, e, nt, bx);
 }
 
 // ---- 7. 커리큘럼 처음 지도(계획서 5.5, 판 리셋 때만) ---------------------------------------------------------------------------
 // 난수는 m.rng 를 섞은 따로 된 값(m.rng 를 움직이지 않음) — 모두 C2 면 지도 결과가 예전과 같다.
 // (스레드 0) 단계 고르기 + 미리 확정할 참 물체를 칸에. 자리·크기는 참 상자(중심, 크기) 그대로 = 교사 지도의 "자세 오차만"
-DEV void curr_slots(MapCore& m, const MapCurr& cu) {
+DEV void curr_slots(MapCore& m, const MapCurr& cu, int np = N_PRIM) {   // np: 쓰는 prim 수(BEHAVIOR 판은 시작 조건의 물체 수)
   uint64_t rr = m.rng ^ 0x6A09E667F3BCC909ull;
   const float u = rand01(rr);
   const int st = u < cu.p0 ? 0 : (u < cu.p0 + cu.p1 ? 1 : 2);
@@ -1833,10 +2013,10 @@ DEV void curr_slots(MapCore& m, const MapCurr& cu) {
   m.init_conf = 0;
   m.init_goal = 0;
   if (st == 2) return;
-  int k = N_PRIM;
+  int k = np;
   if (st == 1) {
-    const int lo = cu.kmin < 0 ? 0 : (cu.kmin > N_PRIM ? N_PRIM : cu.kmin);
-    const int hi = cu.kmax < lo ? lo : (cu.kmax > N_PRIM ? N_PRIM : cu.kmax);
+    const int lo = cu.kmin < 0 ? 0 : (cu.kmin > np ? np : cu.kmin);
+    const int hi = cu.kmax < lo ? lo : (cu.kmax > np ? np : cu.kmax);
     k = lo + (int)(rand01(rr) * (float)(hi - lo + 1));
     k = k > hi ? hi : k;
   }
@@ -1844,8 +2024,8 @@ DEV void curr_slots(MapCore& m, const MapCurr& cu) {
   for (int p = 0; p < N_PRIM; ++p) idx[p] = p;
   uint32_t pick = 0u;
   for (int j = 0; j < k; ++j) {   // 부분 Fisher–Yates: 서로 다른 k 개
-    int r = j + (int)(rand01(rr) * (float)(N_PRIM - j));
-    r = r > N_PRIM - 1 ? N_PRIM - 1 : r;
+    int r = j + (int)(rand01(rr) * (float)(np - j));
+    r = r > np - 1 ? np - 1 : r;
     const int x = idx[j]; idx[j] = idx[r]; idx[r] = x;
     pick |= 1u << idx[j];
   }
@@ -1865,9 +2045,33 @@ DEV void curr_slots(MapCore& m, const MapCurr& cu) {
 }
 // 공개한 칸인가(C0: 방 안·벽 칸 전부, C1: 미리 확정한 물체 중심 reveal_r 안)와 점유인가(방 벽 칸 또는 장면 상자 바닥 자국과 겹침).
 // 벽 칸 = 방 경계 ±rh 를 담은 칸(광선이 벽에 맞는 칸과 같은 floor 규칙)
-DEV int curr_cell(const MapCore& m, const MapCurr& cu, int ix, int iy, bool& occ_out) {
+DEV int curr_cell(const MapCore& m, const MapCurr& cu, int ix, int iy, bool& occ_out, const BCtx& bx) {
   const float x0 = (float)ix * RES, y0 = (float)iy * RES, x1 = x0 + RES, y1 = y0 + RES;
   const float cx = x0 + 0.5f * RES, cy = y0 + 0.5f * RES;
+  if (bx.on) {   // BEHAVIOR: 공개 = 장면 방 칸(C0) 또는 미리 확정한 물체 둘레(C1). 점유 = 장면 띠 점유 래스터(정적 상자) 또는 과제 물체 바닥 자국
+    const bsc::SceneDev& sd = *bx.sd;
+    const int sc = bx.bm->c0 + (ix - GX0), sr = bx.bm->r0 + (iy - GX0);
+    if (sc < 0 || sr < 0 || sc >= sd.W || sr >= sd.H) return 0;
+    const size_t si = (size_t)sr * sd.W + sc;
+    if (sd.room[si] == 0) return 0;
+    if (m.init_stage == 1) {
+      bool near = false;
+      const float r2 = cu.reveal_r * cu.reveal_r;
+      for (int b = 0; b < m.init_conf && !near; ++b) {
+        const float dx = cx - m.slot[b].pos[0], dy = cy - m.slot[b].pos[1];
+        near = dx * dx + dy * dy <= r2;
+      }
+      if (!near) return 0;
+    }
+    bool occ = (sd.occ[si >> 5] >> (si & 31)) & 1u;
+    for (int p = 0; p < N_PRIM && !occ; ++p) {
+      if (!prim_dyn(bx, p)) continue;
+      const Prim& P = m.prim[p];
+      occ = P.lo[0] < x1 && P.hi[0] >= x0 && P.lo[1] < y1 && P.hi[1] >= y0 && P.hi[2] > MP::band_lo && P.lo[2] < MP::band_hi;
+    }
+    occ_out = occ;
+    return 1;
+  }
   const bool in_x = x1 > -m.rhx && x0 <= m.rhx, in_y = y1 > -m.rhy && y0 <= m.rhy;   // 방(+ 경계 칸)과 겹침
   if (!(in_x && in_y)) return 0;
   const bool wall = (x0 <= -m.rhx && -m.rhx < x1) || (x0 <= m.rhx && m.rhx < x1) || (y0 <= -m.rhy && -m.rhy < y1) || (y0 <= m.rhy && m.rhy < y1);
@@ -1890,10 +2094,12 @@ DEV int curr_cell(const MapCore& m, const MapCurr& cu, int ix, int iy, bool& occ
 }
 // (모든 스레드, 낱말마다 한 스레드) 공개한 칸에 로그 오즈·본 칸·점유 비트를 쓰고, 방 안 공개 칸 수를 부분합(part·part2)으로.
 // clear_grid 뒤(동기 뒤)에 부른다. 낱말끼리 독립이라 스레드 순서와 무관
-DEV void curr_grid(const MapCore& m, const MapCurr& cu, Scratch& sh, int16_t* L, uint32_t* seen, uint32_t* occ, int tid, int nt) {
+DEV void curr_grid(const MapCore& m, const MapCurr& cu, Scratch& sh, int16_t* L, uint32_t* seen, uint32_t* occ, int tid, int nt, const BCtx& bx) {
   int cnt = 0, cnt2 = 0;
   // 방(+ 경계 칸)과 겹치는 행·열 칸 범위 — curr_cell 의 겹침 판정과 같은 식. 밖의 낱말은 clear_grid 가 이미 0 으로 둠(같은 결과, 일만 줄임)
   int ylo = GW, yhi = -1, xlo = GW, xhi = -1;
+  if (bx.on) { ylo = 0; yhi = GW - 1; xlo = 0; xhi = GW - 1; }   // BEHAVIOR: 창 전체(장면 칸으로 가림)
+  else
   for (int l = 0; l < GW; ++l) {
     const float c0 = (float)(l + GX0) * RES, c1 = c0 + RES;
     if (c1 > -m.rhy && c0 <= m.rhy) { ylo = l < ylo ? l : ylo; yhi = l; }
@@ -1907,12 +2113,12 @@ DEV void curr_grid(const MapCore& m, const MapCurr& cu, Scratch& sh, int16_t* L,
       const int idx = w * 32 + b;
       const int ix = idx % GW + GX0, iy = idx / GW + GX0;
       bool o = false;
-      if (!curr_cell(m, cu, ix, iy, o)) continue;
+      if (!curr_cell(m, cu, ix, iy, o, bx)) continue;
       sb |= 1u << b;
       const int Lv = o ? MP::curr_occ : MP::curr_free;
       L[idx] = (int16_t)Lv;
       if (Lv >= MP::q_occ) ob |= 1u << b;
-      count_new_seen(m, idx, cnt, cnt2);
+      count_new_seen(m, idx, cnt, cnt2, bx);
     }
     seen[w] = sb;
     occ[w] = ob;
@@ -1921,9 +2127,10 @@ DEV void curr_grid(const MapCore& m, const MapCurr& cu, Scratch& sh, int16_t* L,
   put_part2(sh, tid, cnt2);
 }
 // (스레드 0) 공개한 방 칸 수를 본 칸 수에 더함. 방 드러냄은 같은 스텝의 keyframe(phase_finish)이 같은 규칙으로 정함
-DEV void curr_grid_finish(MapCore& m, const Scratch& sh, int nt) {
+DEV void curr_grid_finish(MapCore& m, const Scratch& sh, int nt, const BCtx& bx) {
   const int s = sum_part(sh, nt), s2 = sum_part2(sh, nt), r1 = s2 & 0xffff, r2 = s2 >> 16;
   m.n_seen_room += s;
+  if (bx.on) return;   // BEHAVIOR: 방마다 본 칸은 count_new_seen 이 BMapEnv 에 이미 더함
   m.rseen[0] += s - r1 - r2;
   m.rseen[1] += r1;
   m.rseen[2] += r2;
@@ -1933,39 +2140,90 @@ DEV void curr_grid_finish(MapCore& m, const Scratch& sh, int nt) {
 // GPU 는 목록(keyframe·리셋·벽)의 판만 블록으로 이 함수를 부르고(map_kf_kernel), 나머지 판은 시작 커널이 완성도만 쓴다.
 // sh 와 ws 는 같은 자리(공용체): 벽 단계는 keyframe 단계가 끝난 뒤 Scratch 를 덮어쓴다.
 struct MapGrid { int16_t* L; uint32_t* seen; uint32_t* occ; int16_t* segs; };   // 한 판의 장치(또는 CPU) 배열
+
+// BEHAVIOR 판 리셋(블록): 창 칸의 장면 방을 세어 창 방 목록(≤ MAXBR, 장면 방 번호 순)·방 칸 수, 창 안 문(양쪽 창 방)을 만든다
+template <class Sync>
+DEV void room_setup_beh(MapCore& m, const BCtx& bx, int tid, int nt, const Sync& sync) {
+  BMapEnv& b = *bx.bm;
+  const bsc::SceneDev& sd = *bx.sd;
+  for (int k = tid; k < 32; k += nt) b.rcnt[k] = 0;
+  sync();
+  for (int idx = tid; idx < NCELL; idx += nt) {
+    const int sc = b.c0 + idx % GW, sr = b.r0 + idx / GW;
+    if (sc < 0 || sr < 0 || sc >= sd.W || sr >= sd.H) continue;
+    const int r = (int)sd.room[(size_t)sr * sd.W + sc] - 1;
+    if (r < 0 || r >= 32) continue;
+#ifdef __CUDA_ARCH__
+    atomicAdd(&b.rcnt[r], 1);
+#else
+    b.rcnt[r] += 1;
+#endif
+  }
+  sync();
+  if (tid == 0) {
+    int n = 0, tot = 0;
+    for (int r = 0; r < 32; ++r) {
+      b.lut[r] = -1;
+      if (r < sd.nroom && b.rcnt[r] > 0 && n < bsc::MAXBR) {
+        b.lut[r] = (int8_t)n; b.rid[n] = (int16_t)r; b.rcells[n] = b.rcnt[r]; b.rseen[n] = 0;
+        tot += b.rcnt[r];
+        ++n;
+      }
+    }
+    for (int k = n; k < bsc::MAXBR; ++k) { b.rid[k] = -1; b.rcells[k] = 0; b.rseen[k] = 0; }
+    b.nroom = n;
+    m.n_room = n > 0 ? n : 1;
+    m.room_cells = tot;
+    m.rrev = 0;
+    int nd = 0;
+    for (int k = 0; k < sd.ndoor && nd < bsc::MAXBD; ++k) {
+      const bsc::SDoor& D = sd.door[k];
+      const float x = D.x - bx.wx, y = D.y - bx.wy;
+      if (!(absf(x) < bsc::WIN_HALF && absf(y) < bsc::WIN_HALF)) continue;
+      const int a = (D.ra >= 0 && D.ra < 32) ? (int)b.lut[D.ra] : -1, c = (D.rb >= 0 && D.rb < 32) ? (int)b.lut[D.rb] : -1;
+      if (a < 0 && c < 0) continue;
+      b.dx[nd] = x; b.dy[nd] = y; b.da[nd] = (int8_t)a; b.db[nd] = (int8_t)c;
+      ++nd;
+    }
+    b.ndoor = nd;
+  }
+  sync();
+}
 union KfShared { Scratch sh; WallScratch ws; };
 template <class Sync>
 DEV void map_rest(MapCore& m, KfShared& u, const EnvView& e, const MapGrid& g, float* met, int N, int i,
-                  int tid, int nt, int bug, int flags, const MapCurr& cu, const Sync& sync) {
+                  int tid, int nt, int bug, int flags, const MapCurr& cu, const Sync& sync, const bsc::SceneSet* ss = nullptr, BMapEnv* bm = nullptr) {
+  const BCtx bx = bctx(ss, bm);
   if (flags & B_RESET) {
     clear_grid(g.L, g.seen, g.occ, tid, nt);
-    if (tid == 0) curr_slots(m, cu);   // 처음 지도 단계(5.5)
+    if (bx.on) room_setup_beh(m, bx, tid, nt, sync);
+    if (tid == 0) curr_slots(m, cu, bx.on ? bx.bm->nprim : N_PRIM);   // 처음 지도 단계(5.5)
     sync();
     if (m.init_stage < 2) {
-      curr_grid(m, cu, u.sh, g.L, g.seen, g.occ, tid, nt);
+      curr_grid(m, cu, u.sh, g.L, g.seen, g.occ, tid, nt, bx);
       sync();
-      if (tid == 0) curr_grid_finish(m, u.sh, nt);
+      if (tid == 0) curr_grid_finish(m, u.sh, nt, bx);
       sync();
     }
     PROF_MARK(P_RESET);
   }
-  if (flags & B_KF) map_keyframe(m, u.sh, e, g.L, g.seen, g.occ, tid, nt, bug, sync);
+  if (flags & B_KF) map_keyframe(m, u.sh, e, g.L, g.seen, g.occ, tid, nt, bug, sync, bx);
   if (flags & (B_KF | B_WALL)) {
     const int chg = (flags & B_KF) ? u.sh.occ_chg : 0;   // ws 가 sh 를 덮기 전에 읽음
     sync();
     phase_walls(m, u.ws, g.occ, g.segs, chg, flags & B_KF, tid, nt, sync);
     PROF_MARK(P_WALLS);
   }
-  if (tid == 0) write_metrics(m, e, met, N, i);
+  if (tid == 0) write_metrics(m, e, met, N, i, bx.on ? bx.bm->nprim : N_PRIM);
   PROF_MARK(P_FINISH);
 }
 
 // 한 판 한 스텝 전체(CPU 참조판: tid 0, nt 1). GPU 는 같은 phase_begin → map_rest 를 두 커널로 나눠 부른다.
 template <class Sync>
 DEV void map_block(MapCore& m, KfShared& u, const EnvView& e, const MapGrid& g, float* met, int N, int i,
-                   int tid, int nt, int bug, int force_kf, const MapCurr& cu, const Sync& sync) {
-  const int flags = phase_begin(m, e, force_kf);
-  map_rest(m, u, e, g, met, N, i, tid, nt, bug, flags, cu, sync);
+                   int tid, int nt, int bug, int force_kf, const MapCurr& cu, const Sync& sync, const bsc::SceneSet* ss = nullptr, BMapEnv* bm = nullptr) {
+  const int flags = phase_begin(m, e, force_kf, ss, bm);
+  map_rest(m, u, e, g, met, N, i, tid, nt, bug, flags, cu, sync, ss, bm);
 }
 
 }  // namespace gmap

@@ -7,7 +7,8 @@ namespace gmap {
 
 struct NoSync { void operator()() const {} bool any(bool v) const { return v; } };
 
-CpuMap::CpuMap(int N_, uint64_t seed) : N(N_) {
+CpuMap::CpuMap(int N_, uint64_t seed, const bsc::SceneSet* ss_host) : N(N_), ss(ss_host) {
+  if (ss) h.bm.assign((size_t)N, BMapEnv{});
   h.core.resize(N);
   h.L.assign((size_t)NCELL * N, 0);
   h.seen.assign((size_t)NWORD * N, 0u);
@@ -25,9 +26,11 @@ void CpuMap::step(const env::Soa& s, int force_kf, const MapCurr& cu) {
     KfShared u;
     const EnvView e = read_env(s, i);
     const MapGrid g{h.L.data() + (size_t)i * NCELL, h.seen.data() + (size_t)i * NWORD, h.occ.data() + (size_t)i * NWORD, h.segs.data() + (size_t)i * SEGW};
-    map_block(h.core[i], u, e, g, h.met.data(), N, i, 0, 1, 0, force_kf, cu, NoSync{});
+    BMapEnv* bm = ss ? &h.bm[i] : nullptr;
+    map_block(h.core[i], u, e, g, h.met.data(), N, i, 0, 1, 0, force_kf, cu, NoSync{}, ss, bm);
     TokScratch ts;
-    make_tokens(h.core[i], g.occ, g.seen, g.segs, h.tprev.data() + (size_t)i * KSLOT, ts, 0, 1, true, NoSync{});
+    const BCtx bx = bctx(ss, bm);
+    make_tokens_n<1>(h.core[i], g.occ, g.seen, g.segs, h.tprev.data() + (size_t)i * KSLOT, ts, 0, 1, true, NoSync{}, 0, &bx);
     h.tok[i] = ts.out;
   }
 }

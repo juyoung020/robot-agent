@@ -6,6 +6,8 @@
 // --negative-way / --negative-live: GPU 토큰 커널만 경유 지점 내리막 차례를 뒤집음 / 지금 보는 중 칸 위치를 지도 자리로(v2 토큰 음성 대조)
 // --arm: 팔을 푼 G1 환경(arm_free)에 팔·그리퍼 행동을 넣어 들기·놓기 규칙을 지나게 한다.
 // --stage 2: A2(가구가 몸통과 부딪힘, 지도는 환경의 가구 상자를 그대로 씀). 기본 1(A1)
+// --stage 3: BEHAVIOR 집(E2, ~/ra_b1k 또는 --scenes DIR; --mix p1,p2, --strict, --only 장면,...). 장면 묶음 덧붙임(BMapEnv)도 비교하고,
+//   방 토큰을 RASC 로더(rasc.h)로 다시 잰 방(독립 길)과 견준다. --negative-room: GPU 토큰의 방 자리를 1.5 m 밀어 반드시 실패
 // 비교: 환경 상태, MapCore, 격자 로그 오즈·본 칸·점유 비트, 벽 선분, 토큰 물체 속도 상태, 지도 토큰(1,280 B), 완성도. 시작 때 FP16 변환을
 // __float2half_rn 과 float 2^32 개 전수로 견준다.
 #include <cstdio>
@@ -18,6 +20,8 @@
 #include "env_api.h"
 #include "env_policy.h"
 #include "map_api.h"
+#include "bscene_host.h"
+#include "rasc.h"
 
 using namespace env;
 
@@ -32,6 +36,8 @@ int main(int argc, char** argv) {
   bool negative = false, arm = false;
   int neg_bug = 1;   // 1 확정 규칙 끔(지도), 2 경유 지점 내리막 차례(토큰), 3 지금 보는 중 칸을 지도 자리로(토큰)
   gmap::MapCurr cu = gmap::kCurrEmpty;
+  bsc::BuildOpt bo;
+  bsc::BCurr bcu = bsc::kBCurrDefault;
   int pos = 0;
   for (int a = 1; a < argc; ++a) {
     if (!std::strcmp(argv[a], "--curr") && a + 1 < argc) {
@@ -42,6 +48,15 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--negative")) negative = true;
     else if (!std::strcmp(argv[a], "--negative-way")) { negative = true; neg_bug = 2; }
     else if (!std::strcmp(argv[a], "--negative-live")) { negative = true; neg_bug = 3; }
+    else if (!std::strcmp(argv[a], "--negative-room")) { negative = true; neg_bug = 4; }
+    else if (!std::strcmp(argv[a], "--scenes") && a + 1 < argc) bo.dir = argv[++a];
+    else if (!std::strcmp(argv[a], "--mix") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &bcu.p1, &bcu.p2);
+    else if (!std::strcmp(argv[a], "--strict")) bcu.strict = 1;
+    else if (!std::strcmp(argv[a], "--only") && a + 1 < argc) {
+      std::string v = argv[++a];
+      size_t p = 0;
+      while (p <= v.size()) { size_t q = v.find(',', p); if (q == std::string::npos) q = v.size(); bo.only.push_back(v.substr(p, q - p)); p = q + 1; }
+    }
     else if (!std::strcmp(argv[a], "--force-kf")) force_kf = 1;
     else if (!std::strcmp(argv[a], "--arm")) arm = true;
     else if (!std::strcmp(argv[a], "--stage") && a + 1 < argc) stage = std::atoi(argv[++a]);
@@ -60,10 +75,28 @@ int main(int argc, char** argv) {
     if (bad) return negative ? 1 : 1;
   }
   const uint64_t seed = 20261004, mseed = 99;
-  DeviceEnv genv(N, stage, seed, arm);
-  CpuEnv cenv(N, stage, seed, arm);
-  gmap::DeviceMap gmapd(N, mseed);
-  gmap::CpuMap cmap(N, mseed);
+  bsc::SceneBuild sb;
+  std::vector<rasc::Scene> rscenes;
+  const bool beh = stage >= kStageBeh;
+  if (beh) {
+    std::string err;
+    if (!bsc::build_scenes(bo, sb, &err) || !bsc::upload(sb, &err)) { std::printf("scene build failed: %s\n", err.c_str()); return 1; }
+    rscenes.resize(sb.sc.size());
+    for (size_t k = 0; k < sb.sc.size(); ++k)
+      if (!rasc::load(rscenes[k], ((bo.dir.empty() ? bsc::default_rasc_dir() : bo.dir) + "/" + sb.sc[k].name + ".rasc").c_str(), &err)) { std::printf("%s\n", err.c_str()); return 1; }
+    std::printf("BEHAVIOR scenes %d, entries %d; mix B1 %.2f B2 %.2f strict %d\n", sb.host.nsc, sb.host.nent, bcu.p1, bcu.p2, bcu.strict);
+  }
+  DeviceEnv genv(N, stage, seed, arm, sb.dev, bcu);
+  CpuEnv cenv(N, stage, seed, arm, beh ? &sb.host : nullptr, bcu);
+  gmap::DeviceMap gmapd(N, mseed, sb.dev);
+  gmap::CpuMap cmap(N, mseed, beh ? &sb.host : nullptr);
+  long room_chk = 0, room_bad = 0, room_known = 0, door_tok = 0;
+  // 방 토큰 독립 확인: RASC 방 이름 → 종류(같은 규칙을 여기서 따로 씀)
+  auto rtype_rasc = [](const std::string& n) {
+    auto has = [&](const char* p) { return n.rfind(p, 0) == 0; };
+    return has("kitchen") ? 0 : has("bathroom") ? 1 : (has("bedroom") || has("childs_room")) ? 2 : has("living_room") ? 3
+         : (has("private_office") || has("shared_office") || has("office")) ? 4 : 5;
+  };
   cudaMemcpy(gmapd.curr_dev(), &cu, sizeof cu, cudaMemcpyHostToDevice);   // 장치 값(커널이 판 리셋 때 읽음)
   long st_eps[3] = {0, 0, 0}, st_conf[3] = {0, 0, 0}, st_goal[3] = {0, 0, 0};
   double st_task_end[3] = {0, 0, 0}, st_obj_end[3] = {0, 0, 0}, st_seen_end[3] = {0, 0, 0};
@@ -150,6 +183,9 @@ int main(int argc, char** argv) {
       for (size_t k = 0; k < gh.segs.size(); ++k) if (gh.segs[k] != ch.segs[k]) { note("wall segments (env)", (long)(k / gmap::SEGW)); break; }
     }
     if (std::memcmp(gh.tprev.data(), ch.tprev.data(), sizeof(gmap::TPrev) * gh.tprev.size())) note("token prev positions", 0);
+    if (beh && std::memcmp(gh.bm.data(), ch.bm.data(), sizeof(gmap::BMapEnv) * gh.bm.size())) {
+      for (int i = 0; i < N; ++i) if (std::memcmp(&gh.bm[i], &ch.bm[i], sizeof(gmap::BMapEnv))) { note("BEHAVIOR map extras (BMapEnv)", i); break; }
+    }
     for (int i = 0; i < N; ++i) if (std::memcmp(&gh.tok[i], &ch.tok[i], sizeof(gmap::MapTok))) {
       const uint8_t* a = reinterpret_cast<const uint8_t*>(&gh.tok[i]);
       const uint8_t* b = reinterpret_cast<const uint8_t*>(&ch.tok[i]);
@@ -190,6 +226,20 @@ int main(int argc, char** argv) {
       n_wallseg += c.nseg_h + c.nseg_v;
       maxseg_h = std::max<long>(maxseg_h, c.nseg_h); maxseg_v = std::max<long>(maxseg_v, c.nseg_v);
       const gmap::MapTok& tk = ch.tok[i];
+      if (beh && ch.bm[i].on) {   // 방 토큰 = RASC 방 격자에서 믿는 자세의 방, 드러났을 때만 그 종류, 아니면 모름(5)
+        const gmap::BMapEnv& B = ch.bm[i];
+        const rasc::Scene& R = rscenes[B.scene];
+        const int r = R.room_at(c.ex + B.wx, c.ey + B.wy);
+        const int loc = (r >= 0 && r < 32) ? B.lut[r] : -1;
+        const bool rev = loc >= 0 && ((c.rrev >> loc) & 1);
+        const int want = rev ? rtype_rasc(R.str(R.rooms[r].name)) : 5;
+        int got = -1;
+        for (int q = 0; q < 6; ++q) if (gmap::h2f(tk.room[q]) > 0.5f) got = got < 0 ? q : 99;
+        ++room_chk;
+        room_known += rev;
+        room_bad += got != want;
+        door_tok += gmap::h2f(tk.room[9]) > 0.5f;
+      }
       tok_slots += tk.n_slot;
       for (int b = 0; b < tk.n_slot; ++b) tok_target += gmap::h2f(tk.slot[b][gmap::T_TARGET]) > 0.5f;
       for (int j = 0; j < 8; ++j) tok_walls += gmap::h2f(tk.wall[16 + 5 * j + 4]) > 0.5f;
@@ -261,9 +311,14 @@ int main(int argc, char** argv) {
     mix(cmap.h.tok.data(), sizeof(gmap::MapTok) * cmap.h.tok.size());
     std::printf("  final CPU map state hash %016llx\n", (unsigned long long)hsh);
   }
+  if (beh) {
+    std::printf("  BEHAVIOR room token vs RASC room grid at the slam pose (independent loader): %ld env-steps checked, robot in a revealed room %ld, door in token %ld, mismatches %ld\n",
+                room_chk, room_known, door_tok, room_bad);
+    if (room_bad) ++mismatches;
+  }
   if (negative) {
     std::printf("negative control (%s on GPU): %ld mismatching items (must be > 0)\n",
-                neg_bug == 1 ? "confirm rule off" : neg_bug == 2 ? "waypoint descent tie order flipped" : "live slots use map position", mismatches);
+                neg_bug == 1 ? "confirm rule off" : neg_bug == 2 ? "waypoint descent tie order flipped" : neg_bug == 3 ? "live slots use map position" : "BEHAVIOR room token shifted 1.5 m", mismatches);
     if (first_step >= 0) std::printf("  first mismatch: step %ld, %s\n", first_step, first_what);
     return mismatches > 0 ? 0 : 1;
   }

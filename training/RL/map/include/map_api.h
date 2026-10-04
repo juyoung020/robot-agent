@@ -19,11 +19,13 @@ struct MapHost {   // 내려받은 한 벌(검증용)
   std::vector<int16_t> segs;    // 벽 선분 [N][SEGW]
   std::vector<TPrev> tprev;     // 토큰 물체 속도용 [N][KSLOT]
   std::vector<MapTok> tok;      // 이번 스텝 지도 토큰 [N]
+  std::vector<BMapEnv> bm;      // BEHAVIOR 판 덧붙임 [N](장면 묶음이 있을 때만)
 };
 
 class DeviceMap {
  public:
-  DeviceMap(int N, uint64_t seed);
+  // ss_dev: BEHAVIOR 장면 묶음(장치, env bscene_host upload). 있으면 판마다 BMapEnv 를 두고 BEHAVIOR 판(env stage 3)을 장면으로 돈다
+  DeviceMap(int N, uint64_t seed, const bsc::SceneSet* ss_dev = nullptr);
   ~DeviceMap();
   DeviceMap(const DeviceMap&) = delete;
   DeviceMap& operator=(const DeviceMap&) = delete;
@@ -50,6 +52,8 @@ class DeviceMap {
   TPrev* tprev_ = nullptr;
   MapTok* tok_ = nullptr;
   bool tok_on_ = true;
+  const bsc::SceneSet* ss_ = nullptr;
+  BMapEnv* bm_ = nullptr;
   uint32_t* list_ = nullptr;   // 이번 스텝 keyframe·리셋·벽 판 번호(+ 시작 결과 3 비트), 장치 안에서 채움
   int* count_ = nullptr;       // 목록 길이
   MapCurr* curr_ = nullptr;    // 커리큘럼 처음 지도(장치 값, 기본 kCurrEmpty)
@@ -84,7 +88,8 @@ float h2f(uint16_t h);
 struct CpuMap {
   int N;
   MapHost h;
-  CpuMap(int N_, uint64_t seed);
+  const bsc::SceneSet* ss = nullptr;
+  CpuMap(int N_, uint64_t seed, const bsc::SceneSet* ss_host = nullptr);
   void step(const env::Soa& s, int force_kf = 0, const MapCurr& cu = kCurrEmpty);
 };
 

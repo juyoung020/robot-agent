@@ -17,17 +17,19 @@ __global__ void __launch_bounds__(NT) map_init_kernel(MapCore* core, int N, uint
 // 1 단계(판마다 한 스레드): 시작(리셋·오도메트리·움직임 거르기). keyframe·리셋인 판은 목록(장치 안, 원자 덧셈)에 넣고,
 // 아닌 판은 여기서 완성도만 쓰고 끝난다. 목록 순서는 실행마다 달라도 판끼리 독립이라 결과는 같다.
 constexpr int BEGIN_NT = 128;
-__global__ void __launch_bounds__(BEGIN_NT) map_begin_kernel(env::Soa s, MapCore* core, float* met, uint32_t* list, int* count, int force_kf) {
+__global__ void __launch_bounds__(BEGIN_NT) map_begin_kernel(env::Soa s, MapCore* core, float* met, uint32_t* list, int* count, int force_kf,
+                                                             const bsc::SceneSet* ss, BMapEnv* bm) {
   const int i = blockIdx.x * BEGIN_NT + threadIdx.x, N = s.N;
   if (i >= N) return;
   const EnvView e = read_env(s, i);
   MapCore& m = core[i];
-  const int f = phase_begin(m, e, force_kf);
+  BMapEnv* bmi = bm ? bm + i : nullptr;
+  const int f = phase_begin(m, e, force_kf, ss, bmi);
 #ifdef MAP_PROF
   atomicAdd(&g_prof[P_NSEC + ((f & B_KF) ? 1 : 0)], 1ull);
 #endif
   if (f) list[atomicAdd(count, 1)] = (uint32_t)i | ((uint32_t)f << LIST_SHIFT);
-  else write_metrics(m, e, met, N, i);
+  else write_metrics(m, e, met, N, i, (bmi && bmi->on) ? bmi->nprim : N_PRIM);
 }
 
 // 2 단계(목록의 판 하나 = 블록 하나, NT 스레드): keyframe 갱신. 블록 수는 N 으로 고정하고 목록 길이 밖 블록은 바로 끝난다(호스트 동기 없음).
@@ -44,7 +46,7 @@ __device__ __forceinline__ const void* env_pf_addr(const env::Soa& s, int i, int
 }
 __global__ void __launch_bounds__(NT, 10) map_kf_kernel(env::Soa s, MapCore* core, int16_t* L, uint32_t* seen, uint32_t* occ,
                                                         int16_t* segs, float* met, const uint32_t* list, const int* count, int bug,
-                                                        const MapCurr* curr) {
+                                                        const MapCurr* curr, const bsc::SceneSet* ss, BMapEnv* bm) {
   __shared__ __align__(16) MapCore m;
   __shared__ KfShared u;
   const int j = blockIdx.x, tid = threadIdx.x, N = s.N;
@@ -72,7 +74,7 @@ __global__ void __launch_bounds__(NT, 10) map_kf_kernel(env::Soa s, MapCore* cor
   PROF_MARK(P_LOAD);
   const MapGrid g{L + (size_t)i * NCELL, seen + (size_t)i * NWORD, occ + (size_t)i * NWORD, segs + (size_t)i * SEGW};
   const MapCurr cu = *curr;   // 장치 값(바퀴 사이에 바뀔 수 있음 — 다시 잡기 없이)
-  map_rest(m, u, e, g, met, N, i, tid, NT, bug, flags, cu, BlockSync{});
+  map_rest(m, u, e, g, met, N, i, tid, NT, bug, flags, cu, BlockSync{}, ss, bm ? bm + i : nullptr);
   __syncthreads();
   uint4* out = reinterpret_cast<uint4*>(&core[i]);
   for (int k = tid; k < (int)(sizeof(MapCore) / 16); k += NT) out[k] = dst[k];
@@ -87,7 +89,7 @@ struct HalfSync {
   __device__ bool any(bool v) const { return __any_sync(mask, v); }   // 같은 판 레인끼리 하나라도(경유 지점 BFS 끝 판정)
 };
 __global__ void __launch_bounds__(TOK_NL * TOK_EPB) map_tok_kernel(int N, const MapCore* core, const uint32_t* occ, const uint32_t* seen, const int16_t* segs,
-                                                                   TPrev* tprev, MapTok* out, int tbug) {
+                                                                   TPrev* tprev, MapTok* out, int tbug, const bsc::SceneSet* ss, BMapEnv* bm) {
   __shared__ TokScratch ts[TOK_EPB];
   const int sub = threadIdx.x / TOK_NL, lane = threadIdx.x % TOK_NL;
   const int i0 = blockIdx.x * TOK_EPB + sub;
@@ -95,7 +97,9 @@ __global__ void __launch_bounds__(TOK_NL * TOK_EPB) map_tok_kernel(int N, const 
   const int i = live ? i0 : N - 1;   // 남는 레인도 같은 동기를 지나도록 마지막 판을 읽기만 함
   const HalfSync hs{0xffffu << (16 * (sub & 1))};
   PROF_START();
-  make_tokens_n<TOK_NL>(core[i], occ + (size_t)i * NWORD, seen + (size_t)i * NWORD, segs + (size_t)i * SEGW, tprev + (size_t)i * KSLOT, ts[sub], lane, TOK_NL, live, hs, tbug);
+  const BCtx bx = bctx(ss, bm ? bm + i : nullptr);
+  make_tokens_n<TOK_NL>(core[i], occ + (size_t)i * NWORD, seen + (size_t)i * NWORD, segs + (size_t)i * SEGW, tprev + (size_t)i * KSLOT, ts[sub], lane, TOK_NL, live, hs, tbug,
+                        &bx);
   hs();
   PROF_MARK(TK_ROOM);
   if (!live) return;
@@ -106,7 +110,11 @@ __global__ void __launch_bounds__(TOK_NL * TOK_EPB) map_tok_kernel(int N, const 
 
 #define CK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) { std::fprintf(stderr, "CUDA error %s at %s:%d\n", cudaGetErrorString(e_), __FILE__, __LINE__); std::abort(); } } while (0)
 
-DeviceMap::DeviceMap(int N, uint64_t seed) : N_(N) {
+DeviceMap::DeviceMap(int N, uint64_t seed, const bsc::SceneSet* ss_dev) : N_(N), ss_(ss_dev) {
+  if (ss_dev) {
+    CK(cudaMalloc(&bm_, sizeof(BMapEnv) * (size_t)N));
+    CK(cudaMemset(bm_, 0, sizeof(BMapEnv) * (size_t)N));
+  }
   CK(cudaMalloc(&core_, sizeof(MapCore) * (size_t)N));
   CK(cudaMalloc(&L_, sizeof(int16_t) * NCELL * (size_t)N));
   CK(cudaMalloc(&seen_, sizeof(uint32_t) * NWORD * (size_t)N));
@@ -130,7 +138,7 @@ DeviceMap::DeviceMap(int N, uint64_t seed) : N_(N) {
   CK(cudaGetLastError());
 }
 DeviceMap::~DeviceMap() { cudaFree(core_); cudaFree(L_); cudaFree(seen_); cudaFree(met_); cudaFree(list_); cudaFree(count_);
-                         cudaFree(occ_); cudaFree(segs_); cudaFree(tprev_); cudaFree(tok_); cudaFree(curr_); }
+                         cudaFree(occ_); cudaFree(segs_); cudaFree(tprev_); cudaFree(tok_); cudaFree(curr_); if (bm_) cudaFree(bm_); }
 
 size_t DeviceMap::bytes() const {
   return (size_t)N_ * (sizeof(MapCore) + sizeof(int16_t) * NCELL + 2 * sizeof(uint32_t) * NWORD + sizeof(float) * N_MET + sizeof(int16_t) * SEGW +
@@ -140,9 +148,9 @@ size_t DeviceMap::bytes() const {
 void DeviceMap::step(const env::Soa& s, int force_kf, int bug, cudaStream_t st, MapTok* tok, const MapCurr* curr) {
   // 목록 길이를 0 으로(비동기, 그래프로 잡힘) → 시작 커널(판마다 스레드) → keyframe 커널(목록의 판만 일함)
   CK(cudaMemsetAsync(count_, 0, sizeof(int), st));
-  map_begin_kernel<<<(N_ + BEGIN_NT - 1) / BEGIN_NT, BEGIN_NT, 0, st>>>(s, core_, met_, list_, count_, force_kf);
-  map_kf_kernel<<<N_, NT, 0, st>>>(s, core_, L_, seen_, occ_, segs_, met_, list_, count_, bug == 1 ? 1 : 0, curr ? curr : curr_);
-  if (tok_on_) map_tok_kernel<<<(N_ + TOK_EPB - 1) / TOK_EPB, TOK_NL * TOK_EPB, 0, st>>>(N_, core_, occ_, seen_, segs_, tprev_, tok ? tok : tok_, bug >= 2 ? bug : 0);
+  map_begin_kernel<<<(N_ + BEGIN_NT - 1) / BEGIN_NT, BEGIN_NT, 0, st>>>(s, core_, met_, list_, count_, force_kf, ss_, bm_);
+  map_kf_kernel<<<N_, NT, 0, st>>>(s, core_, L_, seen_, occ_, segs_, met_, list_, count_, bug == 1 ? 1 : 0, curr ? curr : curr_, ss_, bm_);
+  if (tok_on_) map_tok_kernel<<<(N_ + TOK_EPB - 1) / TOK_EPB, TOK_NL * TOK_EPB, 0, st>>>(N_, core_, occ_, seen_, segs_, tprev_, tok ? tok : tok_, bug >= 2 ? bug : 0, ss_, bm_);
 }
 
 void prof_reset() {
@@ -169,6 +177,10 @@ void DeviceMap::download(MapHost& h, const MapTok* tok) const {
   CK(cudaMemcpy(h.L.data(), L_, sizeof(int16_t) * h.L.size(), cudaMemcpyDeviceToHost));
   CK(cudaMemcpy(h.seen.data(), seen_, sizeof(uint32_t) * h.seen.size(), cudaMemcpyDeviceToHost));
   CK(cudaMemcpy(h.met.data(), met_, sizeof(float) * h.met.size(), cudaMemcpyDeviceToHost));
+  if (bm_) {
+    h.bm.resize(N_);
+    CK(cudaMemcpy(h.bm.data(), bm_, sizeof(BMapEnv) * h.bm.size(), cudaMemcpyDeviceToHost));
+  }
 }
 
 TokenRecorder::TokenRecorder(int N, int T) : N_(N), T_(T) {

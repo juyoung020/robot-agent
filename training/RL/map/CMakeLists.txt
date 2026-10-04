@@ -23,10 +23,15 @@ add_library(gmap STATIC src/map_kernel.cu src/map_ref.cpp)
 target_include_directories(gmap PUBLIC include)
 target_link_libraries(gmap PUBLIC env_core CUDA::cudart OpenMP::OpenMP_CXX)
 
+# BEHAVIOR 장면 묶음 만들기(호스트, env/src/bscene_host.cpp — RASC 로더 b1kconv/cpp/rasc.h 읽기만). 커널 라이브러리(gmap)는 이것에 기대지 않는다
+add_library(bscene_host_m STATIC ${ENV_DIR}/src/bscene_host.cpp)
+target_include_directories(bscene_host_m PUBLIC ${ENV_DIR}/include ${CMAKE_CURRENT_LIST_DIR}/../tools/b1kconv/cpp)
+target_link_libraries(bscene_host_m PUBLIC CUDA::cudart)
+
 add_executable(map_verify tools/map_verify.cu)
-target_link_libraries(map_verify gmap)
+target_link_libraries(map_verify gmap bscene_host_m)
 add_executable(map_bench tools/map_bench.cu)
-target_link_libraries(map_bench gmap)
+target_link_libraries(map_bench gmap bscene_host_m)
 # 지도 토큰 기록(5.3): 스텝마다 장치 기록 버퍼 [T][N] 에 쓰고 끝에 파일로
 add_executable(map_tokrec tools/map_tokrec.cu)
 target_link_libraries(map_tokrec gmap)
@@ -35,6 +40,9 @@ enable_testing()
 add_test(NAME map_bit_identical COMMAND map_verify 1024 300)
 add_test(NAME map_negative_control COMMAND map_verify 1024 120 --negative)
 add_test(NAME map_bit_identical_arm COMMAND map_verify 1024 300 --arm)
+# BEHAVIOR 집(E2, ~/ra_b1k 필요): 지도 + 환경 되먹임
+add_test(NAME map_bit_identical_behavior COMMAND map_verify 512 300 --stage 3 --curr 0.34,0.33)
+add_test(NAME map_negative_behavior COMMAND map_verify 512 120 --stage 3 --negative)
 
 # 구간별 시간(clock64) 재기: 같은 소스를 -DMAP_PROF 로. 결과 비교에는 쓰지 않음
 add_library(gmap_prof STATIC src/map_kernel.cu src/map_ref.cpp)
@@ -42,7 +50,7 @@ target_include_directories(gmap_prof PUBLIC include)
 target_compile_definitions(gmap_prof PUBLIC MAP_PROF)
 target_link_libraries(gmap_prof PUBLIC env_core CUDA::cudart OpenMP::OpenMP_CXX)
 add_executable(map_prof tools/map_bench.cu)
-target_link_libraries(map_prof gmap_prof)
+target_link_libraries(map_prof gmap_prof bscene_host_m)
 
 # scenemap 지도 → 지도 토큰(MapTok) 변환기 단위 시험(CPU, MAP_STATE_PLAN.md 4단계): 강체 불변·회전·평행 이동·칸 순서
 add_executable(sm_tok_test tools/sm_tok_test.cpp)

@@ -358,10 +358,12 @@ DEV void waypoint(const uint32_t* occ, float gx, float gy, float px, float py, f
 // 판 하나의 토큰. 레인 lane / nl 개가 나눠 하고 sync 로 맞춘다(CPU: lane 0, nl 1). write = false 면 tprev 를 쓰지 않음(GPU 남는 레인)
 // occ: 판의 점유 비트 전체. 로봇 둘레 행을 ts.so 로 옮긴 뒤 광선을 쏘고, out 은 그다음 동기부터 쓴다(so 와 같은 자리)
 // NLC: nl 의 최솟값(컴파일 때). 레인마다 맡는 칸·광선 수가 (16 + NLC − 1) / NLC 이하라 지난 자리·광선 거리를 레지스터 배열에 둔다(GPU NLC = 16 → 하나씩)
-// tbug(음성 대조, 검증용): 2 = 경유 지점 내리막의 같은 거리 이웃을 뒤 차례로, 3 = 지금 보는 중 칸도 지도 자리(관측 자리 무시)
+// tbug(음성 대조, 검증용): 2 = 경유 지점 내리막의 같은 거리 이웃을 뒤 차례로, 3 = 지금 보는 중 칸도 지도 자리(관측 자리 무시), 4 = BEHAVIOR 방 자리 1.5 m 밀림
 template <int NLC, class Sync>
+// bxp: BEHAVIOR 판 맥락(map.h BCtx — 방·문은 장면 방 격자, 이름·확신도는 장면 묶음의 이름 표 표, 목표 칸 = prim 0 의 이름). nullptr = 상자 방
 DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* seen, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
-                       bool write, const Sync& sync, int tbug = 0) {
+                       bool write, const Sync& sync, int tbug = 0, const BCtx* bxp = nullptr) {
+  const bool beh = bxp != nullptr && bxp->on;
   constexpr int PER = (KSLOT + NLC - 1) / NLC;
   static_assert(KSLOT == 16, "rays and slots share the per-lane count");
   TPrev tpl[PER];
@@ -371,7 +373,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
   sincosf_d(m.eyaw, &s, &c);
   const float px = m.ex, py = m.ey;
   const int nseg = m.nseg_h + m.nseg_v;
-  const int rk = room_of(m, px, py);
+  const int rk = beh ? broom_local(*bxp, px + (tbug == 4 ? 1.5f : 0.f), py) : room_of(m, px, py);   // tbug 4: 음성 대조(BEHAVIOR 방 토큰 자리 틀림)
   const int rrk = (rk >= 0 && ((m.rrev >> rk) & 1)) ? rk : -1;   // 로봇이 있는 드러난 방
   // 1) 서로 무관한 전역 읽기를 먼저 다 낸다(지연을 겹침): 칸 열쇠·지난 자리, 선분 거리, 로봇 둘레 점유 행
   {
@@ -397,7 +399,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
       const float dx = S.pos[0] - px, dy = S.pos[1] - py;
       ts.sk[b] = sqrtf(dx * dx + dy * dy);
       const float tx = S.pos[0] - tcx, ty = S.pos[1] - tcy, d2 = tx * tx + ty * ty;
-      ts.tk[b] = (S.cls == C_CUP && S.state != S_GONE && d2 < thr * thr) ? d2 : -1.f;
+      ts.tk[b] = (S.cls == (beh ? P.cls : (int)C_CUP) && S.state != S_GONE && d2 < thr * thr) ? d2 : -1.f;
     }
   }
   for (int k = lane; k < nseg; k += nl) {
@@ -513,17 +515,28 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
         const float dl = m.plen - S.seen_len, dr = m.prot - S.seen_rot;
         v[T_UNC] = f2h(S.held ? 0.f : MP::odo_t * dl + (MP::odo_rr * dr + MP::odo_rt * dl) * dist);
       }
-      const int ok = room_of(m, S.pos[0], S.pos[1]);
+      const int ok = beh ? broom_local(*bxp, S.pos[0], S.pos[1]) : room_of(m, S.pos[0], S.pos[1]);
       v[T_SAMEROOM] = (rrk >= 0 && ok == rrk) ? (uint16_t)0x3c00u : (uint16_t)0u;
       v[T_TARGET] = b == tgt ? (uint16_t)0x3c00u : (uint16_t)0u;
       // 이름: 라벨 표 1위(지도 이름 = 틀린 이름 그대로)의 확신도 = 생김새(출처 참 물체 종류, 유령 = NCLS)와 이름 벡터의 코사인·1위 − 2위(vla_vocab.h).
       // 1위 − 2위가 낮으면 상위어 행(VLA_INPUT 3절 "확신 낮으면 상위어")
+      if (beh) {   // BEHAVIOR: 종류 = 이름 표 행. 생김새 = 우리 렌더의 상자(행 1, 가정 — 종류별 생김새 행은 아직 없음), 유령 = NCLS
+        const bsc::SceneSet& ss = *bxp->ss;
+        const int app = S.src >= 0 ? (int)C_ITEM : NCLS;
+        const float cf1 = ss.conf1[app * ss.nname + S.cls], cf2 = ss.conf2[app * ss.nname + S.cls];
+        v[T_CONF1] = f2h(cf1);
+        v[T_CONF2] = f2h(cf2);
+        const int hy = ss.hyper[S.cls];
+        o.name_id[rank] = (int16_t)((cf2 < vlav::kConfLow && hy >= 0) ? hy : S.cls);
+        o.app_id[rank] = (int16_t)app;
+      } else {
       const int app = S.src >= 0 ? m.prim[S.src].cls : NCLS;
       const float cf1 = vlav::conf1(app, S.cls), cf2 = vlav::conf2(app, S.cls);
       v[T_CONF1] = f2h(cf1);
       v[T_CONF2] = f2h(cf2);
       o.name_id[rank] = cf2 < vlav::kConfLow ? vlav::sim_hyper(S.cls) : vlav::sim_name(S.cls);
       o.app_id[rank] = (int16_t)app;
+      }
     }
     if (write) tprev[b] = TPrev{{S.pos[0], S.pos[1], S.pos[2]}, (S.id << 16) | tag_now};
   }
@@ -538,9 +551,26 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
   if (lane == 0) {
     float r[N_ROOMTOK];
     for (int q = 0; q < N_ROOMTOK; ++q) r[q] = 0.f;
-    r[rrk >= 0 ? m.rtype[rrk] : N_RTYPE] = 1.f;
     float bd = kInf;
-    for (int j = 0; j < m.n_room - 1; ++j) {   // 문 = 양쪽 방이 다 드러난 자르는 선(scenemap: 두 방 사이 이음매)
+    if (beh) {   // 방 종류 = 장면 방 이름의 종류, 문 = 창 안 문 중 아는 쪽 방이 모두 드러난 것
+      const BMapEnv& B = *bxp->bm;
+      r[rrk >= 0 ? (int)bxp->sd->rtype[B.rid[rrk]] : N_RTYPE] = 1.f;
+      for (int j = 0; j < B.ndoor; ++j) {
+        const int a = B.da[j], c2 = B.db[j];
+        if ((a >= 0 && !((m.rrev >> a) & 1)) || (c2 >= 0 && !((m.rrev >> c2) & 1))) continue;
+        const float dxw = B.dx[j] - px, dyw = B.dy[j] - py;
+        const float d = sqrtf(dxw * dxw + dyw * dyw);
+        if (d < bd) {
+          bd = d;
+          r[6] = c * dxw + s * dyw;
+          r[7] = -s * dxw + c * dyw;
+          r[8] = d;
+          r[9] = 1.f;
+        }
+      }
+    } else
+    r[rrk >= 0 ? m.rtype[rrk] : N_RTYPE] = 1.f;
+    for (int j = 0; !beh && j < m.n_room - 1; ++j) {   // 문 = 양쪽 방이 다 드러난 자르는 선(scenemap: 두 방 사이 이음매)
       if (!((m.rrev >> j) & 1) || !((m.rrev >> (j + 1)) & 1)) continue;
       const float dxw = (m.raxis ? m.rdoor[j] : m.rcut[j]) - px, dyw = (m.raxis ? m.rcut[j] : m.rdoor[j]) - py;
       const float d = sqrtf(dxw * dxw + dyw * dyw);
@@ -554,7 +584,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
     }
     for (int q = 0; q < N_ROOMTOK; ++q) o.room[q] = f2h(r[q]);
     o.comp[0] = f2h((float)m.n_task_conf);
-    o.comp[1] = f2h((float)m.n_obj_conf / (float)N_PRIM);
+    o.comp[1] = f2h((float)m.n_obj_conf / (float)(beh ? bxp->bm->nprim : N_PRIM));
     o.comp[2] = f2h(m.room_cells > 0 ? (float)m.n_seen_room / (float)m.room_cells : 0.f);
     o.comp[3] = f2h((float)popc32((uint32_t)m.rrev) / (float)m.n_room);
     o.n_slot = (int16_t)nslot;
