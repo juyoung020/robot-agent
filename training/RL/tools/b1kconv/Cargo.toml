@@ -1,0 +1,12 @@
+[package]
+name = "b1kconv"
+version = "0.1.0"
+edition = "2021"
+description = "BEHAVIOR 2026 scenes + tasks -> one compact device file per scene (RASC v1) + generated C header + LIMO/OMX-F feasibility table (CURRICULUM_BEHAVIOR2026 E1). Reads plain JSON/PNG/BDDL only; never decrypts USDs."
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+miniz_oxide = "0.9"
+
+[profile.release]
+debug = false
