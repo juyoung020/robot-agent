@@ -52,7 +52,9 @@ struct alignas(16) MapTok {
   int16_t flags;                         // 비트 0 = 이번 스텝 keyframe
   uint16_t front[N_FRONT];               // FP16: 안 본 곳 광선(로봇 앞부터 반시계 45°), 첫 안 본 칸까지 /4 m. 점유 칸에 먼저 막히거나 4 m 안에 없으면 1 (예전 pad 자리)
   uint16_t way[N_WAY];                   // FP16: 다음 경유 지점(VLA_INPUT 4절 목표 토큰) base_link x·y m, 목표까지 경로 길이 m, 있음(1/0). 목표 칸이 없거나 길이 없으면 0
-  uint16_t pad2[4];                      // 0
+  uint16_t instr1;                       // 이 판의 지시문 행 + 1(training/data/pnp_v1 instr128, 환경 I_B_INSTR — 집기·놓기 판만), 0 = 없음(상자 방·B1). 관측(obs.h)이 표에서 128 칸으로
+  uint16_t bkind;                        // 이 판의 BEHAVIOR 단계(1 B1, 2 B2, 3 B3), 0 = 상자 방 — 교사 스킬 표시(POLICY 3.2)
+  uint16_t pad2[2];                      // 0
 };
 static_assert(sizeof(MapTok) == 1296, "map token v2 = 1296 B per env-step (v1 1280 B + way 4 + pad)");
 struct TPrev { float p[3]; int tag; };   // 칸마다 지난 스텝 지도 자리, tag = 물체 번호 << 16 | 스텝 & 0xffff (물체 속도용, 확정 칸만 씀)
@@ -605,7 +607,9 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
     o.n_slot = (int16_t)nslot;
     o.flags = (int16_t)(m.kf_flag ? 1 : 0);
     for (int q = 0; q < N_WAY; ++q) o.way[q] = f2h(ts.wy[q]);
-    for (int q = 0; q < 4; ++q) o.pad2[q] = 0;
+    o.instr1 = (uint16_t)(beh ? bxp->bm->instr + 1 : 0);   // 상자 방은 0(예전 pad 와 같은 바이트)
+    o.bkind = (uint16_t)(beh ? bxp->bm->kind : 0);
+    for (int q = 0; q < 2; ++q) o.pad2[q] = 0;
   }
 }
 

@@ -36,7 +36,8 @@ add_library(ppo SHARED ${RL}/env/src/env_kernel.cu ${RL}/map/src/map_kernel.cu $
 target_include_directories(ppo PUBLIC ${INC})
 target_include_directories(ppo PRIVATE ${RL}/tools/b1kconv/cpp)
 set_source_files_properties(${RL}/env/src/bscene_host.cpp PROPERTIES COMPILE_OPTIONS "-O2")
-target_compile_definitions(ppo PUBLIC VLA_DATA_DIR="${CMAKE_CURRENT_LIST_DIR}/../../data/vla_v1")   # 얼린 이름·생김새 표(observation/vec_tab.h)
+target_compile_definitions(ppo PUBLIC VLA_DATA_DIR="${CMAKE_CURRENT_LIST_DIR}/../../data/vla_v1"   # 얼린 이름·생김새 표(observation/vec_tab.h)
+                           PNP_DATA_DIR="${CMAKE_CURRENT_LIST_DIR}/../../data/pnp_v1")  # 집기·놓기 지시문 표(X0 지시문 칸)
 target_link_libraries(ppo PUBLIC CUDA::cudart Threads::Threads)
 
 # CPU 참조판(검증 전용): 신경망 FP64 / bf16 흉내

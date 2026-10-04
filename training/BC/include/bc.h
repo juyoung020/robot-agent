@@ -20,6 +20,7 @@
 #include "net.h"
 #include "net_ops.h"
 #include "tf.h"
+#include "bscene_host.h"
 #include "vec_tab.h"
 #include "vit.h"
 
@@ -53,7 +54,10 @@ constexpr int FLOW_W = MAX_H * N_LAB;    // 128
 constexpr int TEMB = 32;                 // 시간 sin 16 + cos 16
 constexpr int E_X = 129, E_T = E_X + FLOW_W, E_IN = 304;   // E1 입력 칸: 몸통 0..127, 1 = 128, x_τ 129..256, 시간 257..288, 0 289..303
 static_assert(E_T + TEMB <= E_IN && E_IN % 16 == 0, "E1 input");
-constexpr int MAX_TXT = 64;
+// 지시 표 txt: [0, 64) = vla_v1 지시(과제 바꿔 말하기, 상자 방) 또는 bc_load_text_table 표, [64, 64 + 1024) = 집기·놓기 지시(training/data/pnp_v1 —
+// BEHAVIOR 판의 행 = 지도 토큰 instr1 − 1 = 환경 I_B_INSTR, 판 시작 때 환경이 고른 문장)
+constexpr int TXT_PNP0 = 64;
+constexpr int MAX_TXT = TXT_PNP0 + 1024;
 // 지시 문장 고르기(장치 값): 과제의 학습용 바꿔 말하기 / 처음 보는 바꿔 말하기(heldout, VLA_INPUT 7절 평가) 표 행
 struct TxtSel { int n_train, n_held, pad0, pad1; int train[16], held[16]; };
 struct StudentNet {
@@ -74,6 +78,10 @@ NDEV int text_id(uint32_t epi, int n_txt) { return n_txt > 1 ? (int)(net::mix64(
 NDEV int text_row(uint32_t epi, const TxtSel& s, int eval_unseen) {
   if (eval_unseen && s.n_held > 0) return s.held[text_id(epi, s.n_held)];
   return s.n_train > 0 ? s.train[text_id(epi, s.n_train)] : 0;
+}
+// 표본(지도 토큰)의 지시 행: 집기·놓기 판이면 환경이 고른 pnp 행(heldout 은 환경 BCurr::eval_instr 가 고름), 아니면 과제 바꿔 말하기 해시
+NDEV int text_row_tok(const gmap::MapTok& tok, uint32_t epi, const TxtSel& s, int eval_unseen) {
+  return tok.instr1 ? TXT_PNP0 + (int)tok.instr1 - 1 : text_row(epi, s, eval_unseen);
 }
 
 // 시간 τ 의 sin/cos 16 주기(0.004 … 4.0, 로그 간격 — π0 방식, 가정)
@@ -126,6 +134,8 @@ struct Bc {
   uint32_t *tobj = nullptr, *toff = nullptr;
   float *tact = nullptr, *txb = nullptr;   // [N][H][8] 추론 청크, 오일러 작업
 
+  std::unique_ptr<bsc::SceneBuild> scenes;   // E2 BEHAVIOR(stage 3): 장면 묶음(beh 1 일 때만)
+  bsc::BCurr* bcurr_d = nullptr;             // 커리큘럼 장치 값(환경이 판 리셋 때 읽음)
   std::unique_ptr<env::DeviceEnv> env;
   std::unique_ptr<gmap::DeviceMap> map;
   std::unique_ptr<gmap::TokenRecorder> tok;   // 줄 2 개 고리: 스텝 t 가 읽는 줄 t%2, 지도가 쓰는 줄 (t+1)%2 (T 짝수 → 다음 롤아웃 0 줄 = 지난 끝 줄)
@@ -136,7 +146,8 @@ struct Bc {
   int* cur_len = nullptr;     // [N] 진행 중 에피소드 스텝
   uint32_t* ep_uid = nullptr; // [N] 진행 중 에피소드 번호(0 아님, 판·에피소드마다 다름)
   int* it_stat = nullptr;     // [3][3] 이 롤아웃 처음 지도별 (끝난 수, 성공, 충돌)
-  int* it_out = nullptr;      // [3] 이 롤아웃 (성공, 충돌, 시간초과) 합
+  int* it_out = nullptr;      // [8] 이 롤아웃 (성공, 충돌, 시간초과) 합, [3] 접지 판, [4] 접지 맞음, [5] B2·B3 끝난 판, [6] 그 성공
+  int* gnd = nullptr;         // [N] 지금 스텝에 로봇에서 가장 가까운 과제 물체가 목표인가(1/0), 판정 안 함 −1 (BEHAVIOR B2·B3, 과제 물체 ≥ 2)
   unsigned long long* tab = nullptr;   // [3][2][10][6] 누적(ppo 와 같은 배치)
   float* dis = nullptr;       // [T][N] (학생 μ − 교사 라벨)² 합 — 롤아웃 끝에 고정 순서로 더함
   gmap::MapCurr* curr_d = nullptr;

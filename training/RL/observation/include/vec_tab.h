@@ -15,20 +15,27 @@
 #ifndef VLA_DATA_DIR
 #define VLA_DATA_DIR "training/data/vla_v1"
 #endif
+#ifndef PNP_DATA_DIR
+#define PNP_DATA_DIR "training/data/pnp_v1"
+#endif
 
 namespace obsv {
 
 struct VecTables {
-  std::vector<uint16_t> name, app, instr;   // bf16 [n][128]
+  std::vector<uint16_t> name, app, instr, pinstr;   // bf16 [n][128]. pinstr = 집기·놓기 지시문(training/data/pnp_v1, 환경 I_B_INSTR 행)
   std::vector<int32_t> aux;                 // [n_name][8]
-  int n_name = 0, n_app = 0, n_instr = 0;
-  uint16_t *d_name = nullptr, *d_app = nullptr, *d_instr = nullptr;
+  int n_name = 0, n_app = 0, n_instr = 0, n_pinstr = 0;
+  uint16_t *d_name = nullptr, *d_app = nullptr, *d_instr = nullptr, *d_pinstr = nullptr;
   int32_t* d_aux = nullptr;
   std::string dir;
 
   static std::string data_dir() {
     const char* e = std::getenv("VLA_DATA");
     return e && *e ? std::string(e) : std::string(VLA_DATA_DIR);
+  }
+  static std::string pnp_dir() {
+    const char* e = std::getenv("PNP_DATA");
+    return e && *e ? std::string(e) : std::string(PNP_DATA_DIR);
   }
   static float h2f(uint16_t h) { return net::h2f(h); }
   static bool read(const std::string& p, std::vector<char>& out) {
@@ -59,6 +66,11 @@ struct VecTables {
     f16_to_bf16(rn, name, n_name);
     f16_to_bf16(ra, app, n_app);
     if (read(dir + "/instr128.f16", ri)) f16_to_bf16(ri, instr, n_instr);
+    {   // 집기·놓기 지시문(없으면 지시문 칸 0 — 상자 방만 쓰면 필요 없음)
+      std::vector<char> rp;
+      if (read(pnp_dir() + "/instr128.f16", rp)) f16_to_bf16(rp, pinstr, n_pinstr);
+      else std::fprintf(stderr, "vec_tab: %s/instr128.f16 not found — instruction columns stay 0 (set PNP_DATA)\n", pnp_dir().c_str());
+    }
     aux.resize(rx.size() / 4);
     std::memcpy(aux.data(), rx.data(), rx.size());
     if ((int)aux.size() != n_name * AUX_W || n_app != vlav::N_APP || n_name != vlav::N_NAME) {
@@ -78,14 +90,15 @@ struct VecTables {
     up(app.data(), app.size() * 2, (void**)&d_app);
     up(aux.data(), aux.size() * 4, (void**)&d_aux);
     if (n_instr) up(instr.data(), instr.size() * 2, (void**)&d_instr);
+    if (n_pinstr) up(pinstr.data(), pinstr.size() * 2, (void**)&d_pinstr);
   }
   void free_dev() {
-    cudaFree(d_name); cudaFree(d_app); cudaFree(d_aux); cudaFree(d_instr);
-    d_name = d_app = d_instr = nullptr; d_aux = nullptr;
+    cudaFree(d_name); cudaFree(d_app); cudaFree(d_aux); cudaFree(d_instr); cudaFree(d_pinstr);
+    d_name = d_app = d_instr = d_pinstr = nullptr; d_aux = nullptr;
   }
-  VecTab dev() const { return VecTab{d_name, d_app, d_aux, n_name, n_app}; }
-  VecTab host() const { return VecTab{name.data(), app.data(), aux.data(), n_name, n_app}; }
-  size_t dev_bytes() const { return (name.size() + app.size() + instr.size()) * 2 + aux.size() * 4; }
+  VecTab dev() const { return VecTab{d_name, d_app, d_aux, n_name, n_app, d_pinstr, n_pinstr}; }
+  VecTab host() const { return VecTab{name.data(), app.data(), aux.data(), n_name, n_app, pinstr.empty() ? nullptr : pinstr.data(), n_pinstr}; }
+  size_t dev_bytes() const { return (name.size() + app.size() + instr.size() + pinstr.size()) * 2 + aux.size() * 4; }
 };
 
 }  // namespace obsv

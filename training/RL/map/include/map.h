@@ -345,7 +345,7 @@ DEV uint32_t* scr_occ(Scratch& sh) { return reinterpret_cast<uint32_t*>(&sh); } 
 
 // furn: A2 가구 상자(환경 SoA 의 이 판 자리, 줄 간격 N). 판 리셋 때만 읽는다. nullptr(손으로 만든 EnvView) 이면 가구 없음
 struct EnvView { float x, y, yaw, v, w, tx, ty, rhx, rhy; float q[env::N_Q]; int ep; const float* fb; const int* fi; int fs;
-                 int bkind, bscene, bent; float bwx, bwy; };   // BEHAVIOR 판(E2): 단계(0 = 상자 방), 장면, 시작 조건 번호, 창 가운데(세계)
+                 int bkind, bscene, bent; float bwx, bwy; int binstr; };   // BEHAVIOR 판(E2): 단계(0 = 상자 방), 장면, 시작 조건 번호, 창 가운데(세계), 지시문 행(−1 없음)
 DEV EnvView read_env(const env::Soa& s, int i, bool beh = false) {   // beh: BEHAVIOR 판 값도 읽음(장면 묶음이 있는 지도만)
   const int N = s.N;
   EnvView e;
@@ -363,6 +363,7 @@ DEV EnvView read_env(const env::Soa& s, int i, bool beh = false) {   // beh: BEH
   e.bent = beh ? s.iv[env::I_B_ENT * N + i] : 0;
   e.bwx = beh ? s.f[env::F_B_WX * N + i] : 0.f;
   e.bwy = beh ? s.f[env::F_B_WY * N + i] : 0.f;
+  e.binstr = beh ? s.iv[env::I_B_INSTR * N + i] : -1;
   return e;
 }
 
@@ -377,6 +378,7 @@ struct BMapEnv {
   int c0, r0;                    // 창 칸 (0, 0) = 장면 칸 (c0, r0)
   int nroom, ndoor, room_cells, kind;
   int goal;                      // 목표 물체 prim 비트(POLICY 1.3 objects:[…] — 칸의 "목표인지"): 0 = 집을 물체, 1 = 놓을 곳(바닥이 아닐 때)
+  int instr;                     // 판의 지시문 행(환경 I_B_INSTR, −1 없음) — 지도 토큰 instr1 로(관측이 표에서 벡터로)
   int16_t sbox[N_PRIM];          // prim 의 정적 상자 번호(−1 = 과제 물체)
   int16_t pad16;
   int8_t lut[32];                // 장면 방 번호 → 창 방 번호(−1 = 창에 없음)
@@ -682,7 +684,7 @@ DEV void init_core(MapCore& m, uint64_t seed, int i) {
 DEV void make_scene_beh(MapCore& m, const EnvView& e, const bsc::SceneSet& ss, BMapEnv& bm) {
   const bsc::Entry& E = ss.ent[e.bent];
   const bsc::SceneDev& d = ss.sc[e.bscene];
-  bm.on = 1; bm.scene = e.bscene; bm.ent = e.bent; bm.nprim = E.nprim; bm.kind = e.bkind;
+  bm.on = 1; bm.scene = e.bscene; bm.ent = e.bent; bm.nprim = E.nprim; bm.kind = e.bkind; bm.instr = e.binstr;
   bm.goal = 1 | ((E.list == bsc::L_OBJ && E.dkind != bsc::DK_FLOOR && E.nprim > 1) ? 2 : 0);
   bm.wx = e.bwx; bm.wy = e.bwy;
   bm.c0 = (int)floorf((e.bwx - bsc::WIN_HALF - d.ox) / bsc::CELL + 0.5f);

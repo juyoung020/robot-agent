@@ -39,6 +39,9 @@ static bool g_lite = false;
 static bool g_act8 = false;    // --act8: 행동 8 모두 학습(act_mask 0xff, VLA_INPUT 5절)
 static bool g_arch1 = false;   // --arch1: 토큰마다 학생(tf.h). 신경망 수치는 tf_verify, 여기는 입력·자료·그래프·결정성
 static bool g_aug = false;     // --aug: 학생 입력 흔들기 켬(v6/v7)
+static bool g_txt = false;     // --txt: 영상 없는 학생에 글(지시) 칸 — BEHAVIOR(--stage 3)의 pnp 지시 행 확인용
+static bool g_gdrop = false;   // --gdrop: 학생 목표 표시 감추기 0.5(obs.h p_goal_drop)
+static int g_stage = -1;        // --stage 3: BEHAVIOR 집(영상 없는 학생만 — --lite)
 static bool g_raug = false;    // --raug: 렌더 흔들기(색·조명·노출 0.8) + 팀 기본 섞기 0.25
 
 static BcConfig small_cfg(uint64_t seed, int graphs) {
@@ -53,6 +56,9 @@ static BcConfig small_cfg(uint64_t seed, int graphs) {
     c.n_env = 256; c.mb = 256; c.cap = 256 * 16 * 3; c.upd_steps = 2;
   }
   if (g_act8) c.act_mask = 0xffu;
+  if (g_gdrop) c.goal_drop = 0.5f;
+  if (g_txt) c.text = 1;
+  if (g_stage >= 0) c.stage = g_stage;
   if (g_raug) { c.render_aug = 1; c.ra_color = 0.8f; c.ra_light = 0.8f; c.ra_expo = 0.8f; c.render_team_mix = 0.25f; }
   if (g_arch1 && !g_lite) { c.arch = 1; c.tf_d = 128; c.tf_layers = 2; c.tf_heads = 2; c.tf_mlp = 256; c.tf_elayers = 2; }
   if (g_aug) {
@@ -286,7 +292,8 @@ static int run_v5(int bug) {
   // 자료: 교사 기록 2 롤아웃 + 학생이 움직이며 기록 1 롤아웃(DAgger 자리)
   bc_set_mode(&b, 0, 1); b.launch(0); b.launch(0);
   bc_set_mode(&b, 1, 1);
-  const long long cur_before = dl(b.data_d, 1)[0].cursor;
+  const Data dd_before = dl(b.data_d, 1)[0];
+  const long long cur_before = dd_before.cursor;
   b.launch(0);
   VCK(cudaDeviceSynchronize());
   { BcLog L; while (b.poll(&L)) {} }
@@ -306,6 +313,8 @@ static int run_v5(int bug) {
     const auto tidg = (sn.text || sn.arch == 1) ? dl(b.sb.tid, N) : std::vector<int>();
     const uint32_t am = dl(b.amask_d, 1)[0];
     const TxtSel tsel = dl(b.tsel_d, 1)[0];
+    const obsv::ObsAug aug = dl(b.aug_d, 1)[0];   // 롤아웃 학생 입력과 같은 흔들기·열쇠(롤아웃 번호, 스텝·판) — 목표 표시 감추기 포함
+    long long n_gdrop = 0;
     for (int i = 0; i < N; ++i) {
       const long long slot = (cur_before + (long long)t * N + i) % b.cap;
       VCK(cudaMemcpy(obs.data(), b.d_obs + slot * env::N_OBS, 2 * env::N_OBS, cudaMemcpyDeviceToHost));
@@ -316,7 +325,9 @@ static int run_v5(int bug) {
       float of[env::N_OBS];
       for (int k = 0; k < env::N_OBS; ++k) of[k] = bf2f(obs[k]);
       std::fill(x0c.begin(), x0c.end(), 0);
-      const uint32_t mk = assemble_student(of, 1, 0, tk, x0c.data(), sinc.data(), c.use_map, c.student_goal, 0, 1, b.vt.host());
+      const uint64_t ak0 = (uint64_t)dd_before.rollouts, ak1 = ((uint64_t)t << 32) | (uint64_t)i;
+      const uint32_t mk = assemble_student(of, 1, 0, tk, x0c.data(), sinc.data(), c.use_map, c.student_goal, 0, 1, b.vt.host(), &aug, ak0, ak1);
+      n_gdrop += obsv::goal_drop(&aug, ak0, ak1);
       for (int k = X0_OBS; k < X0_W; ++k) diff += x0c[k] != x0g[(size_t)i * X0_W + k];
       for (int k = 0; k < KSLOT * SLOT_IN; ++k) diff += sinc[k] != sing[(size_t)i * KSLOT * SLOT_IN + k];
       diff += mk != mg[i];
@@ -324,13 +335,13 @@ static int run_v5(int bug) {
       if (sn.text || sn.arch == 1) {
         uint32_t ep;
         VCK(cudaMemcpy(&ep, b.d_epi + slot, 4, cudaMemcpyDeviceToHost));
-        tdiff += tidg[i] != text_row(ep, tsel, 0);
+        tdiff += tidg[i] != text_row_tok(tk, ep, tsel, 0);
       }
     }
     const bool ok = diff == 0 && ldiff == 0 && tdiff == 0;
     ++total; fails += !ok;
-    std::printf("  record == seen: student input rebuilt from %d stored samples vs rollout input: %lld words differ; labels vs clamp(teacher mu): %lld; text ids: %lld  %s\n", N,
-                diff, ldiff, tdiff, ok ? "ok" : "FAIL");
+    std::printf("  record == seen: student input rebuilt from %d stored samples vs rollout input: %lld words differ; labels vs clamp(teacher mu): %lld; text ids: %lld; "
+                "goal flags hidden in %lld samples (p %.2f)  %s\n", N, diff, ldiff, tdiff, n_gdrop, aug.p_goal_drop, ok ? "ok" : "FAIL");
     if (sn.vision) {
       const long long s0 = (cur_before + (long long)t * N) % b.cap;
       if (s0 + N > b.cap) { std::printf("  (render-state slots wrap; skipped)\n"); }
@@ -373,7 +384,9 @@ static int run_v5(int bug) {
       VCK(cudaMemcpy(&tk, b.d_tok + idx, sizeof tk, cudaMemcpyDeviceToHost));
       float of[env::N_OBS];
       for (int k = 0; k < env::N_OBS; ++k) of[k] = bf2f(obs[k]);
-      const uint32_t mk = assemble_student(of, 1, 0, tk, x0c.data(), sinc.data(), c.use_map, c.student_goal, 0, 1, b.vt.host());
+      const obsv::ObsAug ag = dl(b.aug_d, 1)[0];   // 모으기 열쇠 = (갱신 스텝 | 1 << 63, 행) — gather_k 와 같음
+      const uint32_t mk = assemble_student(of, 1, 0, tk, x0c.data(), sinc.data(), c.use_map, c.student_goal, 0, 1, b.vt.host(), &ag,
+                                           (uint64_t)iter0 | 0x8000000000000000ull, (uint64_t)r);
       for (int k = X0_OBS; k < X0_W; ++k) diff += x0c[k] != in.x0[(size_t)r * X0_W + k];
       for (int k = 0; k < KSLOT * SLOT_IN; ++k) diff += sinc[k] != in.sin[(size_t)r * KSLOT * SLOT_IN + k];
       diff += mk != in.mask[r];
@@ -818,6 +831,9 @@ int main(int argc, char** argv) {
     else if (a == "--arch1") g_arch1 = true;
     else if (a == "--aug") g_aug = true;
     else if (a == "--raug") g_raug = true;
+    else if (a == "--gdrop") g_gdrop = true;
+    else if (a == "--txt") g_txt = true;
+    else if (a == "--stage" && i + 1 < argc) g_stage = std::atoi(argv[++i]);
     else if (a == "--teacher" && i + 1 < argc) g_teacher = argv[++i];
     else if (a == "--text" && i + 1 < argc) g_text = argv[++i];
     else pos.push_back(a);

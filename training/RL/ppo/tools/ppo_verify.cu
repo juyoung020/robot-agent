@@ -45,6 +45,7 @@ static bool g_act8 = false;     // --act8: 행동 8 모두 학습(act_mask 0xff 
 static bool g_aug = false;      // --aug: 학습 때 흔들기 켬(속도 잡음·직전 명령·이름 흔들기·칸 지우기·지도 끄기, obs.h ObsAug)
 static bool g_beh = false;      // --beh: BEHAVIOR 장면 묶음을 만들어 환경·지도에 붙임(상자 방 단계면 결과 비트가 같아야 함). 단계 3 이면 늘 켬
 static int g_stage = -1;        // --stage S: v6/v7 의 환경 단계(−1 = 설정 그대로). 3 = BEHAVIOR B1–B3(장면 묶음 ~/ra_b1k)
+static bool g_gdrop = false;    // --gdrop: obs 검사에서 학생용 목표 표시 감추기 0.5 를 켬(교사 학습기는 늘 0 — CPU == GPU 길만 봄)
 static bool g_curr = false;     // --curr: v6/v7 에 장치 커리큘럼(문턱 0): A1 → env 3(장치에서 환경 바꾸기) → env 3 다른 B 섞음(같은 환경) → A2 → env 3
 static PpoConfig small_cfg(uint64_t seed, int graphs, bool g4 = true) {
   PpoConfig c{};
@@ -516,18 +517,39 @@ static int run_snap(const char* out, int N, int T, int iters, int stage, int use
     std::fwrite(p, 1, nb, f);
     for (size_t i = 0; i < nb; ++i) h = (h ^ ((const uint8_t*)p)[i]) * 1099511628211ull;
   };
+  // 옛 배치 해시(지시문 앞 X0 304): A1·C1 의 입력 칸 [304, 432) 를 뺀 변수 배치로 — 상자 방이면 그 칸 가중치·Adam 은 늘 0 이어야(확인)
+  const ParamLayout lay = param_layout();
+  std::vector<float> lp, lm, lv;
+  long extra_nz = 0;
+  for (const auto* src : {&s.P, &s.m, &s.v}) {
+    std::vector<float>& dst = src == &s.P ? lp : src == &s.m ? lm : lv;
+    for (int l = 0; l < N_LAYER; ++l) {
+      const LayerDesc& L = kLayers[l];
+      const int Ko = L.K == X0_W ? X0_INSTR : L.K;
+      for (int n = 0; n < L.N; ++n)
+        for (int k = 0; k < L.K; ++k) {
+          const float v = (*src)[lay.off[l] + (size_t)n * L.K + k];
+          if (k < Ko) dst.push_back(v); else extra_nz += v != 0.f;
+        }
+      while (dst.size() % 64) dst.push_back(0.f);
+    }
+    for (int k = 0; k < 64; ++k) dst.push_back((*src)[lay.logstd + k]);
+  }
+  uint64_t hl = 1469598103934665603ull;
+  auto putl = [&](const void* p, size_t nb) { for (size_t i = 0; i < nb; ++i) hl = (hl ^ ((const uint8_t*)p)[i]) * 1099511628211ull; };
+  putl(lp.data(), 4 * lp.size()); putl(lm.data(), 4 * lm.size()); putl(lv.data(), 4 * lv.size());
+  putl(s.obs.data(), 4 * s.obs.size()); putl(s.adv.data(), 4 * s.adv.size()); putl(s.val.data(), 4 * s.val.size()); putl(s.act.data(), 4 * s.act.size());
+  putl(s.tok.data(), s.tok.size()); putl(s.tab.data(), 8 * s.tab.size());
+  for (const PpoLog& q : s.logs) putl(&q, offsetof(PpoLog, n_b));
   put(s.P.data(), 4 * s.P.size()); put(s.m.data(), 4 * s.m.size()); put(s.v.data(), 4 * s.v.size());
   put(s.obs.data(), 4 * s.obs.size()); put(s.adv.data(), 4 * s.adv.size()); put(s.val.data(), 4 * s.val.size()); put(s.act.data(), 4 * s.act.size());
   put(s.tok.data(), s.tok.size()); put(s.tab.data(), 8 * s.tab.size());
-  // 옛 배치 해시(빌드 사이 견주기): 기록은 E2 앞 PpoLog 칸(goal_known 까지)만 — 같은 상자 방 판이면 E2 앞 기준 해시와 같아야 한다
-  uint64_t hl = h;
-  for (const PpoLog& q : s.logs)
-    for (size_t i = 0; i < offsetof(PpoLog, n_b); ++i) hl = (hl ^ ((const uint8_t*)&q)[i]) * 1099511628211ull;
+  // 옛 배치 해시(빌드 사이 견주기) = 위 hl: 변수는 X0 304 배치, 기록은 E2 앞 PpoLog 칸(goal_known 까지)만 — 같은 상자 방 판이면 E2 앞 기준 해시와 같아야 한다
   put(s.logs.data(), sizeof(PpoLog) * s.logs.size());
   std::fclose(f);
   const PpoLog& L = s.logs.back();
-  std::printf("snap %s: N %d T %d iters %d A%d use_map %d%s -> FNV-1a %016llx  legacy-layout %016llx (last log: kl %.6f succ %.4f ep_ret %.4f, B1/B2/B3 eps %.0f/%.0f/%.0f)\n",
-              out, N, T, iters, stage, use_map, c.beh ? " beh" : "", (unsigned long long)h, (unsigned long long)hl, L.kl, L.succ, L.ep_ret, L.n_b[0], L.n_b[1], L.n_b[2]);
+  std::printf("snap %s: N %d T %d iters %d A%d use_map %d%s -> FNV-1a %016llx  legacy-layout %016llx (last log: kl %.6f succ %.4f ep_ret %.4f, B1/B2/B3 eps %.0f/%.0f/%.0f; instruction-column weights/Adam != 0: %ld)\n",
+              out, N, T, iters, stage, use_map, c.beh ? " beh" : "", (unsigned long long)h, (unsigned long long)hl, L.kl, L.succ, L.ep_ret, L.n_b[0], L.n_b[1], L.n_b[2], extra_nz);
   return 0;
 }
 
@@ -855,6 +877,7 @@ static int run_slotcols() {
 static int run_obs(bool neg) {
   PpoConfig c = small_cfg(5, 0);
   ppo::Trainer tr(c);
+  if (g_gdrop) { const float p = 0.5f; VCK(cudaMemcpy(reinterpret_cast<uint8_t*>(tr.aug_d) + offsetof(obsv::ObsAug, p_goal_drop), &p, sizeof p, cudaMemcpyHostToDevice)); }
   for (int k = 0; k < 2; ++k) tr.iterate();
   VCK(cudaDeviceSynchronize());
   PpoLog L;
@@ -888,6 +911,40 @@ static int run_obs(bool neg) {
   }
   std::printf("obs assemble CPU vs GPU (N %d, step %d, iter %lld, use_map %d, aug %d, act_mask 0x%x): %ld words differ; filled slots %.2f/env, slots with a name vector %.3f\n",
               N, T, (long long)s.iter, tr.cfg.use_map, a.on, s.act_mask, bad, (double)nslot / N, nslot ? (double)nonzero_name / nslot : 0.0);
+  // 지시문·스킬 칸(독립 확인, assemble 을 거치지 않음): GPU X0 [304, 432) = 환경이 고른 행의 pnp 표 그대로, [291, 294) = 단계 원-핫, 상자 방·B1 은 0
+  {
+    long ibad = 0, n_in = 0, n_kind[4] = {0, 0, 0, 0}, env_mis = 0;
+    const std::vector<int> ivs = dl(tr.env->soa().iv, (size_t)env::NUM_I * N);
+    for (int e = 0; e < N; ++e) {
+      const int row = (int)tok[e].instr1 - 1, kind = tok[e].bkind;
+      if (kind >= 0 && kind < 4) ++n_kind[kind];
+      if (row >= 0) ++n_in;
+      // 끝 줄 토큰의 지시 행 = 지금 환경 판의 I_B_INSTR(같은 판이면)
+      if (kind > 0 && ivs[(size_t)env::I_B_KIND * N + e] == kind && row != ivs[(size_t)env::I_B_INSTR * N + e]) ++env_mis;
+      for (int k = 0; k < VEC_D; ++k) {
+        const uint16_t want = (row >= 0 && row < vt.n_pinstr) ? vt.pinstr[(size_t)row * VEC_D + (neg ? (k + 1) % VEC_D : k)] : (uint16_t)0;
+        ibad += gx0[(size_t)e * X0_W + X0_INSTR + k] != want;
+      }
+      for (int k = 0; k < N_SKILL; ++k) ibad += gx0[(size_t)e * X0_W + X0_SKILL + k] != f2bf(kind == 1 + k ? 1.f : 0.f);
+    }
+    std::printf("instruction/skill columns vs pnp_v1 table rows (independent): %ld words differ; envs with an instruction %ld, kinds box/B1/B2/B3 %ld/%ld/%ld/%ld, "
+                "token row != env I_B_INSTR %ld\n", ibad, n_in, n_kind[0], n_kind[1], n_kind[2], n_kind[3], env_mis);
+    if (neg) bad += ibad;
+    else bad += ibad + env_mis;
+  }
+  if (a.p_goal_drop > 0.f) {   // 목표 감춤(독립 확인): 감춘 판은 GPU X0 목표 칸·손끝→목표·경유 지점 0, 칸 줄 T_TARGET 0
+    long hid = 0, leak = 0;
+    for (int e = 0; e < N; ++e) {
+      const uint64_t k1 = ((uint64_t)T << 32) | (uint64_t)e;
+      if (!obsv::goal_drop(&a, (uint64_t)s.iter, k1)) continue;
+      ++hid;
+      for (int c2 = 0; c2 < N_OBS_G1; ++c2) if (obsv::goal_col(c2)) leak += gx0[(size_t)e * X0_W + X0_OBS + c2] != 0;
+      for (int k = 0; k < N_WAY; ++k) leak += gx0[(size_t)e * X0_W + X0_WAY + k] != 0;
+      for (int b = 0; b < KSLOT; ++b) leak += gsin[((size_t)e * KSLOT + b) * SLOT_IN + gmap::T_TARGET] != 0;
+    }
+    std::printf("goal-flag dropout (p %.2f): %ld / %d envs hidden, %ld goal words leaked (must be 0)\n", a.p_goal_drop, hid, N, leak);
+    bad += leak;
+  }
   if (neg) {
     std::printf("negative control (wrong augmentation key on CPU): %s\n", bad > 0 ? "differs (expected)" : "IDENTICAL (bad)");
     return bad > 0 ? 0 : 1;
@@ -907,6 +964,7 @@ int main(int argc, char** argv) {
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--beh")) g_beh = true;
   for (int a = 2; a + 1 < argc; ++a) if (!std::strcmp(argv[a], "--stage")) g_stage = std::atoi(argv[a + 1]);
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--curr")) g_curr = true;
+  for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--gdrop")) g_gdrop = true;
   if (m == "switch") return run_switch(argc > 2 && argv[2][0] != '-' ? std::atoi(argv[2]) : 1024, argc > 3 && argv[3][0] != '-' ? std::atoi(argv[3]) : 32, neg);
   if (m == "obs") return run_obs(neg);
   if (m == "slotcols") return run_slotcols();

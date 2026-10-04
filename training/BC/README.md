@@ -30,6 +30,13 @@ RL 전문가가 시뮬에서 성공한 궤적(영상, state, 지도 토큰, 행�
 ### 호환
 - v1 교사 체크포인트(`~/ra_ppoout/g5/t4/on_s1`)는 v2 관측과 모양이 달라 `bc_load_teacher` 가 −2 를 돌려준다 → 기존 BC 설정(`config/bc_a2*.json`)은 v2 교사를 새로 학습한 뒤에 다시 돈다. 학생 체크포인트도 새 머리 `BCSTUD03`(arch 1) / 모양이 바뀐 `BCSTUD02`.
 
+## E2 BEHAVIOR 판·지시문 벡터·목표 표시 감추기(2026-10-04) — 잰 값(학습 아님)
+- **지시문**: 지시 표 `txt` = [0, 64) vla_v1(상자 방 과제 바꿔 말하기) + [64, 772) pnp_v1 집기·놓기 지시(708 행). 표본의 행 = 지도 토큰 `instr1`(환경이 판 시작 때 고른 문장, `BCurr::eval_instr` 면 heldout)이 있으면 pnp 행, 없으면 예전 해시(`text_row_tok`) — 롤아웃·모으기가 같은 토큰을 보므로 같은 행. 글 토큰(arch 1 `G_TXT`, arch 0 `text`)과 X0 지시문 칸(`../RL/observation/README.md`) 둘로 들어감.
+- **BEHAVIOR(stage 3)**: 설정 `beh {mix, split, strict, eval_instr, yaw_jit, nav_k, scene_mask}` → 장면 묶음·`BCurr`·지도 거리장 되먹임(학습기 PPO 와 같은 규칙). **영상 학생은 아직 안 됨**(렌더가 상자 방만 그림 — 멈춤 메시지), 영상 없는 학생(+ 글)만.
+- **목표 표시 감추기**: `goal_drop`(기본 0.5, 가정) — 학생 입력에서 칸 목표 표시·목표 값·경유 지점을 감춤. 학생 평가마다 `<이름>_noflag`(늘 감춤) 접지 평가: B2·B3 판 끝에 가장 가까운 과제 물체가 목표인 비율·성공(results.json `grounding`).
+- 검증: `bc_verify v5` `--lite`·`--lite --gdrop`·`--lite --txt --gdrop --stage 3` 24/24, `--act8` 35/35, `--arch1 --act8 --gdrop` 4/4, `--negative --lite` 모든 버그 실패, V6 `--lite --aug --gdrop`·`--arch1 --aug --raug --act8 --gdrop`·`--aug` 0 낱말, V7 lite·arch1 같은 씨앗 0 / 다른 씨앗 4,744,961·4,722,173, reseed lite·arch1 0.
+- 실행기 시험(1.7 s, N 1,024 T 32, stage 3 B2 0.5·B3 0.5, 영상 없는 학생 + 글, 교사 = PPO env 3 실행기 시험 1.5 분 체크포인트 — 성공률은 뜻 없음): 교사 B2·B3 성공 0.467·접지 0.461, BC 0.155·0.319(표시 끔 0.154·0.309), DAgger 1 0.315·0.363(표시 끔 0.330·0.345). 끝까지 돌고 results.json 에 접지가 남음.
+
 ## 장치 씨앗 바꾸기(`bc_reset_env`, 2026-10-04) — 잰 값
 - 환경·지도를 처음에 한 번만 만들고 `bc_reset_env(씨앗)` 은 장치 요청(환경 `request_stage`·지도 `request_reset`·고리 버퍼 지우기, 비동기 복사)만 한다 → 다음 롤아웃 그래프 맨 앞 `apply_body` 가 적용. 동기·`cudaMalloc`·그래프 다시 잡기 없음(아래 점검의 "단계 경계마다 약 16 ms" 가 없어짐).
 - `bc_verify reseed`(기록 2 → 갱신 3 → 씨앗 바꾸기 → DAgger 롤아웃·갱신·평가 롤아웃, 예전 판 = 동기 + `make_env` + 다시 잡기): `--lite`·`--arch1 --act8` 모두 0 낱말 다름(씨앗 안 바꾼 판과는 1,990,248·3,265,968 다름).

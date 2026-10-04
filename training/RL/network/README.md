@@ -1,5 +1,7 @@
 # 정책·가치 신경망 (G3)
 
+> E2(2026-10-04): 몸통 입력 X0 = 432(+ 스킬 원-핫 3 + 지시문 128, `../observation/README.md` "지시문"). A1·C1 K 432, 변수 457,024. V4 33/33·V5 36/36(기본·`--g4data --a2 --act8 --aug`), 음성 대조 버그 1·2 실패, FP64 유한 차분 최악 2.94e-7.
+
 계획서 [GPU_TRAINING.md](../../../docs/map_vla/GPU_TRAINING.md) 3·6·7절. 손 커널(CUDA)만 쓴다. PyTorch·JAX·cuBLAS 는 없다.
 
 ## 구조 (`include/net.h`)

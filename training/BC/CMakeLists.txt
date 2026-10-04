@@ -38,11 +38,17 @@ set_target_properties(bcvit PROPERTIES CUDA_ARCHITECTURES OFF POSITION_INDEPENDE
 target_compile_options(bcvit PRIVATE ${SM120A})
 target_compile_definitions(bcvit PRIVATE TN_HPROMO=${TN_HPROMO})
 target_include_directories(bcvit PRIVATE ${INC})
-add_library(bc SHARED ${RL}/env/src/env_kernel.cu ${RL}/map/src/map_kernel.cu ${RL}/network/src/net_kernels.cu src/bc.cu src/tf.cu src/bc_render.cu $<TARGET_OBJECTS:bcvit>)
+# E2: BEHAVIOR 장면 묶음 만들기(호스트, RASC 로더 tools/b1kconv/cpp/rasc.h 읽기만) — stage 3 일 때만 씀
+find_package(Threads REQUIRED)
+add_library(bc SHARED ${RL}/env/src/env_kernel.cu ${RL}/map/src/map_kernel.cu ${RL}/network/src/net_kernels.cu src/bc.cu src/tf.cu src/bc_render.cu ${RL}/env/src/bscene_host.cpp
+            $<TARGET_OBJECTS:bcvit>)
 target_include_directories(bc PUBLIC ${INC})
-target_compile_definitions(bc PUBLIC VLA_DATA_DIR="${CMAKE_CURRENT_LIST_DIR}/../data/vla_v1")   # 얼린 이름·생김새·지시 표(observation/vec_tab.h)
+target_include_directories(bc PRIVATE ${RL}/tools/b1kconv/cpp)
+set_source_files_properties(${RL}/env/src/bscene_host.cpp PROPERTIES COMPILE_OPTIONS "-O2")
+target_compile_definitions(bc PUBLIC VLA_DATA_DIR="${CMAKE_CURRENT_LIST_DIR}/../data/vla_v1"   # 얼린 이름·생김새·지시 표(observation/vec_tab.h)
+                          PNP_DATA_DIR="${CMAKE_CURRENT_LIST_DIR}/../data/pnp_v1")   # 집기·놓기 지시문 표
 target_include_directories(bc PRIVATE ${ENGINE_DIR})
-target_link_libraries(bc PUBLIC CUDA::cudart)
+target_link_libraries(bc PUBLIC CUDA::cudart Threads::Threads)
 # 팀 RenderBatch(서브모듈, 읽기만)를 쓰는 파일 하나에만 팀 렌더 빌드 규칙(-ftz=true 등) — render_bench 와 같음
 set_source_files_properties(src/bc_render.cu PROPERTIES COMPILE_OPTIONS
   "-O2;-fmad=false;-prec-div=true;-prec-sqrt=true;-ftz=true;--expt-relaxed-constexpr;-Xcompiler=-ffp-contract=off")

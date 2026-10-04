@@ -2,8 +2,10 @@
 // CPU 참조판과 GPU 커널이 같은 소스를 쓴다(비트 동일). 롤아웃(정책 앞 계산)과 갱신(미니배치 모으기)이 같은 함수·같은 열쇠를 써서
 // 같은 (스텝, 판)이면 같은 입력 비트가 된다(학습 때 흔들기 포함).
 //
-//  X0 줄(304, bf16): [0,128) 집합(여기서 안 씀, 칸 MLP 뒤 집합 커널이 씀) | [128,208) G1 관측 80 | [208,264) 벽 56 | [264,274) 방 10 |
-//                    [274,278) 완성도 4 | 278 = 1 | [279,287) 안 본 곳 광선 8 | [287,291) 다음 경유 지점 4 (둘 다 use_map 2 만) | 0
+//  X0 줄(432, bf16): [0,128) 집합(여기서 안 씀, 칸 MLP 뒤 집합 커널이 씀) | [128,208) G1 관측 80 | [208,264) 벽 56 | [264,274) 방 10 |
+//                    [274,278) 완성도 4 | 278 = 1 | [279,287) 안 본 곳 광선 8 | [287,291) 다음 경유 지점 4 (둘 다 use_map 2 만) |
+//                    [291,294) 스킬 B1·B2·B3 원-핫(지도 토큰 bkind, 상자 방 0) | 0 | [304,432) 지시문 128(지도 토큰 instr1 → pnp_v1 표 행, 없으면 0)
+//  스킬·지시문은 지도 값이 아니라 과제 값이라 use_map·지도 끄기 흔들기와 무관하게 늘 넣는다(교사·학생 같음 — POLICY 4.2 (가), README "지시문")
 //  use_map: 0 = 지도 입력 모두 0, 1 = 지도 토큰(안 본 곳 광선·경유 지점 칸은 0), 2 = + 안 본 곳 광선 + 경유 지점
 //  칸 줄 16 × 304(bf16): 숫자 33(정규화 v2) | 이름 뜻 128 | 생김새 128 | 289 = 1 | 0.  빈 칸은 모두 0
 //  돌려주는 값: 채운 칸 비트(집합 평균·최댓값의 가림 — 칸 지우기 흔들기 뒤)
@@ -40,6 +42,8 @@ struct VecTab {
   const uint16_t* app;
   const int32_t* aux;
   int n_name, n_app;
+  const uint16_t* pinstr;   // [n_pinstr][128] bf16: 집기·놓기 지시문(training/data/pnp_v1 instr128, 조합 × 문장 12) — X0 지시문 칸
+  int n_pinstr;
 };
 constexpr int AUX_W = 8;
 enum AuxCol { AX_HYPER = 0, AX_GS = 1, AX_GL = 2, AX_SIM = 3, AX_HELD = 6, AX_KIND = 7 };
@@ -57,7 +61,8 @@ struct ObsAug {
   float p_wrong;         // 비슷한 틀린 이름(이름 벡터가 가까운 다른 무리)
   float p_slot_drop;     // 칸 지우기(덜 만들어진 지도)
   float p_map_off;       // 지도 토큰 통째로 비우기(카메라만으로)
-  float pad;
+  float p_goal_drop;     // 학생만(BC): 판·스텝마다 이 확률로 "목표인지" 칸 표시(T_TARGET)·목표 특권 값(G1 53–55·72–79)·경유 지점을 감춤 —
+                         // 학생이 지시문(128-d)과 칸 이름 벡터(같은 공간)를 맞춰 목표 물체를 찾게. on 과 무관(0 = 끔). 교사(PPO)는 늘 0
   unsigned long long seed;
 };
 constexpr ObsAug kAugOff = {0, 0, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0ull};
@@ -148,11 +153,24 @@ NDEV float aug_gauss(uint64_t h) {   // 균등 4 개 합(Irwin–Hall) → 평�
   for (int q = 0; q < 4; ++q) s = s + (float)((h >> (16 * q)) & 0xffffu) * (1.0f / 65536.0f);
   return (s - 2.f) * 1.7320508f;
 }
+// 목표 표시 감추기 결정(학생만, on 과 무관). 장치에서는 따로 부르는 함수(__noinline__): 이 해시를 assemble 안에 펼치면
+// nvcc 12.8 -O3 가 같은 함수의 속도 잡음 칸을 틀리게 만들었다(실행마다 다른 값, -G 면 맞음 — README "지시문" 절, ppo_verify obs --aug 로 잡음)
+#ifdef __CUDACC__
+static __host__ __device__ __noinline__
+#else
+static inline
+#endif
+bool goal_off_hash(const ObsAug* a, uint64_t k0, uint64_t k1) {
+  return a->p_goal_drop > 0.f && aug_u(aug_hash(*a, k0, k1, 0x47445250ull)) < a->p_goal_drop;
+}
 // 판(행) 하나의 흔들기 결정: 지도 끄기·직전 명령 지우기
-struct AugRow { bool map_off, prev_off; };
+struct AugRow { bool map_off, prev_off, goal_off; };
 NDEV AugRow aug_row(const ObsAug* a, uint64_t k0, uint64_t k1) {
-  AugRow r{false, false};
-  if (!a || !a->on) return r;
+  AugRow r{false, false, false};
+  if (!a) return r;
+  // 목표 표시 감추기(학생만, on 과 무관): 감춘 판은 목표를 모르는 것과 같은 입력 + 칸 목표 표시 0 + 경유 지점 0
+  r.goal_off = goal_off_hash(a, k0, k1);
+  if (!a->on) return r;
   r.map_off = aug_u(aug_hash(*a, k0, k1, 0x4d4f4646ull)) < a->p_map_off;
   r.prev_off = aug_u(aug_hash(*a, k0, k1, 0x50524556ull)) < a->prev_drop;
   return r;
@@ -196,7 +214,11 @@ NDEV int aug_name(const ObsAug* a, const VecTab& vt, int row, uint64_t k0, uint6
 }
 
 // 칸 숫자 하나(칸 b, 숫자 c < 33) → 정규화 값
-NDEV float slot_num(const gmap::MapTok& tok, int b, int c) { return feat_norm(F_SLOT + c, net::h2f(tok.slot[b][c])); }
+NDEV float slot_num(const gmap::MapTok& tok, int b, int c, bool gdrop = false) {
+  return (gdrop && c == gmap::T_TARGET) ? 0.f : feat_norm(F_SLOT + c, net::h2f(tok.slot[b][c]));
+}
+// 목표 표시 감추기(학생 흔들기, 열쇠 = 판·스텝) — aug_row().goal_off 와 같은 값(검증 도구용)
+NDEV bool goal_drop(const ObsAug* a, uint64_t k0, uint64_t k1) { return aug_row(a, k0, k1).goal_off; }
 
 // 지도 칸 수(use_map 0 이면 0)
 NDEV int slot_count(const gmap::MapTok& tok, int use_map) { return use_map ? (tok.n_slot < 0 ? 0 : (tok.n_slot > net::KSLOT ? net::KSLOT : tok.n_slot)) : 0; }
@@ -218,8 +240,9 @@ static_assert(net::SLOT_NAME + net::VEC_D == net::SLOT_APP && net::SLOT_APP + ne
 // compact: srows 를 칸 16 × SLOT_C(40) 줄인 줄로(표 행은 번호만, net.h) — PPO 학습기가 씀. 펼친 값은 304 칸 줄과 같다
 NDEV uint32_t assemble(const float* obs, int stride, int i, const gmap::MapTok& tok, uint16_t* x0, uint16_t* srows, int use_map, int goal_mode,
                        int lane, int nl, const VecTab& vt, const ObsAug* aug = nullptr, uint64_t k0 = 0, uint64_t k1 = 0, bool compact = false) {
-  const bool show = goal_mode == 0 || goal_known(tok);
   const AugRow ar = aug_row(aug, k0, k1);
+  const bool gdrop = ar.goal_off;
+  const bool show = !gdrop && (goal_mode == 0 || goal_known(tok));
   const int um = ar.map_off ? 0 : use_map;
   const bool on = aug && aug->on;
   // 8 칸(16 B)씩: 레인마다 덩이 하나를 계산해 한 번에 씀
@@ -250,9 +273,24 @@ NDEV uint32_t assemble(const float* obs, int stride, int i, const gmap::MapTok& 
     }
     return f2bf(v);
   };
+  // 지시문 행(표 밖이면 없음)·스킬
+  const int irow = (int)tok.instr1 - 1;
+  const uint16_t* isrc = (irow >= 0 && irow < vt.n_pinstr && vt.pinstr) ? vt.pinstr + (size_t)irow * net::VEC_D : nullptr;
+  const int skill = (int)tok.bkind;
   for (int q = lane; q < (net::X0_W - net::X0_OBS) / 8; q += nl) {
     uint16_t h[8];
+    const int col0 = net::X0_OBS + q * 8;
     for (int e = 0; e < 8; ++e) h[e] = x0v(q * 8 + e);
+    if (col0 >= net::X0_INSTR) {   // 지시문 128: 표 행 bf16 그대로
+      for (int e = 0; e < 8; ++e) h[e] = isrc ? isrc[col0 - net::X0_INSTR + e] : (uint16_t)0;
+    } else if (col0 + 8 > net::X0_SKILL && col0 < net::X0_SKILL + net::N_SKILL) {   // 스킬 원-핫
+      for (int e = 0; e < 8; ++e) {
+        const int col = col0 + e;
+        if (col >= net::X0_SKILL && col < net::X0_SKILL + net::N_SKILL) h[e] = f2bf(skill == 1 + col - net::X0_SKILL ? 1.f : 0.f);
+      }
+    }
+    if (gdrop && col0 + 8 > net::X0_WAY && col0 < net::X0_WAY + net::N_WAY)   // 목표 감춤: 경유 지점 0(덩이 둘에 걸침)
+      for (int e = 0; e < 8; ++e) if (col0 + e >= net::X0_WAY && col0 + e < net::X0_WAY + net::N_WAY) h[e] = 0;
     put8(x0 + net::X0_OBS + q * 8, h);
   }
   const int ns = slot_count(tok, um);
@@ -267,10 +305,10 @@ NDEV uint32_t assemble(const float* obs, int stride, int i, const gmap::MapTok& 
       uint16_t h[8] = {0, 0, 0, 0, 0, 0, 0, 0};
       if (live) {
         if (c0 + 8 <= net::SLOT_VALS) {
-          for (int e = 0; e < 8; ++e) h[e] = f2bf(slot_num(tok, b, c0 + e));
+          for (int e = 0; e < 8; ++e) h[e] = f2bf(slot_num(tok, b, c0 + e, gdrop));
         } else {
           static_assert(net::SLOT_VALS == 33 && net::SLOT_C == 40, "compact row: chunk 4 = num 32, bias, name, app");
-          h[0] = f2bf(slot_num(tok, b, net::SLOT_VALS - 1));
+          h[0] = f2bf(slot_num(tok, b, net::SLOT_VALS - 1, gdrop));
           h[1] = f2bf(1.f);
           const int nr = aug_name(aug, vt, tok.name_id[b], k0, k1, b);
           h[2] = (uint16_t)(nr >= 0 ? nr + 1 : 0);
@@ -296,7 +334,7 @@ NDEV uint32_t assemble(const float* obs, int stride, int i, const gmap::MapTok& 
         const int c = c0 + e;
         uint16_t hb = 0;
         if (live) {
-          if (c < net::SLOT_VALS) hb = f2bf(slot_num(tok, b, c));
+          if (c < net::SLOT_VALS) hb = f2bf(slot_num(tok, b, c, gdrop));
           else if (c < net::SLOT_APP) hb = nsrc ? nsrc[c - net::SLOT_NAME] : (uint16_t)0;
           else if (c < net::SLOT_BIAS) hb = asrc ? asrc[c - net::SLOT_APP] : (uint16_t)0;
           else if (c == net::SLOT_BIAS) hb = f2bf(1.f);

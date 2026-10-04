@@ -88,7 +88,7 @@ __global__ void __launch_bounds__(AS_L * AS_E) assemble_k(const float* obs_col, 
 
 // ---- 스텝 처음: 새 에피소드면 번호를 매기고, 학생 렌더 상태·지시 번호 ----
 __global__ void step_begin_k(env::Soa s, const int* cur_len, uint32_t* ep_uid, const Data* dd, int t, int T, const TxtSel* tsel, const obsv::ObsAug* aug,
-                             RenderState* rs, int* tid) {
+                             RenderState* rs, int* tid, const gmap::MapTok* tok_t) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= s.N) return;
   uint32_t u = ep_uid[i];
@@ -97,7 +97,7 @@ __global__ void step_begin_k(env::Soa s, const int* cur_len, uint32_t* ep_uid, c
     if (u == 0) u = 1;
     ep_uid[i] = u;
   }
-  if (tid) tid[i] = text_row(u, *tsel, aug->eval_unseen);
+  if (tid) tid[i] = text_row_tok(tok_t[i], u, *tsel, aug->eval_unseen);
   if (rs) { RenderState r; render_state(s, i, r, u); rs[i] = r; }
 }
 
@@ -223,7 +223,31 @@ __global__ void __launch_bounds__(256) act_rec_k(ActP p) {
 }
 
 // ---- 처음 지도(완성도)별 에피소드 통계: 환경 스텝 뒤·지도 스텝 앞(ppo epstat_k 와 같은 부호·배치) ----
-__global__ void epstat_k(const int* done, const float* met_init, int N, int* cur_len, int* it_stat, int* it_out, unsigned long long* tab) {
+// 접지(스텝마다, 환경 스텝 앞 = 이 스텝 관측의 자리): BEHAVIOR B2·B3 판에서 과제 물체(움직이는 상자, prim sbox < 0) 중 로봇 몸통 가운데에서 가장 가까운 것이
+// 목표(prim 0, 집을 것)인가. 과제 물체가 하나뿐이면 판정 안 함(−1). 상자 방·B1 −1
+__global__ void ground_k(env::Soa s, const bsc::SceneSet* ss, int* gnd) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x, N = s.N;
+  if (i >= N) return;
+  const int kind = s.iv[(size_t)env::I_B_KIND * N + i];
+  int r = -1;
+  if (ss && (kind == 2 || kind == 3)) {
+    const bsc::Entry& E = ss->ent[s.iv[(size_t)env::I_B_ENT * N + i]];
+    const float x = s.f[(size_t)env::F_X * N + i], y = s.f[(size_t)env::F_Y * N + i];
+    float best = 1e30f;
+    int bi = -1, nt = 0;
+    for (int p = 0; p < E.nprim; ++p) {
+      const bsc::BPrim& P = E.prim[p];
+      if (P.sbox >= 0) continue;
+      ++nt;
+      const float dx = 0.5f * (P.lo[0] + P.hi[0]) - x, dy = 0.5f * (P.lo[1] + P.hi[1]) - y, d = dx * dx + dy * dy;
+      if (d < best) { best = d; bi = p; }
+    }
+    if (nt >= 2) r = bi == 0 ? 1 : 0;
+  }
+  gnd[i] = r;
+}
+__global__ void epstat_k(const int* done, const float* met_init, const int* gnd, const int* lkind, int N, int* cur_len, int* it_stat, int* it_out,
+                         unsigned long long* tab) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= N) return;
   int len = cur_len[i] + 1;
@@ -238,6 +262,9 @@ __global__ void epstat_k(const int* done, const float* met_init, int N, int* cur
     if (d == env::kSuccess) atomicAdd(&it_stat[st * 3 + 1], 1);
     if (d == env::kCollision) atomicAdd(&it_stat[st * 3 + 2], 1);
     atomicAdd(&it_out[d == env::kSuccess ? 0 : d == env::kCollision ? 1 : 2], 1);
+    if (gnd[i] >= 0) { atomicAdd(&it_out[3], 1); atomicAdd(&it_out[4], gnd[i]); }
+    const int bk = lkind[i];
+    if (bk == 2 || bk == 3) { atomicAdd(&it_out[5], 1); if (d == env::kSuccess) atomicAdd(&it_out[6], 1); }
     unsigned long long* q = tab + (size_t)((st * 2 + g) * TAB_C + c) * TAB_Q;
     atomicAdd(q, 1ull);
     atomicAdd(q + (d == env::kSuccess ? 1 : d == env::kCollision ? 2 : 3), 1ull);
@@ -290,7 +317,11 @@ __global__ void __launch_bounds__(256) rollout_end_k(const float* dis, long long
   L.succ = it_out[0] * inv;
   L.coll = it_out[1] * inv;
   L.tout = it_out[2] * inv;
-  it_out[0] = it_out[1] = it_out[2] = 0;
+  L.g_n = (float)it_out[3];
+  L.g_ok = it_out[3] > 0 ? (float)it_out[4] / (float)it_out[3] : 0.f;
+  L.p_n = (float)it_out[5];
+  L.p_succ = it_out[5] > 0 ? (float)it_out[6] / (float)it_out[5] : 0.f;
+  for (int k = 0; k < 8; ++k) it_out[k] = 0;
   for (int k = 0; k < 3; ++k) {
     const int nk = it_stat[k * 3];
     L.n_c[k] = (float)nk;
@@ -344,7 +375,7 @@ __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
     uint32_t* dst = reinterpret_cast<uint32_t*>(g.rs + r);
     for (int q = lane; q < (int)(sizeof(RenderState) / 4); q += AS_L) dst[q] = src[q];
   }
-  if (g.tid && lane == 0) g.tid[r] = text_row(e0, *g.tsel, g.aug->eval_unseen);
+  if (g.tid && lane == 0) g.tid[r] = text_row_tok(g.d_tok[idx], e0, *g.tsel, g.aug->eval_unseen);
 }
 
 // ---- BC 손실(K5): L = (1/M) Σ_r Σ_{k<2} (μ − 라벨)², dZ_A4 = 2(μ − 라벨)/M (bf16), 나머지 행동 0 ----
@@ -506,7 +537,8 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
   cur_len = alloc<int>(N);
   ep_uid = alloc<uint32_t>(N);
   it_stat = alloc<int>(9);
-  it_out = alloc<int>(3);
+  it_out = alloc<int>(8);
+  gnd = alloc<int>(N);
   tab = alloc<unsigned long long>((size_t)3 * 2 * TAB_C * TAB_Q);
   dis = alloc<float>((size_t)T * N);
   bc_pend = alloc<int>(1);
@@ -516,8 +548,26 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
   BCK(cudaHostAlloc(&stage_h, 64 * 16, cudaHostAllocDefault));
   for (auto& e : stage_ev) BCK(cudaEventCreateWithFlags(&e, cudaEventDisableTiming));
   {
-    const gmap::MapCurr c0{cfg.map_p0, cfg.map_p1, cfg.map_kmin, cfg.map_kmax, cfg.map_reveal_r, 0};
+    const gmap::MapCurr c0{cfg.map_p0, cfg.map_p1, cfg.map_kmin, cfg.map_kmax, cfg.map_reveal_r, cfg.map_nav_k};
     BCK(cudaMemcpy(curr_d, &c0, sizeof c0, cudaMemcpyHostToDevice));
+  }
+  // E2 BEHAVIOR(stage 3): 장면 묶음 + 커리큘럼 장치 값(학습기 ppo 와 같은 규칙). 영상 학생은 아직 안 됨 — 렌더(bc_render)가 상자 방만 그림
+  bcurr_d = alloc<bsc::BCurr>(1);
+  {
+    bsc::BCurr b0{cfg.b_p1, cfg.b_p2, cfg.b_scene_mask, cfg.b_split, cfg.b_yaw_jit, cfg.b_strict, cfg.b_nofilter, cfg.b_eval_instr};
+    if (cfg.beh || cfg.stage >= env::kStageBeh) {
+      if (cfg.vision) { std::fprintf(stderr, "bc: BEHAVIOR stage 3 with vision is not supported yet (renderer draws the box room only)\n"); std::abort(); }
+      cfg.beh = 1;
+      bsc::BuildOpt bo;
+      bo.quiet = true;
+      scenes = std::make_unique<bsc::SceneBuild>();
+      std::string err;
+      if (!bsc::build_scenes(bo, *scenes, &err) || !bsc::upload(*scenes, &err)) { std::fprintf(stderr, "bc: BEHAVIOR scene build failed: %s\n", err.c_str()); std::abort(); }
+      dev_bytes += scenes->dev_bytes;
+      if (b0.scene_mask == 0) b0.scene_mask = (1u << scenes->host.nsc) - 1u;
+      if (b0.p1 == 0.f && b0.p2 == 0.f) { b0.p1 = bsc::kBCurrDefault.p1; b0.p2 = bsc::kBCurrDefault.p2; }   // 비율을 안 주면 env_verify 기본 섞음
+    }
+    BCK(cudaMemcpy(bcurr_d, &b0, sizeof b0, cudaMemcpyHostToDevice));
   }
 
   d_obs = alloc<uint16_t>((size_t)cap * env::N_OBS);
@@ -552,8 +602,9 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
   vt.upload();
   dev_bytes += vt.dev_bytes();
   {
-    if (vt.n_instr > MAX_TXT) { std::fprintf(stderr, "bc: %d instructions > %d\n", vt.n_instr, MAX_TXT); std::abort(); }
+    if (vt.n_instr > TXT_PNP0 || vt.n_pinstr > MAX_TXT - TXT_PNP0) { std::fprintf(stderr, "bc: %d / %d instructions > %d / %d\n", vt.n_instr, vt.n_pinstr, TXT_PNP0, MAX_TXT - TXT_PNP0); std::abort(); }
     BCK(cudaMemcpy(txt, vt.instr.data(), vt.instr.size() * 2, cudaMemcpyHostToDevice));
+    if (vt.n_pinstr) BCK(cudaMemcpy(txt + (size_t)TXT_PNP0 * TXT_W, vt.pinstr.data(), vt.pinstr.size() * 2, cudaMemcpyHostToDevice));   // 집기·놓기 지시
     n_txt = vt.n_instr;
     TxtSel ts_h{};
     std::vector<std::string> tasks;
@@ -586,6 +637,7 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
     a.on = cfg.aug_on; a.eval_unseen = cfg.aug_eval_unseen; a.vel_sigma = cfg.aug_vel_sigma; a.prev_drop = cfg.aug_prev_drop; a.prev_sigma = cfg.aug_prev_sigma;
     a.p_erase = cfg.aug_p_erase; a.p_syn = cfg.aug_p_syn; a.p_hyper = cfg.aug_p_hyper; a.p_wrong = cfg.aug_p_wrong; a.p_slot_drop = cfg.aug_p_slot_drop;
     a.p_map_off = cfg.aug_p_map_off; a.seed = cfg.seed * 0x2545F4914F6CDD1Dull + 0xB0Cull;
+    a.p_goal_drop = cfg.goal_drop;   // 학생만(교사 라벨 입력은 aug 없음 = 늘 표시)
     BCK(cudaMemcpy(aug_d, &a, sizeof a, cudaMemcpyHostToDevice));
   }
   if (sn.arch == 1) {   // 토큰마다 학생(tf.h): 변수·작업 버퍼는 tf 안. 묶음 입력 줄(영상·물체 묶음은 sb.tok·sb.sin 을 그대로)
@@ -675,6 +727,7 @@ Bc::~Bc() {
   cudaDeviceSynchronize();
   for (auto* g : {&g_roll, &g_roll_s, &g_upd}) if (*g) cudaGraphExecDestroy(*g);
   tok.reset(); map.reset(); env.reset();
+  if (scenes) bsc::free_dev(*scenes);
   if (rnd) bcr::destroy(rnd);
   if (rnd_team) bcr::destroy(rnd_team);
   enc.free_all();
@@ -690,16 +743,21 @@ Bc::~Bc() {
 void Bc::make_env(uint64_t env_seed) {
   cfg.env_seed = env_seed;
   tok.reset(); map.reset(); env.reset();
-  env = std::make_unique<env::DeviceEnv>(N, cfg.stage, env_seed * 1000003ull + 17ull + (uint64_t)cfg.stage);
+  const bsc::SceneSet* ss = scenes ? scenes->dev : nullptr;
+  bsc::BCurr b0 = bsc::kBCurrDefault;
+  BCK(cudaMemcpy(&b0, bcurr_d, sizeof b0, cudaMemcpyDeviceToHost));
+  env = std::make_unique<env::DeviceEnv>(N, cfg.stage, env_seed * 1000003ull + 17ull + (uint64_t)cfg.stage, false, ss, b0);
+  if (ss) env->set_bcurr_source(bcurr_d);
   env->set_dynamic(env::stage_family(cfg.stage));   // 씨앗 바꾸기는 장치 값(reseed)
-  map = std::make_unique<gmap::DeviceMap>(N, env_seed * 7919ull + 3ull + (uint64_t)cfg.stage);
+  map = std::make_unique<gmap::DeviceMap>(N, env_seed * 7919ull + 3ull + (uint64_t)cfg.stage, ss);
+  if (ss) env->set_nav(map->nav_fb());   // BEHAVIOR 다가가기 거리 = 지도 거리장(정책이 아는 지도)
   tok = std::make_unique<gmap::TokenRecorder>(N, 2);
   BCK(cudaMemset(obs_col, 0, sizeof(float) * 2 * env::N_OBS * N));
   BCK(cudaMemset(tok->at(0), 0, sizeof(gmap::MapTok) * N));
   BCK(cudaMemset(tok->at(1), 0, sizeof(gmap::MapTok) * N));
   BCK(cudaMemset(cur_len, 0, sizeof(int) * N));
   BCK(cudaMemset(it_stat, 0, sizeof(int) * 9));
-  BCK(cudaMemset(it_out, 0, sizeof(int) * 3));
+  BCK(cudaMemset(it_out, 0, sizeof(int) * 8));
 }
 
 void Bc::set_dev(void* dst, const void* src, size_t n) {
@@ -940,7 +998,7 @@ __global__ void bc_apply_k(const int* pend, int N, float* obs_col, gmap::MapTok*
   uint4* b = reinterpret_cast<uint4*>(tok1 + i);
   for (int k = 0; k < (int)(sizeof(gmap::MapTok) / 16); ++k) { a[k] = make_uint4(0u, 0u, 0u, 0u); b[k] = make_uint4(0u, 0u, 0u, 0u); }
   cur_len[i] = 0;
-  if (i == 0) { for (int k = 0; k < 9; ++k) it_stat[k] = 0; for (int k = 0; k < 3; ++k) it_out[k] = 0; }
+  if (i == 0) { for (int k = 0; k < 9; ++k) it_stat[k] = 0; for (int k = 0; k < 8; ++k) it_out[k] = 0; }
 }
 __global__ void bc_commit_k(int* pend) { *pend = 0; }
 
@@ -976,7 +1034,7 @@ void Bc::rollout_step(int t, bool student) {
   float* obs_n = obs_col + (size_t)((t + 1) % 2) * env::N_OBS * N;
   cur_t = t;
   step_begin_k<<<(N + 127) / 128, 128>>>(env->soa(), cur_len, ep_uid, data_d, t, T, tsel_d, aug_d, student && sn.vision ? rs_roll : nullptr,
-                                         student && (sn.text || sn.arch == 1) ? sb.tid : nullptr);
+                                         student && (sn.text || sn.arch == 1) ? sb.tid : nullptr, tok->at(t));
   assemble_k<<<ab, AS_L * AS_E>>>(obs_t, tok->at(t), N, cfg.teacher_use_map, 0, 0, nt.x0, nt.sin, nt.mask, vt.dev(), nullptr, data_d, t);
   forward_teacher(nt, N);
   const float* meanS = nt.mean;
@@ -990,8 +1048,9 @@ void Bc::rollout_step(int t, bool student) {
   const float* met_init = map->metrics() + (size_t)gmap::M_INIT * N;
   ActP p{nt.mean, meanS, mode_d, data_d, amask_d, t, N, cap, obs_t, tok->at(t), env->soa(), met_init, cur_len, ep_uid, act_env, dis, d_obs, d_tok, d_lab, d_meta, d_epi, d_rs};
   act_rec_k<<<(N + 7) / 8, 256>>>(p);
+  ground_k<<<(N + 127) / 128, 128>>>(env->soa(), scenes ? scenes->dev : nullptr, gnd);
   env->step(act_env, obs_n, rew, done);
-  epstat_k<<<(N + 127) / 128, 128>>>(done, met_init, N, cur_len, it_stat, it_out, tab);
+  epstat_k<<<(N + 127) / 128, 128>>>(done, met_init, gnd, env->soa().iv + (size_t)env::I_B_LKIND * N, N, cur_len, it_stat, it_out, tab);
   map->step(env->soa(), 0, 0, 0, tok->at(t + 1), curr_d);
   BCK(cudaGetLastError());
 }
@@ -1032,6 +1091,7 @@ int Bc::poll(BcLog* out) {
 using bc::Bc;
 extern "C" {
 void* bc_create(const BcConfig* cfg) { return new Bc(*cfg); }
+int64_t bc_struct_size(int32_t which) { return which == 0 ? (int64_t)sizeof(BcConfig) : which == 1 ? (int64_t)sizeof(BcLog) : -1; }
 void bc_destroy(void* h) { delete static_cast<Bc*>(h); }
 int bc_load_teacher(void* h, const char* path) {
   auto* b = static_cast<Bc*>(h);
@@ -1070,7 +1130,7 @@ int bc_load_text_table(void* h, const char* path) {
     std::fprintf(stderr, "bc: %s looks like an old 768-d text table; using training/data/vla_v1 instr128 (%d sentences)\n", path, b->n_txt);
     return b->n_txt;
   }
-  if (k < 1 || k > bc::MAX_TXT || bytes != (long)k * 4 * bc::TXT_W) { std::fclose(f); return -2; }
+  if (k < 1 || k > bc::TXT_PNP0 || bytes != (long)k * 4 * bc::TXT_W) { std::fclose(f); return -2; }
   std::vector<float> v((size_t)k * bc::TXT_W);
   const bool ok = std::fread(v.data(), 4, v.size(), f) == v.size();
   std::fclose(f);
@@ -1110,7 +1170,7 @@ int bc_set_mode(void* h, int32_t actor, int32_t record) {
 }
 int bc_set_map_curriculum(void* h, float p0, float p1, int32_t kmin, int32_t kmax, float reveal_r) {
   auto* b = static_cast<Bc*>(h);
-  const gmap::MapCurr c{p0, p1, kmin, kmax, reveal_r, 0};
+  const gmap::MapCurr c{p0, p1, kmin, kmax, reveal_r, b->cfg.map_nav_k};
   b->set_dev(b->curr_d, &c, sizeof c);
   return 0;
 }
@@ -1187,6 +1247,11 @@ int bc_sync(void*) { BCK(cudaDeviceSynchronize()); return 0; }
 int bc_set_act_mask(void* h, uint32_t mask) {
   auto* b = static_cast<Bc*>(h);
   b->set_dev(b->amask_d, &mask, sizeof mask);
+  return 0;
+}
+int bc_set_goal_drop(void* h, float p) {
+  auto* b = static_cast<Bc*>(h);
+  b->set_dev(reinterpret_cast<uint8_t*>(b->aug_d) + offsetof(obsv::ObsAug, p_goal_drop), &p, sizeof p);
   return 0;
 }
 int bc_set_aug_eval(void* h, int32_t aug_on, int32_t eval_unseen) {

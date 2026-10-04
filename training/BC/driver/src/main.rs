@@ -76,6 +76,18 @@ struct BcConfig {
     ra_light: f32,
     ra_expo: f32,
     render_team_mix: f32,
+    // E2 BEHAVIOR(stage 3): 장면 묶음·커리큘럼 값(bc_capi.h)
+    beh: i32,
+    map_nav_k: i32,
+    b_p1: f32,
+    b_p2: f32,
+    b_scene_mask: u32,
+    b_split: i32,
+    b_yaw_jit: f32,
+    b_strict: i32,
+    b_nofilter: i32,
+    b_eval_instr: i32,
+    goal_drop: f32,
 }
 
 #[repr(C)]
@@ -99,10 +111,16 @@ struct BcLog {
     s_c: [f32; 3],
     k_c: [f32; 3],
     gpu_ms: f32,
+    g_n: f32,
+    g_ok: f32,
+    p_n: f32,
+    p_succ: f32,
 }
 
 type H = *mut std::ffi::c_void;
 extern "C" {
+    fn bc_struct_size(which: i32) -> i64;
+    fn bc_set_goal_drop(h: H, p: f32) -> i32;
     fn bc_create(cfg: *const BcConfig) -> H;
     fn bc_destroy(h: H);
     fn bc_load_teacher(h: H, path: *const std::os::raw::c_char) -> i32;
@@ -215,6 +233,10 @@ fn main() {
 
     let home = std::env::var("HOME").unwrap_or_default();
     let teacher = v.get("teacher").and_then(|x| x.as_str()).unwrap_or("~/ra_ppoout/g5/t4/on_s1/ckpt_final.bin").replace('~', &home);
+    unsafe {   // C ABI 구조체 배치 확인(bc_capi.h 와 어긋나면 바로 멈춤)
+        assert_eq!(bc_struct_size(0) as usize, std::mem::size_of::<BcConfig>(), "C ABI size mismatch: BcConfig");
+        assert_eq!(bc_struct_size(1) as usize, std::mem::size_of::<BcLog>(), "C ABI size mismatch: BcLog");
+    }
     let c = BcConfig {
         n_env: gi(&v, "n_env", 4096) as i32,
         horizon: gi(&v, "horizon", 64) as i32,
@@ -276,6 +298,17 @@ fn main() {
         ra_light: gf(v.get("render_aug").unwrap_or(&Value::Null), "light", 0.0) as f32,
         ra_expo: gf(v.get("render_aug").unwrap_or(&Value::Null), "expo", 0.0) as f32,
         render_team_mix: gf(v.get("render_aug").unwrap_or(&Value::Null), "team_mix", 0.0) as f32,
+        beh: gi(v.get("beh").unwrap_or(&Value::Null), "on", 0) as i32,
+        map_nav_k: gi(v.get("beh").unwrap_or(&Value::Null), "nav_k", 0) as i32,
+        b_p1: v.get("beh").and_then(|b| b.get("mix")).and_then(|m| m.get(0)).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
+        b_p2: v.get("beh").and_then(|b| b.get("mix")).and_then(|m| m.get(1)).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
+        b_scene_mask: gi(v.get("beh").unwrap_or(&Value::Null), "scene_mask", 0) as u32,
+        b_split: gi(v.get("beh").unwrap_or(&Value::Null), "split", 0) as i32,
+        b_yaw_jit: gf(v.get("beh").unwrap_or(&Value::Null), "yaw_jit", 0.0) as f32,
+        b_strict: gi(v.get("beh").unwrap_or(&Value::Null), "strict", 0) as i32,
+        b_nofilter: 0,
+        b_eval_instr: gi(v.get("beh").unwrap_or(&Value::Null), "eval_instr", 0) as i32,
+        goal_drop: gf(&v, "goal_drop", 0.5) as f32,   // (가정) 학생 목표 표시 감추기 확률 — README "지시문·목표 표시 감추기"
     };
     let r0 = gi(&v, "record_rollouts", 4) as usize;
     let u0 = gi(&v, "bc_updates", 100) as usize;
@@ -315,7 +348,10 @@ fn main() {
         run.phase = format!("eval_{}", name);
         let t = Instant::now();
         unsafe { bc_reset_env(run.h, eval_seed); bc_set_mode(run.h, actor, 0); }
-        run.launch(0, eval_iters, |h, k| if k == eval_drop { unsafe { bc_clear_table(h); } });
+        let lg = run.launch(0, eval_iters, |h, k| if k == eval_drop { unsafe { bc_clear_table(h); } });
+        // 접지(BEHAVIOR B2·B3): 평가 바퀴(앞 eval_drop 버림)의 끝 스텝 가장 가까운 과제 물체 = 목표 비율, B2·B3 성공
+        let (mut gn, mut gk, mut pn, mut ps) = (0f64, 0f64, 0f64, 0f64);
+        for l in lg.iter().skip(eval_drop) { gn += l.g_n as f64; gk += (l.g_ok * l.g_n) as f64; pn += l.p_n as f64; ps += (l.p_succ * l.p_n) as f64; }
         let mut tab = vec![0u64; 3 * 2 * 10 * 6];
         unsafe { bc_table(run.h, tab.as_mut_ptr()); }
         let tj = table_json(&tab);
@@ -325,10 +361,16 @@ fn main() {
             name, if actor == 0 { "teacher" } else { "student" }, a["success"].as_f64().unwrap(), a["collision"].as_f64().unwrap(), a["timeout"].as_f64().unwrap(),
             a["episodes"].as_f64().unwrap(), st["C0"]["success"].as_f64().unwrap(), st["C0"]["collision"].as_f64().unwrap(), st["C1"]["success"].as_f64().unwrap(),
             st["C1"]["collision"].as_f64().unwrap(), st["C2"]["success"].as_f64().unwrap(), st["C2"]["collision"].as_f64().unwrap(), t.elapsed().as_secs_f64());
+        if pn > 0.0 {
+            println!("     grounding {:<10}: nearest task object is the target in {:.4} of {} B2/B3 episodes (>= 2 task objects); B2/B3 success {:.4} of {}",
+                name, if gn > 0.0 { gk / gn } else { 0.0 }, gn, ps / pn, pn);
+        }
         if let Some(r) = run.rf.as_mut() {
             let ck = if actor == 1 { Some(out.join(format!("student_{}.bin", name))) } else { None };
             r.eval(name, actor, &tj, ck.as_deref(), run.t0.elapsed().as_secs_f64());
         }
+        let mut tj = tj;
+        if pn > 0.0 { tj["grounding"] = json!({"episodes": gn, "nearest_is_target": if gn > 0.0 { gk / gn } else { 0.0 }, "pnp_episodes": pn, "pnp_success": ps / pn}); }
         results.insert(name.to_string(), tj);
         fs::write(out.join("results.json"), serde_json::to_string_pretty(&Value::Object(results.clone())).unwrap()).unwrap();
     };
@@ -348,6 +390,16 @@ fn main() {
         (dis, l.last().map(|x| x.count).unwrap_or(0), gms as f64 / 1e3)
     };
 
+    // 학생 평가 + BEHAVIOR 면 접지 평가(목표 표시를 늘 끔 — 지시문과 칸 이름 벡터만으로 맞는 물체로 가나), 뒤에 설정 값으로 되돌림
+    let grounding = c.stage >= 3 || c.beh != 0;
+    let eval_s = |run: &mut Run, name: &str, results: &mut serde_json::Map<String, Value>| {
+        eval(run, name, 1, results);
+        if grounding {
+            unsafe { bc_set_goal_drop(run.h, 1.0) };
+            eval(run, &format!("{}_noflag", name), 1, results);
+            unsafe { bc_set_goal_drop(run.h, c.goal_drop) };
+        }
+    };
     if eval_teacher {
         eval(&mut run, "teacher", 0, &mut results);
     }
@@ -359,7 +411,7 @@ fn main() {
     println!("bc: {} updates x {} steps, loss {:.5} -> {:.5} ({:.2} s GPU)", u0, c.upd_steps, l0, l1, gs);
     unsafe { bc_save_student(h, cstr(out.join("student_bc.bin").to_str().unwrap()).as_ptr()); }
     if v.get("eval_bc").and_then(|x| x.as_bool()).unwrap_or(true) {
-        eval(&mut run, "bc", 1, &mut results);
+        eval_s(&mut run, "bc", &mut results);
     }
     if lr_decay != c.lr { unsafe { bc_set_lr(h, lr_decay); } }
     for i in 1..=nd {
@@ -372,7 +424,7 @@ fn main() {
         println!("  train: loss {:.5} -> {:.5} ({:.2} s GPU)", l0, l1, gs);
         let nm = format!("{}{}", if dagger { "dagger" } else { "more" }, i);
         unsafe { bc_save_student(h, cstr(out.join(format!("student_{}.bin", nm)).to_str().unwrap()).as_ptr()); }
-        eval(&mut run, &nm, 1, &mut results);
+        eval_s(&mut run, &nm, &mut results);
     }
     println!("done: {:.1} s wall", run.t0.elapsed().as_secs_f64());
     if let Some(r) = run.rf.as_mut() { r.finish(run.t0.elapsed().as_secs_f64()); }

@@ -56,6 +56,16 @@ typedef struct BcConfig {
   float ra_light;       /* 조명 방향·자리 흔들기 세기(0..1) */
   float ra_expo;        /* 노출·대비·채널 이득 흔들기 세기(0..1) */
   float render_team_mix;   /* 팀 기본 설정(튕김 1·반사 1·잡음 제거 4)으로 그릴 표본 비율(0 = 싼 설정만) */
+  /* ---- E2 BEHAVIOR 집 장면(stage 3, 커리큘럼 B1–B3): 장면 묶음·커리큘럼 값(ppo_capi.h PpoBCurr 와 같은 배치 = env bsc::BCurr). 영상 학생은 아직 안 됨(렌더가 상자 방만) ---- */
+  int32_t beh;          /* 1 = 장면 묶음(~/ra_b1k)을 만들어 환경·지도에(stage 3 이면 늘) */
+  int32_t map_nav_k;    /* 지도 다가가기 거리장 주기(0 = 10) */
+  float b_p1, b_p2;     /* B1·B2 비율(나머지 B3) */
+  uint32_t b_scene_mask;   /* 0 = 모든 장면 */
+  int32_t b_split;      /* 0 학습 인스턴스, 1 공개 평가, 2 둘 다 */
+  float b_yaw_jit;
+  int32_t b_strict, b_nofilter, b_eval_instr;   /* 엄격 거르개, (음성 대조), 지시문 heldout */
+  float goal_drop;      /* 학생만: 판·스텝마다 이 확률로 목표 표시(칸 T_TARGET)·목표 특권 값·경유 지점을 감춤 — 지시문으로 목표 물체를 찾게(obs.h ObsAug::p_goal_drop).
+                           장치 값(bc_set_goal_drop). 실행기 기본 0.5 (가정), 0 = 끔. 교사 라벨 입력은 늘 표시 있음 */
 } BcConfig;
 
 typedef struct BcLog {
@@ -72,9 +82,14 @@ typedef struct BcLog {
   float n_eps, succ, coll, tout;  /* 롤아웃: 끝난 에피소드 수와 비율 */
   float n_c[3], s_c[3], k_c[3];   /* 롤아웃: 처음 지도 C0·C1·C2 별 끝난 수·성공·충돌 */
   float gpu_ms;         /* 이벤트로 잰 GPU 시간 */
+  /* 롤아웃: 학생 접지(BEHAVIOR B2·B3 판, 과제 물체 ≥ 2): 끝 스텝에 로봇에서 가장 가까운 과제 물체가 목표(집을 것)인 판 비율 — 표시를 끈 평가(bc_set_goal_drop 1)에서
+   *         "지시문만으로 맞는 물체로 가나". p_n·p_succ = B2·B3 끝난 판 수·성공 비율 */
+  float g_n, g_ok, p_n, p_succ;
 } BcLog;
 
 void* bc_create(const BcConfig* cfg);
+/* 구조체 크기(실행기가 자기 배치와 견줌): 0 BcConfig, 1 BcLog */
+int64_t bc_struct_size(int32_t which);
 void bc_destroy(void* h);
 /* 교사 체크포인트(ppo_run 의 ckpt_*.bin) 읽기 — 동기, 시작 때만. 0 = 됨 */
 int bc_load_teacher(void* h, const char* path);
@@ -106,6 +121,8 @@ int64_t bc_device_bytes(void* h);
 int bc_set_act_mask(void* h, uint32_t mask);
 /* 흔들기 켬/끔과 처음 보는 이름·지시 평가 켬/끔(장치 값, 비동기 복사) */
 int bc_set_aug_eval(void* h, int32_t aug_on, int32_t eval_unseen);
+/* 학생 목표 표시 감추기 확률(장치 값, 비동기 — 다음 롤아웃·갱신부터). 1 = 늘 감춤(접지 평가) */
+int bc_set_goal_drop(void* h, float p);
 int bc_sync(void* h);
 
 #ifdef __cplusplus
