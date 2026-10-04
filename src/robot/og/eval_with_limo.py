@@ -26,6 +26,12 @@ sb.Scene.get_task_metadata = _patched
 # 가 버리므로, 보기용으로 팔 행동만 리셋 자세(reset_joint_pos = 접은 자세)로 채워 그대로 들고 있게 한다.
 import omnigibson.eval.evaluator as _ev
 
+# 잡는 점(eef_link)을 손끝 패드 사이로(설치된 USD 는 그대로, 불러온 무대에서만) — limo_eef_fix.py, E0 측정
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import limo_eef_fix  # noqa: E402
+
+limo_eef_fix.install()
+
 _orig_load_policy = _ev.BatchedEvaluator.load_policy
 
 

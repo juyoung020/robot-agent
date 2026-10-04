@@ -21,7 +21,8 @@ collision:
 eef_vis_links:
   - link: eef_link
     parent_link: omx_end_effector_link
-    offset: {position: [0, 0, 0], orientation: [0, 0.7071068, 0, 0.7071068]}   # z = 손끝 쪽(URDF x), y = 손가락 간격(OG 규약)
+    # 잡는 점 = 손끝 패드 사이: omx_link5 x 0.080(omx_end_effector_link 는 0.0919 = 손가락 끝 바로 앞이라 열면 손가락 밖). E0 측정, limo_eef_fix.py
+    offset: {position: [-0.0119, 0, 0], orientation: [0, 0.7071068, 0, 0.7071068]}   # z = 손끝 쪽(URDF x), y = 손가락 간격(OG 규약)
 camera_links:
   - link: eyes                    # 몸통 앞 Orbbec Dabai 컬러 카메라(URDF depth_camera_link 위치)
     parent_link: depth_camera_link

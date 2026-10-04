@@ -39,14 +39,19 @@ controller_config:
   # smooth 의 기본 출력 범위는 두 관절 범위의 평균(-0.87..0.87)이라 joint_1 의 절반밖에 못 쓰므로 직접 준다.
   # limit_tolerance 를 POS_TOLERANCE(0.002) 이상으로 두면 is_grasping 휴리스틱이 UNKNOWN 을 낸다 — 이 휴리스틱은
   # 두 손가락 목표가 같다고 가정해 거울 손가락에선 빈 손으로 멈춰도 TRUE 를 내므로 끈다.
-  # 이득: 기본(kp 1e7)은 미믹과 함께 0(닫힘 한계)에 부딪힐 때 PhysX 가 터져 joint_1 이 -1.7 까지 뚫고 나간다 → kp 1e4, kd 200
-  # (시험: 열기/닫기 0.3 s 안, 목표 오차 < 0.001 rad, joint_1 + joint_2 = 0.0000).
+  # 이득: 기본(kp 1e7)은 미믹과 함께 0(닫힘 한계)에 부딪힐 때 PhysX 가 터져 joint_1 이 -1.7 까지 뚫고 나간다.
+  # kp 1e4 는 빈손 열기/닫기는 되지만 쥐는 힘이 ~0 이라(측정 관절 힘 < 1e-4 N·m) 물체를 하나도 못 든다(E0).
+  # 드라이브가 acceleration 형이라 max_effort 로 힘을 자를 수 없다(0.52 를 넣으면 힘 0) → kp 로 맞춘다:
+  #   kp 4e5 → 쥐는 힘 0.4–0.6 N·m(실제 XL330-M288-T 정지 토크 0.52 N·m @5 V 와 같음) — 100 g 듦, 250 g(수평 잡기) 놓침
+  #   kp 1e6 → 1.0–1.4 N·m — 250 g 듦, 500 g 놓침 = 공식 가반 하중 250 g 과 맞음. 시뮬 손가락은 볼록 껍질이라 실제 손가락의
+  #   오목한 안쪽(물체를 가두는 주머니)이 없어 같은 힘으로 덜 쥔다 → 1e6 을 쓴다. 미믹 오차 ~4°(joint_1 0.35 / joint_2 -0.42),
+  #   빈손으로 닫힘 한계에 닿아도 안 터짐(E0 시험). kd 200.
   gripper_0:
     name: MultiFingerGripperController
     mode: smooth
     command_input_limits: default
     command_output_limits: [0.0, 1.745329]
     limit_tolerance: 0.002
-    isaac_kp: 10000
+    isaac_kp: 1000000
     isaac_kd: 200
 reset_joint_pos: [0, 0, 0, 0, 0, 0, 0, -1.6, 1.45, 0.15, 0.0, 0.0, 0.0]   # 가상 6 + omx_joint1..5 + 그리퍼 2 (limo_omx.yaml default_joint_pos 와 같게)

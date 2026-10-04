@@ -1,0 +1,86 @@
+{
+ "full_reach_horizontal": {
+  "q": [
+   1.2193,
+   -1.2193,
+   0.0
+  ],
+  "reach_from_j2_axis": 0.391,
+  "tau_noload": {
+   "omx_joint2": 0.576,
+   "omx_joint3": 0.276,
+   "omx_joint4": 0.049
+  },
+  "limit_stall": [
+   0.241,
+   "omx_joint2"
+  ],
+  "limit_half_stall": [
+   0.045,
+   "omx_joint2"
+  ]
+ },
+ "side_top_down_h0.15_d0.08": {
+  "q": [
+   0.1779,
+   0.4704,
+   0.9225
+  ],
+  "reach_from_j2_axis": 0.19,
+  "tau_noload": {
+   "omx_joint2": 0.326,
+   "omx_joint3": 0.187,
+   "omx_joint4": 0.008
+  },
+  "limit_stall": [
+   0.63,
+   "omx_joint2"
+  ],
+  "limit_half_stall": [
+   0.228,
+   "omx_joint2"
+  ]
+ },
+ "side_horiz_h0.45_d0.05": {
+  "q": [
+   -0.9558,
+   0.2642,
+   0.6916
+  ],
+  "reach_from_j2_axis": 0.165,
+  "tau_noload": {
+   "omx_joint2": 0.044,
+   "omx_joint3": 0.226,
+   "omx_joint4": 0.049
+  },
+  "limit_stall": [
+   0.442,
+   "omx_joint4"
+  ],
+  "limit_half_stall": [
+   0.198,
+   "omx_joint4"
+  ]
+ },
+ "side_horiz_h0.25_d0.25": {
+  "q": [
+   0.7014,
+   -0.3408,
+   -0.3606
+  ],
+  "reach_from_j2_axis": 0.365,
+  "tau_noload": {
+   "omx_joint2": 0.514,
+   "omx_joint3": 0.261,
+   "omx_joint4": 0.049
+  },
+  "limit_stall": [
+   0.275,
+   "omx_joint2"
+  ],
+  "limit_half_stall": [
+   0.066,
+   "omx_joint2"
+  ]
+ }
+}
