@@ -428,6 +428,8 @@ Nano 는 연산량 비례 추정(4절 가정, FP16, 텐서 코어 없음).
 - 입력 FP16(`--half-input`): 커널이 FP16 NCHW 로 바로 써서 입력 버퍼가 반(8 × 3 × 256² × 2 = 3 MB).
 - 고정 메모리: 출력·작업 목록·마스크 비트는 `cudaHostAlloc`. 프레임마다 메모리를 잡지 않는다(마스크 격자가 처음보다 커질 때만).
 
+- **실험 파일 정리(2026-10-05)**: 위 변형들의 ONNX·엔진(`~/ovdet_models/x86_sm120/siglip2_b32/study/`, 4.5 GB)과 원시 결과(`~/clip_bench/study.jsonl`)는 지웠다. 수치는 이 표가 기록이다. 지운 파일 이름과 표의 줄: `base`(FP16 + LayerNorm FP32) · `base_ln`(+ GELU FP32 = 채택) · `base_fp32`(전부 FP32) · `base_buckets`(배치 칸 1·2·4·8) · `int8`(INT8 PTQ, `calib256.npz` = LVIS crop 보정) · `int8mlp`(INT8 MLP 만) · `l11`(11 층) · `keep48`(토큰 버림 48 @ 9 층) · `tome4`(ToMe 4 @ 6 층) · `pegemm`(패치 임베딩 GEMM) · `pegemm_buckets`(패치 GEMM + 배치 칸 = 지금 엔진의 바탕). 다시 만들려면 `clip/tools/study.sh NAME "EXPORT_ARGS" "BUILD_ARGS"`(예 `study.sh tome4 "--tome 4@6" "--half-input --pin norm,mlp/act"`; 내보내기 변형 `--res` `--layers` `--keep` `--tome`, 빌드 변형 `--pin` `--profiles` INT8 PTQ).
+
 **채택 기본값**: `export_siglip2.py`(패치 GEMM 기본) → `build_engine.py --half-input --pin norm,mlp/act --profiles 1,2,4,8`.
 Nano 는 같은 ONNX 로 `--profiles 1,8`(메모리) + FP16.
 
