@@ -21,7 +21,7 @@ target/release/trainview --root ~/ra_ppoout --root ~/ra_bc/runs [--port 7810] [-
 ```
 <root>/latest.txt                                  기본으로 열 실행 이름 (학습기가 시작할 때 씀)
 <root>/<이름>/run.json                             설정·상수(schema 1): kind, group, seed, pid, pid_start, segments, git, config 전부, refs(기준선) …
-              progress.jsonl                       업데이트마다 → ≤ 1 줄/s 로 합침(time/iters_in_row), 모집단 값
+              progress.jsonl                       업데이트마다 → ≤ 1 줄/s 로 합침(time/iterations_merged), 모집단 값
               episodes.jsonl                       판마다 한 줄(표본, log_envs 환경의 모든 판)
               replays/ep_<판>_<스킬>_<결과>.trp      판 하나 궤적(바이너리, trainfmt::trp)
               evals/<이름>.json                     평가 표 {iter, ckpt, rows:[{eval, split, n, success, collision, timeout, ref, pass}]}
@@ -29,7 +29,7 @@ target/release/trainview --root ~/ra_ppoout --root ~/ra_bc/runs [--port 7810] [-
 ```
 - 덧붙이기(progress·episodes)와 이름 바꾸기(run.json·evals·replays: `.tmp` 에 쓰고 rename)만 한다.
 - **잰 것만 쓴다**: 그 업데이트에 끝난 판이 없으면 비율 키를 **뺀다**(0·null 을 쓰지 않음).
-- 키 이름 `<묶음>/<이름>`: `time/{iter,env_steps,wall,fps_env,fps_gpu,rollout_ms,update_ms,iter_ms,iters_in_row}`, `rollout/{n_eps,ep_ret_mean,ep_len_mean,success/<스킬>,collision_rate,timeout_rate,…}`, `reward/<스킬>/<항>`, `train/{approx_kl,clip_frac,entropy,log_std_mean,std/<행동>,policy_loss,value_loss,grad_norm,lr,…}`, `curr/{stage_idx,success/C0..C2,stage_frac/C0..C2,…}`, `bc/loss`, `dagger/{round,disagree}`, `rollout_teacher/*`(교사가 몬 판), `eval/<teacher|student>/*`, `fp8/*`, `gpu/mem_used_mb`, `log/*_dropped`.
+- 키 이름은 **표준 RL 기록 이름**(Stable-Baselines3 꼴 `<묶음>/<이름>`)이다 — 아래 "용어" 표. 예: `time/{iterations,total_timesteps,time_elapsed,fps}`, `rollout/{ep_rew_mean,ep_len_mean,success_rate,n_episodes,collision_rate,timeout_rate}`, `train/{approx_kl,clip_fraction,entropy_loss,explained_variance,value_loss,policy_gradient_loss,learning_rate,std,log_std,grad_norm,loss}`, `eval/{success_rate,mean_ep_length,…}`, `eval_teacher/*`, `rollout_teacher/*`(교사가 몬 판), `curriculum/*`, `dagger/*`, `reward/<스킬>/<항>`, `fp8/*`, `gpu/mem_used_mb`, `log/*_dropped`. 스킬이 하나면 `rollout/success_rate`, 여럿이면 `rollout/success_rate/<스킬>`.
 - 재개(`--resume`): 같은 폴더에 이어 쓰고 첫 줄을 쓰기 전에 그 이터 이상의 줄을 지운다(trim). `segments` 에 `{started, pid, from_iter, from_steps, trimmed_lines}` 를 덧붙인다. 뷰어도 env_steps 가 줄어든 줄을 따로 걷어낸다(`rewound`).
 - "학습 중" 배지: `pid` 가 살아 있고 `/proc/<pid>/stat` 시작 시각이 `pid_start` 와 같을 때만. `ended` 가 있으면 끝난 실행.
 
@@ -48,7 +48,66 @@ target/release/trainview --root ~/ra_ppoout --root ~/ra_bc/runs [--port 7810] [-
 |---|---|
 | `trainview` | 서버 |
 | `fake_run --root DIR [--live S] [--only-live]` | 가짜 실행(설계 11절 V0): 씨앗 묶음(bf16/fp8 × 3), 되감기(trim 안 한 재개), 끝의 반쪽 줄, 줄기(s_eval, s_teacher), labs, 리플레이(.trp: 프레임·슬롯·자라는 지도), 평가 표. `--live S` 는 pid 있는 실행 하나를 S 초 동안 초마다 덧붙임. run.json 에 `"synthetic": true` → 화면에 synthetic 배지 |
+| `tools/record_replay/`: `record_ppo`, `record_bc`, `scene_b1k` (C++/CUDA) | **진짜 판 궤적**: 체크포인트를 돌려 `.trp` 를 실행 폴더 `s_eval/` 에 쓴다(아래 "재생 기록"). BEHAVIOR 장면 배치(RASC)도 프레임 하나짜리 `.trp` 로 |
 | `csv2run --out DIR <실행 폴더>…` | 규약 이전 실행(`log.csv` + `config.json` + `events.txt`/`results.json`)을 규약 폴더로 옮김(원본은 읽기만). 키 이름은 runfolder.rs 와 같다 |
+
+## 재생 기록 (record_replay) — 진짜 판을 진짜 장면에서
+
+학습기와 따로 도는 독립 도구다. 학습기 코드·CUDA 그래프는 고치지 않고 **공개 헤더로만** 쓴다: `ppo::Trainer`(trainer.h)·`bc::Bc`(bc.h)를 그래프 없이 만들어 `rollout_step` 을 한 스텝씩 부르고, 스텝마다 `DeviceEnv::download`·`DeviceMap::download` 로 환경·지도를 내려받는다(ppo_verify eval 의 충돌 다시 보기와 같은 방식). 끝 프레임은 같은 `env.h` 를 호스트에서 한 스텝 다시 돌려 얻는다(장치 상태는 이미 새 판으로 리셋돼 있으므로). `.trp` 바이트는 `trpc`(Rust `trainfmt::trp` 의 C ABI 정적 라이브러리)가 쓴다 — 형식 정의는 trainfmt 한 곳.
+
+```bash
+cmake -S training/viewer/tools/record_replay -B ~/ra_recbuild [-DTRAIN_SRC=<학습기 소스 training/>] && cmake --build ~/ra_recbuild -j 4
+~/ra_recbuild/record_ppo --ckpt ~/ra_ppoout/g5/t4/on_s1/ckpt_final.bin --out <실행 폴더> [--episodes 8] [--track 8] [--map 0.2 0.6] [--stage 2] [--stochastic]
+~/ra_recbuild/record_bc  --student ~/ra_bc/runs/img_s1_cont/student_dagger4.bin --out <실행 폴더> [--episodes 8] [--no-images]
+~/ra_recbuild/scene_b1k  --out <실행 폴더> ~/ra_b1k/*.rasc
+```
+- 설정(`use_map`, `goal_from_map`, 영상·글·flow 머리 등)은 체크포인트 옆 `config.json` 에서 읽는다. 기본은 결정적 정책(log σ → −12), 처음 지도 C0 20 %·C1 60 %·C2 20 %(`--map 0 0` = 모두 빈 지도).
+- `TRAIN_SRC`: 신경망·관측 배치가 바뀌면 옛 체크포인트가 새 소스에 맞지 않는다(2026-10-04 v2 변경 — `bc_load_teacher` 가 거절). 그 체크포인트를 만든 커밋의 학습기 소스를 `git archive <커밋> training/RL training/BC` 로 내보내 `-DTRAIN_SRC` 로 준다(읽기만). 이번 기록은 343492d 판(v2 전)으로 했다.
+- 판마다 `.trp` 에 담는 것: 프레임 열 39(참 자세·slam 자세(지도의 믿는 자세)·속도·바퀴 각·팔 6·손끝(순기구학)·행동 8·보상·누적·가치·사건·목표·지도 완성도), 물체 기억 칸 16(믿는 위치·참 위치·크기·지금 봄/기억·불확실도·상태·확정), 자라는 지도(로그 오즈 → MAP_RECT %, 바뀐 사각형만), 지도가 뽑은 벽 선분(`segs` 섹션), 머리 `scene`(방 벽 + 지도의 참 상자: 가구·작은 물건·컵), 영상 학생은 학생이 본 카메라 2 장(256², 2 Hz, 기준 JPEG — 도구 안의 작은 부호기). 판 줄은 `s_eval/episodes_eval.jsonl`.
+- BEHAVIOR(`scene_b1k`): 벽·문·창·가구 상자(yaw), 방 범위·이름, 다닐 곳 격자(TRAV_NO_OBJ), 과제 인스턴스의 로봇 시작 자세와 옮길 과제 물체. 로더는 `training/RL/tools/b1kconv/cpp/rasc.h`(읽기만).
+- `.trp` 에 더한 것(되돌림 호환): 덧붙인 섹션 `[u32 frame][u32 len][바이트]`(지금 `segs`), 머리 `scene`·`slot_z`("center")·`source`. 옛 뷰어는 모르는 섹션·머리 칸을 건너뛴다.
+
+## 용어 (표준 이름) — 2026-10-04 바꿈
+
+화면 글자와 progress 키를 표준 RL 도구의 이름으로 바꿨다. 한국어 설명은 마우스를 올리면 나오는 풍선(title)으로 남겼다. 옛 실행 폴더는 서버가 읽을 때 옛 키를 새 키로 바꾼다(`trainfmt::keys::canon` — 되돌림 호환, `train/entropy` 는 부호를 바꿔 `train/entropy_loss`).
+
+| 옛 키 / 화면 말 | 새 키 / 화면 말 | 출처 |
+|---|---|---|
+| `time/iter` | `time/iterations` | SB3 logger |
+| `time/env_steps` | `time/total_timesteps` | SB3 logger |
+| `time/wall` | `time/time_elapsed` | SB3 logger |
+| `time/fps_env` | `time/fps` | SB3 logger (CleanRL `charts/SPS`, rl_games `performance/step_fps`) |
+| `time/iters_in_row` | `time/iterations_merged` | (우리 것, SB3 꼴) |
+| `rollout/ep_ret_mean` ("리턴") | `rollout/ep_rew_mean` ("Episode return") | SB3 logger (CleanRL `charts/episodic_return`, RLlib `env_runners/episode_return_mean`) |
+| `rollout/success/<스킬>` | `rollout/success_rate[/<스킬>]` | SB3 logger `rollout/success_rate` |
+| `rollout/n_eps` ("판 수") | `rollout/n_episodes` ("Episodes") | SB3 `time/episodes` 꼴 |
+| `rollout/step_rew_mean` | `rollout/step_reward_mean` | rl_games `rewards/step` 꼴 |
+| `train/entropy` | `train/entropy_loss` (= −엔트로피) | SB3 logger |
+| `train/clip_frac` | `train/clip_fraction` | SB3 logger (CleanRL `losses/clipfrac`) |
+| `train/policy_loss` | `train/policy_gradient_loss` | SB3 logger |
+| `train/lr` | `train/learning_rate` | SB3 logger |
+| `train/log_std_mean` ("탐색 log σ") | `train/log_std` ("Policy log std"), `train/std` 더함 | SB3 logger `train/std` |
+| `train/adv_std`, `train/adv_mean` | `train/advantage_std`, `train/advantage_mean` | PPO 논문 "advantage" |
+| `bc/loss`, `bc/flow_loss`, `bc/end_bce` | `train/loss`, `train/flow_loss`, `train/end_bce` | SB3 `train/loss` |
+| `eval/student/success/<스킬>`, `…/ep_len_mean` | `eval/success_rate`, `eval/mean_ep_length` | SB3 logger `eval/*` |
+| `eval/teacher/*` | `eval_teacher/*` | (SB3 꼴) |
+| `dagger/disagree` | `dagger/action_mse` | (뜻대로) |
+| `data/samples` | `dagger/dataset_size` | (뜻대로) |
+| `curr/*` (`stage_idx`, `success/C0`, `stage_frac/C0`, `goal_known` …) | `curriculum/*` (`stage`, `success_rate/C0`, `start_map_fraction/C0`, `goal_known_rate` …) | (SB3 꼴) |
+| 판 | episode | 모든 도구 |
+| 모집단 / 표본 | all episodes (rollout stats) / logged sample | SB3 `rollout/` |
+| 줄기 | split (`main` / `eval` / `teacher`) | — (폴더 이름 `s_<split>/` 은 그대로) |
+| 고장 무늬 검사 | Training health checks (Reward hacking, Entropy collapse, KL too high, …) | — |
+| 학습 / 재생 / 비교 탭 | Training / Replay / Compare | — |
+| EMA | Smoothing (기본 0.6) | TensorBoard·W&B |
+| x 축: iteration / env_steps / 벽시계 | X-axis: `time/iterations` / `time/total_timesteps` / relative time | TensorBoard STEP·RELATIVE·WALL |
+| 시점 커서 | Step cursor | — |
+| 씨앗 묶음 띠 | Group runs (mean ± std) | W&B grouping |
+| 비교 표 | Run comparer | W&B Run comparer |
+| 성공 표 | Success rate table (logged sample) | — |
+| 평가 표 | Evaluation (`evals/*.json`) | SB3 `eval/` |
+
+출처: [SB3 logger](https://stable-baselines3.readthedocs.io/en/master/common/logger.html), [CleanRL PPO](https://docs.cleanrl.dev/rl-algorithms/ppo/), [RLlib new API stack](https://docs.ray.io/en/latest/rllib/new-api-stack-migration-guide.html), [rl_games `a2c_common.py`](https://github.com/Denys88/rl_games) (Isaac Lab 기본 학습기), [W&B line plots](https://docs.wandb.ai/models/app/features/panels/line-plot/reference)·[smoothing](https://docs.wandb.ai/models/app/features/panels/line-plot/smoothing), [TensorBoard 가로축·평활](https://datahacker.rs/tensorboard-visualizing-learning/), PPO 논문(Schulman 2017: clipped surrogate objective, advantage).
 
 ## 경로 (서버)
 
@@ -57,7 +116,7 @@ target/release/trainview --root ~/ra_ppoout --root ~/ra_bc/runs [--port 7810] [-
 | `/api/runs` | 실행 목록(id, kind, group, streams, live, age, iters, env_steps, eps, replays, evals, stage, first_ts, rewound, disk_mb) + latest |
 | `/api/meta?run=` | run.json 그대로 |
 | `/api/progress?run=` | 키 목록(키마다 처음·마지막 줄, 개수) |
-| `/api/progress?run=&keys=a,b\|*&from=<줄>&sig=&max_points=` | 고른 키를 열로. 없는 값 null. `max_points` 보다 길면 칸마다 마지막 + `lo`/`hi`(최소·최대). `sig` 가 다르면 처음부터 |
+| `/api/progress?run=&keys=a,b\|*&from=<줄>&sig=&max_points=` | 고른 키를 열로(x: `iterations`, `total_timesteps`, `time_elapsed`, `ts`). 없는 값 null. 옛 키는 새 이름으로. `max_points` 보다 길면 칸마다 마지막 + `lo`/`hi`(최소·최대). `sig` 가 다르면 처음부터 |
 | `/api/episodes?run=&stream=&from=` | 줄 그대로(최대 20,000, `truncated`·`cap`·`total`, `ret_mismatch` = ret ≠ Σr 줄 수) |
 | `/api/table?run=&stream=&rows=skill\|home\|stage\|map_mode\|driver&cols=bin\|…&last=N&home=&stage=&upto=<env_steps>` | 칸마다 최근 N 판의 n, 성공, SPL, 충돌, 시간 초과, 평균 t, 접촉, 리턴 |
 | `/api/replays?run=&stream=`, `/api/replay?…&id=` | .trp 머리 목록 / 바이트 그대로 |
@@ -87,9 +146,20 @@ target/release/trainview --root ~/ra_ppoout --root ~/ra_bc/runs [--port 7810] [-
 | 옮긴 실행(csv2run, A2 토큰 켬/끔 씨앗 2 개씩) | 비교 표 마지막 10 % 성공률 0.949 / 0.910 / 0.612 / 0.718 — PPO README 의 끝 값(0.950 / 0.912 / 0.618 / 0.720)과 맞음 |
 | 경로 막기 | `id=../../x.trp` → 400, 없는 실행 → 404 |
 
+### 재생 기록 확인 (2026-10-04)
+
+| 무엇 | 결과 |
+|---|---|
+| `record_ppo` A2 토큰 켬 씨앗 1 교사(`g5/t4/on_s1/ckpt_final.bin`, 343492d 소스) | 처음 지도 섞음 8 판 성공 8, 모두 빈 지도(C2) 12 판 성공 11·충돌 1 — 판당 70–126 프레임, 100–150 KB. 화면: 방 벽·가구·컵, 자라는 지도, 지도 벽 선분, 물체 칸, 참/slam 궤적 |
+| `record_bc` G5 영상 학생(`img_s1_cont/student_dagger4.bin` = DAgger 8 번 0.946) | 8 판 성공 8, 카메라 JPEG 2 장 × 2 Hz(판당 240–620 KB). JPEG 은 `file` 로 baseline 256×256 확인, 화면에 표시 |
+| `scene_b1k` BEHAVIOR 7 장면 | 상자 59–556, 방 2–21, 격자 83²–863², 17–793 KB |
+| 옛 키 실행(smoke) | 서버가 새 이름으로 바꿔 냄(`rollout/ep_rew_mean`, `train/entropy_loss` 부호 등) |
+
 ## 남은 일
 
-- **판마다 기록(episodes.jsonl)·리플레이(.trp)를 진짜 학습기에서**: 장치에서 판 끝마다 줄 하나, 고른 환경의 프레임을 링에 쓰는 커널·그래프 변경이 필요하다(이번 작업은 CUDA·그래프를 건드리지 않음). 지금 성공 표·재생 탭은 fake_run 자료로만 확인했다.
+- **학습 중 판마다 기록(episodes.jsonl)·리플레이**: 학습기 안에서 하려면 장치 기록 링 변경이 필요하다(CUDA·그래프). 지금 진짜 판 궤적은 학습 뒤 `record_replay` 로 체크포인트를 돌려 얻는다(평가 줄기 `s_eval`). 학습 판 표본의 성공 표는 아직 fake_run 자료로만 확인.
+- 보상 항목별 값(`r_<항>`): 환경 스텝이 합만 내서 `.trp` 에는 `r_total` 하나. 영상 학생의 `end_p`·가치 없음.
+- BEHAVIOR 장면에서 로봇이 도는 판은 E2(환경을 RASC 로) 뒤에.
 - PPO 의 `train/explained_variance`, `log/*_dropped`(장치 링 넘침 수), 보상 항목별 합(`reward/<스킬>/<항>`), 접촉 수는 장치 기록에 없어 키가 없다(화면은 "not logged").
 - 영상 칸(img 섹션 JPEG): 화면은 읽지만 쓰는 쪽이 없다.
 - `progress` 첫 읽기를 64 MB 씩 여러 요청에 나눠 "읽는 중 n %" 표시(지금은 한 요청 안에서 64 MB 씩 끝까지 읽음).

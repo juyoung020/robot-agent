@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 use trainfmt::RunWriter;
 
+#[allow(dead_code)]
 pub struct RunFolder {
     w: RunWriter,
     stage: usize,
@@ -83,53 +84,54 @@ impl RunFolder {
     pub fn log(&mut self, l: &PpoLog, wall: f64, gpu_sps: f64) {
         let a = &mut self.w.agg;
         let n = l.n_eps as f64;
-        a.last("time/iter", l.iter as f64);
-        a.last("time/env_steps", l.env_steps as f64);
-        a.last("time/wall", wall);
+        a.last("time/iterations", l.iter as f64);
+        a.last("time/total_timesteps", l.env_steps as f64);
+        a.last("time/time_elapsed", wall);
         a.mean("time/rollout_ms", l.rollout_ms as f64);
         a.mean("time/update_ms", l.update_ms as f64);
         a.mean("time/iter_ms", (l.rollout_ms + l.update_ms) as f64);
         a.mean("time/fps_gpu", gpu_sps);
-        a.sum("rollout/n_eps", n);
-        a.mean_w("rollout/ep_ret_mean", l.ep_ret as f64, n);
+        a.sum("rollout/n_episodes", n);
+        a.mean_w("rollout/ep_rew_mean", l.ep_ret as f64, n);
         a.mean_w("rollout/ep_len_mean", l.ep_len as f64, n);
-        a.mean_w(&format!("rollout/success/{}", self.skill), l.succ as f64, n);
+        a.mean_w("rollout/success_rate", l.succ as f64, n);   // 스킬 하나(approach) — 스킬이 여럿이면 rollout/success_rate/<스킬>
         a.mean_w("rollout/collision_rate", l.coll as f64, n);
         a.mean_w("rollout/timeout_rate", l.tout as f64, n);
-        a.mean("rollout/step_rew_mean", l.rew_mean as f64);
+        a.mean("rollout/step_reward_mean", l.rew_mean as f64);
         for (i, nm) in ["C0", "C1", "C2"].iter().enumerate() {
             let nc = l.n_c[i] as f64;
-            a.sum(&format!("curr/n_eps/{}", nm), nc);
-            a.mean_w(&format!("curr/success/{}", nm), l.s_c[i] as f64, nc);
-            a.mean_w(&format!("curr/collision/{}", nm), l.k_c[i] as f64, nc);
-            a.mean_w(&format!("curr/stage_frac/{}", nm), nc / n.max(1.0), n);
+            a.sum(&format!("curriculum/n_episodes/{}", nm), nc);
+            a.mean_w(&format!("curriculum/success_rate/{}", nm), l.s_c[i] as f64, nc);
+            a.mean_w(&format!("curriculum/collision_rate/{}", nm), l.k_c[i] as f64, nc);
+            a.mean_w(&format!("curriculum/start_map_fraction/{}", nm), nc / n.max(1.0), n);
         }
-        a.last("curr/stage_idx", self.stage as f64);
-        a.last("curr/env_stage", l.stage as f64);
-        a.mean("curr/goal_known", l.goal_known as f64);
+        a.last("curriculum/stage", self.stage as f64);
+        a.last("curriculum/env_level", l.stage as f64);
+        a.mean("curriculum/goal_known_rate", l.goal_known as f64);
         a.mean("map/task_confirmed", l.map_task as f64);
         a.mean("train/approx_kl", l.kl as f64);
-        a.mean("train/clip_frac", l.clipfrac as f64);
-        a.mean("train/entropy", l.entropy as f64);
-        a.mean("train/policy_loss", l.pg_loss as f64);
+        a.mean("train/clip_fraction", l.clipfrac as f64);
+        a.mean("train/entropy_loss", -(l.entropy as f64));   // SB3: entropy_loss = −엔트로피
+        a.mean("train/policy_gradient_loss", l.pg_loss as f64);
         a.mean("train/value_loss", l.v_loss as f64);
         a.mean("train/grad_norm", l.grad_norm as f64);
-        a.mean("train/lr", l.lr as f64);
-        a.mean("train/adv_mean", l.adv_mean as f64);
-        a.mean("train/adv_std", l.adv_std as f64);
+        a.mean("train/learning_rate", l.lr as f64);
+        a.mean("train/advantage_mean", l.adv_mean as f64);
+        a.mean("train/advantage_std", l.adv_std as f64);
         a.mean("train/value_mean", l.value_mean as f64);
+        a.mean("train/std", 0.5 * (l.std0 as f64 + l.std1 as f64));
         a.mean("train/std/vx", l.std0 as f64);
         a.mean("train/std/wz", l.std1 as f64);
         if l.std0 > 0.0 && l.std1 > 0.0 {
             // 학습하는 행동은 앞 act_dims 개(approach 는 2: vx, wz). σ 둘의 log 평균
-            a.mean("train/log_std_mean", ((l.std0 as f64).ln() + (l.std1 as f64).ln()) / 2.0);
+            a.mean("train/log_std", ((l.std0 as f64).ln() + (l.std1 as f64).ln()) / 2.0);
         }
         a.last("gpu/mem_used_mb", self.mem_mb);
         let _ = self.act_dims;
         if self.w.due(wall) {
             let (w0, s0) = self.last;
             if wall > w0 && self.last.0 > 0.0 {
-                self.w.agg.last("time/fps_env", (l.env_steps as f64 - s0) / (wall - w0));
+                self.w.agg.last("time/fps", (l.env_steps as f64 - s0) / (wall - w0));
             }
             self.last = (wall, l.env_steps as f64);
         }

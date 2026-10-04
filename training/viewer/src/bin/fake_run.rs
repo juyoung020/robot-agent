@@ -389,22 +389,32 @@ fn progress_row(w: &mut RunWriter, sp: &Spec, rng: &mut Rng, it: usize, iters_pe
     let prog = it as f64 / (sp.rows * iters_per_row) as f64 * sp.speed;
     let steps = (it * 262_144) as f64;
     let a = &mut w.agg;
-    a.last("time/iter", it as f64);
-    a.last("time/env_steps", steps);
-    a.last("time/wall", wall);
-    a.last("time/fps_env", 262_144.0 * iters_per_row as f64 / 1.0 * (1.0 + 0.03 * rng.n()) / if sp.fp8 { 0.8 } else { 1.0 });
+    a.last("time/iterations", it as f64);
+    a.last("time/total_timesteps", steps);
+    a.last("time/time_elapsed", wall);
+    a.last("time/fps", 262_144.0 * iters_per_row as f64 / 1.0 * (1.0 + 0.03 * rng.n()) / if sp.fp8 { 0.8 } else { 1.0 });
     a.last("time/rollout_ms", 27.0 + 2.0 * rng.n());
     a.last("time/update_ms", if sp.fp8 { 70.0 } else { 86.0 } + 3.0 * rng.n());
     a.last("time/iter_ms", 113.0 + 3.0 * rng.n());
     let n_tot: usize = eps_by_skill.iter().map(|e| e.1).sum::<usize>() * 400;
-    a.last("rollout/n_eps", n_tot as f64);
+    a.last("rollout/n_episodes", n_tot as f64);
     let mut ret = 0.0;
+    let (mut sw, mut sn) = (0.0, 0.0);
+    for (s, n, _) in eps_by_skill {
+        if *n > 0 {
+            sw += p_succ(s, prog, sp.fp8, sp.seed) * *n as f64;
+            sn += *n as f64;
+        }
+    }
+    if sn > 0.0 {
+        a.last("rollout/success_rate", (sw / sn + 0.01 * rng.n()).clamp(0.0, 1.0));
+    }
     for (s, n, _) in eps_by_skill {
         let ps = p_succ(s, prog, sp.fp8, sp.seed);
         if *n > 0 {
-            a.last(&format!("rollout/success/{}", s), (ps + 0.01 * rng.n()).clamp(0.0, 1.0));
-            a.last(&format!("rollout/n_eps/{}", s), (*n * 400) as f64);
-            a.last(&format!("rollout/ep_len/{}", s), t_max(s) * 10.0 * (1.0 - 0.6 * ps) + 3.0 * rng.n());
+            a.last(&format!("rollout/success_rate/{}", s), (ps + 0.01 * rng.n()).clamp(0.0, 1.0));
+            a.last(&format!("rollout/n_episodes/{}", s), (*n * 400) as f64);
+            a.last(&format!("rollout/ep_len_mean/{}", s), t_max(s) * 10.0 * (1.0 - 0.6 * ps) + 3.0 * rng.n());
         }
         for t in terms(s) {
             let v = match *t {
@@ -417,26 +427,26 @@ fn progress_row(w: &mut RunWriter, sp: &Spec, rng: &mut Rng, it: usize, iters_pe
             ret += v / 3.0;
         }
     }
-    a.last("rollout/ep_ret_mean", ret + 0.3 * rng.n());
+    a.last("rollout/ep_rew_mean", ret + 0.3 * rng.n());
     a.last("rollout/ep_len_mean", 150.0 * (1.0 - 0.5 * prog.min(1.0)) + 4.0 * rng.n());
     a.last("rollout/timeout_rate", (0.6 * (1.0 - prog).max(0.0) + 0.02 * rng.u()).min(1.0));
     a.last("rollout/collision_rate", 0.05 * (1.0 - prog).max(0.0) + 0.01 + 0.004 * rng.n().abs());
     a.last("rollout/contacts_per_ep", 0.8 * (1.0 - prog * 0.7) + 0.05 * rng.n());
     a.last("rollout/joint_limit_steps", 3.0 * (1.0 - prog).max(0.0) + 0.2 * rng.u());
-    a.last("train/policy_loss", -0.01 + 0.004 * rng.n());
+    a.last("train/policy_gradient_loss", -0.01 + 0.004 * rng.n());
     a.last("train/value_loss", 0.5 * (-prog * 3.0).exp() + 0.05 + 0.01 * rng.n().abs());
-    a.last("train/entropy", 2.0 - 1.5 * prog.min(1.0) + 0.02 * rng.n());
-    a.last("train/log_std_mean", -0.5 - 1.6 * prog.min(1.0) + 0.01 * rng.n());
+    a.last("train/entropy_loss", -(2.0 - 1.5 * prog.min(1.0) + 0.02 * rng.n()));
+    a.last("train/log_std", -0.5 - 1.6 * prog.min(1.0) + 0.01 * rng.n());
     a.last("train/approx_kl", (0.008 + 0.003 * rng.n()).abs() * if sp.fp8 { 1.15 } else { 1.0 });
-    a.last("train/clip_frac", 0.12 + 0.02 * rng.n());
+    a.last("train/clip_fraction", 0.12 + 0.02 * rng.n());
     a.last("train/explained_variance", (0.3 + 0.65 * prog.min(1.0) + 0.02 * rng.n()).min(0.995));
     a.last("train/grad_norm", 0.6 + 0.2 * rng.n().abs());
-    a.last("train/lr", 3e-4 * (1.0 - 0.7 * prog.min(1.0)));
-    a.last("train/adv_std", 1.0 + 0.1 * rng.n());
-    a.last("curr/completion_start_mean", 0.3 + 0.2 * prog.min(1.0));
+    a.last("train/learning_rate", 3e-4 * (1.0 - 0.7 * prog.min(1.0)));
+    a.last("train/advantage_std", 1.0 + 0.1 * rng.n());
+    a.last("curriculum/start_completion_mean", 0.3 + 0.2 * prog.min(1.0));
     for (i, st) in ["C0", "C1", "C2"].iter().enumerate() {
         let f = [0.6 - 0.5 * prog.min(1.0), 0.3, 0.1 + 0.5 * prog.min(1.0)][i];
-        a.last(&format!("curr/stage_frac/{}", st), f.max(0.0));
+        a.last(&format!("curriculum/start_map_fraction/{}", st), f.max(0.0));
     }
     a.last("gpu/mem_used_mb", 1930.0 + if sp.fp8 { -300.0 } else { 0.0 });
     a.last("log/ring_dropped", 0.0);
@@ -450,13 +460,13 @@ fn progress_row(w: &mut RunWriter, sp: &Spec, rng: &mut Rng, it: usize, iters_pe
         a.last("fp8/grad_cos", (0.995 + 0.002 * rng.n()).min(1.0));
     }
     if matches!(sp.kind, "dagger" | "bc") {
-        a.last("bc/flow_loss", 0.4 * (-prog * 4.0).exp() + 0.05 + 0.005 * rng.n());
-        a.last("bc/end_bce", 0.2 * (-prog * 3.0).exp() + 0.02);
+        a.last("train/flow_loss", 0.4 * (-prog * 4.0).exp() + 0.05 + 0.005 * rng.n());
+        a.last("train/end_bce", 0.2 * (-prog * 3.0).exp() + 0.02);
         a.last("val/flow_loss", 0.45 * (-prog * 3.5).exp() + 0.07 + 0.005 * rng.n());
         a.last("val/action_mse", 0.1 * (-prog * 3.0).exp() + 0.01);
         a.last("dagger/round", (prog * 8.0).floor());
         a.last("dagger/beta", (1.0 - prog * 1.5).max(0.0));
-        a.last("dagger/agree", 0.3 * (-prog * 3.0).exp() + 0.02);
+        a.last("dagger/action_mse", 0.3 * (-prog * 3.0).exp() + 0.02);
         a.last("dagger/new_samples", 262144.0);
     }
     for _ in 0..iters_per_row {

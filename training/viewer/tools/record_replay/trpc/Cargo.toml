@@ -1,0 +1,15 @@
+[package]
+name = "trpc"
+version = "0.1.0"
+edition = "2021"
+description = "trainfmt::trp 의 C ABI(정적 라이브러리) — C++/CUDA 기록 도구가 .trp 를 Rust 형식 코드 그대로 쓰게(형식 정의는 trainfmt 한 곳)."
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+trainfmt = { path = "../../../trainfmt" }
+serde_json = "1"
+
+[profile.release]
+panic = "abort"

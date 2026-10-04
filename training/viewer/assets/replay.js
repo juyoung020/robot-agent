@@ -4,8 +4,8 @@
 import { fmt, esc, cssv } from "./charts.js";
 
 const STATE_COL = [0x2ea043, 0x8c8c8c, 0xf58c14, 0x286ee6];   // 보임 · 사라짐 · 옮겨짐 · 들고 있음 (sgview STATE_COL)
-const STATE_NAME = ["보임", "사라짐", "옮겨짐", "들고 있음"];
-const EV = { 1: "접촉", 2: "쥠", 4: "놓침", 8: "성공", 16: "거르개", 32: "리셋" };
+const STATE_NAME = ["seen", "gone", "moved", "held"];
+const EV = { 1: "contact", 2: "grasp", 4: "drop", 8: "success", 16: "filter", 32: "reset" };
 const SNAP = 50;   // 지도 사본 간격(프레임)
 
 function cellGrey(v) { return v < 0 ? 205 : v >= 65 ? 0 : v <= 25 ? 254 : Math.round(254 - (v * 254) / 100); }   // sgview cell_grey
@@ -43,9 +43,17 @@ export function parseTrp(buf) {
     let p = sec.img.off; const end = p + sec.img.len;
     while (p + 9 <= end) { const frame = dv.getUint32(p, true), cam = dv.getUint8(p + 4), len = dv.getUint32(p + 5, true); imgs.push({ frame, cam, bytes: new Uint8Array(buf, p + 9, len), url: null }); p += 9 + len; }
   }
+  // 덧붙인 섹션(trainfmt TrpWriter::record): [u32 frame][u32 len][len 바이트] 이어짐. 예: segs = 벽 선분 n × (x0, y0, x1, y1) f32
+  const extra = {};
+  for (const s of head.sections || []) {
+    if (["frames", "slots", "map", "img"].includes(s.name)) continue;
+    const recs = []; let p = s.off; const end = s.off + s.len;
+    while (p + 8 <= end) { const frame = dv.getUint32(p, true), len = dv.getUint32(p + 4, true); recs.push({ frame, bytes: new Uint8Array(buf.slice(p + 8, p + 8 + len)) }); p += 8 + len; }
+    extra[s.name] = recs;
+  }
   const ci = {}; head.cols.forEach((c, i) => ci[c] = i);
   const sci = {}; (head.slot_cols || []).forEach((c, i) => sci[c] = i);
-  return { head, nc, nf, frames, slots, ns, nsc, maps, imgs, ci, sci, v: (f, c) => ci[c] == null ? NaN : frames[f * nc + ci[c]], sv: (f, s, c) => sci[c] == null ? NaN : slots[(f * ns + s) * nsc + sci[c]] };
+  return { head, nc, nf, frames, slots, ns, nsc, maps, imgs, extra, ci, sci, v: (f, c) => ci[c] == null ? NaN : frames[f * nc + ci[c]], sv: (f, s, c) => sci[c] == null ? NaN : slots[(f * ns + s) * nsc + sci[c]] };
 }
 
 export class Replay {
@@ -157,10 +165,10 @@ export class Replay {
     this.rows = j.rows || [];
     const why = j.why || "";
     const m = this.meta || {};
-    this.$("rp_note").textContent = this.rows.length ? `${this.rows.length} 판${j.bad ? ` (머리 못 읽음 ${j.bad})` : ""}` : `${why}${m.logged && m.logged.why ? " — " + m.logged.why : ""}`;
+    this.$("rp_note").textContent = this.rows.length ? `${this.rows.length} episodes${j.bad ? ` (${j.bad} unreadable headers)` : ""}` : `${why}${m.logged && m.logged.why ? " — " + m.logged.why : ""}`;
     for (const [sel, key] of [["rp_skill", "skill"], ["rp_outcome", "outcome"], ["rp_home", "home"]]) {
       const cur = this.$(sel).value, vals = [...new Set(this.rows.map(r => r.meta && r.meta[key]).filter(Boolean))].sort();
-      this.$(sel).innerHTML = '<option value="">전체</option>' + vals.map(v => `<option${v === cur ? " selected" : ""}>${esc(v)}</option>`).join("");
+      this.$(sel).innerHTML = '<option value="">all</option>' + vals.map(v => `<option${v === cur ? " selected" : ""}>${esc(v)}</option>`).join("");
     }
     this.renderList();
   }
@@ -169,12 +177,12 @@ export class Replay {
     const ci = this.$("rp_near").checked ? this.getCursorIter() : null;
     let rows = this.rows.filter(r => { const m = r.meta || {}; return (!f.skill || m.skill === f.skill) && (!f.outcome || m.outcome === f.outcome) && (!f.home || m.home === f.home); });
     if (ci != null) { const tol = Math.max(50, Math.abs(ci) * 0.05); rows = rows.filter(r => r.meta && Math.abs(r.meta.iter - ci) <= tol); }
-    else if (this.$("rp_near").checked) this.$("rp_note").textContent = "커서가 끝(실시간)이라 '근처' 거르기 안 함";
+    else if (this.$("rp_near").checked) this.$("rp_note").textContent = "cursor is at latest — near-step filter off";
     this.$("rp_list").innerHTML = rows.map(r => {
       const m = r.meta || {};
       return `<div class="item${this.file === r.file ? " on" : ""}" data-f="${esc(r.file)}"><div class="r1"><span><b>${esc(m.skill || "?")}</b> <span class="oc ${esc(m.outcome || "")}">${esc(m.outcome || (m.success ? "success" : "?"))}</span>${r.pin ? " 📌" : ""}</span><span class="mono muted">ep ${m.ep ?? "?"}</span></div>
-        <div class="muted small">${esc(m.home || "")} · ${esc(m.stage || "")} · 완성도 ${fmt(m.completion0 ?? m.map_completeness, 1)} · t ${fmt(m.t)} s · ret ${fmt(m.ret)} · iter ${fmt(m.iter)}${m.driver ? " · " + esc(m.driver) : ""}</div></div>`;
-    }).join("") || '<div class="muted small">거르기에 맞는 판 없음</div>';
+        <div class="muted small">${esc(m.home || "")} · ${esc(m.stage || "")} · map ${fmt(m.completion0 ?? m.map_completeness, 1)} · ${fmt(m.t)} s · return ${fmt(m.ret)}${m.iter != null ? " · iter " + fmt(m.iter) : ""}${m.driver ? " · " + esc(m.driver) : ""}</div></div>`;
+    }).join("") || '<div class="muted small">no episode matches the filters</div>';
     this.$("rp_list").querySelectorAll(".item").forEach(el => el.onclick = () => this.open(el.dataset.f));
   }
 
@@ -195,12 +203,12 @@ export class Replay {
   async open(file) {
     const id = this.run, st = this.$("rp_stream").value || "main";
     this.clearEpisode(); this.file = file; this.renderList();
-    this.$("rp_empty").textContent = "읽는 중…"; this.$("rp_empty").hidden = false;
+    this.$("rp_empty").textContent = "loading…"; this.$("rp_empty").hidden = false;
     const t0 = performance.now();
     const r = await fetch(`/api/replay?run=${encodeURIComponent(id)}&stream=${encodeURIComponent(st)}&id=${encodeURIComponent(file)}`);
     if (id !== this.run || this.file !== file) return;
     let tr;
-    try { tr = parseTrp(await r.arrayBuffer()); } catch (e) { this.$("rp_empty").textContent = "읽기 실패: " + e.message; return; }
+    try { tr = parseTrp(await r.arrayBuffer()); } catch (e) { this.$("rp_empty").textContent = "read failed: " + e.message; return; }
     this.tr = tr; this.loadMs = performance.now() - t0;
     this.$("rp_empty").hidden = true;
     this.build();
@@ -228,6 +236,34 @@ export class Replay {
         this.map.snaps.push({ rgba: rgba.slice(), ri });
       }
     } else this.map = null;
+    // 참 장면(머리 scene): 벽·문·가구·물체·목표 상자(yaw), 방 범위·이름
+    const SC = H.scene;
+    this.sceneInfo = SC ? `${SC.kind === "behavior" ? "BEHAVIOR " : ""}${SC.name || ""}${SC.task ? " · task " + SC.task : ""}` : "";
+    if (SC && SC.boxes) {
+      const KCOL = { wall: [0x6b6b70, 0.95], door: [0x9c6b3c, 0.8], window: [0x8fc5e8, 0.5], furniture: [0xc8a878, 0.45], object: [0xeb6834, 0.8], target: [0xe34948, 0.9], carpet: [0xb8b0a0, 0.25] };
+      const geo = new THREE.BoxGeometry(1, 1, 1), eg = new THREE.EdgesGeometry(geo);
+      for (const b of SC.boxes) {
+        const [col, op] = KCOL[b.kind] || KCOL.furniture;
+        const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: col, transparent: op < 1, opacity: op, depthWrite: op > 0.6 }));
+        m.position.set(b.c[0], b.c[1], b.c[2]); m.scale.set(2 * b.h[0], 2 * b.h[1], Math.max(2 * b.h[2], 0.01)); m.rotation.z = b.yaw || 0;
+        m.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0x3a3a3a, transparent: true, opacity: 0.5 })));
+        G.add(m);
+      }
+    }
+    if (SC && SC.rooms) {
+      for (const r of SC.rooms) {
+        const pts = [[r.bmin[0], r.bmin[1]], [r.bmax[0], r.bmin[1]], [r.bmax[0], r.bmax[1]], [r.bmin[0], r.bmax[1]], [r.bmin[0], r.bmin[1]]].map(p => new THREE.Vector3(p[0], p[1], 0.01));
+        const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineDashedMaterial({ color: 0x4a3aa7, dashSize: 0.15, gapSize: 0.1 }));
+        l.computeLineDistances(); G.add(l);
+        if (SC.rooms.length > 1) G.add(this.label(r.name, (r.bmin[0] + r.bmax[0]) / 2, (r.bmin[1] + r.bmax[1]) / 2, 0.05, H.grid ? Math.max(0.35, H.grid.w * H.grid.res / 60) : 0.35));
+      }
+    }
+    // 지도가 뽑은 벽 선분(segs 섹션) — 프레임 따라 바꿈
+    this.segs = (tr.extra.segs || []).map(r => ({ frame: r.frame, v: new Float32Array(r.bytes.buffer, r.bytes.byteOffset, r.bytes.byteLength / 4) }));
+    if (this.segs.length) {
+      const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(2 * 3 * 512), 3)); g.setDrawRange(0, 0);
+      this.segLines = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xd03b3b })); this.segLines.frustumCulled = false; G.add(this.segLines); this.segAt = -2;
+    } else this.segLines = null;
     // 궤적: 참(파랑) · slam(주황) · 손끝
     const line = (xs, ys, zs, col, op) => {
       const pts = new Float32Array(tr.nf * 3);
@@ -267,10 +303,26 @@ export class Replay {
     // 보상 띠 범례
     const rcols = H.cols.filter(c => c.startsWith("r_"));
     this.rcols = rcols;
-    this.$("rp_legend").innerHTML = rcols.map((c, i) => `<span><i style="background:${cssv("--s" + (1 + i % 8))}"></i>${esc(c.slice(2))}</span>`).join("") + `<span><i style="background:${cssv("--ink")}"></i>value</span><span><i style="background:${cssv("--muted")}"></i>end_p</span><span>눈금: 사건(접촉·쥠·놓침·성공)</span>`;
+    this.$("rp_legend").innerHTML = rcols.map((c, i) => `<span><i style="background:${cssv("--s" + (1 + i % 8))}"></i>${esc(c.slice(2))}</span>`).join("") + `<span><i style="background:${cssv("--ink")}"></i>value</span><span><i style="background:${cssv("--muted")}"></i>end_p</span><span>ticks: events (contact · grasp · drop · success)</span>`;
     const objs = H.objects || [];
     this.objName = s => { const id = tr.sv(this.f, s, "id"); const o = objs.find(o => o.id === id || o.slot === s); return o ? o.name : `slot ${s}`; };
     this.drawStrip();
+  }
+  label(text, x, y, z, h = 0.35) {
+    const cv = document.createElement("canvas"), g = cv.getContext("2d"), fs = 28;
+    g.font = `${fs}px system-ui, sans-serif`; cv.width = Math.ceil(g.measureText(text).width) + 12; cv.height = fs + 12;
+    g.font = `${fs}px system-ui, sans-serif`; g.fillStyle = "rgba(255,255,255,0.8)"; g.fillRect(0, 0, cv.width, cv.height); g.fillStyle = "#2a2a2a"; g.fillText(text, 6, fs);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false }));
+    sp.scale.set(h * cv.width / cv.height, h, 1); sp.position.set(x, y, z + 0.3); return sp;
+  }
+  setSegFrame(f) {
+    if (!this.segLines) return;
+    let k = -1; for (let i = 0; i < this.segs.length; i++) if (this.segs[i].frame <= f) k = i; else break;
+    if (k === this.segAt) return;
+    this.segAt = k;
+    const a = this.segLines.geometry.attributes.position.array, v = k >= 0 ? this.segs[k].v : new Float32Array(0), n = Math.min(512, v.length / 4);
+    for (let i = 0; i < n; i++) { a.set([v[4 * i], v[4 * i + 1], 0.03, v[4 * i + 2], v[4 * i + 3], 0.03], 6 * i); }
+    this.segLines.geometry.setDrawRange(0, 2 * n); this.segLines.geometry.attributes.position.needsUpdate = true;
   }
   setMapFrame(f) {
     const M = this.map, tr = this.tr; if (!M) return;
@@ -296,12 +348,14 @@ export class Replay {
     this.$("rp_time").value = f;
     this.$("rp_tlabel").textContent = `${fmt(v("t"))} s · ${f + 1}/${tr.nf}`;
     this.setMapFrame(f);
+    this.setSegFrame(f);
     // 로봇
     this.robot.position.set(v("x"), v("y"), 0); this.robot.rotation.set(0, 0, v("yaw"));
     const jm = H.joint_map || (this.meta && this.meta.joint_map) || {};
     const vals = {};
     for (const [colName, targets] of Object.entries(jm)) { const x = v(colName); if (!isFinite(x)) continue; for (const [jn, sc, off] of targets) vals[jn] = x * (sc ?? 1) + (off ?? 0); }
-    const wa = this.wheel[f]; Object.assign(vals, { front_left_wheel: wa, rear_left_wheel: wa, front_right_wheel: wa, rear_right_wheel: wa });
+    const wl = tr.ci.wl != null ? v("wl") : this.wheel[f], wr = tr.ci.wr != null ? v("wr") : this.wheel[f];   // 환경이 바퀴 각을 내면 그것
+    Object.assign(vals, { front_left_wheel: wl, rear_left_wheel: wl, front_right_wheel: wr, rear_right_wheel: wr });
     this.setJoints(vals);
     // 궤적
     const L = this.lines;
@@ -326,13 +380,15 @@ export class Replay {
       if (!(src > 0)) { o.grp.visible = false; return; }
       o.grp.visible = true;
       const ex = Math.max(sv("ex"), 0.03), ey = Math.max(sv("ey"), 0.03), ez = Math.max(sv("ez"), 0.03);
-      const bx = sv("bx"), by = sv("by"), bz = sv("bz") + ez / 2, st = Math.max(0, Math.min(3, Math.round(sv("state")) || 0));
+      const ctr = H.slot_z === "center";   // 머리 slot_z: "center" 면 bz·pz 가 상자 가운데(아니면 바닥)
+      const bx = sv("bx"), by = sv("by"), bz = sv("bz") + (ctr ? 0 : ez / 2), st = Math.max(0, Math.min(3, Math.round(sv("state")) || 0));
       if (st === 3) held = true;
       for (const m of [o.box, o.edges, o.tgtEdge]) { m.position.set(bx, by, bz); m.scale.set(ex, ey, ez); }
       o.box.material.color.setHex(STATE_COL[st]);
-      o.box.material.opacity = src === 1 ? 0.85 : 0.18; o.box.material.depthWrite = src === 1;
+      const conf = tr.sci.confirmed == null || sv("confirmed") > 0.5;   // 확정 안 된 칸(검출 1 번 등)은 아주 흐리게
+      o.box.material.opacity = !conf ? 0.08 : src === 1 ? 0.85 : 0.18; o.box.material.depthWrite = conf && src === 1;
       o.tgtEdge.visible = sv("is_tgt") > 0.5;
-      const px = sv("px"), py = sv("py"), pz = sv("pz") + ez / 2;
+      const px = sv("px"), py = sv("py"), pz = sv("pz") + (ctr ? 0 : ez / 2);
       const off = Math.hypot(px - bx, py - by, pz - bz) > 0.05 && isFinite(px);
       o.ghost.visible = o.link.visible = off;
       if (off) { o.ghost.position.set(px, py, pz); o.ghost.scale.set(ex, ey, ez); const a = o.link.geometry.attributes.position.array; a.set([bx, by, bz, px, py, pz]); o.link.geometry.attributes.position.needsUpdate = true; }
@@ -358,12 +414,13 @@ export class Replay {
     const stepR = this.rcols.reduce((s, c) => s + (v(c) || 0), 0);
     const tslot = this.slotObjs.findIndex((o, s) => tr.sv(f, s, "is_tgt") > 0.5 && tr.sv(f, s, "src") > 0);
     this.$("rp_hud").textContent =
-      `${m.skill || "?"} · ${m.home || ""} · ${m.outcome || ""}${H.synthetic ? "  (synthetic)" : ""}\n` +
+      `${m.skill || "?"} · ${m.home || ""} · ${m.outcome || ""}${H.synthetic ? "  (synthetic)" : ""}${H.source ? "  [" + H.source.kind + "]" : ""}\n` +
+      (this.sceneInfo ? this.sceneInfo + "\n" : "") +
       `t ${fmt(v("t"))} s   frame ${f + 1}/${tr.nf}\n` +
-      `보상 이번 스텝 ${fmt(stepR)}   누적 ${fmt(v("ret_cum"))}\n  ${rs.join("  ")}\n` +
-      `가치 ${fmt(v("value"))}   끝 신호 ${fmt(v("end_p"))}\n` +
-      `쥠 ${held ? "들고 있음" : "-"}   접촉 ${contacts}   목표까지 ${fmt(dist)} m${tslot >= 0 ? " (" + this.objName(tslot) + ")" : ""}\n` +
-      `완성도 ${fmt(v("completion"), 1)}   ${evs.join(" ")}` + (this.loadMs != null ? `\n읽기 ${this.loadMs.toFixed(0)} ms` : "");
+      `reward ${fmt(stepR)}   return ${fmt(v("ret_cum"))}\n  ${rs.join("  ")}\n` +
+      `value ${fmt(v("value"))}   end prob ${fmt(v("end_p"))}\n` +
+      `gripper ${held ? "holding" : "-"}   contacts ${contacts}   to goal ${fmt(dist)} m${tslot >= 0 ? " (" + this.objName(tslot) + ")" : ""}\n` +
+      `map: objects ${fmt(v("completion"), 1)}${tr.ci.map_seen != null ? "  area seen " + fmt(v("map_seen"), 1) : ""}   ${evs.join(" ")}` + (this.loadMs != null ? `\nload ${this.loadMs.toFixed(0)} ms` : "");
     this.drawStrip();
     this.dirty = true;
   }

@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 use trainfmt::RunWriter;
 
+#[allow(dead_code)]
 pub struct RunFolder {
     w: RunWriter,
     phase: String,
@@ -59,7 +60,7 @@ pub fn open(out: &Path, cfg_path: &str, v: &Value, c: &BcConfig, teacher: &str, 
         "device_bytes": dev_bytes,
         "curriculum": {"start_maps": ["C0", "C1", "C2"], "map": [c.map_p0, c.map_p1]},
         "refs": {"train/grad_norm": c.max_grad_norm},
-        "x_default": "time/iter",
+        "x_default": "time/iterations",
         "logged": {
             "progress": true,
             "episodes": false,
@@ -90,27 +91,27 @@ impl RunFolder {
         } else {
             self.adam_t = l.adam_t as f64;
         }
-        a.last("time/iter", self.adam_t);
-        a.last("time/env_steps", self.env_steps);
-        a.last("time/wall", wall);
+        a.last("time/iterations", self.adam_t);
+        a.last("time/total_timesteps", self.env_steps);
+        a.last("time/time_elapsed", wall);
         a.last("dagger/round", round_of(phase));
         let n = l.n_eps as f64;
         if l.kind == 1 {
-            a.mean("bc/loss", l.loss as f64);
+            a.mean("train/loss", l.loss as f64);
             a.mean("train/grad_norm", l.grad_norm as f64);
             a.mean("time/update_gpu_ms", l.gpu_ms as f64);
-            a.last("data/samples", l.count as f64);
+            a.last("dagger/dataset_size", l.count as f64);
         } else if l.record == 1 {
             let p = if l.actor == 1 { "rollout" } else { "rollout_teacher" };
-            a.sum(&format!("{}/n_eps", p), n);
-            a.mean_w(&format!("{}/success/{}", p, self.skill), l.succ as f64, n);
+            a.sum(&format!("{}/n_episodes", p), n);
+            a.mean_w(&format!("{}/success_rate", p), l.succ as f64, n);
             a.mean_w(&format!("{}/collision_rate", p), l.coll as f64, n);
             a.mean_w(&format!("{}/timeout_rate", p), l.tout as f64, n);
             for (i, nm) in ["C0", "C1", "C2"].iter().enumerate() {
-                a.mean_w(&format!("{}/success_start/{}", p, nm), l.s_c[i] as f64, l.n_c[i] as f64);
+                a.mean_w(&format!("{}/success_rate_by_start_map/{}", p, nm), l.s_c[i] as f64, l.n_c[i] as f64);
             }
-            a.mean("dagger/disagree", l.disagree as f64);
-            a.last("data/samples", l.count as f64);
+            a.mean("dagger/action_mse", l.disagree as f64);
+            a.last("dagger/dataset_size", l.count as f64);
             a.mean("time/rollout_gpu_ms", l.gpu_ms as f64);
         } else {
             a.mean("time/eval_rollout_gpu_ms", l.gpu_ms as f64);
@@ -122,23 +123,24 @@ impl RunFolder {
     pub fn eval(&mut self, name: &str, actor: i32, tab: &Value, ckpt: Option<&Path>, wall: f64) {
         self.w.flush_row(wall);
         let who = if actor == 0 { "teacher" } else { "student" };
+        let ns = if actor == 0 { "eval_teacher" } else { "eval" };   // 학생(이 실행의 정책) = eval/*, 교사 기준 = eval_teacher/*
         let a = &mut self.w.agg;
-        a.last("time/iter", self.adam_t);
-        a.last("time/env_steps", self.env_steps);
-        a.last("time/wall", wall);
+        a.last("time/iterations", self.adam_t);
+        a.last("time/total_timesteps", self.env_steps);
+        a.last("time/time_elapsed", wall);
         let all = &tab["all"];
         let f = |v: &Value, k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(f64::NAN);
-        a.last(&format!("eval/{}/n_eps", who), f(all, "episodes"));
+        a.last(&format!("{}/n_episodes", ns), f(all, "episodes"));
         if f(all, "episodes") > 0.0 {
-            a.last(&format!("eval/{}/success/{}", who, self.skill), f(all, "success"));
-            a.last(&format!("eval/{}/collision_rate", who), f(all, "collision"));
-            a.last(&format!("eval/{}/timeout_rate", who), f(all, "timeout"));
-            a.last(&format!("eval/{}/ep_len_mean", who), f(all, "steps"));
+            a.last(&format!("{}/success_rate", ns), f(all, "success"));
+            a.last(&format!("{}/collision_rate", ns), f(all, "collision"));
+            a.last(&format!("{}/timeout_rate", ns), f(all, "timeout"));
+            a.last(&format!("{}/mean_ep_length", ns), f(all, "steps"));
         }
         if let Some(bc) = tab.get("by_completeness").and_then(|x| x.as_object()) {
             for (k, r) in bc {
                 if f(r, "episodes") > 0.0 {
-                    a.last(&format!("eval/{}/success_completion/{}", who, k.replace(' ', "")), f(r, "success"));
+                    a.last(&format!("{}/success_rate_by_completion/{}", ns, k.replace(' ', "")), f(r, "success"));
                 }
             }
         }

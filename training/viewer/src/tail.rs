@@ -201,10 +201,17 @@ impl Progress {
                 return;
             }
         };
-        let o = v.as_object().unwrap();
-        let g = |k: &str| o.get(k).and_then(|x| x.as_f64());
+        // 옛 키(2026-10-04 이전)는 표준 이름으로(trainfmt::keys::canon — 되돌림 호환)
+        let mut o: Vec<(String, f64)> = Vec::with_capacity(v.as_object().unwrap().len());
+        for (k, x) in v.as_object().unwrap() {
+            if let Some(x) = x.as_f64() {
+                let (nk, sc) = trainfmt::keys::canon(k);
+                o.push((nk, x * sc));
+            }
+        }
+        let g = |k: &str| o.iter().find(|e| e.0 == k).map(|e| e.1);
         let n = self.total();
-        let steps = g("time/env_steps").or(g("time/iter")).unwrap_or(n as f64);
+        let steps = g("time/total_timesteps").or(g("time/iterations")).unwrap_or(n as f64);
         // 되감기(8절 9번): 새 줄의 env_steps 보다 큰 앞 줄은 재개 전 미래 → 걷어낸다
         let mut keep = n;
         while keep > 0 && self.steps[keep - 1] > steps {
@@ -216,12 +223,12 @@ impl Progress {
             self.sig += 1;
         }
         let n = self.total();
-        self.iter.push(g("time/iter").unwrap_or(f64::NAN));
+        self.iter.push(g("time/iterations").unwrap_or(f64::NAN));
         self.steps.push(steps);
-        self.wall.push(g("time/wall").unwrap_or(f64::NAN));
+        self.wall.push(g("time/time_elapsed").unwrap_or(f64::NAN));
         self.ts.push(g("ts").unwrap_or(f64::NAN));
-        for (k, x) in o {
-            let Some(x) = x.as_f64() else { continue };
+        for (k, x) in &o {
+            let x = *x;
             let i = match self.kidx.get(k) {
                 Some(&i) => i,
                 None => {
@@ -231,7 +238,11 @@ impl Progress {
                     self.keys.len() - 1
                 }
             };
-            self.cols[i].push(x as f32);
+            if self.cols[i].len() == n + 1 {
+                self.cols[i][n] = x as f32;   // 옛 키 둘이 같은 새 키로(예: dagger/agree·disagree) — 뒤 것
+            } else {
+                self.cols[i].push(x as f32);
+            }
         }
         for c in &mut self.cols {
             if c.len() < n + 1 {
@@ -285,7 +296,7 @@ impl Progress {
         };
         let mut s = String::with_capacity(64 + bins.len() * (ks.len() + 4) * 10);
         s.push_str(&format!("{{\"start\":{},\"total\":{},\"sig\":{},\"rewound\":{},\"bad\":{},\"agg\":{},\"x\":{{", from, total, self.sig, self.rewound, self.bad, agg));
-        let xs: [(&str, &Vec<f64>); 4] = [("iter", &self.iter), ("env_steps", &self.steps), ("wall", &self.wall), ("ts", &self.ts)];
+        let xs: [(&str, &Vec<f64>); 4] = [("iterations", &self.iter), ("total_timesteps", &self.steps), ("time_elapsed", &self.wall), ("ts", &self.ts)];
         for (j, (name, v)) in xs.iter().enumerate() {
             if j > 0 {
                 s.push(',');

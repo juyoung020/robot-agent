@@ -145,20 +145,20 @@ GPU_TRAINING 4.1 의 장치 링 버퍼 한 칸이 한 줄이 된다. Rust 로그
 
 | 이름공간 | 키 (예) |
 |---|---|
-| `time/` | `iter`, `env_steps`(**필수**, 단조 증가), `wall`, `fps_env`, `iter_ms`, `rollout_ms`, `update_ms` |
-| `rollout/` | `n_eps`(**필수** — 가중 평균의 분모), `ep_ret_mean`, `ep_len_mean`, `success/<스킬>`, `n_eps/<스킬>`, `timeout_rate`, `drop_rate`, `contacts_per_ep`, `joint_limit_steps` |
+| `time/` | `iterations`, `total_timesteps`(**필수**, 단조 증가), `time_elapsed`, `fps`, `iter_ms`, `rollout_ms`, `update_ms`, `iterations_merged` |
+| `rollout/` | `n_episodes`(**필수** — 가중 평균의 분모), `ep_rew_mean`(판 보상 합 = 리턴), `ep_len_mean`, `success_rate`(스킬 여럿이면 `success_rate/<스킬>`), `collision_rate`, `timeout_rate`, `drop_rate`, `contacts_per_ep`, `joint_limit_steps` |
 | `reward/` | `<스킬>/<항>` = 판당 그 항의 합 평균(POLICY 3.3.4) |
-| `train/` | `policy_loss`, `value_loss`, `entropy`, `log_std_mean`, `approx_kl`, `clip_frac`, `explained_variance`, `grad_norm`, `lr`, `adv_std` |
-| `bc/`, `val/` | `flow_loss`, `end_bce`, `val/flow_loss`, `val/action_mse` |
-| `dagger/` | `round`, `beta`, `agree`(학생–교사 행동 거리), `new_samples` |
+| `train/` | `policy_gradient_loss`, `value_loss`, `entropy_loss`(= −엔트로피), `std`, `log_std`, `approx_kl`, `clip_fraction`, `explained_variance`, `grad_norm`, `learning_rate`, `advantage_std`, BC: `loss`, `flow_loss`, `end_bce` |
+| `val/`, `eval/`, `eval_teacher/` | `val/flow_loss`, `val/action_mse`; `eval/success_rate`, `eval/mean_ep_length`, `eval/collision_rate`(학생 = 이 실행의 정책), `eval_teacher/*`(교사 기준) |
+| `dagger/` | `round`, `beta`, `action_mse`(학생–교사 행동 거리), `dataset_size`, `new_samples` |
 | `rlft/` | `kl_to_bc`, `residual_norm`, `bc_weight` |
-| `curr/` | `stage_frac/<단계>`, `completion_start_mean` |
+| `curriculum/` | `stage`, `start_map_fraction/<C0..>`, `success_rate/<C0..>`, `start_completion_mean`, `goal_known_rate` |
 | `fp8/` | `amax/<층>`, `overflow/<층>`, `underflow/<층>`, `grad_cos` |
 | `gpu/` | `mem_used_mb`, `mem_reserved_mb` |
 | `log/` | `ring_dropped`, `replay_dropped`, `eps_dropped` — 로그를 버린 수. 0 이 아니면 화면에 적는다 |
 
-- 이름은 SB3 꼴(`<묶음>/<이름>`)로 둔다. grep 으로 찾기 쉽고 전투기 뷰어 코드를 옮기기 쉽다.
-- 다만 리턴은 `ep_ret_mean` 이다. SB3 의 `ep_rew_mean` 은 이름이 틀렸다(값이 판 합 = 리턴, 전투기 뷰어 `app.js` "Return" 칸 주석).
+- 이름은 **표준 RL 기록 이름**(Stable-Baselines3 logger 꼴 `<묶음>/<이름>`)을 그대로 쓴다(2026-10-04 바꿈 — 옛 이름 → 새 이름 표와 출처는 [training/viewer/README.md](../../training/viewer/README.md) "용어"). 옛 실행 폴더는 뷰어가 읽을 때 새 이름으로 바꾼다(`trainfmt::keys::canon`).
+- 리턴은 SB3 이름 그대로 `rollout/ep_rew_mean` 이다(값은 판 보상 합 = 리턴). 화면은 "Episode return" 으로 적어 "보상" 으로 읽히지 않게 한다(교훈 18).
 - **잰 것만 쓴다.** 그 업데이트에 그 스킬 판이 하나도 안 끝났으면 `success/<스킬>` 키를 **뺀다**. `null`·`0` 을 쓰지 않는다.
 - 업데이트가 초당 1 번보다 잦으면 여러 업데이트를 합쳐 한 줄로 쓴다(`time/iter` 는 마지막 값, 합친 수 `time/iters_in_row`). 9절 예산 때문이다.
 - 재개 때 학습기는 체크포인트 이터 뒤의 줄을 지운다(전투기 `RunLog` 의 trim 과 같음). 뷰어는 그래도 `env_steps` 가 줄어드는 줄을 걷어내고 그 수를 적는다(8절 9번).
@@ -515,7 +515,7 @@ trainfmt/             (쓰는 쪽과 같이 쓰는 형식 크레이트, 4.6)
 | 15 | 못 잰 검사를 "이상 없음" 으로 세지 않는다 | "6 가지에 걸린 것 없음" 이 재 보지도 않은 것을 포함했다 | 6.2 검사는 확인 n / 못 잰 n 을 따로 |
 | 16 | 빈 그래프와 고장 난 그래프를 가른다 | 첫 판까지 8 분 빈 화면을 배선 고장으로 의심했다 | "첫 판 약 이터 n" 안내 |
 | 17 | 재생 탭은 고른 실행을 **따라오고, 바뀌면 비운다** | 앞 실행의 기체가 남아 "안 따라온다" 로 보였다 | 6.3 |
-| 18 | 이름이 틀린 표준 키는 바로잡는다 | `ep_rew_mean` 은 리턴인데 "보상" 으로 읽혔다 | `ep_ret_mean` |
+| 18 | 표준 키는 그대로 쓰되 뜻을 화면에 적는다 | `ep_rew_mean` 은 리턴인데 "보상" 으로 읽혔다 | 키는 `rollout/ep_rew_mean`(SB3), 화면 이름 "Episode return" |
 | 19 | 뜻이 이웃한 두 계열은 색이 멀어야 한다 | 판정패 분홍과 피격 빨강이 겹쳐 안 갈렸다 | 성공·실패 종류 색표를 한 곳에 |
 | 20 | 기본 선택은 본학습 | 실험·가상 실행이 기본 화면을 가져갈 수 있었다 | `latest.txt`, `lab`·줄기는 후보 아님 |
 
@@ -593,9 +593,9 @@ trainfmt/             (쓰는 쪽과 같이 쓰는 형식 크레이트, 4.6)
 | V0 `trainfmt` + `fake_run` | **됨** | 되감기(trim 없는 재개), 반쪽 줄, 줄기, labs, .trp(프레임·f16 슬롯·MAP_RECT 지도), 평가 표, 씨앗 묶음. `"synthetic": true` |
 | V1 서버(목록·메타·이어 읽기·열 저장소) + 학습 탭(카드·곡선) | **됨** | 되감긴 줄 걷기, 반쪽 줄 안 받음, ino·길이로 새 파일 판정(sig), 64 KB 넘으면 gzip, 10 분 안 본 실행 내림 |
 | V2 성공 표 + 고장 무늬 검사 | **됨** | 표 숫자 = 직접 센 값. 검사 8 개, 못 잰 검사는 이유와 함께 따로 |
-| V3 `.trp` 재생 탭 | **화면은 됨, 쓰는 쪽은 fake_run 뿐** | 로봇(sgview 모델)·참/slam 궤적·손끝·물체 칸·자라는 지도·보상 띠·HUD·시점 4. 진짜 학습기의 판 기록은 남은 일 |
+| V3 `.trp` 재생 탭 | **됨 — 진짜 판·진짜 장면** | 학습 뒤 기록 도구 `training/viewer/tools/record_replay`(`record_ppo`·`record_bc`, 학습기 공개 헤더로 체크포인트를 돌림)가 A2 교사·G5 영상 학생 판을 `s_eval/` 에 씀: 참 장면(방 벽·가구·컵), 자라는 지도(G2 로그 오즈 → MAP_RECT), 지도 벽 선분, 물체 기억 칸, 참/slam 자세, 팔 관절, 목표, 학생 카메라 JPEG. BEHAVIOR 장면 배치(`scene_b1k`, RASC)도 봄. 학습 중 판 기록은 남은 일 |
 | V4 SSE 실시간 + 비교 탭 | **됨** | 실제 `ppo_run` 짧은 실행으로 화면 갱신 확인. 씨앗 묶음 평균 ± σ 띠 |
-| V5 평가 표 | **됨(bc_run)** | `bc_run` 평가마다 `evals/*.json`. 영상 칸은 화면만(쓰는 쪽 없음), FP8 묶음은 키가 오면 그림(지금 학습기는 `fp8/*` 감시 값을 안 냄) |
+| V5 평가 표·영상 칸 | **됨** | `bc_run` 평가마다 `evals/*.json`. 영상 칸은 `record_bc` 가 학생이 본 카메라 2 장(2 Hz JPEG)을 씀. FP8 묶음은 키가 오면 그림(지금 학습기는 `fp8/*` 감시 값을 안 냄) |
 
 학습기가 지금 쓰는 것(4절 중):
 
@@ -609,6 +609,8 @@ trainfmt/             (쓰는 쪽과 같이 쓰는 형식 크레이트, 4.6)
 | `episodes.jsonl`, `replays/*.trp`, `s_<줄기>/` | — | — |
 
 설계와 다르게 한 것:
+- 키 이름과 화면 말은 표준 RL 도구 이름(SB3 logger, TensorBoard·W&B 화면 말)으로 바꿨다(2026-10-04). 옛 이름 → 새 이름 표와 출처는 viewer README "용어". 이 문서 4.2 표는 새 이름이다.
+- `.trp` 확장(되돌림 호환): 덧붙인 섹션 `[u32 frame][u32 len][바이트]`(`segs` = 지도 벽 선분 n × (x0, y0, x1, y1) f32), 머리 `scene`(상자·방), `slot_z`, `source`. 실제 G1 판의 열은 4.4 표와 조금 다르다(`wl`·`wr` 바퀴 각, `r_total`, `completion`·`map_seen`·`goal_known`).
 - 곡선은 **축 하나**다. 6.2 의 "오른쪽 축에 겹침"(보상 항목 + 리턴·성공률, EV + 가치 손실)은 그림을 나눴다(이중 축은 눈금이 서로를 속인다).
 - SSE 는 연결마다 한 스레드가 1 초마다 stat 한다(5.8 의 감시 스레드 하나 + 방송 대신). 클라이언트마다 줄 커서가 따로라 다시 붙어도 줄이 빠지거나 겹치지 않는다.
 - 실행 찾기는 뿌리 밑 깊이 4 까지(`~/ra_ppoout/g5/t4/on_s1` 같은 지금의 실행 나무를 그대로 `--root` 로 볼 수 있게). 실행 이름 = `<뿌리 이름>/<상대 경로>`.
@@ -616,9 +618,9 @@ trainfmt/             (쓰는 쪽과 같이 쓰는 형식 크레이트, 4.6)
 - 판마다 줄이 없는 학습기라 `rollout/success/<스킬>` 등은 장치 링의 바퀴 합계(모집단)다. DAgger 의 교사 몬 판은 줄기 폴더 대신 `rollout_teacher/*` 키로 갈랐다(판 줄이 없으므로).
 
 남은 일:
-1. 장치 쪽 판 기록(판 끝마다 줄, 고른 환경의 프레임 링) → `episodes.jsonl`·`.trp`·`s_eval/`. CUDA·그래프 변경이라 이번에 하지 않음(FP8 작업과 겹침).
+1. **학습 중** 장치 쪽 판 기록(판 끝마다 줄, 고른 환경의 프레임 링) → 본 줄기 `episodes.jsonl`·`.trp`. CUDA·그래프 변경이라 하지 않음. 지금은 학습 뒤 `record_replay` 로 평가 판(`s_eval/`)만.
 2. PPO 장치 기록에 없는 키: `train/explained_variance`, `log/*_dropped`, `reward/<스킬>/<항>`, 접촉 수, `fp8/*` 감시 값.
-3. 영상(JPEG) 쓰는 쪽, 큰 progress 첫 읽기의 "읽는 중 n %", 그리퍼 → 두 관절 식(URDF 확인), training/README 의 `args.json` → `run.json` 정리(12절)는 README 에 한 줄 더함.
+3. 환경 스텝이 보상 합만 내서 `.trp` 의 보상 항목은 `r_total` 하나. 큰 progress 첫 읽기의 "읽는 중 n %", 그리퍼 → 두 관절 식(URDF 확인), training/README 의 `args.json` → `run.json` 정리(12절)는 README 에 한 줄 더함.
 
 ## 출처
 

@@ -1,0 +1,117 @@
+// record_bc — BC 학생(student-lite 또는 G5 영상 학생) 체크포인트로 판 몇 개를 .trp 로 남긴다(학습 뷰어 재생 탭, TRAIN_VIEWER.md 4.4).
+// 학습기(libbc)의 공개 헤더(bc.h, bc_capi.h, bc_render.h)만 쓰고 고치지 않는다: 그래프 없이 Bc::rollout_step(t, 학생) 을 한 스텝씩 부르고
+// 스텝마다 환경·지도를 내려받는다. 학생이 움직이고(교사 앞 계산은 라벨용으로 그대로 돎) 기록 버퍼에는 쓰지 않는다(record 0).
+// 영상 학생이면 학생이 본 카메라 2 장(같은 bcr 렌더, 256²)을 0.5 s 마다 JPEG 으로 img 섹션에 싣는다.
+//
+//   record_bc --student STUDENT.bin --out RUN_DIR [--config config.json] [--teacher CKPT] [--split eval] [--episodes 8] [--n-env 64] [--track 8]
+//             [--map 0.2 0.6] [--seed 7] [--no-images] [--max-steps 3000]
+#include <cuda_runtime.h>
+
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include "bc.h"
+#include "bc_capi.h"
+#include "bc_render.h"
+#include "g1_rec.h"
+
+#define RCK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) { std::fprintf(stderr, "CUDA %s at %s:%d\n", cudaGetErrorString(e_), __FILE__, __LINE__); std::exit(1); } } while (0)
+
+template <class T> static std::vector<T> dl(const T* d, size_t n) { std::vector<T> h(n); RCK(cudaMemcpy(h.data(), d, n * sizeof(T), cudaMemcpyDeviceToHost)); return h; }
+static double jget(const std::string& t, const char* key, double d) {
+  const std::string k = std::string("\"") + key + "\"";
+  size_t p = t.find(k);
+  if (p == std::string::npos) return d;
+  p = t.find(':', p + k.size());
+  return p == std::string::npos ? d : std::strtod(t.c_str() + p + 1, nullptr);
+}
+static std::string jgets(const std::string& t, const char* key) {
+  const std::string k = std::string("\"") + key + "\"";
+  size_t p = t.find(k);
+  if (p == std::string::npos) return "";
+  p = t.find('"', t.find(':', p + k.size()) + 1);
+  const size_t e = t.find('"', p + 1);
+  return p == std::string::npos || e == std::string::npos ? "" : t.substr(p + 1, e - p - 1);
+}
+static std::string tilde(std::string s) { if (!s.empty() && s[0] == '~') s = std::string(std::getenv("HOME")) + s.substr(1); return s; }
+
+int main(int argc, char** argv) {
+  std::string student, out, cfgp, teacher, split = "eval", text_table;
+  int episodes = 8, N = 64, track = 8, max_steps = 3000;
+  float p0 = 0.2f, p1 = 0.6f;
+  uint64_t seed = 7;
+  bool images = true;
+  for (int a = 1; a < argc; ++a) {
+    const std::string s = argv[a];
+    auto nx = [&]() { return a + 1 < argc ? std::string(argv[++a]) : std::string(); };
+    if (s == "--student") student = nx(); else if (s == "--out") out = nx(); else if (s == "--config") cfgp = nx(); else if (s == "--teacher") teacher = nx();
+    else if (s == "--split") split = nx(); else if (s == "--episodes") episodes = std::stoi(nx()); else if (s == "--n-env") N = std::stoi(nx());
+    else if (s == "--track") track = std::stoi(nx()); else if (s == "--map") { p0 = std::stof(nx()); p1 = std::stof(nx()); } else if (s == "--seed") seed = std::stoull(nx());
+    else if (s == "--no-images") images = false; else if (s == "--max-steps") max_steps = std::stoi(nx()); else if (s == "--text-table") text_table = nx();
+  }
+  if (student.empty() || out.empty()) { std::fprintf(stderr, "usage: record_bc --student STUDENT.bin --out RUN_DIR [--config config.json] ...\n"); return 2; }
+  if (cfgp.empty()) { const size_t sl = student.rfind('/'); cfgp = (sl == std::string::npos ? std::string(".") : student.substr(0, sl)) + "/config.json"; }
+  std::string cfg;
+  { std::ifstream f(cfgp); std::stringstream ss; ss << f.rdbuf(); cfg = ss.str(); }
+  if (teacher.empty()) teacher = tilde(jgets(cfg, "teacher"));
+  BcConfig c{};
+  c.n_env = N; c.horizon = 64; c.stage = (int)jget(cfg, "stage", 2); c.use_map = (int)jget(cfg, "use_map", 2); c.teacher_use_map = (int)jget(cfg, "teacher_use_map", 2);
+  c.student_goal = (int)jget(cfg, "student_goal", 0); c.use_graphs = 0; c.log_ring = 16; c.mb = 64; c.upd_steps = 1; c.dw_chunk = 1024; c.store_render = 1;   // 영상 학생은 store_render 1 이 필요(기록은 안 하므로 버퍼만)
+  c.cap = 4096; c.seed = 1; c.env_seed = seed; c.lr = 0.f; c.adam_b1 = 0.9f; c.adam_b2 = 0.999f; c.adam_eps = 1e-8f; c.max_grad_norm = 1.f;
+  c.map_p0 = p0; c.map_p1 = p1; c.map_kmin = 1; c.map_kmax = 8; c.map_reveal_r = 1.5f; c.fp8 = (int)jget(cfg, "fp8", 0);
+  c.vision = (int)jget(cfg, "vision", 0); c.head = (int)jget(cfg, "head", 0); c.chunk = (int)jget(cfg, "chunk", 16); c.flow_steps = (int)jget(cfg, "flow_steps", 10);
+  c.text = (int)jget(cfg, "text", 0); c.render_profile = (int)jget(cfg, "render_profile", 1); c.render_batch = N; c.img_dim = 16; c.sample_render = 1;
+  c.vit_prec = (int)jget(cfg, "vit_prec", 0);   // G5 영상 학생은 vit_prec 0(FP32 누산)으로 학습했다(BC README G6) — 설정에 없으면 0
+  void* h = bc_create(&c);
+  bc::Bc& B = *static_cast<bc::Bc*>(h);
+  if (bc_load_teacher(h, teacher.c_str())) { std::fprintf(stderr, "teacher %s failed\n", teacher.c_str()); return 2; }
+  if (c.text) {
+    if (text_table.empty()) text_table = tilde(jgets(cfg, "text_table"));
+    if (text_table.empty()) text_table = std::string(REPO_DIR) + "/training/BC/data/instr_a2.f32";
+    if (bc_load_text_table(h, text_table.c_str()) <= 0) { std::fprintf(stderr, "text table %s failed\n", text_table.c_str()); return 2; }
+  }
+  if (bc_load_student(h, student.c_str())) { std::fprintf(stderr, "student %s failed\n", student.c_str()); return 2; }
+  bc_reset_env(h, seed);
+  bc_set_mode(h, 1, 0);
+  RCK(cudaDeviceSynchronize());
+
+  rec::Out o(out, split);
+  const std::string src = rec::Obj().str("kind", "bc_student").str("student", student).str("teacher", teacher).str("config", cfgp).num("vision", c.vision).num("head", c.head)
+                              .num("text", c.text).num("use_map", c.use_map).raw("map_p", "[" + rec::jnum(p0) + "," + rec::jnum(p1) + "]").num("seed", (double)seed).done();
+  rec::G1Rec R(N, track, o, "student", src);
+  R.home_prefix = "A" + std::to_string(c.stage) + "_room";
+  const bool cams = images && c.vision && B.rnd;
+  std::printf("record_bc: %s (vision %d head %d text %d) teacher %s  A%d  N %d track %d -> %s%s\n", student.c_str(), c.vision, c.head, c.text, teacher.c_str(), c.stage, N,
+              track, o.rep.c_str(), cams ? "  + camera JPEG 2 Hz" : "");
+  std::vector<float> fs;
+  std::vector<int> iv;
+  std::vector<uint64_t> rg;
+  gmap::MapHost mh;
+  std::vector<uint8_t> rgb[2];
+  const int T = B.T, K = std::min(track, N), RES = bcr::RES;
+  for (int k = 0; k < max_steps && R.finished < episodes; ++k) {
+    const int t = k % T;
+    RCK(cudaDeviceSynchronize());
+    B.env->download(fs, iv, rg);
+    B.map->download(mh);
+    B.rollout_step(t, true);
+    RCK(cudaDeviceSynchronize());
+    if (cams) {   // 이 스텝에 학생이 본 그림(rs_roll = 스텝 전 상태): 추적하는 판 0..K-1 을 한 번 더 그림(다음 스텝 인코더가 다시 그리므로 정책에 영향 없음)
+      bcr::render(B.rnd, B.rs_roll, K, 0);
+      RCK(cudaDeviceSynchronize());
+      for (int cam = 0; cam < 2; ++cam) rgb[cam] = dl(bcr::rgb(B.rnd, cam), (size_t)K * RES * RES * 3);
+    }
+    const std::vector<float> act = dl(B.act_env, (size_t)env::N_ACT * N);
+    const std::vector<float> rew = dl(B.rew, N);
+    const std::vector<int> done = dl(B.done, N);
+    R.step(fs, iv, rg, mh, act, rew, done, {}, c.stage,
+           [&](int i, int cam) -> const uint8_t* { return cams && i < K ? rgb[cam].data() + (size_t)i * RES * RES * 3 : nullptr; }, cams ? RES : 0);
+  }
+  std::printf("record_bc: %d episodes written (success %d, collision %d, timeout %d) -> %s\n", R.finished, R.n_success, R.n_coll, R.n_tout, o.eps.c_str());
+  bc_destroy(h);
+  return R.finished ? 0 : 1;
+}

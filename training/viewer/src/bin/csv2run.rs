@@ -73,50 +73,51 @@ fn ppo(src: &Path, dst: &Path, cfg: &Value, name: &str) -> usize {
         }
         let a = &mut w.agg;
         let n = g("n_eps");
-        a.last("time/iter", it);
-        a.last("time/env_steps", g("env_steps"));
-        a.last("time/wall", wall);
+        a.last("time/iterations", it);
+        a.last("time/total_timesteps", g("env_steps"));
+        a.last("time/time_elapsed", wall);
         a.mean("time/rollout_ms", g("rollout_ms"));
         a.mean("time/update_ms", g("update_ms"));
         a.mean("time/iter_ms", g("rollout_ms") + g("update_ms"));
         a.mean("time/fps_gpu", g("gpu_env_steps_per_s"));
-        a.sum("rollout/n_eps", n);
-        a.mean_w("rollout/ep_ret_mean", g("ep_ret"), n);
+        a.sum("rollout/n_episodes", n);
+        a.mean_w("rollout/ep_rew_mean", g("ep_ret"), n);
         a.mean_w("rollout/ep_len_mean", g("ep_len"), n);
-        a.mean_w("rollout/success/approach", g("succ"), n);
+        a.mean_w("rollout/success_rate", g("succ"), n);
         a.mean_w("rollout/collision_rate", g("coll"), n);
         a.mean_w("rollout/timeout_rate", g("tout"), n);
-        a.mean("rollout/step_rew_mean", g("rew_mean"));
+        a.mean("rollout/step_reward_mean", g("rew_mean"));
         for (i, nm) in ["C0", "C1", "C2"].iter().enumerate() {
             let nc = g(&format!("n_c{}", i));
             if nc.is_finite() {
-                a.sum(&format!("curr/n_eps/{}", nm), nc);
-                a.mean_w(&format!("curr/success/{}", nm), g(&format!("succ_c{}", i)), nc);
-                a.mean_w(&format!("curr/collision/{}", nm), g(&format!("coll_c{}", i)), nc);
-                a.mean_w(&format!("curr/stage_frac/{}", nm), nc / n.max(1.0), n);
+                a.sum(&format!("curriculum/n_episodes/{}", nm), nc);
+                a.mean_w(&format!("curriculum/success_rate/{}", nm), g(&format!("succ_c{}", i)), nc);
+                a.mean_w(&format!("curriculum/collision_rate/{}", nm), g(&format!("coll_c{}", i)), nc);
+                a.mean_w(&format!("curriculum/start_map_fraction/{}", nm), nc / n.max(1.0), n);
             }
         }
-        a.last("curr/stage_idx", si as f64);
-        a.last("curr/env_stage", g("stage"));
-        a.mean("curr/goal_known", g("goal_known"));
+        a.last("curriculum/stage", si as f64);
+        a.last("curriculum/env_level", g("stage"));
+        a.mean("curriculum/goal_known_rate", g("goal_known"));
         a.mean("map/task_confirmed", g("map_task"));
         a.mean("train/approx_kl", g("kl"));
-        a.mean("train/clip_frac", g("clipfrac"));
-        a.mean("train/entropy", g("entropy"));
-        a.mean("train/policy_loss", g("pg_loss"));
+        a.mean("train/clip_fraction", g("clipfrac"));
+        a.mean("train/entropy_loss", -g("entropy"));
+        a.mean("train/policy_gradient_loss", g("pg_loss"));
         a.mean("train/value_loss", g("v_loss"));
         a.mean("train/grad_norm", g("grad_norm"));
-        a.mean("train/lr", g("lr"));
-        a.mean("train/adv_std", g("adv_std"));
+        a.mean("train/learning_rate", g("lr"));
+        a.mean("train/advantage_std", g("adv_std"));
         a.mean("train/value_mean", g("value_mean"));
+        a.mean("train/std", 0.5 * (g("std0") + g("std1")));
         a.mean("train/std/vx", g("std0"));
         a.mean("train/std/wz", g("std1"));
         if g("std0") > 0.0 && g("std1") > 0.0 {
-            a.mean("train/log_std_mean", (g("std0").ln() + g("std1").ln()) / 2.0);
+            a.mean("train/log_std", (g("std0").ln() + g("std1").ln()) / 2.0);
         }
         if w.due(wall) {
             if last.0 > 0.0 && wall > last.0 {
-                w.agg.last("time/fps_env", (g("env_steps") - last.1) / (wall - last.0));
+                w.agg.last("time/fps", (g("env_steps") - last.1) / (wall - last.0));
             }
             last = (wall, g("env_steps"));
         }
@@ -141,7 +142,7 @@ fn bc(src: &Path, dst: &Path, cfg: &Value, name: &str) -> usize {
         "rounds": cfg.get("dagger_iters"), "dagger": dagger,
         "precision": {"fp8": cfg.get("fp8").cloned().unwrap_or(json!(0)), "vit_prec": cfg.get("vit_prec"), "default": "bf16"},
         "refs": {"train/grad_norm": cfg.get("max_grad_norm").cloned().unwrap_or(json!(1.0))},
-        "x_default": "time/iter",
+        "x_default": "time/iterations",
         "logged": {"progress": true, "episodes": false, "replays": false, "why": "옮긴 실행: log.csv 는 롤아웃·갱신 합계만 담는다"},
     });
     let mut w = RunWriter::create(dst, meta, false, false).unwrap();
@@ -170,28 +171,28 @@ fn bc(src: &Path, dst: &Path, cfg: &Value, name: &str) -> usize {
             adam_t = g("adam_t");
         }
         let a = &mut w.agg;
-        a.last("time/iter", adam_t);
-        a.last("time/env_steps", steps);
-        a.last("time/wall", wall);
+        a.last("time/iterations", adam_t);
+        a.last("time/total_timesteps", steps);
+        a.last("time/time_elapsed", wall);
         let d: String = ph.chars().filter(|c| c.is_ascii_digit()).collect();
         a.last("dagger/round", d.parse().unwrap_or(0.0));
         let n = g("n_eps");
         if kind == 1 {
-            a.mean("bc/loss", g("loss"));
+            a.mean("train/loss", g("loss"));
             a.mean("train/grad_norm", g("grad_norm"));
             a.mean("time/update_gpu_ms", g("gpu_ms"));
-            a.last("data/samples", g("count"));
+            a.last("dagger/dataset_size", g("count"));
         } else if g("record") as i32 == 1 {
             let p = if g("actor") as i32 == 1 { "rollout" } else { "rollout_teacher" };
-            a.sum(&format!("{}/n_eps", p), n);
-            a.mean_w(&format!("{}/success/approach", p), g("succ"), n);
+            a.sum(&format!("{}/n_episodes", p), n);
+            a.mean_w(&format!("{}/success_rate", p), g("succ"), n);
             a.mean_w(&format!("{}/collision_rate", p), g("coll"), n);
             a.mean_w(&format!("{}/timeout_rate", p), g("tout"), n);
             for (i, nm) in ["C0", "C1", "C2"].iter().enumerate() {
-                a.mean_w(&format!("{}/success_start/{}", p, nm), g(&format!("succ_c{}", i)), g(&format!("n_c{}", i)));
+                a.mean_w(&format!("{}/success_rate_by_start_map/{}", p, nm), g(&format!("succ_c{}", i)), g(&format!("n_c{}", i)));
             }
-            a.mean("dagger/disagree", g("disagree"));
-            a.last("data/samples", g("count"));
+            a.mean("dagger/action_mse", g("disagree"));
+            a.last("dagger/dataset_size", g("count"));
             a.mean("time/rollout_gpu_ms", g("gpu_ms"));
         } else {
             a.mean("time/eval_rollout_gpu_ms", g("gpu_ms"));

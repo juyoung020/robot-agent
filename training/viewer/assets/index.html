@@ -11,15 +11,15 @@
   <div class="row1">
     <b class="brand">trainview</b>
     <nav id="tabs">
-      <button data-tab="train" class="on">학습</button>
-      <button data-tab="replay">재생</button>
-      <button data-tab="compare">비교</button>
+      <button data-tab="train" class="on" title="학습">Training</button>
+      <button data-tab="replay" title="재생: 판 하나를 3D 로">Replay</button>
+      <button data-tab="compare" title="비교: 실행 여럿">Compare</button>
     </nav>
     <span id="runname" class="mono"></span>
     <span id="badges"></span>
     <span class="grow"></span>
     <span id="status" class="muted mono"></span>
-    <span id="conn" class="pill" title="실시간 연결(SSE). 끊기면 3 초 폴링">—</span>
+    <span id="conn" class="pill" title="live connection (SSE); falls back to 3 s polling">—</span>
   </div>
   <div id="pickers">
     <div class="pick"><span class="lab">teacher</span><div id="pick_teacher" class="chips"></div></div>
@@ -34,33 +34,33 @@
   <div id="metaline" class="muted"></div>
   <div id="cards" class="cards"></div>
   <div class="bar">
-    <label>x 축 <select id="xmode"><option value="iter">iteration</option><option value="env_steps" selected>env_steps</option><option value="wall">벽시계(s)</option></select></label>
-    <label>EMA <input id="ema" type="range" min="0" max="0.99" step="0.01" value="0.6"><span id="ema_v" class="mono"></span></label>
-    <label class="grow">시점 커서 <input id="cursor" type="range" min="0" max="1000" value="1000" class="grow"><span id="cursor_v" class="mono"></span></label>
-    <button id="cursor_off" title="커서를 끝으로">끝</button>
+    <label title="x 축">X-axis <select id="xmode"><option value="iter">time/iterations</option><option value="env_steps" selected>time/total_timesteps</option><option value="wall">time/time_elapsed (relative)</option></select></label>
+    <label title="EMA 평활 (TensorBoard·W&B 의 Smoothing)">Smoothing <input id="ema" type="range" min="0" max="0.99" step="0.01" value="0.6"><span id="ema_v" class="mono"></span></label>
+    <label class="grow" title="시점 커서: 카드·검사·표·재생 목록을 이 시점까지로 자름">Step cursor <input id="cursor" type="range" min="0" max="1000" value="1000" class="grow"><span id="cursor_v" class="mono"></span></label>
+    <button id="cursor_off" title="커서를 끝(실시간)으로">Latest</button>
   </div>
-  <details id="checks_box" open><summary>고장 무늬 검사 <span id="checks_sum" class="muted"></span></summary><div id="checks"></div></details>
+  <details id="checks_box" open><summary title="고장 무늬 검사">Training health checks <span id="checks_sum" class="muted"></span></summary><div id="checks"></div></details>
   <div id="note_first" class="note" hidden></div>
   <div id="groups"></div>
   <section class="panel">
-    <h3>성공 표 — <span id="tab_title">스킬 × 시작 지도 완성도</span> <span class="warn-s">⚠ sample</span></h3>
+    <h3 title="성공 표: 스킬 × 처음 지도 완성도 (판 기록 표본)">Success rate table — <span id="tab_title">skill × initial map completeness</span> <span class="warn-s">⚠ logged sample</span></h3>
     <div class="bar">
-      <label>줄기 <select id="t_stream"></select></label>
-      <label>행 <select id="t_rows"><option>skill</option><option>home</option><option>stage</option><option>map_mode</option><option>driver</option></select></label>
-      <label>열 <select id="t_cols"><option value="bin">완성도 칸</option><option>map_mode</option><option>stage</option><option>home</option><option>driver</option><option value="all">전체</option></select></label>
-      <label>집 <select id="t_home"><option value="">전체</option></select></label>
-      <label>단계 <select id="t_stage"><option value="">전체</option></select></label>
-      <label>값 <select id="t_metric"><option value="success">성공률 SR</option><option value="spl">SPL</option><option value="collision">충돌률</option><option value="timeout">시간 초과율</option><option value="t">평균 t (s)</option><option value="ret">리턴</option><option value="contacts">접촉</option></select></label>
-      <label>칸마다 최근 <input id="t_last" type="range" min="0" max="6" step="1" value="3"><span id="t_last_v" class="mono"></span> 판</label>
+      <label title="줄기: 집계를 따로 하는 판 묶음(main / eval / teacher)">Split <select id="t_stream"></select></label>
+      <label title="행">Rows <select id="t_rows"><option>skill</option><option>home</option><option>stage</option><option>map_mode</option><option>driver</option></select></label>
+      <label title="열">Columns <select id="t_cols"><option value="bin">map completeness bin</option><option>map_mode</option><option>stage</option><option>home</option><option>driver</option><option value="all">all</option></select></label>
+      <label title="집(장면)">Home <select id="t_home"><option value="">all</option></select></label>
+      <label title="커리큘럼 단계">Stage <select id="t_stage"><option value="">all</option></select></label>
+      <label title="칸 값">Metric <select id="t_metric"><option value="success">success_rate</option><option value="spl">SPL</option><option value="collision">collision_rate</option><option value="timeout">timeout_rate</option><option value="t">ep_len_mean (s)</option><option value="ret">ep_rew_mean</option><option value="contacts">contacts_per_ep</option></select></label>
+      <label title="칸마다 최근 N 판">Last <input id="t_last" type="range" min="0" max="6" step="1" value="3"><span id="t_last_v" class="mono"></span> episodes per cell</label>
     </div>
     <div id="t_note" class="muted"></div>
     <div id="table" class="tablewrap"></div>
   </section>
   <section class="panel">
-    <h3>평가 표 <span class="muted">evals/*.json</span></h3>
+    <h3 title="평가 표">Evaluation <span class="muted">evals/*.json</span></h3>
     <div id="evals"></div>
   </section>
-  <details class="panel"><summary>사건 기록 <span class="muted">events.txt</span></summary><pre id="events" class="mono small"></pre></details>
+  <details class="panel"><summary title="사건 기록">Events <span class="muted">events.txt</span></summary><pre id="events" class="mono small"></pre></details>
   <details class="panel"><summary>run.json</summary><pre id="metajson" class="mono small"></pre></details>
 </section>
 
@@ -68,29 +68,29 @@
 <section id="tab_replay" class="tab">
   <div class="replay">
     <aside id="rp_side">
-      <div class="muted small">실행 <b id="rp_run" class="mono"></b></div>
+      <div class="muted small">Run <b id="rp_run" class="mono"></b></div>
       <div class="bar wrap">
-        <label>줄기 <select id="rp_stream"></select></label>
-        <label>스킬 <select id="rp_skill"><option value="">전체</option></select></label>
-        <label>결과 <select id="rp_outcome"><option value="">전체</option></select></label>
-        <label>집 <select id="rp_home"><option value="">전체</option></select></label>
-        <label><input type="checkbox" id="rp_near"> 커서 이터 근처</label>
+        <label title="줄기">Split <select id="rp_stream"></select></label>
+        <label title="스킬">Skill <select id="rp_skill"><option value="">all</option></select></label>
+        <label title="결과">Outcome <select id="rp_outcome"><option value="">all</option></select></label>
+        <label title="집(장면)">Home <select id="rp_home"><option value="">all</option></select></label>
+        <label title="커서 이터 근처"><input type="checkbox" id="rp_near"> near cursor step</label>
       </div>
       <div id="rp_note" class="muted small"></div>
       <div id="rp_list" class="list"></div>
     </aside>
     <div id="rp_main">
-      <div id="rp_view"><div id="rp_hud" class="hud mono"></div><div id="rp_cams" class="cams"></div><div id="rp_empty" class="empty">왼쪽 목록에서 판을 고르세요</div></div>
+      <div id="rp_view"><div id="rp_hud" class="hud mono"></div><div id="rp_cams" class="cams"></div><div id="rp_empty" class="empty">Pick an episode from the list</div></div>
       <div class="bar">
         <button id="rp_play">▶</button>
-        <button id="rp_prev" title="한 프레임 뒤 (←)">◀︎|</button>
-        <button id="rp_next" title="한 프레임 앞 (→)">|▶︎</button>
+        <button id="rp_prev" title="previous frame (←)">◀︎|</button>
+        <button id="rp_next" title="next frame (→)">|▶︎</button>
         <input id="rp_time" type="range" min="0" max="0" value="0" class="grow">
         <span id="rp_tlabel" class="mono"></span>
         <select id="rp_speed"><option>0.25</option><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select>
-        <select id="rp_camsel" title="시점 (숫자 키 1–4)"><option value="1">1 지도 위</option><option value="2">2 따라감</option><option value="3">3 손목</option><option value="4" selected>4 자유</option></select>
-        <label><input type="checkbox" id="rp_ee" checked> 손끝 궤적</label>
-        <label><input type="checkbox" id="rp_slam" checked> slam 궤적</label>
+        <select id="rp_camsel" title="camera (keys 1–4)"><option value="1">1 top-down</option><option value="2">2 follow</option><option value="3">3 wrist</option><option value="4" selected>4 free orbit</option></select>
+        <label><input type="checkbox" id="rp_ee" checked> end-effector path</label>
+        <label><input type="checkbox" id="rp_slam" checked> SLAM pose path</label>
       </div>
       <canvas id="rp_strip" height="110"></canvas>
       <div id="rp_legend" class="legend small"></div>
@@ -102,19 +102,19 @@
 <section id="tab_compare" class="tab">
   <div class="cmp">
     <aside id="cmp_side">
-      <div class="muted small">실행을 여럿 고르세요. 같은 <code>group</code>(씨앗만 다름)은 평균 ± 표준편차 띠로 묶을 수 있습니다.</div>
+      <div class="muted small">Select runs. Runs with the same <code>group</code> (different seeds) can be grouped as mean ± std.</div>
       <div id="cmp_runs" class="list"></div>
     </aside>
     <div id="cmp_main">
       <div class="bar wrap">
-        <label>지표 A <select id="cmp_a"></select></label>
-        <label>지표 B <select id="cmp_b"></select></label>
-        <label>x 축 <select id="cmp_x"><option value="env_steps">env_steps</option><option value="wall">처음부터 지난 시간(s)</option><option value="ts">벽시계</option><option value="iter">iteration</option></select></label>
-        <label><input type="checkbox" id="cmp_group" checked> 씨앗 묶음 띠</label>
-        <label>EMA <input id="cmp_ema" type="range" min="0" max="0.99" step="0.01" value="0.6"></label>
+        <label>Metric A <select id="cmp_a"></select></label>
+        <label>Metric B <select id="cmp_b"></select></label>
+        <label>X-axis <select id="cmp_x"><option value="env_steps">time/total_timesteps</option><option value="wall">relative time (s)</option><option value="ts">wall clock</option><option value="iter">time/iterations</option></select></label>
+        <label title="씨앗 묶음 띠"><input type="checkbox" id="cmp_group" checked> Group runs (mean ± std)</label>
+        <label>Smoothing <input id="cmp_ema" type="range" min="0" max="0.99" step="0.01" value="0.6"></label>
       </div>
       <div id="cmp_charts"></div>
-      <h3>비교 표 <span class="muted small">실행마다 마지막 10 % 줄 평균</span></h3>
+      <h3 title="비교 표">Run comparer <span class="muted small">mean over the last 10 % of rows</span></h3>
       <div id="cmp_table" class="tablewrap"></div>
     </div>
   </div>

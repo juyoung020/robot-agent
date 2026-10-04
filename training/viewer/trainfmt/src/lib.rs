@@ -13,6 +13,7 @@
 //! 쓰는 쪽은 **덧붙이기**(progress, episodes)와 **이름 바꾸기**(run.json, evals, replays: `.tmp` 에 쓰고 rename)만 한다.
 //! 이 크레이트는 학습 고리와 무관하다: 학습기의 로그 스레드(이미 비동기인 경로)에서만 부른다.
 
+pub mod keys;
 pub mod trp;
 
 use serde_json::{json, Map, Value};
@@ -157,7 +158,7 @@ impl Agg {
             }
         }
         if self.n > 1 {
-            o.insert("time/iters_in_row".into(), json!(self.n));
+            o.insert("time/iterations_merged".into(), json!(self.n));
         }
         self.n = 0;
         o
@@ -279,7 +280,7 @@ impl RunWriter {
         let mut cut = 0usize;
         if let Ok(f) = fs::File::open(&path) {
             for l in BufReader::new(f).lines().map_while(Result::ok) {
-                let it = serde_json::from_str::<Value>(&l).ok().and_then(|v| v.get("time/iter").and_then(|x| x.as_f64()));
+                let it = serde_json::from_str::<Value>(&l).ok().and_then(|v| v.get("time/iterations").or(v.get("time/iter")).and_then(|x| x.as_f64()));
                 match it {
                     Some(i) if i < iter => {
                         kept.push_str(&l);
@@ -322,13 +323,13 @@ impl RunWriter {
             return;
         }
         if self.trim_pending {
-            let it = self.agg.get("time/iter").unwrap_or(0.0);
-            let st = self.agg.get("time/env_steps").unwrap_or(0.0);
+            let it = self.agg.get("time/iterations").unwrap_or(0.0);
+            let st = self.agg.get("time/total_timesteps").unwrap_or(0.0);
             self.trim_from(it, st);
         }
         let mut row = self.agg.take_row();
         row.insert("ts".into(), json!(round_sig(now_ts())));
-        row.entry("time/wall").or_insert(json!(round_sig(wall)));
+        row.entry("time/time_elapsed").or_insert(json!(round_sig(wall)));
         if let Some(p) = &mut self.progress {
             let _ = writeln!(p, "{}", Value::Object(row));
             let _ = p.flush(); // 줄 단위로 내보냄: 뷰어는 줄끝까지 온 줄만 읽는다
@@ -429,7 +430,7 @@ mod tests {
         assert!(!r.contains_key("x"));
         assert_eq!(r["it"].as_f64().unwrap(), 2.0);
         assert_eq!(r["d"].as_f64().unwrap(), 3.0);
-        assert_eq!(r["time/iters_in_row"].as_i64().unwrap(), 2);
+        assert_eq!(r["time/iterations_merged"].as_i64().unwrap(), 2);
     }
     #[test]
     fn sig() {

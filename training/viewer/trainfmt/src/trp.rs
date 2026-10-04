@@ -88,13 +88,15 @@ pub struct TrpWriter {
     pub slots: Vec<u16>,
     pub map: Vec<u8>,
     pub img: Vec<u8>,
+    /// 덧붙인 섹션(이름, 바이트): 각 기록 = [u32 frame][u32 len][len 바이트]. 예: "segs" = 벽 선분 n × (x0, y0, x1, y1) f32 (m)
+    pub extra: Vec<(String, Vec<u8>)>,
     pub head: Value,
     n_frames: usize,
 }
 
 impl TrpWriter {
     pub fn new(cols: &[String], slot_cols: &[String], n_slots: usize, head: Value) -> TrpWriter {
-        TrpWriter { cols: cols.to_vec(), slot_cols: slot_cols.to_vec(), n_slots, frames: vec![], slots: vec![], map: vec![], img: vec![], head, n_frames: 0 }
+        TrpWriter { cols: cols.to_vec(), slot_cols: slot_cols.to_vec(), n_slots, frames: vec![], slots: vec![], map: vec![], img: vec![], extra: vec![], head, n_frames: 0 }
     }
     pub fn n_frames(&self) -> usize {
         self.n_frames
@@ -132,6 +134,21 @@ impl TrpWriter {
         self.img.extend_from_slice(jpeg);
     }
 
+    /// 덧붙인 섹션 `name` 에 기록 하나: [u32 frame][u32 len][bytes]
+    pub fn record(&mut self, name: &str, frame: u32, bytes: &[u8]) {
+        let i = match self.extra.iter().position(|e| e.0 == name) {
+            Some(i) => i,
+            None => {
+                self.extra.push((name.to_string(), vec![]));
+                self.extra.len() - 1
+            }
+        };
+        let b = &mut self.extra[i].1;
+        b.extend_from_slice(&frame.to_le_bytes());
+        b.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        b.extend_from_slice(bytes);
+    }
+
     /// 바이트로
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut secs: Vec<(&str, Vec<u8>)> = vec![("frames", self.frames.iter().flat_map(|v| v.to_le_bytes()).collect())];
@@ -143,6 +160,9 @@ impl TrpWriter {
         }
         if !self.img.is_empty() {
             secs.push(("img", self.img.clone()));
+        }
+        for (n, b) in &self.extra {
+            secs.push((n.as_str(), b.clone()));
         }
         let pad8 = |n: usize| (n + 7) & !7;
         // 머리 길이가 오프셋에 따라 바뀌므로 자리가 멈출 때까지 다시 잰다(두세 번)
