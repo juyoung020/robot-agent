@@ -27,6 +27,14 @@
 <td align="center"><sub>BEHAVIOR Challenge 2026 시뮬레이터(OmniGibson)에서 로봇이 라디오를 집어 켜는 모습 (turning_on_radio, 6배속)</sub></td>
 <td align="center"><sub>리모 + 매니퓰레이터 URDF 를 RViz 에 띄운 모습 (TF 프레임 표시)</sub></td>
 </tr>
+<tr>
+<td align="center" width="50%"><img src="docs/assets/trainview_live.png" width="380" alt="학습 뷰어 — 실시간 학습 탭"></td>
+<td align="center" width="50%"><img src="docs/assets/trainview_compare.png" width="380" alt="학습 뷰어 — 실행 비교 탭"></td>
+</tr>
+<tr>
+<td align="center"><sub>학습 뷰어(<a href="training/viewer">trainview</a>, Rust 서버 + 브라우저) — GPU 안에서 도는 RL 교사 학습을 실시간으로(성공률·판 길이·충돌·보상·고장 무늬 검사)</sub></td>
+<td align="center"><sub>같은 뷰어의 비교 탭 — 지도 토큰 켬/끔 교사를 씨앗 둘씩 평균 ± σ 띠로 비교(가구가 막는 A2, 빈 지도 C2 성공률)</sub></td>
+</tr>
 </table>
 
 </div>
