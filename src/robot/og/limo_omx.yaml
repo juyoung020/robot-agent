@@ -8,6 +8,9 @@ default_controllers:
   arm_0: JointController
   gripper_0: MultiFingerGripperController
 disabled_collision_pairs:
+  # base_link 의 볼록 껍질(convexHull)이 팔 받침 위까지 덮어 omx_link1 과 늘 겹친다 → self_collisions 가 켜지면
+  # 그 접촉이 1000 N·m(베이스 관절 힘 상한)을 넘는 비틀림을 만들어 행동 0 에서도 yaw 가 ~0.37 rad/s 로 돈다.
+  - ["base_link", "omx_link1"]
   - ["omx_link6", "omx_link7"]
   - ["base_link", "front_left_wheel_link"]
   - ["base_link", "front_right_wheel_link"]

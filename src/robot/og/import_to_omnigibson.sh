@@ -87,6 +87,8 @@ export OMNI_KIT_ACCEPT_EULA=YES
 python "$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/OmniGibson/omnigibson/examples/robots/import_custom_robot.py" --config "$W/limo_omx_source_config.yaml"
 
 python "$HERE/recolor_usd.py" "$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/datasets/omnigibson-robot-assets/objects/robot/limo_omx/usd/limo_omx.usda"
+# 임포터가 URDF <mimic> 을 지우므로 그리퍼 joint_2 = -joint_1 미믹을 USD 에 다시 넣는다(1차원 smooth 그리퍼 행동으로 두 손가락이 대칭으로 움직임)
+python "$HERE/add_gripper_mimic.py" "$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/datasets/omnigibson-robot-assets/objects/robot/limo_omx/usd/limo_omx.usda"
 mkdir -p "$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/datasets/omnigibson-robot-assets/models/limo_omx"
 cp "$HERE/limo_omx.yaml" "$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/datasets/omnigibson-robot-assets/models/limo_omx/limo_omx.yaml"
 A=$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/datasets/omnigibson-robot-assets

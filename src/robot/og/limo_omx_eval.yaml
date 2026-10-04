@@ -29,9 +29,19 @@ controller_config:
     command_output_limits: null
     use_impedances: false
     use_delta_commands: false
+  # 그리퍼: 1차원 연속 행동 a∈[-1,1] → joint_1 목표 [0, 1.745] (-1 = 오므림(0), +1 = 최대 벌림(100°)).
+  # joint_2 는 USD 미믹(add_gripper_mimic.py, joint_2 = -joint_1)으로 거울처럼 따라온다(드라이브 이득 0).
+  # smooth 의 기본 출력 범위는 두 관절 범위의 평균(-0.87..0.87)이라 joint_1 의 절반밖에 못 쓰므로 직접 준다.
+  # limit_tolerance 를 POS_TOLERANCE(0.002) 이상으로 두면 is_grasping 휴리스틱이 UNKNOWN 을 낸다 — 이 휴리스틱은
+  # 두 손가락 목표가 같다고 가정해 거울 손가락에선 빈 손으로 멈춰도 TRUE 를 내므로 끈다.
+  # 이득: 기본(kp 1e7)은 미믹과 함께 0(닫힘 한계)에 부딪힐 때 PhysX 가 터져 joint_1 이 -1.7 까지 뚫고 나간다 → kp 1e4, kd 200
+  # (시험: 열기/닫기 0.3 s 안, 목표 오차 < 0.001 rad, joint_1 + joint_2 = 0.0000).
   gripper_0:
     name: MultiFingerGripperController
     mode: smooth
     command_input_limits: default
-    command_output_limits: default
+    command_output_limits: [0.0, 1.745329]
+    limit_tolerance: 0.002
+    isaac_kp: 10000
+    isaac_kd: 200
 reset_joint_pos: [0, 0, 0, 0, 0, 0, 0, -1.6, 1.45, 0.15, 0.0, 0.0, 0.0]   # 가상 6 + omx_joint1..5 + 그리퍼 2 (limo_omx.yaml default_joint_pos 와 같게)
