@@ -777,7 +777,7 @@ static void q_layer_fwd(Model& m, int l, int B, int L, const float* Xin, float* 
   }
   qk::rmsnorm(s.Xmid, R, H, P + Ly.ln2, true, c.eps, s.A2, nullptr, nullptr, st);
   mm_swiglu(s.A2, H, R, W + Ly.wgu.off, c.I, H, ck ? s.GU : nullptr, s.Hh, st);
-  mm_res(s.Hh, c.I, R, W + Ly.wdn.off, H, c.I, s.Xmid, Xout, H, nullptr, st);
+  if (!ck) mm_res(s.Hh, c.I, R, W + Ly.wdn.off, H, c.I, s.Xmid, Xout, H, nullptr, st);   // 다시 계산(뒤)에서는 층 출력을 안 씀 → down GEMM 건너뜀
 }
 // 뒤: s.dR = 층 출력 기울기 → 층 입력 기울기(제자리). 앞 중간값은 q_layer_fwd 를 다시 불러 만든다
 static void q_layer_bwd(Model& m, int l, int B, int L, cudaStream_t st) {
@@ -848,7 +848,7 @@ static void q_layer_bwd(Model& m, int l, int B, int L, cudaStream_t st) {
 }
 
 // ---- 영상 블록 ----
-static void v_block_fwd(Model& m, int l, int Rv, const float* Xin, float* Xout, cudaStream_t st) {
+static void v_block_fwd(Model& m, int l, int Rv, const float* Xin, float* Xout, cudaStream_t st, bool ck = false) {
   Model::WS& s = *m.w;
   const VCfg& c = m.c;
   const auto& b = m.vb[l];
@@ -866,7 +866,7 @@ static void v_block_fwd(Model& m, int l, int Rv, const float* Xin, float* Xout, 
   mm_res(s.vAo, D, Rv, W + b.proj.off, D, D, Xin, s.vXm, D, P + b.projb, st);
   tk::ln_fwd(s.vXm, Rv, D, P + b.ln2g, P + b.ln2b, c.vEps, s.vA2, nullptr, st);
   mm_bias(s.vA2, D, Rv, W + b.fc1.off, c.vMLP, D, s.vH1, c.vMLP, P + b.fc1b, s.vAg, true, st);
-  mm_res(s.vAg, c.vMLP, Rv, W + b.fc2.off, D, c.vMLP, s.vXm, Xout, D, P + b.fc2b, st);
+  if (!ck) mm_res(s.vAg, c.vMLP, Rv, W + b.fc2.off, D, c.vMLP, s.vXm, Xout, D, P + b.fc2b, st);
 }
 static void v_block_bwd(Model& m, int l, int Rv, cudaStream_t st) {
   Model::WS& s = *m.w;
@@ -877,7 +877,7 @@ static void v_block_bwd(Model& m, int l, int Rv, cudaStream_t st) {
   uint16_t* GW = m.ap.GW;
   float* GV = m.ap.GV;
   const int D = c.vD, M = c.vMLP;
-  v_block_fwd(m, l, Rv, s.vX[l], s.vdA, st);   // 다시 계산(출력은 버림). vdb = 위 블록 ln1 / 끝 LN 의 뒤가 씀(B)
+  v_block_fwd(m, l, Rv, s.vX[l], s.vdA, st, true);   // 다시 계산(출력은 버림). vdb = 위 블록 ln1 / 끝 LN 의 뒤가 씀(B)
   tk::mm_dw(s.vdb, D, s.vAg, M, Rv, D, M, s.ws, DWCH, GW + b.fc2.off, nullptr, st);
   tk::colsum(s.vdR, Rv, D, D, s.part, GV + b.fc2b, false, st);
   tk::mm_dx(s.vdb, D, Rv, W + b.fc2.off, D, M, s.vdH, M, false, st);
@@ -923,7 +923,7 @@ static void e_block_fwd(Model& m, int f, const VBatch& bt, const float* Xin, flo
   mm_res(s.eAg, QW, RA, W + e.o.off, De, QW, Xin, s.eXm, De, nullptr, st);
   qk::rmsnorm(s.eXm, RA, De, P + e.ln2, true, Q.eps, s.eA2, nullptr, nullptr, st);
   mm_swiglu(s.eA2, De, RA, W + e.gu.off, c.Ie, De, ck ? s.eGU : nullptr, s.eHh, st);
-  mm_res(s.eHh, c.Ie, RA, W + e.dn.off, De, c.Ie, s.eXm, Xout, De, nullptr, st);
+  if (!ck) mm_res(s.eHh, c.Ie, RA, W + e.dn.off, De, c.Ie, s.eXm, Xout, De, nullptr, st);
 }
 static void e_block_bwd(Model& m, int f, const VBatch& bt, cudaStream_t st) {
   Model::WS& s = *m.w;
