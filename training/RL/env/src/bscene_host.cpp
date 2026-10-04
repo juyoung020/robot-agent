@@ -319,14 +319,17 @@ bool stance_ok(const SceneBuild::Sc& s, const Entry& e, float cx, float cy) {
   return env::grasp_reach_box(ctr, e.ext, cx, cy, cs, sn);
 }
 
-void goal_field(const SceneBuild::Sc& s, const Entry& e, std::vector<float>& dist) {
+void goal_field(const SceneBuild::Sc& s, const Entry& e, std::vector<float>& dist, const float* pt) {
   const int c0 = (int)std::lround((e.wx - WIN_HALF - s.d.ox) / CELL), r0 = (int)std::lround((e.wy - WIN_HALF - s.d.oy) / CELL);
   std::vector<std::pair<int, float>> seeds;
   for (int c = 0; c < WIN * WIN; ++c) {
     const int i = c % WIN, j = c / WIN, sc = c0 + i, sr = r0 + j;
     if (sc < 0 || sr < 0 || sc >= s.d.W || sr >= s.d.H || !s.freeg[(size_t)sr * s.d.W + sc]) continue;
     const float cx = ((float)i + 0.5f) * CELL - WIN_HALF, cy = ((float)j + 0.5f) * CELL - WIN_HALF;
-    if (e.list == L_ROOM) { if (std::fabs(cx - e.gx) < 1e-4f && std::fabs(cy - e.gy) < 1e-4f) seeds.push_back({c, 0.f}); }
+    if (pt) {   // 점(창 좌표): 점에서 0.20–0.35 m 칸(몸통 옆에 점을 두고 팔이 닿는 거리 — 대본 정책용, 가정)
+      const float d = std::hypot(cx - pt[0], cy - pt[1]);
+      if (d >= 0.20f && d <= 0.35f) seeds.push_back({c, 0.f});
+    } else if (e.list == L_ROOM) { if (std::fabs(cx - e.gx) < 1e-4f && std::fabs(cy - e.gy) < 1e-4f) seeds.push_back({c, 0.f}); }
     else if (dist_pt_rect(e.prim[0].lo, e.prim[0].hi, cx, cy) <= 0.6f && stance_ok(s, e, cx, cy)) seeds.push_back({c, 0.f});
   }
   dijkstra_win(s, c0, r0, seeds, dist);
@@ -928,6 +931,72 @@ bool build_one(const std::string& path, const Names& nm, const BuildOpt& opt, co
             tmp.rbits = nullptr;
           }
           if (!sp_ok) { ++st.rj_spawn; continue; }
+          // 놓을 점(목표 점, 2026-10-05 — VLA_INPUT 2.1, CURRICULUM_BEHAVIOR2026 3.2): 바닥 = 고른 자리 가운데(z 0), 면(ontop) = 윗면 위 점.
+          // 면 점: 받침 사각형(물체 축) 안 0.05 m 격자를 해시 차례로, 물체 바닥 자국 반지름(가로·세로 큰 쪽 반 + free_margin)만큼 안쪽,
+          // 그 면 위(바닥 높이 윗면 ± 0.05 m)에 있는 다른 물체 상자와 바닥 자국 정사각형이 안 겹치고, 닿는 칸(느슨 BFS 비트, 엄격 판이면 엄격 비트도)
+          // 하나에서 점까지 ≤ 팔 닿는 거리(낮은 면 reach_low 0.38, 높은 면 reach_high 0.21 + edge_dist 0.10 = 0.31 — 가장자리 거르개(칸 → 가장자리 0.21)에
+          // 옆 잡기 가장자리 안 거리(0.10)를 더함, 실행기 move_robot goal.rs REACH_HIGH 와 같은 값). 용기(inside) = 없음
+          e.ppt_ok = 0;
+          e.ppt[0] = e.ppt[1] = e.ppt[2] = 0.f;
+          if (D.kind == DK_FLOOR) {
+            cxy(use_dc, e.ppt[0], e.ppt[1]);
+            e.ppt_ok = 1;
+          } else if (D.kind == DK_ONTOP) {
+            const float ro = 0.5f * std::max(e.ext[0], e.ext[1]) + filt.free_margin;
+            const float pcs = std::cos(D.yaw), psn = std::sin(D.yaw);
+            const float ax = D.half[0] - ro, ay = D.half[1] - ro;
+            if (ax >= 0.f && ay >= 0.f) {
+              const float G = 0.05f;
+              const int nx = (int)std::floor(ax / G), ny = (int)std::floor(ay / G);
+              std::vector<std::pair<uint64_t, int>> pc;
+              for (int j = -ny; j <= ny; ++j)
+                for (int i2 = -nx; i2 <= nx; ++i2) {
+                  const int key = ((j + 512) << 10) | (i2 + 512);
+                  pc.push_back({hmix(((uint64_t)pidx << 32) ^ ((uint64_t)pa.dst << 20) ^ (uint64_t)key), key});
+                }
+              std::sort(pc.begin(), pc.end());
+              auto clear_at = [&](float wx2, float wy2) {   // 세계 점의 물체 바닥 자국 정사각형(반 ro)이 그 면 위 다른 물체와 안 겹침
+                auto hit = [&](const float lo[3], const float hi[3]) {
+                  if (!(lo[2] >= D.top - 0.05f && lo[2] <= D.top + 0.05f)) return false;
+                  return lo[0] < wx2 + ro && hi[0] > wx2 - ro && lo[1] < wy2 + ro && hi[1] > wy2 - ro;
+                };
+                for (size_t t = 0; t < tobjs.size(); ++t) if ((int)t != ti && (int)t != dti && hit(tobjs[t].lo, tobjs[t].hi)) return false;
+                for (size_t ob = 0; ob < s.objs.n; ++ob) {
+                  const RascObjRec& O = s.objs[ob];
+                  if ((O.flags & (RASC_F_WALL | RASC_F_FLOOR | RASC_F_CEILING | RASC_F_DOOR | RASC_F_WINDOW | RASC_F_CARPET)) || (int)ob == (int)D.obj) continue;
+                  if (hit(O.aabb_min, O.aabb_max)) return false;
+                }
+                return true;
+              };
+              const float preach = dst_high ? filt.reach_high + filt.edge_dist : filt.reach_low;
+              auto reach_at = [&](const std::vector<uint32_t>& bits, float px, float py) {   // 창 좌표 점에 팔 닿는 거리 안 닿는 칸이 있나
+                const int i0p = std::max(0, (int)std::floor((px - preach + WIN_HALF) / CELL)), i1p = std::min(WIN - 1, (int)std::floor((px + preach + WIN_HALF) / CELL));
+                const int j0p = std::max(0, (int)std::floor((py - preach + WIN_HALF) / CELL)), j1p = std::min(WIN - 1, (int)std::floor((py + preach + WIN_HALF) / CELL));
+                for (int j = j0p; j <= j1p; ++j)
+                  for (int i2 = i0p; i2 <= i1p; ++i2) {
+                    const int c = j * WIN + i2;
+                    if (!has(bits, c)) continue;
+                    float x, y;
+                    cxy(c, x, y);
+                    if (std::hypot(x - px, y - py) <= preach) return true;
+                  }
+                return false;
+              };
+              for (auto& q : pc) {
+                const float lx = (float)((q.second & 1023) - 512) * G, ly = (float)((q.second >> 10) - 512) * G;
+                const float wx2 = D.center[0] + pcs * lx - psn * ly, wy2 = D.center[1] + psn * lx + pcs * ly;
+                if (!clear_at(wx2, wy2)) continue;
+                const float px = wx2 - e.wx, py = wy2 - e.wy;
+                if (!reach_at(rb, px, py) || (inner && !reach_at(rb_in, px, py))) continue;
+                e.ppt[0] = px; e.ppt[1] = py; e.ppt[2] = D.top;
+                e.ppt_ok = 1;
+                break;
+              }
+            }
+          }
+          st.ppt_ok += e.ppt_ok;
+          st.ppt_onto += (D.kind == DK_ONTOP);
+          st.ppt_onto_ok += (D.kind == DK_ONTOP) && e.ppt_ok;
           cand.push_back({e, inner, rb, rb_in});
         }
         if (cand.empty()) continue;
@@ -1197,13 +1266,16 @@ bool build_scenes(const BuildOpt& opt0, SceneBuild& out, std::string* err) {
     const std::string pd = opt.pnp_dir.empty() ? default_pnp_dir() : opt.pnp_dir;
     std::map<std::tuple<int, int, int, int>, int> tab;
     FILE* f = std::fopen((pd + "/combos.tsv").c_str(), "r");
-    out.ntpl = 0; out.ntpl_train = 0;
+    out.ntpl = 0; out.ntpl_train = 0; out.ncombo = 0; out.iblocks = 1;
     if (f) {
       char line[512];
       while (std::fgets(line, sizeof line, f)) {
         int idx, a, b2, c, r;
-        if (line[0] == '#') { std::sscanf(line, "# ntpl %d ntpl_train %d", &out.ntpl, &out.ntpl_train); continue; }
-        if (std::sscanf(line, "%d %d %d %d %d", &idx, &a, &b2, &c, &r) == 5) tab[std::make_tuple(a, b2, c, r)] = idx;
+        if (line[0] == '#') {
+          if (std::sscanf(line, "# ntpl %d ntpl_train %d", &out.ntpl, &out.ntpl_train) == 2) out.iblocks = std::strstr(line, "blocks combo,point,goto") ? 3 : 1;
+          continue;
+        }
+        if (std::sscanf(line, "%d %d %d %d %d", &idx, &a, &b2, &c, &r) == 5) { tab[std::make_tuple(a, b2, c, r)] = idx; out.ncombo = std::max(out.ncombo, idx + 1); }
       }
       std::fclose(f);
     }
@@ -1214,7 +1286,7 @@ bool build_scenes(const BuildOpt& opt0, SceneBuild& out, std::string* err) {
       e.combo = (it == tab.end() || out.ntpl <= 0) ? -1 : it->second;
       out.combo_missing += e.combo < 0;
     }
-    H.ntpl = out.ntpl; H.ntpl_train = out.ntpl_train;
+    H.ntpl = out.ntpl; H.ntpl_train = out.ntpl_train; H.ncombo = out.ncombo; H.iblocks = out.iblocks;
   }
   for (int i = 0; i < ns; ++i)
     for (int sp = 0; sp < 2; ++sp) {   // 물체 표의 엄격 판 수(통계)
@@ -1301,7 +1373,12 @@ std::string stats_text(const SceneBuild& b) {
                   st.pr_cand, st.rj_artic, st.rj_closed, st.rj_struct, st.rj_reach, st.rj_win, st.rj_stance, st.rj_floor, st.rj_area, st.rj_spawn, st.rj_cap);
     o += buf;
   }
-  std::snprintf(buf, sizeof buf, "  instruction combos %zu, entries without an instruction row %d (ntpl %d, train %d)\n", b.combos.size(), b.combo_missing, b.ntpl, b.ntpl_train);
+  for (auto& st : b.stats) {
+    std::snprintf(buf, sizeof buf, "  %-26s place points (before pair cap): pairs with a point %d, ontop pairs %d, ontop with a point %d (floor pairs always have one)\n",
+                  st.name.c_str(), st.ppt_ok, st.ppt_onto, st.ppt_onto_ok);
+    o += buf;
+  }
+  std::snprintf(buf, sizeof buf, "  instruction combos %zu (table %d), entries without an instruction row %d (ntpl %d, train %d, blocks %d)\n", b.combos.size(), b.ncombo, b.combo_missing, b.ntpl, b.ntpl_train, b.iblocks);
   o += buf;
   return o;
 }

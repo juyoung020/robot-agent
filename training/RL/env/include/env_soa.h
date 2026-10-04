@@ -19,12 +19,15 @@ enum FloatField {
   F_B_PX, F_B_PY,                              // 지난 스텝 자리(진행 보상: 같은 거리장으로 두 자리를 잼)
   F_B_TZ, F_B_EX0, F_B_EX2 = F_B_EX0 + 2,      // 목표 높이 가운데, 목표 상자 크기
   F_B_DIST,                                    // 마지막 유효 거리(관측)
+  F_B_GPX, F_B_GPY, F_B_GPZ,                   // 놓을 점(창 좌표, z = 놓이는 바닥 높이) — I_B_GMODE 에 GM_PLACE_PT 일 때만 뜻 있음
+  F_B_PD3,                                     // 점으로 가기 B3: 지난 스텝 손끝 → 점(물체 가운데 높이) 3D 거리(모양 잡기), −1 = 아직 없음
   NUM_F
 };
 enum IntField { I_STEP, I_MAXSTEPS, I_OK, I_SEEN, I_EP, I_NF, I_FC0, I_FC_END = I_FC0 + N_FURN - 1,
                 I_B_KIND, I_B_SCENE, I_B_ENT, I_B_ROOM,   // BEHAVIOR 판: bsc::EntKind(0 = 상자 방), 장면, Entry 번호, 목표 방
                 I_B_FSET, I_B_INSTR,                       // 집기·놓기 판: 쓴 거르개(0 느슨, 1 엄격, −1 아님), 지시문 행(training/data/pnp_v1, −1 없음)
                 I_B_LKIND,                                 // 이 스텝이 보고한 판(끝났으면 끝난 판)의 단계 bsc::EntKind — 학습기 단계별 에피소드 표용(상자 방 0)
+                I_B_GMODE,                                 // 목표 꼴 비트 bsc::GoalMode(0 = 물체 목표만, 예전 판)
                 NUM_I };
 
 struct Soa {

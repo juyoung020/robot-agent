@@ -1,4 +1,4 @@
-// 지도 토큰(계획서 GPU_TRAINING.md 5.3·4.4, VLA_INPUT.md 3·4절) — 스텝마다 판마다 1,296 B(v2: v1 1,280 B + 다음 경유 지점). map.h 끝에서 include 된다.
+// 지도 토큰(계획서 GPU_TRAINING.md 5.3·4.4, VLA_INPUT.md 3·4절) — 스텝마다 판마다 1,360 B(v3: v2 1,296 B + 목표 칸 2 × 16, 2026-10-05). map.h 끝에서 include 된다.
 // CPU 참조판과 GPU 커널이 같은 make_tokens 를 쓴다(GPU 는 판 하나 = 레인 16, CPU 는 레인 1). 모든 값은 믿는(slam) 자세의 base_link 기준이다.
 //   물체 칸 16 × 숫자 33 (FP16) + 이름 표 번호·생김새 표 번호(int16, 4.4: 벡터는 장치 표에, 관측에는 번호만) + 벽 56 (FP16) + 방 10 (FP16)
 //   + 완성도 4 (FP16) + 칸 수·표시 + 안 본 곳 광선 8 + 다음 경유 지점 4 (FP16). 값은 m·rad 그대로이고 정규화(5 m 자르기·로그·자료 통계)는 관측 쪽(obs.h)이 한다.
@@ -18,6 +18,23 @@ constexpr int N_ROOMTOK = 10;
 constexpr int N_COMP = 4;
 constexpr int N_FRONT = 8;   // 안 본 곳 광선 8(45° 간격) — VLA_INPUT 에 없는 값을 더함(가정)
 constexpr int N_WAY = 4;     // 다음 경유 지점: x, y, 경로 길이, 있음
+// 목표 칸(VLA_INPUT 2.1, 결정 2026-10-05 — 앱에서 물체를 누르면 id, 바닥·면을 누르면 점): 집을 것(0)·놓을 곳(1, 점으로 가기의 점도 여기) 둘.
+// 칸마다 16 값, m 그대로(정규화는 obs.h), 믿는(slam) 자세의 base_link 기준 — 지도 좌표·id·종류 번호 없음. 물체 목표는 그 물체 칸의 "목표인지" 도 켜짐(일부러 겹침)
+constexpr int N_GENT = 2, N_GV = 16;
+enum GoalEnt { GE_PICK = 0, GE_PLACE = 1 };
+enum GoalVal {
+  GV_PRESENT = 0,   // 이 목표가 주어짐
+  GV_KOBJ = 1,      // 꼴: 물체(id)
+  GV_KPT = 2,       // 꼴: 점
+  GV_KNOWN = 3,     // 위치 값이 있음(물체가 지도에 있음 — 지금 또는 마지막 본 자리, 또는 점)
+  GV_LOST = 4,      // 물체 목표의 위치가 마지막으로 알던 자리(지도에서 사라짐 S_GONE / 실제: 지도에서 빠짐)
+  GV_POS = 5,       // 3 x 앞, y 왼쪽, z (base_link, z = 세계 z − base_z — 칸 T_POS 와 같음)
+  GV_DIST = 8,      // 수평 거리
+  GV_SIN = 9,       // 방위 sin = y / 거리 (거리 < 1e-4 면 0)
+  GV_COS = 10,      // 방위 cos = x / 거리 (거리 < 1e-4 면 1)
+  GV_EEF = 11,      // 3 위치 − 손끝(base_link 축)
+  // 14, 15 = 0
+};
 // 칸 숫자 33 의 자리(VLA_INPUT 3절 표 순서)
 enum TokSlot {
   T_POS = 0,        // 3 위치 xyz (base_link)
@@ -55,8 +72,10 @@ struct alignas(16) MapTok {
   uint16_t instr1;                       // 이 판의 지시문 행 + 1(training/data/pnp_v1 instr128, 환경 I_B_INSTR — 집기·놓기 판만), 0 = 없음(상자 방·B1). 관측(obs.h)이 표에서 128 칸으로
   uint16_t bkind;                        // 이 판의 BEHAVIOR 단계(1 B1, 2 B2, 3 B3), 0 = 상자 방 — 교사 스킬 표시(POLICY 3.2)
   uint16_t pad2[2];                      // 0
+  uint16_t goal[N_GENT][N_GV];           // FP16 목표 칸 2(GoalEnt × GoalVal). flags 비트 1 = 지금 가는 목표가 점(점으로 가기)
 };
-static_assert(sizeof(MapTok) == 1296, "map token v2 = 1296 B per env-step (v1 1280 B + way 4 + pad)");
+static_assert(sizeof(MapTok) == 1360, "map token v3 = 1360 B per env-step (v2 1296 B + goal entries 2 x 16 FP16)");
+static_assert(sizeof(MapTok) % 16 == 0, "16 B copies");
 struct TPrev { float p[3]; int tag; };   // 칸마다 지난 스텝 지도 자리, tag = 물체 번호 << 16 | 스텝 & 0xffff (물체 속도용, 확정 칸만 씀)
 
 // float → FP16 (가장 가까운 짝수로 반올림, NaN 은 0x7fff). CPU 는 정수 연산(f2h_soft), GPU 는 하드웨어 __float2half_rn —
@@ -202,6 +221,7 @@ struct TokScratch {   // 판 하나의 작업 공간(GPU 공유 메모리). 광�
   float tk[KSLOT];        // 목표 후보 열쇠, 아님 −1
   float wy[N_WAY];        // 경유 지점 결과(레인 0 이 씀, 끝에 out 으로)
   float tk2[KSLOT];       // 둘째 목표(BEHAVIOR 놓을 곳) 후보 열쇠, 아님 −1
+  float tg[KSLOT], tg2[KSLOT];   // 같은 짝인데 사라진(S_GONE) 칸 — 목표 칸의 "마지막으로 알던 자리"(GV_LOST), 아님 −1
   union {
     WayScratch w;                            // 1) 경유 지점 BFS(창 옮기기 전)
     struct {
@@ -360,10 +380,34 @@ DEV void waypoint(const uint32_t* occ, float gx, float gy, float px, float py, f
   sync();
 }
 
+// 목표 칸 하나(GoalVal 16 값 FP16): kind 0 = 없음, 1 = 물체, 2 = 점. 위치 P(지도 좌표)는 known 일 때만. (px, py, c, s) = 믿는 자세, eef_b = base_link 손끝
+DEV void goal_fill(uint16_t* g, int kind, bool known, bool lost, const float P[3], float px, float py, float c, float s, const float eef_b[3]) {
+  float v[N_GV];
+  for (int q = 0; q < N_GV; ++q) v[q] = 0.f;
+  if (kind) {
+    v[GV_PRESENT] = 1.f;
+    v[kind == 1 ? GV_KOBJ : GV_KPT] = 1.f;
+    if (known) {
+      v[GV_KNOWN] = 1.f;
+      v[GV_LOST] = lost ? 1.f : 0.f;
+      const float dx = P[0] - px, dy = P[1] - py;
+      const float x = c * dx + s * dy, y = -s * dx + c * dy, z = P[2] - MP::base_z;
+      const float d = sqrtf(x * x + y * y);
+      v[GV_POS] = x; v[GV_POS + 1] = y; v[GV_POS + 2] = z;
+      v[GV_DIST] = d;
+      v[GV_SIN] = d >= 1e-4f ? y / d : 0.f;
+      v[GV_COS] = d >= 1e-4f ? x / d : 1.f;
+      v[GV_EEF] = x - eef_b[0]; v[GV_EEF + 1] = y - eef_b[1]; v[GV_EEF + 2] = z - eef_b[2];
+    }
+  }
+  for (int q = 0; q < N_GV; ++q) g[q] = f2h(v[q]);
+}
+
 // 판 하나의 토큰. 레인 lane / nl 개가 나눠 하고 sync 로 맞춘다(CPU: lane 0, nl 1). write = false 면 tprev 를 쓰지 않음(GPU 남는 레인)
 // occ: 판의 점유 비트 전체. 로봇 둘레 행을 ts.so 로 옮긴 뒤 광선을 쏘고, out 은 그다음 동기부터 쓴다(so 와 같은 자리)
 // NLC: nl 의 최솟값(컴파일 때). 레인마다 맡는 칸·광선 수가 (16 + NLC − 1) / NLC 이하라 지난 자리·광선 거리를 레지스터 배열에 둔다(GPU NLC = 16 → 하나씩)
-// tbug(음성 대조, 검증용): 2 = 경유 지점 내리막의 같은 거리 이웃을 뒤 차례로, 3 = 지금 보는 중 칸도 지도 자리(관측 자리 무시), 4 = BEHAVIOR 방 자리 1.5 m 밀림
+// tbug(음성 대조, 검증용): 2 = 경유 지점 내리막의 같은 거리 이웃을 뒤 차례로, 3 = 지금 보는 중 칸도 지도 자리(관측 자리 무시), 4 = BEHAVIOR 방 자리 1.5 m 밀림,
+//   11 = 목표 칸을 회전 없이(지도 차)
 template <int NLC, class Sync>
 // bxp: BEHAVIOR 판 맥락(map.h BCtx — 방·문은 장면 방 격자, 이름·확신도는 장면 묶음의 이름 표 표, 목표 칸 = prim 0 의 이름). nullptr = 상자 방
 DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* seen, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
@@ -392,7 +436,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
     for (int q = 0; q < PER; ++q) {
       const int b = lane + q * nl;
       if (b >= KSLOT) break;
-      if (!((cm >> b) & 1)) { ts.sk[b] = -1.f; ts.tk[b] = -1.f; ts.tk2[b] = -1.f; continue; }
+      if (!((cm >> b) & 1)) { ts.sk[b] = -1.f; ts.tk[b] = -1.f; ts.tk2[b] = -1.f; ts.tg[b] = -1.f; ts.tg2[b] = -1.f; continue; }
       const Slot& S = m.slot[b];
 #ifdef __CUDA_ARCH__
       {  // 칸 기록(100 B)을 L1 로 미리 — 3) 이 광선 뒤에 다시 읽음
@@ -404,15 +448,21 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
       const float dx = S.pos[0] - px, dy = S.pos[1] - py;
       ts.sk[b] = sqrtf(dx * dx + dy * dy);
       const float tx = S.pos[0] - tcx, ty = S.pos[1] - tcy, d2 = tx * tx + ty * ty;
-      ts.tk[b] = (S.cls == (beh ? P.cls : (int)C_CUP) && S.state != S_GONE && d2 < thr * thr) ? d2 : -1.f;
+      // 목표 물체(prim 0) 짝: BEHAVIOR 는 goal 비트 0 일 때만(점으로 가기면 물체 목표 없음). 사라진 칸은 따로(목표 칸의 마지막 자리)
+      const bool m0 = (!beh || (bxp->bm->goal & 1)) && S.cls == (beh ? P.cls : (int)C_CUP) && d2 < thr * thr;
+      ts.tk[b] = (m0 && S.state != S_GONE) ? d2 : -1.f;
+      ts.tg[b] = (m0 && S.state == S_GONE) ? d2 : -1.f;
       ts.tk2[b] = -1.f;
+      ts.tg2[b] = -1.f;
       if (beh && (bxp->bm->goal & 2)) {   // 놓을 곳(prim 1): 같은 이름의 확정 칸 중 짝 문턱 안
         const Prim& P1 = m.prim[1];
         float e1[3];
         for (int a = 0; a < 3; ++a) e1[a] = P1.hi[a] - P1.lo[a];
         const float th1 = maxf(MP::da_min, MP::da_k * max3(e1));
         const float ux = S.pos[0] - 0.5f * (P1.lo[0] + P1.hi[0]), uy = S.pos[1] - 0.5f * (P1.lo[1] + P1.hi[1]), u2 = ux * ux + uy * uy;
-        ts.tk2[b] = (S.cls == P1.cls && S.state != S_GONE && u2 < th1 * th1) ? u2 : -1.f;
+        const bool m1 = S.cls == P1.cls && u2 < th1 * th1;
+        ts.tk2[b] = (m1 && S.state != S_GONE) ? u2 : -1.f;
+        ts.tg2[b] = (m1 && S.state == S_GONE) ? u2 : -1.f;
       }
     }
   }
@@ -422,16 +472,22 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
   }
   sync();
   // 1b) 목표 칸(모든 레인이 같은 값) → 다음 경유 지점(목표 칸이 있을 때만 BFS). 작업 공간은 창 옮기기 전의 union 자리
-  int tgt = -1, tgt2 = -1, nslot = 0;
+  int tgt = -1, tgt2 = -1, nslot = 0, gone = -1, gone2 = -1;
   for (int b = 0; b < KSLOT; ++b) {
     nslot += ts.sk[b] >= 0.f;
     if (ts.tk[b] >= 0.f && (tgt < 0 || ts.tk[b] < ts.tk[tgt])) tgt = b;
+    if (ts.tg[b] >= 0.f && (gone < 0 || ts.tg[b] < ts.tg[gone])) gone = b;
   }
   if (beh)
-    for (int b = 0; b < KSLOT; ++b)
+    for (int b = 0; b < KSLOT; ++b) {
       if (ts.tk2[b] >= 0.f && b != tgt && (tgt2 < 0 || ts.tk2[b] < ts.tk2[tgt2])) tgt2 = b;
+      if (ts.tg2[b] >= 0.f && b != gone && (gone2 < 0 || ts.tg2[b] < ts.tg2[gone2])) gone2 = b;
+    }
+  const bool goto_pt = beh && (bxp->bm->gmode & bsc::GM_GOTO);   // 지금 가는 목표 = 놓을 점(물체 목표 없음)
   if (tgt >= 0) {
     waypoint<NLC>(occ, m.slot[tgt].pos[0], m.slot[tgt].pos[1], px, py, c, s, ts.w, ts.wy, lane, nl, sync, tbug);
+  } else if (goto_pt) {   // 점으로 가기: 경유 지점도 점으로(점은 늘 앎)
+    waypoint<NLC>(occ, bxp->bm->gp[0], bxp->bm->gp[1], px, py, c, s, ts.w, ts.wy, lane, nl, sync, tbug);
   } else if (lane == 0) {
     for (int q = 0; q < N_WAY; ++q) ts.wy[q] = 0.f;
   }
@@ -605,11 +661,29 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
     o.comp[2] = f2h(m.room_cells > 0 ? (float)m.n_seen_room / (float)m.room_cells : 0.f);
     o.comp[3] = f2h((float)popc32((uint32_t)m.rrev) / (float)m.n_room);
     o.n_slot = (int16_t)nslot;
-    o.flags = (int16_t)(m.kf_flag ? 1 : 0);
+    o.flags = (int16_t)((m.kf_flag ? 1 : 0) | (goto_pt ? 2 : 0));
     for (int q = 0; q < N_WAY; ++q) o.way[q] = f2h(ts.wy[q]);
     o.instr1 = (uint16_t)(beh ? bxp->bm->instr + 1 : 0);   // 상자 방은 0(예전 pad 와 같은 바이트)
     o.bkind = (uint16_t)(beh ? bxp->bm->kind : 0);
     for (int q = 0; q < 2; ++q) o.pad2[q] = 0;
+    // 목표 칸 2(GoalEnt): 물체 = 목표 칸(T_TARGET 과 같은 칸)의 자리(지금 보는 중이면 관측 자리 — 칸 위치와 같은 규칙), 없으면 같은 짝의 사라진 칸
+    // 마지막 자리(GV_LOST), 그것도 없으면 위치 모름. 상자 방: 집을 것 = 컵. BEHAVIOR: prim 0 = B1 은 놓을 곳(가는 곳)·그 밖은 집을 것, prim 1 = 놓을 곳, 점 = 놓을 곳
+    const float gc = tbug == 11 ? 1.f : c, gs = tbug == 11 ? 0.f : s;   // tbug 11(음성 대조): 목표 칸을 지도 차(회전 없음)로
+    for (int k = 0; k < N_GENT; ++k) goal_fill(o.goal[k], 0, false, false, nullptr, px, py, gc, gs, m.eef_b);
+    auto obj_entry = [&](int k, int b0, int bg) {
+      const int b = b0 >= 0 ? b0 : bg;
+      if (b < 0) { goal_fill(o.goal[k], 1, false, false, nullptr, px, py, gc, gs, m.eef_b); return; }
+      const Slot& S = m.slot[b];
+      const bool live = !S.held && S.last_seen == t_kf;
+      goal_fill(o.goal[k], 1, true, b0 < 0, (live && tbug != 3 && b0 >= 0) ? S.meas : S.pos, px, py, gc, gs, m.eef_b);
+    };
+    if (!beh) obj_entry(GE_PICK, tgt, gone);
+    else {
+      const BMapEnv& B = *bxp->bm;
+      if (B.goal & 1) obj_entry(B.kind == bsc::EK_B1 ? GE_PLACE : GE_PICK, tgt, gone);
+      if (B.goal & 2) obj_entry(GE_PLACE, tgt2, gone2);
+      if (B.gmode & bsc::GM_PLACE_PT) goal_fill(o.goal[GE_PLACE], 2, true, false, B.gp, px, py, gc, gs, m.eef_b);
+    }
   }
 }
 

@@ -221,7 +221,39 @@ int main(int argc, char** argv) {
     }
     if (fi && !((pk.flags & RASC_PK_INNER) && (D.flags & 1))) ++viol[V_STRICT];
   }
-  long tot = 0;
+  // 놓을 점(목표 점, Entry::ppt — 표 전체, 독립 확인: RASC 놓을 곳 기록에서 다시 잼): 바닥 = 고른 자리 안·z 0·서는 칸(성분 ≠ 0),
+  // 면 = 받침 사각형 안(물체 반지름 + free_margin 안쪽)·z = 윗면, 같은 성분의 서는 칸이 점에서 팔 닿는 거리(0.38 / 0.31) 안, 용기 = 점 없음
+  long n_pt[3] = {0, 0, 0}, pt_bad = 0;
+  for (int ei = 0; ei < b.host.nent; ++ei) {
+    const Entry& e = b.ent[ei];
+    if (e.list != L_OBJ) continue;
+    const rasc::Scene& R = rs[e.scene];
+    const RascPlaceRec& D = R.places[e.dst_rec];
+    const SceneDev& d = b.sc[e.scene].d;
+    if (!e.ppt_ok) { pt_bad += D.kind == 3; continue; }   // 바닥 짝은 늘 점이 있어야
+    ++n_pt[D.kind - 1];
+    if (D.kind == 2) { ++pt_bad; continue; }
+    const float px = e.ppt[0], py = e.ppt[1];
+    auto comp_at = [&](float x, float y) {   // 창 좌표 → 장면 칸 성분(느슨)
+      const int c = (int)std::floor((x + e.wx - d.ox) / CELL), r = (int)std::floor((y + e.wy - d.oy) / CELL);
+      return (c < 0 || r < 0 || c >= d.W || r >= d.H) ? 0 : (int)b.sc[e.scene].comp[(size_t)r * d.W + c];
+    };
+    if (D.kind == 3) { pt_bad += !(px > e.dlo[0] && px < e.dhi[0] && py > e.dlo[1] && py < e.dhi[1] && e.ppt[2] == 0.f && comp_at(px, py) != 0); continue; }
+    const float ro = 0.5f * std::max(e.ext[0], e.ext[1]) + F.free_margin;
+    const float c2 = std::cos(D.yaw), s2 = std::sin(D.yaw), dxw = px + e.wx - D.center[0], dyw = py + e.wy - D.center[1];
+    const float lx = c2 * dxw + s2 * dyw, ly = -s2 * dxw + c2 * dyw;
+    bool ok = std::fabs(lx) <= D.half[0] - ro + 1e-3f && std::fabs(ly) <= D.half[1] - ro + 1e-3f && e.ppt[2] == D.top;
+    const float reach = D.top > F.topdown_z ? F.reach_high + F.edge_dist : F.reach_low;
+    bool near = false;
+    for (int dj = -5; dj <= 5 && !near; ++dj)
+      for (int di = -5; di <= 5 && !near; ++di) {
+        const float cx = (std::floor((px + WIN_HALF) / CELL) + di + 0.5f) * CELL - WIN_HALF, cy = (std::floor((py + WIN_HALF) / CELL) + dj + 0.5f) * CELL - WIN_HALF;
+        near = std::hypot(cx - px, cy - py) <= reach && comp_at(cx, cy) == (int)e.comp;
+      }
+    pt_bad += !(ok && near);
+  }
+  std::printf("  place points (all pick-and-place entries): ontop %ld, inside %ld (must be 0), floor %ld; violations %ld\n", n_pt[0], n_pt[1], n_pt[2], pt_bad);
+  long tot = pt_bad;
   std::printf("  sampled B3 episodes %ld; per scene:", n_ep);
   for (int s2 = 0; s2 < b.host.nsc; ++s2) std::printf(" %s %ld", b.sc[s2].name.c_str(), by_scene[s2]);
   std::printf("\n  place kind: floor %ld, inside %ld, ontop %ld; with an instruction row %ld; spawn fell back to the table %ld\n", n_floor, n_inside, n_ep - n_floor - n_inside,

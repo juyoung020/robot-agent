@@ -1,11 +1,25 @@
 {
  "name": "pnp_instr",
- "version": "v1",
- "created": "2026-10-04",
+ "version": "v2",
+ "created": "2026-10-05",
  "dim": 128,
  "combos": 59,
  "ntpl": 12,
  "ntpl_train": 10,
+ "blocks": {
+  "combo": [
+   0,
+   708
+  ],
+  "point": [
+   708,
+   1416
+  ],
+  "goto": [
+   1416,
+   1428
+  ]
+ },
  "templates": {
   "en_train": [
    "pick up the {o} from the {s} and put it {p} the {d}",
@@ -28,6 +42,50 @@
    "{s}에 놓인 {o}{eul} 집어 {d}{dp2}"
   ]
  },
+ "templates_point": {
+  "en_train": [
+   "put the {o} here",
+   "place the {o} right here",
+   "set the {o} down at this spot",
+   "drop the {o} off here",
+   "leave the {o} over there",
+   "move the {o} to this spot"
+  ],
+  "en_heldout": [
+   "could you bring the {o} over to this point"
+  ],
+  "ko_train": [
+   "{o}{eul} 여기에 놔",
+   "{o}{eul} 이 자리에 내려놔",
+   "{o}{eul} 거기에 둬",
+   "{o} 여기 갖다 놔"
+  ],
+  "ko_heldout": [
+   "{o}{eul} 이쪽에 놓아 줄래"
+  ]
+ },
+ "templates_goto": {
+  "en_train": [
+   "go here",
+   "move to this spot",
+   "drive over there",
+   "go to this point",
+   "head to the spot I marked",
+   "come over here"
+  ],
+  "en_heldout": [
+   "please make your way to this location"
+  ],
+  "ko_train": [
+   "여기로 가",
+   "이 자리로 이동해",
+   "저기로 가 줘",
+   "표시한 곳으로 가"
+  ],
+  "ko_heldout": [
+   "이 위치까지 가 줄래"
+  ]
+ },
  "space": "embed P (runs/sb32_pe_300k/head.pt), EN = PE-Core-L-14-336 text no template, KO = runs/ko_small_v2 pe_l14 head (as vla_v1 instr)",
  "names": "training/data/vla_v1 names.jsonl rows",
  "coherence": {
@@ -36,10 +94,40 @@
   "other_combo_mean": 0.35515910387039185,
   "other_combo_max": 0.9834409952163696
  },
- "files": {
-  "combos.tsv": "39a7e9300dba49547f5f8d3efd254983e8410ef69cf58f957794e16bb8f87175",
-  "instr.jsonl": "eaaa699188ed0c47aa4e808a555ce9eaae9804d40ee58a60fc888b2c3e2576a8",
-  "instr128.f16": "554a402cb79c19b786b209c053d69effb1e2efaf3f22eae34716c7e228b28b07"
+ "coherence_blocks": {
+  "point_same_combo": 0.6058589220046997,
+  "point_other_combo": 0.34709814190864563,
+  "point_vs_own_combo": 0.4579189121723175,
+  "point_point": {
+   "mean": 0.351124107837677,
+   "min": -0.12235105782747269,
+   "max": 1.0000004768371582
+  },
+  "point_combo": {
+   "mean": 0.24172210693359375,
+   "min": -0.20212532579898834,
+   "max": 0.8533223867416382
+  },
+  "goto_goto": {
+   "mean": 0.6058489680290222,
+   "min": 0.14057379961013794,
+   "max": 0.927926778793335
+  },
+  "goto_combo": {
+   "mean": 0.16975729167461395,
+   "min": -0.2592255473136902,
+   "max": 0.5787995457649231
+  },
+  "goto_point": {
+   "mean": 0.32333484292030334,
+   "min": -0.17369382083415985,
+   "max": 0.8187758326530457
+  }
  },
- "sha": "b600e0d7f2acf04d"
+ "files": {
+  "combos.tsv": "fea9eb1d6072a75a5fed28322b05ea75646e39e9a38b73e852b8101d8190014e",
+  "instr.jsonl": "081ab5e300525caed6deb24990b9a85c9602f4ef098261ac4ad446027a31bdeb",
+  "instr128.f16": "cd4be95e5c6730679d7041cc9ee30b992dde80236e764a3c38b619429bf6ac49"
+ },
+ "sha": "dec17d536518a69a"
 }

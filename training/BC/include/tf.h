@@ -6,7 +6,7 @@
 //   TXT    1 × 144  지시 문장 128(instr128) + 1 칸(128)
 //   ARM    1 × 48   관절각 6, 관절 속도 6, 관절 xyz 18, 손끝 6D 6, 손끝 속도 6 = 42 + 1 칸(42)
 //   BASE   1 × 16   몸통 속도 3 + 1 칸(3)
-//   GOAL   1 × 16   직전 명령 8 + 손끝 → 목표 3 + 경유 지점 4 = 15 + 1 칸(15)
+//   GOAL   1 × 48   직전 명령 8 + 손끝 → 목표 3 + 경유 지점 4 + 목표 칸 2 × 14(집을 것·놓을 곳, X0 432..463 의 앞 14 값) = 43 + 1 칸(43) — 2026-10-05
 //   OBJ   16 × 304  숫자 33 + 이름 128 + 생김새 128 + 1 칸(289), 2 층 ELU MLP, 빈 칸은 키에서 가림(obj_mask 비트)
 //   WALL   1 × 80   벽 56 + 안 본 곳 광선 8 + 1 칸(64)
 //   ROOM   1 × 16   방 10 + 1 칸(10)
@@ -32,8 +32,15 @@ namespace tfm {
 enum Grp { G_IMG, G_TXT, G_ARM, G_BASE, G_GOAL, G_OBJ, G_WALL, G_ROOM, N_GRP };
 struct GrpDesc { int n_tok, K, k_real, n_type; };   // k_real = 1 칸 자리(그 앞이 값)
 constexpr GrpDesc kGrp[N_GRP] = {
-    {128, 784, 768, 2}, {1, 144, 128, 1}, {1, 48, 42, 1}, {1, 16, 3, 1}, {1, 16, 15, 1}, {16, 304, 289, 1}, {1, 80, 64, 1}, {1, 16, 10, 1},
+    {128, 784, 768, 2}, {1, 144, 128, 1}, {1, 48, 42, 1}, {1, 16, 3, 1}, {1, 48, 43, 1}, {16, 304, 289, 1}, {1, 80, 64, 1}, {1, 16, 10, 1},
 };
+// GOAL 묶음 입력 칸 c(< 43)의 X0 출처 칸(BC tf_pack_k·bc_verify·RecallVLA 같은 배치): 직전 명령 8 + 손끝 → 목표 3 | 경유 지점 4 | 목표 칸 0 의 14 | 목표 칸 1 의 14
+constexpr int GOAL_K = 48, GOAL_REAL = 43, GOAL_ENT_V = 14;
+NDEV constexpr int goal_src_col(int c) {
+  return c < 11 ? net::X0_OBS + 45 + c : c < 15 ? net::X0_WAY + c - 11 : c < 15 + GOAL_ENT_V ? net::X0_GOAL + (c - 15)
+         : c < GOAL_REAL ? net::X0_GOAL + net::N_GOAL_V + (c - 15 - GOAL_ENT_V) : -1;
+}
+static_assert(15 + 2 * GOAL_ENT_V == GOAL_REAL && GOAL_REAL < GOAL_K && GOAL_K % 16 == 0, "goal token layout");
 // 장치 코드에서도(상수 표를 장치 메모리에 두지 않게 switch 로)
 NDEV constexpr int grp_ntok(int g) { return g == G_IMG ? 128 : g == G_OBJ ? 16 : 1; }
 NDEV constexpr int grp_ntype(int g) { return g == G_IMG ? 2 : 1; }

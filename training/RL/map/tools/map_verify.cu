@@ -62,6 +62,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--scenes") && a + 1 < argc) bo.dir = argv[++a];
     else if (!std::strcmp(argv[a], "--mix") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &bcu.p1, &bcu.p2);
     else if (!std::strcmp(argv[a], "--strict")) bcu.strict = 1;
+    else if (!std::strcmp(argv[a], "--point") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &bcu.p_point, &bcu.p_goto);   // 목표 점 섞음
+    else if (!std::strcmp(argv[a], "--negative-goal")) { negative = true; neg_bug = 11; }   // 목표 칸 회전 없음(토큰)
     else if (!std::strcmp(argv[a], "--only") && a + 1 < argc) {
       std::string v = argv[++a];
       size_t p = 0;
@@ -137,6 +139,7 @@ int main(int argc, char** argv) {
   double sum_task_end = 0, sum_obj_end = 0, sum_seen_end = 0, max_err = 0, max_err_yaw = 0;
   long n_end = 0, n_confirmed = 0, n_gone = 0, n_moved = 0, n_cand = 0, n_relink = 0, n_merge = 0, n_appeared = 0, n_moving = 0;
   double tok_front = 0;
+  long goal_present[2] = {0, 0}, goal_known[2] = {0, 0}, goal_lost[2] = {0, 0}, goal_pt[2] = {0, 0}, goal_ptchk = 0, goal_ptbad = 0, goal_objchk = 0, goal_objbad = 0;
   long tok_front_open = 0;
   long tok_live = 0, tok_reach = 0, tok_hyper = 0, way_valid = 0, way_tgt = 0, way_far = 0;   // v2 칸·경유 지점 통계
   double way_len = 0, way_ratio = 0;
@@ -291,6 +294,39 @@ int main(int argc, char** argv) {
         room_bad += got != want;
         door_tok += gmap::h2f(tk.room[9]) > 0.5f;
       }
+      {  // 목표 칸(VLA_INPUT 2.1): 독립 계산과 견줌 — 점 목표는 env 의 참 점을 믿는 자세로 돌린 값, 물체 목표는 표시 칸(T_TARGET 맨 앞)과 같은 자리
+        using namespace gmap;
+        const int gm = beh ? cenv.iv[(size_t)I_B_GMODE * N + i] : 0;
+        auto gv = [&](int e, int q) { return h2f(tk.goal[e][q]); };
+        for (int e = 0; e < N_GENT; ++e) {
+          if (gv(e, GV_PRESENT) < 0.5f) continue;
+          ++goal_present[e];
+          goal_known[e] += gv(e, GV_KNOWN) > 0.5f;
+          goal_lost[e] += gv(e, GV_LOST) > 0.5f;
+          goal_pt[e] += gv(e, GV_KPT) > 0.5f;
+        }
+        if (gm & bsc::GM_PLACE_PT) {
+          ++goal_ptchk;
+          const float dx = cenv.f[(size_t)F_B_GPX * N + i] - c.ex, dy = cenv.f[(size_t)F_B_GPY * N + i] - c.ey;
+          const float cy = std::cos(c.eyaw), sy = std::sin(c.eyaw);
+          const float x = cy * dx + sy * dy, y = -sy * dx + cy * dy, z = cenv.f[(size_t)F_B_GPZ * N + i] - MP::base_z;
+          const float tol = 0.01f + 2e-3f * std::sqrt(x * x + y * y);
+          const bool ok = gv(GE_PLACE, GV_KPT) > 0.5f && gv(GE_PLACE, GV_KNOWN) > 0.5f && std::fabs(gv(GE_PLACE, GV_POS) - x) < tol &&
+                          std::fabs(gv(GE_PLACE, GV_POS + 1) - y) < tol && std::fabs(gv(GE_PLACE, GV_POS + 2) - z) < tol &&
+                          std::fabs(gv(GE_PLACE, GV_EEF) - (x - c.eef_b[0])) < tol && ((gm & bsc::GM_GOTO) != 0) == ((tk.flags & 2) != 0) &&
+                          ((gm & bsc::GM_GOTO) == 0 || gv(GE_PICK, GV_PRESENT) < 0.5f);
+          goal_ptbad += !ok;
+        }
+        for (int b = 0; b < tk.n_slot; ++b) {   // 표시 칸(T_TARGET)마다 같은 자리의 물체 목표 칸(지도에 있음, 잃음 아님)이 있어야 — 일부러 겹친 두 표시
+          if (h2f(tk.slot[b][T_TARGET]) < 0.5f) continue;
+          ++goal_objchk;
+          bool hit = false;
+          for (int e = 0; e < N_GENT; ++e)
+            hit = hit || (gv(e, GV_KOBJ) > 0.5f && gv(e, GV_KNOWN) > 0.5f && gv(e, GV_LOST) < 0.5f && tk.goal[e][GV_POS] == tk.slot[b][T_POS] &&
+                          tk.goal[e][GV_POS + 1] == tk.slot[b][T_POS + 1] && tk.goal[e][GV_POS + 2] == tk.slot[b][T_POS + 2]);
+          goal_objbad += !hit;
+        }
+      }
       tok_slots += tk.n_slot;
       for (int b = 0; b < tk.n_slot; ++b) tok_target += gmap::h2f(tk.slot[b][gmap::T_TARGET]) > 0.5f;
       for (int j = 0; j < 8; ++j) tok_walls += gmap::h2f(tk.wall[16 + 5 * j + 4]) > 0.5f;
@@ -353,6 +389,11 @@ int main(int argc, char** argv) {
               tok_live / std::max(1.0, (double)tok_slots), tok_reach / std::max(1.0, (double)tok_slots), tok_hyper / std::max(1.0, (double)tok_slots),
               way_valid / std::max(1.0, (double)way_tgt), way_tgt, way_len / std::max(1.0, (double)way_valid), way_ratio / std::max(1.0, (double)way_valid),
               way_far / std::max(1.0, (double)way_valid));
+  std::printf("  goal entries per env-step: pick present %.3f (known %.3f, lost %.3f), place present %.3f (known %.3f, lost %.3f, point %.3f);"
+              " independent check: point entries %ld bad %ld, object entries vs first target slot %ld bad %ld\n",
+              goal_present[0] / ES, goal_known[0] / ES, goal_lost[0] / ES, goal_present[1] / ES, goal_known[1] / ES, goal_lost[1] / ES, goal_pt[1] / ES,
+              goal_ptchk, goal_ptbad, goal_objchk, goal_objbad);
+  if (!negative && (goal_ptbad || goal_objbad)) { std::printf("FAIL: goal entries disagree with the independent check\n"); ++mismatches; }
   {  // 마지막 CPU 지도 전체의 FNV-1a 해시: 최적화 전후 의미가 같은지(같은 씨앗·같은 스텝) 비교용
     uint64_t hsh = 1469598103934665603ull;
     auto mix = [&](const void* p, size_t n) { const unsigned char* c = (const unsigned char*)p; for (size_t k = 0; k < n; ++k) { hsh ^= c[k]; hsh *= 1099511628211ull; } };
@@ -380,7 +421,7 @@ int main(int argc, char** argv) {
     std::printf("negative control (%s on GPU): %ld mismatching items (must be > 0)\n",
                 neg_bug == 1 ? "confirm rule off" : neg_bug == 2 ? "waypoint descent tie order flipped" : neg_bug == 3 ? "live slots use map position" : neg_bug == 4 ? "BEHAVIOR room token shifted 1.5 m" : neg_bug == 5 ? "BEHAVIOR distance field always 4-neighbour" :
                 neg_bug == 6 ? "name table off" : neg_bug == 7 ? "moving tracking off" : neg_bug == 8 ? "absence detect-range/new-view gates off" :
-                neg_bug == 9 ? "relink off" : "different-name IoU merge off", mismatches);
+                neg_bug == 9 ? "relink off" : neg_bug == 10 ? "different-name IoU merge off" : "goal entries without rotation", mismatches);
     if (first_step >= 0) std::printf("  first mismatch: step %ld, %s\n", first_step, first_what);
     return mismatches > 0 ? 0 : 1;
   }

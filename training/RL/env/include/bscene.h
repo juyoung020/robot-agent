@@ -75,6 +75,10 @@ struct Entry {            // 판 하나의 시작 조건(호스트가 미리 만
   int32_t pick_rec, dst_rec, src_rec;   // RASC PICKS·PLACES 번호(확인 도구용)
   int32_t rb, rb_in;      // 창 안 닿는 칸 비트(창 128² 칸 = 낱말 512) 자리: 잡는 자세 칸에서 창 안 BFS(느슨/엄격 문턱), −1 없음
   float dlo[3], dhi[3];   // 놓을 자리(창 좌표 축 정렬): 면·용기 = 상자, 바닥 = 고른 0.4 m 자리
+  // 놓을 점(목표 점, 2026-10-05 — 앱에서 바닥·면을 눌러 "여기에 놔"): 창 좌표 xyz(z = 물체가 놓일 바닥 높이). 바닥 = 고른 자리 가운데(z 0),
+  // 면(ontop) = 호스트가 고른 윗면 점(물체 바닥 자국이 면 안·다른 물체와 안 겹침·닿는 칸에서 팔 닿는 거리 — bscene_host place_point), 용기 = 없음
+  float ppt[3];
+  int32_t ppt_ok;         // 1 = ppt 가 놓을 수 있는 점, 0 = 없음(용기·못 찾음)
 };
 // 집기·놓기 판 고르기 표(호스트가 만듦): 인스턴스 → 집을 물체 → 짝(Entry). 각 단계에서 엄격 판을 앞에 둠
 struct PnpPick { int ent_off, n, n_in; };
@@ -91,6 +95,8 @@ struct SceneSet {         // 장치 메모리에 하나(커널은 포인터로 �
   const PnpPick* ppick;
   int ioff[MAXSC][2], icnt[MAXSC][2], icnt_in[MAXSC][2];
   int ntpl, ntpl_train;                       // 지시문 조합마다 문장 수(앞 ntpl_train = 학습, 나머지 = 평가용 heldout)
+  int ncombo;                                 // 지시문 조합 수(pnp_v1 combos.tsv 줄 수)
+  int iblocks;                                // 지시문 표 묶음: 1 = 조합만(pnp_v1 v1), 3 = 조합 | 점에 놓기("put the {o} here") | 점으로 가기("go here") — v2
   const uint32_t* rbits;                      // Entry::rb·rb_in 이 가리키는 창 닿는 칸 비트 묶음
   // 이름 표(vla_v1): 생김새 행 a(0..6) × 이름 행 n 의 확신도(bscene_host 가 name128·app128 로 계산), 비슷한 다른 이름 3, 상위어
   const float* conf1;     // [7][nname]
@@ -109,8 +115,19 @@ struct BCurr {
   int strict;             // 1 = 집기·놓기 표(B2–B5)를 엄격 거르개 판만, 0 = 느슨(기본). 판마다 쓴 거르개를 상태에 적음(I_B_FSET)
   int nofilter;           // NoFilter 비트(시작 고르기 거르개 끄기 — 음성 대조만)
   int eval_instr;         // 1 = 지시문을 평가용(heldout) 문장에서
+  // 목표 점(2026-10-05, VLA_INPUT 2.1 목표 칸 — 0 이면 예전과 같은 난수 흐름·같은 판)
+  float p_point;          // 집기·놓기 판(B2·B3)에서 놓을 곳을 받침 물체 대신 놓을 점(Entry::ppt)으로 + 지시문 "put the {o} here" 묶음. 바닥 놓을 곳은 늘 점(이 확률은 지시문만)
+  float p_goto;           // B1·B3 판을 "점으로 가기" 로: 집을 칸 없음, 놓을 칸 = 점(B1 = 방 목표 점, B3 = Entry::ppt), 지시문 "go here" 묶음
 };
-constexpr BCurr kBCurrDefault = {0.34f, 0.33f, 0xffu, 0, 0.f, 0, 0, 0};
+constexpr BCurr kBCurrDefault = {0.34f, 0.33f, 0xffu, 0, 0.f, 0, 0, 0, 0.f, 0.f};
+// 판의 목표 꼴(env I_B_GMODE 비트, 지도 BMapEnv::gmode)
+enum GoalMode { GM_PLACE_PT = 1,   // 놓을 칸(목표 칸 1)이 점(F_B_GPX..Z)
+                GM_GOTO = 2 };     // 점으로 가기: 집을 칸 없음, 지금 가는 목표 = 놓을 점(B1·B3 변형)
+// 점에 놓기 성공(B5 점 판, 잡기 물리 E6 뒤 — 정의만): 놓은 물체(손 안 아님)의 바닥 자국 가운데가 점에서 수평 place_r 안, 바닥 높이가 점 z ± place_tz
+struct KPt {
+  static constexpr float place_r = 0.05f;    // 2D 반경 m (가정: 앱 지도 칸 0.05 m·OMX 위치 오차 ~1 cm 보다 넉넉히)
+  static constexpr float place_tz = 0.02f;   // 높이 허용 m (pred_ontop tol 과 같음)
+};
 
 // 지도 → 환경(앞 스텝의 지도 값): 정책이 아는 지도(자라는 지도)의 거리장과 목표 확정 여부
 struct NavFb {
@@ -313,6 +330,11 @@ DEV bool pred_grasped(bool held, const float obj_lo[3], float support_top, float
 DEV bool pred_ontop(const float o_lo[3], const float o_hi[3], const float s_lo[3], const float s_hi[3], float tol = 0.02f) {
   const float cx = 0.5f * (o_lo[0] + o_hi[0]), cy = 0.5f * (o_lo[1] + o_hi[1]);
   return absf(o_lo[2] - s_hi[2]) <= tol && cx > s_lo[0] && cx < s_hi[0] && cy > s_lo[1] && cy < s_hi[1];
+}
+// 점에 놓기(KPt): 손에서 놓였고, 바닥 자국 가운데가 점 pt 에서 수평 place_r 안, 물체 바닥이 pt z ± place_tz
+DEV bool pred_at_point(bool held, const float o_lo[3], const float o_hi[3], const float pt[3]) {
+  const float dx = 0.5f * (o_lo[0] + o_hi[0]) - pt[0], dy = 0.5f * (o_lo[1] + o_hi[1]) - pt[1];
+  return !held && dx * dx + dy * dy <= KPt::place_r * KPt::place_r && absf(o_lo[2] - pt[2]) <= KPt::place_tz;
 }
 // inside(가정): 물체 상자 가운데가 용기 상자 안이고 물체 xy 가 용기 xy 안에 들어감(위 열린 용기)
 DEV bool pred_inside(const float o_lo[3], const float o_hi[3], const float c_lo[3], const float c_hi[3]) {

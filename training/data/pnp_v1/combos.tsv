@@ -1,4 +1,4 @@
-# ntpl 12 ntpl_train 10
+# ntpl 12 ntpl_train 10 blocks combo,point,goto
 # combos for the pick-and-place instruction table: idx obj_row src_row dst_row rel (-2 = floor, <= -1000 = floor of room category -1000-row; rel 2 ontop, 3 inside). en names after '|'
 0 42 -2 -1035 2 | battery | floor | living room floor
 1 42 -2 448 2 | battery | floor | furniture

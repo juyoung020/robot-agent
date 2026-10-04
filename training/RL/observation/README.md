@@ -47,3 +47,6 @@ G1 관측 80 의 배치는 그대로다(`env.h` step_core). 바뀌는 것은 정
 - 기본: BC 설정 `goal_drop` 0.5 **(가정)**, 장치 값 `bc_set_goal_drop`. 접지 평가 = 학생 평가마다 표시를 늘 끈 판(`<이름>_noflag`, p = 1)을 한 번 더 — "B2·B3 판 끝에 로봇에서 가장 가까운 과제 물체가 목표인가" 비율과 B2·B3 성공(`BcLog g_n·g_ok·p_n·p_succ`, results.json `grounding`).
 - 검증: `ppo_verify obs --gdrop [--stage 3 --aug]` 0 낱말 다름, 512 판 중 250 판 감춤·새는 낱말 0. `bc_verify v5 --lite --gdrop [--stage 3 --txt]`·`--arch1 --act8 --gdrop`: 기록 = 본 것(감춘 표본 290/512)·모으기 CPU == GPU 0 다름, V6(`--lite --aug --gdrop`, `--arch1 --aug --raug --act8 --gdrop`) 0 낱말.
 - **nvcc 12.8 최적화 문제**: 감추기 해시를 `assemble` 안에 펼치면(-O3) 같은 함수의 속도 잡음 칸이 실행마다 다른 값이 됐다(`-G` 면 맞음, 입력·열쇠 같음 — `ppo_verify obs --aug`·V6 `--aug` 가 잡음). 판정을 따로 부르는 함수(`goal_off_hash`, `__noinline__`)로 빼서 피했다.
+
+## 목표 칸(2026-10-05)
+X0 [432, 464) = 목표 칸 2 × 16(`obs.h goal_val`, VLA_INPUT 2.1): 표시·꼴·앎·잃음·sin·cos 그대로, 위치·거리·손끝 기준은 물체 칸 특징 T_POS·T_DIST·T_POS_EEF 의 μ·σ(tok_norm.h 그대로 — 새 통계 없음). 학생 감추기는 물체 목표 칸만, 점으로 가기 판(토큰 flags 비트 1)은 G1 목표 값·경유 지점을 남김, 교사 `goal_known` 은 점으로 가기면 참.

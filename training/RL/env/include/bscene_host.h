@@ -62,6 +62,7 @@ struct SceneStats {               // 확인·보고용(잰 값)
   // 집기·놓기(문서 B3–B5 거르개): 집을 물체(인스턴스 × 물체) 후보/지남, 놓을 곳(서로 다른 RASC 받침) 지남, 짝, 엄격; 뺀 까닭
   int pk_scene = 0, pk_cand = 0, pk_ok = 0, pk_ok_in = 0, sup_ok = 0, sup_ok_in = 0, pr_cand = 0, pr_ok = 0, pr_ok_in = 0, inst_ok = 0, inst_ok_in = 0;
   int rj_artic = 0, rj_closed = 0, rj_struct = 0, rj_reach = 0, rj_win = 0, rj_stance = 0, rj_dst = 0, rj_area = 0, rj_spawn = 0, rj_cap = 0, rj_floor = 0;
+  int ppt_ok = 0, ppt_onto = 0, ppt_onto_ok = 0;   // 놓을 점: 찾은 짝(바닥 포함), 면 짝, 그중 면 점을 찾은 것
   double path_sum[2] = {0, 0};     // 표마다 경로 합(평균용)
   double ratio_sum[2] = {0, 0};    // 경로 / 직선
   int name_hit = 0, name_miss = 0; // 과제 물체 이름 찾음 / 못 찾음(상위어로)
@@ -111,7 +112,7 @@ struct SceneBuild {
   struct Combo { int16_t obj, src, dst, rel; };
   std::vector<Combo> combos;                 // 엔트리에 나온 (집을 것, 출발, 놓을 곳, 술어) — 정렬 순서 = combos.tsv
   int combo_missing = 0;                     // combos.tsv 에 없는 조합의 엔트리 수
-  int ntpl = 0, ntpl_train = 0;
+  int ntpl = 0, ntpl_train = 0, ncombo = 0, iblocks = 1;   // 지시문 표: 문장 수, 조합 수, 묶음(3 = 조합·점에 놓기·점으로 가기)
   PnpFilter filt{};
 };
 bool dump_combos(const SceneBuild& b, const std::string& path, std::string* err);   // combos.tsv 쓰기(지시문 표 만들기 입력)
@@ -129,7 +130,7 @@ bool body_free_host(const SceneBuild::Sc& s, const Entry& e, float x, float y, f
 // 창 안 8 이웃 다익스트라(로봇 중심 칸): 창 좌표 시작에서, 창 칸 [WIN²] 거리(m, 못 가면 −1)
 void window_dijkstra(const SceneBuild::Sc& s, float wx, float wy, float sx, float sy, std::vector<float>& dist);
 // 목표에서 거꾸로(참 장면): B1 = 목표 점 칸, 물체 표 = 물체 바닥 자국에서 0.38 m 안 칸이 씨앗(0). 대본 정책·SPL 용
-void goal_field(const SceneBuild::Sc& s, const Entry& e, std::vector<float>& dist);
+void goal_field(const SceneBuild::Sc& s, const Entry& e, std::vector<float>& dist, const float* pt = nullptr);   // pt: 점 목표(창 좌표) 둘레 칸을 씨앗으로
 // 참 장면 다익스트라, 씨앗 = (tx, ty) 에서 rad 안 칸(빈 칸이 아니어도) — 지도 거리장(map.h 8 절)과 같은 씨앗으로 견주기용
 void disk_field(const SceneBuild::Sc& s, const Entry& e, float tx, float ty, float rad, std::vector<float>& dist);
 bool stance_ok(const SceneBuild::Sc& s, const Entry& e, float cx, float cy);   // B3 서는 자리(목표를 봄, 몸통 안 닿음, 잡는 점 작업 공간에 물체)

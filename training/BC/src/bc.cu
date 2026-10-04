@@ -424,7 +424,7 @@ __global__ void update_end_k(TrainState* ts, Data* dd, int ring, BcLog* out) {
 }
 
 // ---- arch 1(토큰마다 학생): X0(304)·지시 표 → 묶음 입력 줄(tf.h). 값은 bf16 그대로 옮김(새로 계산 없음) — 물체 묶음은 칸 줄(sin) 그대로 ----
-//   ARM 48 = 관측 0..41 | 1 · BASE 16 = 관측 42..44 | 1 · GOAL 16 = 관측 45..55(직전 명령 8, 손끝 → 목표 3) + 경유 지점 4 | 1
+//   ARM 48 = 관측 0..41 | 1 · BASE 16 = 관측 42..44 | 1 · GOAL 48 = 관측 45..55(직전 명령 8, 손끝 → 목표 3) + 경유 지점 4 + 목표 칸 2 × 14 | 1
 //   WALL 80 = 벽 56 + 안 본 곳 광선 8 | 1 · ROOM 16 = 방 10 | 1 · TXT 144 = 지시 128 | 1
 struct PackP { const uint16_t* x0; const uint16_t* txt; const int* tid; int M; uint16_t* g[tfm::N_GRP]; };
 __global__ void tf_pack_k(PackP p) {
@@ -435,7 +435,7 @@ __global__ void tf_pack_k(PackP p) {
   auto put = [&](int g, int K, int kreal, uint16_t v) { if (c < K) p.g[g][(size_t)r * K + c] = c < kreal ? v : (c == kreal ? one : (uint16_t)0); };
   put(tfm::G_ARM, 48, 42, c < 42 ? x[X0_OBS + c] : 0);
   put(tfm::G_BASE, 16, 3, c < 3 ? x[X0_OBS + 42 + c] : 0);
-  put(tfm::G_GOAL, 16, 15, c < 11 ? x[X0_OBS + 45 + c] : (c < 15 ? x[X0_WAY + c - 11] : 0));
+  put(tfm::G_GOAL, tfm::GOAL_K, tfm::GOAL_REAL, c < tfm::GOAL_REAL ? x[tfm::goal_src_col(c)] : 0);
   put(tfm::G_WALL, 80, 64, c < 56 ? x[X0_OBS + N_OBS_G1 + c] : (c < 64 ? x[X0_FRONT + c - 56] : 0));
   put(tfm::G_ROOM, 16, 10, c < 10 ? x[X0_OBS + N_OBS_G1 + 56 + c] : 0);
   put(tfm::G_TXT, 144, 128, c < 128 ? p.txt[(size_t)p.tid[r] * TXT_W + c] : 0);
@@ -554,7 +554,7 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
   // E2 BEHAVIOR(stage 3): 장면 묶음 + 커리큘럼 장치 값(학습기 ppo 와 같은 규칙). 영상 학생은 아직 안 됨 — 렌더(bc_render)가 상자 방만 그림
   bcurr_d = alloc<bsc::BCurr>(1);
   {
-    bsc::BCurr b0{cfg.b_p1, cfg.b_p2, cfg.b_scene_mask, cfg.b_split, cfg.b_yaw_jit, cfg.b_strict, cfg.b_nofilter, cfg.b_eval_instr};
+    bsc::BCurr b0{cfg.b_p1, cfg.b_p2, cfg.b_scene_mask, cfg.b_split, cfg.b_yaw_jit, cfg.b_strict, cfg.b_nofilter, cfg.b_eval_instr, cfg.b_p_point, cfg.b_p_goto};
     if (cfg.beh || cfg.stage >= env::kStageBeh) {
       if (cfg.vision) { std::fprintf(stderr, "bc: BEHAVIOR stage 3 with vision is not supported yet (renderer draws the box room only)\n"); std::abort(); }
       cfg.beh = 1;

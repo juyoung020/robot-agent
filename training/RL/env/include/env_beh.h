@@ -32,10 +32,13 @@ struct KB {
   static constexpr float seed_b1 = 0.15f;      // 거리장 씨앗 반경(지도 쪽과 같은 값): B1 점 둘레
   static constexpr float seed_obj = 0.45f;     // B2·B3 물체 둘레(팔 닿는 원, 가정: 옆 0.27 m + 몸통 반 폭 0.11 m 남짓)
   static constexpr float slack_b1 = 10.f, slack_b2 = 30.f, slack_b3 = 10.f;   // 시간 예산 = 참 최단 경로 / 0.3 m/s + 여유 s (가정: B2 는 찾느라 더)
+  // 점으로 가기 B3(목표 점, 2026-10-05): 손끝 → 점(물체가 놓일 가운데 높이) 3D 거리 퍼텐셜 모양 잡기 무게(가정: 에임 r_aim 과 같은 크기),
+  // 목표 1.5 m 안에서만(에임 항과 같은 범위). 팔을 쓰는 B5 점 판에서 그대로 "물체를 점 위로" 쪽 퍼텐셜이 된다
+  static constexpr float r_pt3 = 2.f;
 };
 DEV float seed_r_of(int kind) { return kind == bsc::EK_B1 ? KB::seed_b1 : KB::seed_obj; }
 
-struct BState { float wx, wy, px, py, tz, ex[3], dist; int kind, scene, ent, room, fset, instr; };
+struct BState { float wx, wy, px, py, tz, ex[3], dist, gp[3], pd3; int kind, scene, ent, room, fset, instr, gmode; };
 DEV void load_b(const Soa& s, int i, BState& b) {
   const int N = s.N;
   b.wx = s.f[F_B_WX * N + i]; b.wy = s.f[F_B_WY * N + i]; b.px = s.f[F_B_PX * N + i]; b.py = s.f[F_B_PY * N + i];
@@ -44,6 +47,9 @@ DEV void load_b(const Soa& s, int i, BState& b) {
   b.dist = s.f[F_B_DIST * N + i];
   b.kind = s.iv[I_B_KIND * N + i]; b.scene = s.iv[I_B_SCENE * N + i]; b.ent = s.iv[I_B_ENT * N + i]; b.room = s.iv[I_B_ROOM * N + i];
   b.fset = s.iv[I_B_FSET * N + i]; b.instr = s.iv[I_B_INSTR * N + i];
+  for (int a = 0; a < 3; ++a) b.gp[a] = s.f[(F_B_GPX + a) * N + i];
+  b.pd3 = s.f[F_B_PD3 * N + i];
+  b.gmode = s.iv[I_B_GMODE * N + i];
 }
 DEV void store_b(const Soa& s, int i, const BState& b) {
   const int N = s.N;
@@ -53,6 +59,9 @@ DEV void store_b(const Soa& s, int i, const BState& b) {
   s.f[F_B_DIST * N + i] = b.dist;
   s.iv[I_B_KIND * N + i] = b.kind; s.iv[I_B_SCENE * N + i] = b.scene; s.iv[I_B_ENT * N + i] = b.ent; s.iv[I_B_ROOM * N + i] = b.room;
   s.iv[I_B_FSET * N + i] = b.fset; s.iv[I_B_INSTR * N + i] = b.instr;
+  for (int a = 0; a < 3; ++a) s.f[(F_B_GPX + a) * N + i] = b.gp[a];
+  s.f[F_B_PD3 * N + i] = b.pd3;
+  s.iv[I_B_GMODE * N + i] = b.gmode;
 }
 
 // 판 리셋 B1: (장면, split) → 방 표에서 시작 조건 하나(로봇 시작 = 인스턴스 값)
@@ -155,12 +164,23 @@ DEV void reset_beh(Core& c, BState& b, const bsc::SceneSet& ss, const bsc::BCurr
   }
   if (e < 0) { e = 0; kind = ss.ent[0].list == bsc::L_ROOM ? bsc::EK_B1 : bsc::EK_B3; }   // 설정이 아무것도 못 고름(호스트가 미리 막음) — 첫 판
   const bsc::Entry& E = ss.ent[e];
-  c.tx = E.gx; c.ty = E.gy;
+  // 점으로 가기(B1·B3 변형, 목표 점): p_goto > 0 일 때만 난수를 하나 더 뽑는다(0 이면 예전과 같은 난수 흐름 = 같은 판)
+  bool go = false;
+  if (cu.p_goto > 0.f && kind != bsc::EK_B2) {
+    const float ug = rand01(c.rng);
+    go = ug < cu.p_goto && (kind == bsc::EK_B1 || E.ppt_ok != 0);
+  }
+  const int nt = cu.eval_instr ? ss.ntpl - ss.ntpl_train : ss.ntpl_train;
+  const int toff = cu.eval_instr ? ss.ntpl_train : 0;
+  const bool blk3 = ss.iblocks >= 3 && ss.ntpl > 0 && nt > 0;   // 지시문 표 v2(점 묶음 있음)
+  c.tx = go && kind == bsc::EK_B3 ? E.ppt[0] : E.gx;
+  c.ty = go && kind == bsc::EK_B3 ? E.ppt[1] : E.gy;
   if (kind == bsc::EK_B1) {   // B1: 인스턴스 로봇 시작
     c.x = E.sx; c.y = E.sy;
     c.yaw = cu.yaw_jit > 0.f ? wrap_pi(E.syaw + rand_range(c.rng, -cu.yaw_jit, cu.yaw_jit)) : E.syaw;
     b.fset = -1;
     b.instr = -1;
+    if (go && blk3) b.instr = 2 * ss.ncombo * ss.ntpl + toff + rand_below(c.rng, nt);   // "go here" 묶음
   } else {    // 집기·놓기: 무작위 시작(거르개를 지나는 칸·무작위 yaw), 못 찾으면 표의 대신 쓸 시작
     bool ok = false;
     float x = 0.f, y = 0.f, yaw = 0.f;
@@ -171,6 +191,7 @@ DEV void reset_beh(Core& c, BState& b, const bsc::SceneSet& ss, const bsc::BCurr
       y = rand_range(c.rng, -R, R);
       yaw = rand_range(c.rng, -kPi, kPi);
       ok = spawn_ok(ss, E, x, y, yaw, cu.strict, cu.nofilter);
+      if (ok && go) { const float px = x - c.tx, py = y - c.ty; ok = px * px + py * py >= KP::spawn_min_d * KP::spawn_min_d; }   // 점에서도 ≥ 1 m
       ++tries;
     }
     ENV_PROF_ADD(3, 1);
@@ -180,15 +201,37 @@ DEV void reset_beh(Core& c, BState& b, const bsc::SceneSet& ss, const bsc::BCurr
     if (!ok) { x = E.sx; y = E.sy; yaw = E.syaw; }
     c.x = x; c.y = y; c.yaw = yaw;
     b.fset = cu.strict ? 1 : 0;
-    const int nt = cu.eval_instr ? ss.ntpl - ss.ntpl_train : ss.ntpl_train;
     const int t = rand_below(c.rng, nt > 0 ? nt : 1);
-    b.instr = (E.combo >= 0 && nt > 0) ? E.combo * ss.ntpl + (cu.eval_instr ? ss.ntpl_train : 0) + t : -1;
+    b.instr = (E.combo >= 0 && nt > 0) ? E.combo * ss.ntpl + toff + t : -1;
+    if (go) b.instr = blk3 ? 2 * ss.ncombo * ss.ntpl + toff + t : -1;
   }
+  // 목표 꼴: 점으로 가기 = 놓을 점 + 집을 칸 없음. 집기·놓기 판의 바닥 놓을 곳은 늘 점(바닥은 누를 물체가 없음), 면은 p_point 로 점
+  b.gmode = 0;
+  for (int a = 0; a < 3; ++a) b.gp[a] = 0.f;
+  if (go) {
+    b.gmode = bsc::GM_PLACE_PT | bsc::GM_GOTO;
+    if (kind == bsc::EK_B1) { b.gp[0] = E.gx; b.gp[1] = E.gy; b.gp[2] = 0.f; }
+    else for (int a = 0; a < 3; ++a) b.gp[a] = E.ppt[a];
+  } else if (kind != bsc::EK_B1 && E.ppt_ok) {
+    const bool floor = E.dkind == bsc::DK_FLOOR;
+    bool pt = floor;
+    bool pt_txt = false;
+    if (cu.p_point > 0.f && (floor || E.dkind == bsc::DK_ONTOP)) {   // 0 이면 난수 안 뽑음(예전 흐름)
+      pt_txt = rand01(c.rng) < cu.p_point;
+      pt = pt || pt_txt;
+    }
+    if (pt) {
+      b.gmode = bsc::GM_PLACE_PT;
+      for (int a = 0; a < 3; ++a) b.gp[a] = E.ppt[a];
+      if (pt_txt && blk3 && E.combo >= 0 && b.instr >= 0) b.instr = b.instr + ss.ncombo * ss.ntpl;   // 같은 조합·같은 문장 번호의 "put the {o} here" 행
+    }
+  }
+  b.pd3 = -1.f;
   c.rhx = bsc::WIN_HALF; c.rhy = bsc::WIN_HALF;   // 창 반 변(상자 방 값 자리 — 지도 완성도 계산만 씀)
   c.nf = 0;
   b.wx = E.wx; b.wy = E.wy;
   b.px = c.x; b.py = c.y;
-  b.tz = kind == bsc::EK_B1 ? KB::b1_tz : E.gz;
+  b.tz = kind == bsc::EK_B1 ? KB::b1_tz : (go ? E.ppt[2] + 0.5f * E.ext[2] : E.gz);   // 점으로 가기 B3: 물체가 점에 놓였을 때의 가운데 높이
   for (int a = 0; a < 3; ++a) b.ex[a] = E.ext[a];
   b.kind = kind; b.scene = E.scene; b.ent = e; b.room = E.groom;
   c.v = 0.f; c.w = 0.f; c.wl = 0.f; c.wr = 0.f;
@@ -268,10 +311,11 @@ DEV void wall_rays_beh(const Core& c, const BState& b, const bsc::SceneSet& ss, 
 DEV bool occluded_beh(const Core& c, const BState& b, const bsc::SceneSet& ss, float cx, float cy) {
   const float p[3] = {cx + b.wx, cy + b.wy, K::cam_z}, q[3] = {c.tx + b.wx, c.ty + b.wy, b.tz};
   const bsc::Entry& E = ss.ent[b.ent];
-  const int except = b.kind == bsc::EK_B1 ? -1 : E.prim[0].sbox;   // 목표가 정적 상자면 자기 상자는 빼고
+  const bool pt = b.kind == bsc::EK_B1 || (b.gmode & bsc::GM_GOTO);   // 목표가 점(물체 아님)
+  const int except = pt ? -1 : E.prim[0].sbox;   // 목표가 정적 상자면 자기 상자는 빼고
   if (bsc::seg_blocked_scene(ss.sc[b.scene], p, q, except)) return true;
   const float pl[3] = {cx, cy, K::cam_z}, v[3] = {c.tx - cx, c.ty - cy, b.tz - K::cam_z};
-  for (int k = (b.kind == bsc::EK_B1 ? 0 : 1); k < E.nprim; ++k) {
+  for (int k = (pt ? 0 : 1); k < E.nprim; ++k) {
     const bsc::BPrim& P = E.prim[k];
     if (P.sbox >= 0) continue;
     if (bsc::seg_hits_aabb3(pl, v, P.lo, P.hi)) return true;
@@ -355,6 +399,12 @@ DEV void step_core_beh(Core& c, BState& b, const bsc::SceneSet& ss, const uint8_
   const float clear = wmin - K::half_wid;
   if (clear < 0.15f) r = r + K::r_near * (0.15f - maxf(clear, 0.f)) * absf(c.v);
   r = r + K::r_jerk * jerk + K::r_time;
+  if ((b.gmode & bsc::GM_GOTO) && b.kind == bsc::EK_B3) {   // 점으로 가기 B3: 손끝 → 점 3D 거리 퍼텐셜(관측 53–55 = 목표 − 손끝, base_link)
+    const float* g = o.obs + (N_BODY - 3);
+    const float d3 = sqrtf(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
+    if (b.pd3 >= 0.f && dist < 1.5f) r = r + KB::r_pt3 * (b.pd3 - d3);
+    b.pd3 = d3;
+  }
 
   const bool still = absf(c.v) <= K::succ_v && absf(c.w) <= K::succ_w;
   bool ok;

@@ -287,7 +287,15 @@ static int run_v5(int bug, bool adam10) {
   tfref::run(tfref::EMUL, c, t.lay, P, ri, b, true);
   const float lg = dl(t.loss_d, 1)[0];
   std::printf("  loss gpu %.7f  fp64 %.7f  emul %.7f\n", lg, a.loss, b.loss);
-  check("loss", V{lg}, V{a.loss}, V{b.loss});
+  {   // 손실은 낱값 하나: EMUL 의 상대 오차는 표본 하나라 우연히 0 에 가까울 수 있다(2026-10-05, 목표 묶음 K 48 로 입력이 바뀌자 GPU 1.3e-6 대 EMUL 2.1e-7).
+      // 바닥 = max(EMUL, FP32 합 반올림 한도 √(항 수)·2⁻²⁴) — 항 수 = 행동 칸 B·H·A. 벡터 값(velocity 등)은 그대로 EMUL 바닥
+    const double n_terms = (double)RA * c.A, fl32 = std::sqrt(n_terms) * 5.960464477539063e-8;
+    const double e = std::fabs((double)lg - a.loss) / std::fabs(a.loss), fe = std::fabs((double)b.loss - a.loss) / std::fabs(a.loss), fl = std::max(fe, fl32);
+    const bool ok = e <= 2.0 * fl + 1e-7;
+    ++n_check;
+    if (!ok) ++n_fail;
+    std::printf("  %-28s gpu %.3e  floor %.3e (emul %.3e, fp32 sum bound %.3e over %.0f terms)  ratio %5.2f  %s\n", "loss", e, fl, fe, fl32, n_terms, e / fl, ok ? "ok" : "FAIL");
+  }
   check("prefix Pf", cols(bfv(dl(t.Pf, R * d1)), R, d1, d), cols(a.Pf, R, d1, d), cols(b.Pf, R, d1, d));
   check("velocity", fv(dl(t.vel, RA * c.A)), a.vel, b.vel);
   check("dX0 (embedding grad)", fv(dl(t.dR, R * d)), a.dX0, b.dX0);

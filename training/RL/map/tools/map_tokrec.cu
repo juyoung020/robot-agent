@@ -1,7 +1,7 @@
 // 지도 토큰 기록(계획서 5.3): G1 환경 + 접근 제어(+ 선택: 팔 행동)로 T 스텝 몰면서 스텝마다 지도 토큰을 장치 기록 버퍼 [T][N] 에
 // 바로 쓰고(호스트 동기 없음), 끝에 한 번 내려받아 파일로 쓴다. 롤아웃 버퍼에 넣는 경로와 같다(map.step(..., rec.at(t))).
 //   map_tokrec [N=256] [T=300] [out=map_tokens.bin] [--arm] [--legacy]   (--legacy: 안 본 곳 광선 8 을 0 으로 = 그 전 배치와 바이트 비교)
-// 파일: 머리 32 B("MTOK", 판 2(MapTok v2 1,296 B; 판 1 = 1,280 B), N, T, sizeof(MapTok), KSLOT, TOK_SLOT_VALS, N_WALL) + MapTok[T][N] (리틀 엔디언, FP16 은 IEEE 반정밀도)
+// 파일: 머리 32 B("MTOK", 판 3(MapTok v3 1,360 B = v2 + 목표 칸 2 × 16; 판 2 = 1,296 B, 판 1 = 1,280 B), N, T, sizeof(MapTok), KSLOT, TOK_SLOT_VALS, N_WALL) + MapTok[T][N] (리틀 엔디언, FP16 은 IEEE 반정밀도)
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
   if (legacy) for (gmap::MapTok& k : tok) for (int q = 0; q < gmap::N_FRONT; ++q) k.front[q] = 0;
   FILE* f = std::fopen(out, "wb");
   if (!f) { std::perror(out); return 1; }
-  const int32_t head[8] = {0x4b4f544d /*"MTOK"*/, 2, N, T, (int32_t)sizeof(gmap::MapTok), gmap::KSLOT, gmap::TOK_SLOT_VALS, gmap::N_WALL};
+  const int32_t head[8] = {0x4b4f544d /*"MTOK"*/, 3, N, T, (int32_t)sizeof(gmap::MapTok), gmap::KSLOT, gmap::TOK_SLOT_VALS, gmap::N_WALL};
   std::fwrite(head, sizeof head, 1, f);
   std::fwrite(tok.data(), sizeof(gmap::MapTok), tok.size(), f);
   std::fclose(f);

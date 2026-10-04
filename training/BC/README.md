@@ -461,3 +461,7 @@ A2 토큰 켬 씨앗 1(`~/ra_ppoout/g5/t4/on_s1/ckpt_final.bin`, `../RL/ppo/READ
 2. 렌더: 색·조명·질감 흔들기, 팀 기본 설정 섞기(싼 설정과 토큰 코사인 0.72), 실제 카메라 FOV·해상도, 로봇 몸·팔 그리기.
 3. 영상 토큰 처리: 계획서 3절의 작은 트랜스포머(6–8 층) + 영상·지도·글 토큰 함께 어텐션, flow 전문가가 그 토큰을 보게(π0 방식). 과제 여러 개일 때 지시 문장 의미, 이름 흔들기·지우기·안 본 이름 평가(VLA_INPUT 6·7절).
 4. G6: FP8(앞 → dgrad → wgrad), 9.1 의 BF16 대 FP8 비교 — 영상 학생에서는 얼린 인코더 앞 GEMM(전체의 86 %)이 첫 대상. G7: 큰 VLA(얼린 Qwen FP8, 몸통 출력 코사인 ≥ 0.999 — 이번 SigLIP 비교 틀을 그대로 씀).
+
+## 목표 칸(2026-10-05)
+X0 464(목표 칸 2 × 16, VLA_INPUT 2.1), 토큰마다 학생의 GOAL 묶음 16 → 48(`tf.h goal_src_col`: 직전 명령 8 + 손끝 → 목표 3 + 경유 지점 4 + 목표 칸마다 앞 14 = 43 + 1), 지시 표 상한 `MAX_TXT` 64 + 2,048(pnp_v1 v2 1,428 행), 설정 `beh.p_point`·`beh.p_goto`. 학생 목표 감추기는 물체 목표 칸만(점 칸은 안 감춤).
+- 검증: `bc_verify v5 --lite` 24/24, `--lite --txt --gdrop --stage 3` 24/24, `--act8` 35/35, `--arch1 --act8 --gdrop` 4/4, `--negative --lite` 모든 버그 실패, V6 `--lite --aug --gdrop`·`--arch1 --aug --raug --act8 --gdrop` 0, V7 lite 0 / 4,841,414·arch1 0 / 4,676,327, reseed 0. `tf_verify all` 84/84 — 손실(낱값 하나) 검사의 바닥을 max(EMUL, FP32 합 한도 √항 수·2⁻²⁴)로 바꿈: GOAL K 48 로 입력이 바뀌자 GPU 1.28e-6 대 EMUL 2.1e-7(우연히 작은 표본 하나)로 실패했음, 벡터 값(velocity 비율 1.01 등)은 그대로 EMUL 바닥.

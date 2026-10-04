@@ -46,6 +46,7 @@ static bool g_aug = false;      // --aug: 학습 때 흔들기 켬(속도 잡음
 static bool g_beh = false;      // --beh: BEHAVIOR 장면 묶음을 만들어 환경·지도에 붙임(상자 방 단계면 결과 비트가 같아야 함). 단계 3 이면 늘 켬
 static int g_stage = -1;        // --stage S: v6/v7 의 환경 단계(−1 = 설정 그대로). 3 = BEHAVIOR B1–B3(장면 묶음 ~/ra_b1k)
 static bool g_gdrop = false;    // --gdrop: obs 검사에서 학생용 목표 표시 감추기 0.5 를 켬(교사 학습기는 늘 0 — CPU == GPU 길만 봄)
+static float g_ppt = 0.f, g_pgo = 0.f;   // --point p_point,p_goto: BEHAVIOR 판 목표 점 섞음(VLA_INPUT 2.1)
 static bool g_curr = false;     // --curr: v6/v7 에 장치 커리큘럼(문턱 0): A1 → env 3(장치에서 환경 바꾸기) → env 3 다른 B 섞음(같은 환경) → A2 → env 3
 static PpoConfig small_cfg(uint64_t seed, int graphs, bool g4 = true) {
   PpoConfig c{};
@@ -66,7 +67,7 @@ static PpoConfig small_cfg(uint64_t seed, int graphs, bool g4 = true) {
   if (std::getenv("PPO_ALLFAM")) { c.beh = 1; c.env_stages = (uint32_t)std::strtoul(std::getenv("PPO_ALLFAM"), nullptr, 0) | (1u << c.stage); }   // 측정: 환경 커널 무리 셋을 모두 띄움(장치 단계 판의 빈 커널 비용)
   if (g_beh || c.stage >= 3) {   // BEHAVIOR: 기본 섞음(B1 0.34·B2 0.33·B3), 모든 장면, 학습 인스턴스
     c.beh = 1;
-    c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0};
+    c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0, g_ppt, g_pgo};
     if (c.stage >= 3) c.use_map = 2;
   }
   if (g_aug) {
@@ -389,7 +390,7 @@ static void set_test_curr(Trainer& tr) {
   st[1] = PpoCurrStage{3, 1.0f, 0.f, 0.f, -1, 0u, 1, b1};
   st[2] = PpoCurrStage{3, 0.1f, 0.1f, 0.f, -1, 0u, 1, b23};
   st[3] = PpoCurrStage{2, 0.3f, 0.4f, 0.f, -1, 0u, 0, PpoBCurr{}};
-  st[4] = PpoCurrStage{3, 0.3f, 0.4f, 2.f, -1, 0u, 1, PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0}};
+  st[4] = PpoCurrStage{3, 0.3f, 0.4f, 2.f, -1, 0u, 1, PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0, g_ppt, g_pgo}};
   const uint32_t all = (1u << tr.scenes->host.nsc) - 1u;
   for (auto& q : st) if (q.b_set) q.bcurr.scene_mask = all;
   if (ppo_curr_set(&tr, st, 5, 1, 0) != 0) { std::fprintf(stderr, "curr_set failed\n"); std::exit(2); }
@@ -427,7 +428,7 @@ static int run_switch(int N, int T, bool neg) {
   for (const auto& q : cs) {
     PpoConfig c = small_cfg(53, 1);
     c.n_env = N; c.horizon = T; c.stage = q[0]; c.use_map = 2; c.beh = 1;
-    c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0};
+    c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0, g_ppt, g_pgo};
     c.env_stages = (1u << q[0]) | (1u << q[1]);
     Snap r[2];
     for (int dev = 0; dev < 2; ++dev) {
@@ -508,7 +509,7 @@ static int run_v7() {
 static int run_snap(const char* out, int N, int T, int iters, int stage, int use_map) {
   PpoConfig c = small_cfg(7, 1);
   c.n_env = N; c.horizon = T; c.minibatches = 4; c.epochs = 5; c.use_map = use_map; c.adaptive_lr = 1; c.stage = stage;
-  if (stage >= 3 && !c.beh) { c.beh = 1; c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0}; }
+  if (stage >= 3 && !c.beh) { c.beh = 1; c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0, g_ppt, g_pgo}; }
   const Snap s = run_iters(c, iters);
   FILE* f = std::fopen(out, "wb");
   if (!f) { std::perror(out); return 2; }
@@ -529,7 +530,7 @@ static int run_snap(const char* out, int N, int T, int iters, int stage, int use
       for (int n = 0; n < L.N; ++n)
         for (int k = 0; k < L.K; ++k) {
           const float v = (*src)[lay.off[l] + (size_t)n * L.K + k];
-          if (k < Ko) dst.push_back(v); else extra_nz += v != 0.f;
+          if (k < Ko) dst.push_back(v); else if (k < X0_GOAL) extra_nz += v != 0.f;   // 지시문 칸만 셈(목표 칸 [432, 464) 은 상자 방에도 값이 있음 — 컵 = 집을 것)
         }
       while (dst.size() % 64) dst.push_back(0.f);
     }
@@ -932,17 +933,37 @@ static int run_obs(bool neg) {
     if (neg) bad += ibad;
     else bad += ibad + env_mis;
   }
-  if (a.p_goal_drop > 0.f) {   // 목표 감춤(독립 확인): 감춘 판은 GPU X0 목표 칸·손끝→목표·경유 지점 0, 칸 줄 T_TARGET 0
-    long hid = 0, leak = 0;
+  {   // 목표 칸 X0 [432, 464)(독립 확인, assemble 을 거치지 않음): 칸이 없으면 0, 있으면 표시 = 1·꼴 원-핫, 위치를 모르면 위치 값 0, 남는 2 칸 0
+    long gbad = 0, npick = 0, nplace = 0, npt = 0;
+    for (int e = 0; e < N; ++e)
+      for (int k = 0; k < gmap::N_GENT; ++k) {
+        const uint16_t* g = tok[e].goal[k];
+        const uint16_t* x = &gx0[(size_t)e * X0_W + X0_GOAL + k * gmap::N_GV];
+        const bool pres = g[gmap::GV_PRESENT] == 0x3c00u, dropped = pres && g[gmap::GV_KOBJ] == 0x3c00u && a.p_goal_drop > 0.f &&
+                                                                    obsv::goal_drop(&a, (uint64_t)s.iter, ((uint64_t)T << 32) | (uint64_t)e);
+        if (!pres || dropped) { for (int q = 0; q < gmap::N_GV; ++q) gbad += x[q] != 0; continue; }
+        (k == 0 ? npick : nplace) += 1;
+        npt += g[gmap::GV_KPT] == 0x3c00u;
+        gbad += x[gmap::GV_PRESENT] != f2bf(1.f) || (x[gmap::GV_KOBJ] == f2bf(1.f)) == (x[gmap::GV_KPT] == f2bf(1.f));
+        if (g[gmap::GV_KNOWN] != 0x3c00u) for (int q = gmap::GV_POS; q < gmap::GV_EEF + 3; ++q) gbad += q != gmap::GV_SIN && q != gmap::GV_COS && x[q] != 0;
+        for (int q = gmap::GV_EEF + 3; q < gmap::N_GV; ++q) gbad += x[q] != 0;
+      }
+    std::printf("goal entry columns (independent): %ld words wrong; entries pick %ld place %ld (points %ld)\n", gbad, npick, nplace, npt);
+    if (!neg) bad += gbad;
+  }
+  if (a.p_goal_drop > 0.f) {   // 목표 감춤(독립 확인): 감춘 판은 칸 줄 T_TARGET 0 이고, 물체 목표 판이면 X0 목표 값(G1)·손끝→목표·경유 지점도 0.
+    // 점으로 가기 판(지도 토큰 flags 비트 1)은 G1 목표 값·경유 지점이 점 쪽이라 남는다(점 목표 칸은 감추지 않음 — 위 검사)
+    long hid = 0, leak = 0, hid_pt = 0;
     for (int e = 0; e < N; ++e) {
       const uint64_t k1 = ((uint64_t)T << 32) | (uint64_t)e;
       if (!obsv::goal_drop(&a, (uint64_t)s.iter, k1)) continue;
       ++hid;
+      for (int b = 0; b < KSLOT; ++b) leak += gsin[((size_t)e * KSLOT + b) * SLOT_IN + gmap::T_TARGET] != 0;
+      if (tok[e].flags & 2) { ++hid_pt; continue; }
       for (int c2 = 0; c2 < N_OBS_G1; ++c2) if (obsv::goal_col(c2)) leak += gx0[(size_t)e * X0_W + X0_OBS + c2] != 0;
       for (int k = 0; k < N_WAY; ++k) leak += gx0[(size_t)e * X0_W + X0_WAY + k] != 0;
-      for (int b = 0; b < KSLOT; ++b) leak += gsin[((size_t)e * KSLOT + b) * SLOT_IN + gmap::T_TARGET] != 0;
     }
-    std::printf("goal-flag dropout (p %.2f): %ld / %d envs hidden, %ld goal words leaked (must be 0)\n", a.p_goal_drop, hid, N, leak);
+    std::printf("goal-flag dropout (p %.2f): %ld / %d envs hidden (%ld go-to-point kept), %ld goal words leaked (must be 0)\n", a.p_goal_drop, hid, N, hid_pt, leak);
     bad += leak;
   }
   if (neg) {
@@ -965,6 +986,7 @@ int main(int argc, char** argv) {
   for (int a = 2; a + 1 < argc; ++a) if (!std::strcmp(argv[a], "--stage")) g_stage = std::atoi(argv[a + 1]);
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--curr")) g_curr = true;
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--gdrop")) g_gdrop = true;
+  for (int a = 2; a + 1 < argc; ++a) if (!std::strcmp(argv[a], "--point")) std::sscanf(argv[a + 1], "%f,%f", &g_ppt, &g_pgo);
   if (m == "switch") return run_switch(argc > 2 && argv[2][0] != '-' ? std::atoi(argv[2]) : 1024, argc > 3 && argv[3][0] != '-' ? std::atoi(argv[3]) : 32, neg);
   if (m == "obs") return run_obs(neg);
   if (m == "slotcols") return run_slotcols();

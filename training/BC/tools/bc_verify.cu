@@ -423,7 +423,7 @@ static int run_v5(int bug) {
       };
       chk(tfm::G_ARM, 48, 42, [&](int k) { return x[X0_OBS + k]; });
       chk(tfm::G_BASE, 16, 3, [&](int k) { return x[X0_OBS + 42 + k]; });
-      chk(tfm::G_GOAL, 16, 15, [&](int k) { return k < 11 ? x[X0_OBS + 45 + k] : x[X0_WAY + k - 11]; });
+      chk(tfm::G_GOAL, tfm::GOAL_K, tfm::GOAL_REAL, [&](int k) { return x[tfm::goal_src_col(k)]; });
       chk(tfm::G_WALL, 80, 64, [&](int k) { return k < 56 ? x[X0_OBS + N_OBS_G1 + k] : x[X0_FRONT + k - 56]; });
       chk(tfm::G_ROOM, 16, 10, [&](int k) { return x[X0_OBS + N_OBS_G1 + 56 + k]; });
       chk(tfm::G_TXT, 144, 128, [&](int k) { return txt[(size_t)tid[r] * TXT_W + k]; });

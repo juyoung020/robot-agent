@@ -31,6 +31,7 @@ static const char* field_name(int k) {
   if (k >= F_PD0 && k <= F_PD_END) { std::snprintf(b, sizeof b, "path_node%d", k - F_PD0); return b; }
   if (k == F_B_WX) return "b.wx"; if (k == F_B_WY) return "b.wy"; if (k == F_B_PX) return "b.px"; if (k == F_B_PY) return "b.py";
   if (k == F_B_TZ) return "b.tz"; if (k >= F_B_EX0 && k <= F_B_EX2) return "b.ext"; if (k == F_B_DIST) return "b.dist";
+  if (k >= F_B_GPX && k <= F_B_GPZ) return "b.goal_point"; if (k == F_B_PD3) return "b.pd3";
   return "?";
 }
 
@@ -46,6 +47,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--scenes") && a + 1 < argc) bo.dir = argv[++a];
     else if (!std::strcmp(argv[a], "--mix") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &cu.p1, &cu.p2);
     else if (!std::strcmp(argv[a], "--strict")) cu.strict = 1;
+    else if (!std::strcmp(argv[a], "--point") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &cu.p_point, &cu.p_goto);   // 목표 점 섞음(p_point, p_goto)
     else if (!std::strcmp(argv[a], "--follow")) follow = true;
     else if (!std::strcmp(argv[a], "--split") && a + 1 < argc) cu.split = std::atoi(argv[++a]);
     else if (!std::strcmp(argv[a], "--only") && a + 1 < argc) {
@@ -64,12 +66,13 @@ int main(int argc, char** argv) {
   if (stage >= kStageBeh) {
     std::string err;
     if (!bsc::build_scenes(bo, sb, &err) || !bsc::upload(sb, &err)) { std::printf("scene build failed: %s\n", err.c_str()); return 1; }
-    std::printf("BEHAVIOR scenes: %d, entries %d, device %.1f MB; mix B1 %.2f B2 %.2f B3 %.2f strict %d split %d\n", sb.host.nsc, sb.host.nent, sb.dev_bytes / 1e6,
-                cu.p1, cu.p2, 1.f - cu.p1 - cu.p2, cu.strict, cu.split);
+    std::printf("BEHAVIOR scenes: %d, entries %d, device %.1f MB; mix B1 %.2f B2 %.2f B3 %.2f strict %d split %d; point goals p_point %.2f p_goto %.2f (instr blocks %d)\n",
+                sb.host.nsc, sb.host.nent, sb.dev_bytes / 1e6, cu.p1, cu.p2, 1.f - cu.p1 - cu.p2, cu.strict, cu.split, cu.p_point, cu.p_goto, sb.host.iblocks);
   }
   DeviceEnv gpu(N, stage, seed, arm || arm_zero, sb.dev, cu);
   CpuEnv cpu(N, stage, seed, arm, stage >= kStageBeh ? &sb.host : nullptr, cu);
   long kind_end[2][4][4] = {};   // [짝수 판 비례 제어 / 홀수 판(--follow 면 대본)][단계][끝]
+  long gm_end[4][4][4] = {};     // [목표 꼴 GoalMode 비트 0..3][단계][끝] (모든 판)
   std::vector<int> fol_ep(N, -1);
   std::vector<std::vector<float>> fol_g(N);
   float *d_act, *d_obs, *d_rew; int* d_done;
@@ -96,8 +99,13 @@ int main(int argc, char** argv) {
     if (follow && stage >= kStageBeh) {   // 홀수 판: 대본(참 장면 거리장 내리막)
       for (int i = 1; i < N; i += 2) {
         const int ep = cpu.iv[(size_t)I_EP * N + i], ent = cpu.iv[(size_t)I_B_ENT * N + i], kind = cpu.iv[(size_t)I_B_KIND * N + i];
+        const int gm = cpu.iv[(size_t)I_B_GMODE * N + i];
         const bsc::Entry& e = sb.ent[ent];
-        if (fol_ep[i] != ep) { bsc::goal_field(sb.sc[e.scene], e, fol_g[i]); fol_ep[i] = ep; }
+        if (fol_ep[i] != ep) {   // 점으로 가기 B3: 점 둘레 칸으로(B1 점 판은 예전 방 목표 그대로 — 같은 점)
+          const float pt[2] = {cpu.f[(size_t)F_B_GPX * N + i], cpu.f[(size_t)F_B_GPY * N + i]};
+          bsc::goal_field(sb.sc[e.scene], e, fol_g[i], ((gm & bsc::GM_GOTO) && kind == bsc::EK_B3) ? pt : nullptr);
+          fol_ep[i] = ep;
+        }
         const float x = cpu.f[(size_t)F_X * N + i], y = cpu.f[(size_t)F_Y * N + i], yaw = cpu.f[(size_t)F_YAW * N + i];
         const auto& G = fol_g[i];
         const int ci = (int)std::floor((x + bsc::WIN_HALF) / bsc::CELL), cj = (int)std::floor((y + bsc::WIN_HALF) / bsc::CELL);
@@ -128,9 +136,11 @@ int main(int argc, char** argv) {
     if (!arm) for (int k = 2; k < N_ACT; ++k) for (int i = 0; i < N; ++i) act[(size_t)k * N + i] = 0.f;   // 팔 묶음·0 고정 판: 팔 행동 0(묶인 판은 어차피 안 씀)
     cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
     std::vector<int> kind_before(cpu.iv.begin() + (size_t)I_B_KIND * N, cpu.iv.begin() + (size_t)(I_B_KIND + 1) * N);
+    std::vector<int> gm_before(cpu.iv.begin() + (size_t)I_B_GMODE * N, cpu.iv.begin() + (size_t)(I_B_GMODE + 1) * N);
     gpu.step(d_act, d_obs, d_rew, d_done, negative ? nbug : 0);
     cpu.step(act, obs_c, rew_c, done_c);
     for (int i = 0; i < N; ++i) if (done_c[i] > 0 && kind_before[i] >= 0 && kind_before[i] < 4) ++kind_end[i & 1][kind_before[i]][done_c[i]];
+    for (int i = 0; i < N; ++i) if (done_c[i] > 0 && gm_before[i] >= 0 && gm_before[i] < 4 && kind_before[i] >= 0 && kind_before[i] < 4) ++gm_end[gm_before[i]][kind_before[i]][done_c[i]];
     cudaDeviceSynchronize();
     cudaMemcpy(obs_g.data(), d_obs, sizeof(float) * obs_g.size(), cudaMemcpyDeviceToHost);
     cudaMemcpy(rew_g.data(), d_rew, sizeof(float) * N, cudaMemcpyDeviceToHost);
@@ -156,6 +166,12 @@ int main(int argc, char** argv) {
       for (int k = 1; k < 4; ++k)
         std::printf("  %s B%d episodes ended: success %ld, collision %ld, timeout %ld\n", p ? (follow ? "odd envs (scripted follower)" : "odd envs (random)") : "even envs (straight approach)",
                     k, kind_end[p][k][1], kind_end[p][k][2], kind_end[p][k][3]);
+  if (stage >= kStageBeh)
+    for (int g = 0; g < 4; ++g)
+      for (int k = 1; k < 4; ++k)
+        if (gm_end[g][k][1] + gm_end[g][k][2] + gm_end[g][k][3])
+          std::printf("  goal mode %d (%s) B%d: success %ld, collision %ld, timeout %ld\n", g, g == 0 ? "object goals" : g == 1 ? "place = point" : g == 3 ? "go to point" : "?", k,
+                      gm_end[g][k][1], gm_end[g][k][2], gm_end[g][k][3]);
   if (negative) {
     std::printf("negative control: %ld mismatches (must be > 0)\n", mismatches);
     return mismatches > 0 ? 0 : 1;

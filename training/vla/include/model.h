@@ -17,7 +17,7 @@ namespace rvla {
 // 지도·몸 묶음(VLA_INPUT 1–4절, BC tf.h 와 같은 입력 줄: 값 + 1 칸(편향) + 0)
 enum VGrp { VG_ARM, VG_BASE, VG_GOAL, VG_OBJ, VG_WALL, VG_ROOM, N_VG };
 struct VGrpDesc { int n_tok, K, k_real; };
-constexpr VGrpDesc kVGrp[N_VG] = {{1, 48, 42}, {1, 16, 3}, {1, 16, 15}, {16, 304, 289}, {1, 80, 64}, {1, 16, 10}};
+constexpr VGrpDesc kVGrp[N_VG] = {{1, 48, 42}, {1, 16, 3}, {1, 48, 43}, {16, 304, 289}, {1, 80, 64}, {1, 16, 10}};   // GOAL 48 = BC tf.h GOAL(목표 칸 2 × 14 포함, 2026-10-05)
 // 열 자리 부호: (종류 << 28) | 원본 행
 enum SrcKind { SK_PAD = 0, SK_TXT = 1, SK_IMG = 2, SK_GRP = 3 /* + g */ };
 inline int src_code(int kind, int idx) { return (kind << 28) | idx; }

@@ -29,6 +29,8 @@ struct PpoBCurr {
     strict: i32,
     nofilter: i32,
     eval_instr: i32,
+    p_point: f32,
+    p_goto: f32,
 }
 
 #[repr(C)]
@@ -206,6 +208,8 @@ struct BSpec {
     yaw_jit: f32,
     strict: i32,
     eval_instr: i32,
+    p_point: f32,
+    p_goto: f32,
 }
 fn parse_bspec(v: &Value, base: &BSpec) -> BSpec {
     let mut b = base.clone();
@@ -220,6 +224,8 @@ fn parse_bspec(v: &Value, base: &BSpec) -> BSpec {
     b.yaw_jit = gf(v, "yaw_jit", b.yaw_jit as f64) as f32;
     b.strict = gi(v, "strict", b.strict as i64) as i32;
     b.eval_instr = gi(v, "eval_instr", b.eval_instr as i64) as i32;
+    b.p_point = gf(v, "p_point", b.p_point as f64) as f32;   // 목표 점(VLA_INPUT 2.1): 놓을 곳 = 점 섞음
+    b.p_goto = gf(v, "p_goto", b.p_goto as f64) as f32;     // 점으로 가기(B1·B3 변형) 섞음
     b
 }
 fn bcurr_of(h: *mut std::ffi::c_void, b: &BSpec, all: u32) -> PpoBCurr {
@@ -231,7 +237,7 @@ fn bcurr_of(h: *mut std::ffi::c_void, b: &BSpec, all: u32) -> PpoBCurr {
         assert!(m != 0, "beh: none of the scenes {:?} is in the scene set", b.scenes);
         m
     };
-    PpoBCurr { p1: b.p1, p2: b.p2, scene_mask: mask, split: b.split, yaw_jit: b.yaw_jit, strict: b.strict, nofilter: 0, eval_instr: b.eval_instr }
+    PpoBCurr { p1: b.p1, p2: b.p2, scene_mask: mask, split: b.split, yaw_jit: b.yaw_jit, strict: b.strict, nofilter: 0, eval_instr: b.eval_instr, p_point: b.p_point, p_goto: b.p_goto }
 }
 
 fn env_name(e: i32) -> String {

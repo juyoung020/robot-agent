@@ -87,6 +87,8 @@ struct BcConfig {
     b_strict: i32,
     b_nofilter: i32,
     b_eval_instr: i32,
+    b_p_point: f32,
+    b_p_goto: f32,
     goal_drop: f32,
 }
 
@@ -308,6 +310,8 @@ fn main() {
         b_strict: gi(v.get("beh").unwrap_or(&Value::Null), "strict", 0) as i32,
         b_nofilter: 0,
         b_eval_instr: gi(v.get("beh").unwrap_or(&Value::Null), "eval_instr", 0) as i32,
+        b_p_point: gf(v.get("beh").unwrap_or(&Value::Null), "p_point", 0.0) as f32,   // 목표 점 섞음(VLA_INPUT 2.1)
+        b_p_goto: gf(v.get("beh").unwrap_or(&Value::Null), "p_goto", 0.0) as f32,
         goal_drop: gf(&v, "goal_drop", 0.5) as f32,   // (가정) 학생 목표 표시 감추기 확률 — README "지시문·목표 표시 감추기"
     };
     let r0 = gi(&v, "record_rollouts", 4) as usize;

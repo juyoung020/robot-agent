@@ -54,10 +54,10 @@ constexpr int FLOW_W = MAX_H * N_LAB;    // 128
 constexpr int TEMB = 32;                 // 시간 sin 16 + cos 16
 constexpr int E_X = 129, E_T = E_X + FLOW_W, E_IN = 304;   // E1 입력 칸: 몸통 0..127, 1 = 128, x_τ 129..256, 시간 257..288, 0 289..303
 static_assert(E_T + TEMB <= E_IN && E_IN % 16 == 0, "E1 input");
-// 지시 표 txt: [0, 64) = vla_v1 지시(과제 바꿔 말하기, 상자 방) 또는 bc_load_text_table 표, [64, 64 + 1024) = 집기·놓기 지시(training/data/pnp_v1 —
+// 지시 표 txt: [0, 64) = vla_v1 지시(과제 바꿔 말하기, 상자 방) 또는 bc_load_text_table 표, [64, 64 + 2048) = 집기·놓기 지시(training/data/pnp_v1 —
 // BEHAVIOR 판의 행 = 지도 토큰 instr1 − 1 = 환경 I_B_INSTR, 판 시작 때 환경이 고른 문장)
 constexpr int TXT_PNP0 = 64;
-constexpr int MAX_TXT = TXT_PNP0 + 1024;
+constexpr int MAX_TXT = TXT_PNP0 + 2048;   // pnp_v1 v2 = 1,428 행(조합 708 + 점에 놓기 708 + 점으로 가기 12, 2026-10-05)
 // 지시 문장 고르기(장치 값): 과제의 학습용 바꿔 말하기 / 처음 보는 바꿔 말하기(heldout, VLA_INPUT 7절 평가) 표 행
 struct TxtSel { int n_train, n_held, pad0, pad1; int train[16], held[16]; };
 struct StudentNet {

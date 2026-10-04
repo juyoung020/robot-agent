@@ -13,7 +13,9 @@
 //   app_id  : 호출자가 준 값(생김새 표 = SigLIP 임베딩 표 번호), 없으면 NCLS(GPU 는 참 물체 종류)
 //   comp[4] : 0(과제 완성도는 시뮬 정답이 있어야 함)
 //   front[8]: 0(안 본 곳 광선 — scenemap C ABI 에 '본 칸' 격자가 없음; sm_grid −1 로 만들 수 있으나 아직 안 함)
-//   flags   : 비트 0 = 호출자가 준 keyframe 표시
+//   flags   : 비트 0 = 호출자가 준 keyframe 표시, 비트 1 = 점으로 가기(SmTokIn::goto_point)
+//   goal    : 목표 칸 2(map_tok.h GoalVal) — 호출자가 준 목표(집을 것·놓을 곳: 물체 id 또는 map 점). 물체는 스냅숏에서 id 로 찾음(사라짐 GONE 이나
+//             스냅숏에 없으면 호출자가 준 마지막 자리 + GV_LOST). 실행기(src/agent/tools/move_robot goal.rs)와 같은 규칙
 #pragma once
 #include <algorithm>
 #include <cmath>
@@ -52,6 +54,10 @@ struct SmTokIn {
   int room_type = N_RTYPE;              // R_KITCHEN.. 또는 N_RTYPE(모름)
   bool have_door = false;
   float door_xy[2] = {0, 0};            // 가까운 문 map xy
+  // 목표 칸(VLA_INPUT 2.1): [0] 집을 것, [1] 놓을 곳(점으로 가기의 점도). kind 0 없음, 1 물체(id), 2 점(map xyz)
+  struct Goal { int kind = 0; uint32_t id = 0; float pt[3] = {0, 0, 0}; bool have_last = false; float last[3] = {0, 0, 0}; };
+  Goal goal[N_GENT];
+  bool goto_point = false;              // 지금 가는 목표 = 놓을 점(flags 비트 1)
 };
 
 // 물체 속도용 지난 자리(호출자가 스텝마다 넘김): id → (map 자리, 시각)
@@ -151,7 +157,18 @@ inline void make_sm_tokens(const SmTokIn& in, MapTok* o, SmTokPrev* prev = nullp
   }
   for (int q = 0; q < N_ROOMTOK; ++q) o->room[q] = f2h_soft(rr[q]);
   o->n_slot = int16_t(nslot);
-  o->flags = int16_t(in.keyframe ? 1 : 0);
+  o->flags = int16_t((in.keyframe ? 1 : 0) | (in.goto_point ? 2 : 0));
+  for (int k = 0; k < N_GENT; ++k) {
+    const SmTokIn::Goal& G = in.goal[k];
+    if (G.kind == 2) { goal_fill(o->goal[k], 2, true, false, G.pt, px, py, c, s, in.eef_b); continue; }
+    if (G.kind != 1) { goal_fill(o->goal[k], 0, false, false, nullptr, px, py, c, s, in.eef_b); continue; }
+    const SmTokObj* hit = nullptr;
+    for (const SmTokObj& S : in.objs) if (S.id == G.id) hit = &S;
+    if (hit && hit->state != 1) goal_fill(o->goal[k], 1, true, false, hit->pos, px, py, c, s, in.eef_b);   // 지도에 있음(SEEN·MOVED·HELD)
+    else if (hit) goal_fill(o->goal[k], 1, true, true, hit->pos, px, py, c, s, in.eef_b);                 // GONE: 마지막 자리
+    else if (G.have_last) goal_fill(o->goal[k], 1, true, true, G.last, px, py, c, s, in.eef_b);           // 스냅숏에서 빠짐: 호출자가 기억한 자리
+    else goal_fill(o->goal[k], 1, false, false, nullptr, px, py, c, s, in.eef_b);
+  }
 }
 
 #ifdef SCENEMAP_H

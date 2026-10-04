@@ -64,6 +64,7 @@ typedef struct BcConfig {
   int32_t b_split;      /* 0 학습 인스턴스, 1 공개 평가, 2 둘 다 */
   float b_yaw_jit;
   int32_t b_strict, b_nofilter, b_eval_instr;   /* 엄격 거르개, (음성 대조), 지시문 heldout */
+  float b_p_point, b_p_goto;   /* 목표 점 섞음(PpoBCurr p_point·p_goto 와 같은 뜻, 0 = 끔) */
   float goal_drop;      /* 학생만: 판·스텝마다 이 확률로 목표 표시(칸 T_TARGET)·목표 특권 값·경유 지점을 감춤 — 지시문으로 목표 물체를 찾게(obs.h ObsAug::p_goal_drop).
                            장치 값(bc_set_goal_drop). 실행기 기본 0.5 (가정), 0 = 끔. 교사 라벨 입력은 늘 표시 있음 */
 } BcConfig;

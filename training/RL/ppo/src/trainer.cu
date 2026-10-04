@@ -14,7 +14,8 @@
 
 // BEHAVIOR 커리큘럼 값: C ABI 구조체 = 환경 장치 값(같은 배치를 그대로 복사)
 static_assert(sizeof(PpoBCurr) == sizeof(bsc::BCurr) && offsetof(PpoBCurr, scene_mask) == offsetof(bsc::BCurr, scene_mask) &&
-                  offsetof(PpoBCurr, yaw_jit) == offsetof(bsc::BCurr, yaw_jit) && offsetof(PpoBCurr, eval_instr) == offsetof(bsc::BCurr, eval_instr),
+                  offsetof(PpoBCurr, yaw_jit) == offsetof(bsc::BCurr, yaw_jit) && offsetof(PpoBCurr, eval_instr) == offsetof(bsc::BCurr, eval_instr) &&
+                  offsetof(PpoBCurr, p_point) == offsetof(bsc::BCurr, p_point) && offsetof(PpoBCurr, p_goto) == offsetof(bsc::BCurr, p_goto),
               "PpoBCurr == bsc::BCurr");
 
 namespace ppo {

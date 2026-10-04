@@ -54,6 +54,7 @@ env 3 단계가 하나라도 있으면 실행기가 `beh` 1 로 학습기를 만
 | `beh.split` | 0(학습 인스턴스) | CURRICULUM 3절: 공개 평가 인스턴스(1)는 평가만 |
 | `beh.strict` | 0(느슨 거르개) | 3.1절 표. 엄격(1)은 E0 엄격 한도 판만 |
 | `beh.eval_instr` | 0 | 1 = 지시문 heldout 문장(평가) |
+| `beh.p_point` / `beh.p_goto` | 0.3 / 0.25 | **(가정)** 목표 점(CURRICULUM_BEHAVIOR2026 3.2, POLICY 4.6): 집기·놓기 판 놓을 곳을 점으로(+ "put the {o} here") / B1·B3 를 점으로 가기로. 단계 `b` 가 덮어씀. 0 = 예전 판 |
 | `beh.yaw_jit` | 0.5 rad | **(가정)** B1 시작 yaw = 인스턴스 R1Pro 자세라 ±0.5 rad 흔듦(외우기 방지). 집기·놓기 판은 시작이 원래 무작위 |
 | `beh.nav_k` | 10 | 지도 다가가기 거리장 주기(map README E2, `nav_tradeoff`: K 10 의 판 보상 합 차 0.12 / 8.25) |
 | 단계 `b` | `{mix, scenes, split, strict, eval_instr, yaw_jit}` | env 3 단계에 들어갈 때 장치 값 `bsc::BCurr` 로(같은 환경이면 장치 커리큘럼 커널이 바로, 다른 환경이면 실행기가 `ppo_set_bcurr`) |

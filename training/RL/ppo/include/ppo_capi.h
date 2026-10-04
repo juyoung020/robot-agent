@@ -16,6 +16,8 @@ typedef struct PpoBCurr {
   int32_t strict;         /* 1 = 집기·놓기 엄격 거르개 판만 */
   int32_t nofilter;       /* 음성 대조용(0) */
   int32_t eval_instr;     /* 1 = 지시문을 평가용(heldout) 문장에서 */
+  float p_point;          /* 집기·놓기 판(B2·B3)의 놓을 곳을 점으로(+ "put the {o} here" 지시문) 바꿀 확률 — 목표 점(VLA_INPUT 2.1). 0 = 예전 판 그대로 */
+  float p_goto;           /* B1·B3 판을 "점으로 가기"(집을 칸 없음, 놓을 칸 = 점, "go here") 로 바꿀 확률. 0 = 예전 판 그대로 */
 } PpoBCurr;
 
 typedef struct PpoConfig {

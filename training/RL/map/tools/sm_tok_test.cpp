@@ -199,6 +199,52 @@ int main() {
     CHECK(std::fabs(h2f(V.slot[0][T_VEL]) - 0.5f) < 2e-3f, "velocity %f", h2f(V.slot[0][T_VEL]));
     n_cases += 4;
   }
+  // 5. 목표 칸(VLA_INPUT 2.1): 강체 불변(지도·점을 같이 옮김), 값 = Rᵀ(p − x), sin·cos, 손끝 기준, 사라짐(GONE)·스냅숏에 없음(마지막 자리) → GV_LOST, 모름, 점으로 가기 flags
+  for (int it = 0; it < 50; ++it) {
+    std::uniform_real_distribution<float> R(-3.1f, 3.1f), T(-4.f, 4.f);
+    SmTokIn a = scene(rng, 6);
+    a.goal[GE_PICK].kind = 1; a.goal[GE_PICK].id = a.objs[2].id;
+    a.goal[GE_PLACE].kind = 2; a.goal[GE_PLACE].pt[0] = T(rng); a.goal[GE_PLACE].pt[1] = T(rng); a.goal[GE_PLACE].pt[2] = 0.45f;
+    MapTok A;
+    make_sm_tokens(a, &A);
+    const float c = std::cos(a.yaw), s = std::sin(a.yaw);
+    const float* P = a.goal[GE_PLACE].pt;
+    const float x = c * (P[0] - a.x) + s * (P[1] - a.y), y = -s * (P[0] - a.x) + c * (P[1] - a.y), z = P[2] - MP::base_z, d = std::sqrt(x * x + y * y);
+    CHECK(h2f(A.goal[1][GV_PRESENT]) == 1.f && h2f(A.goal[1][GV_KPT]) == 1.f && h2f(A.goal[1][GV_KOBJ]) == 0.f && h2f(A.goal[1][GV_KNOWN]) == 1.f, "point flags");
+    CHECK(std::fabs(h2f(A.goal[1][GV_POS]) - x) <= tol(x) && std::fabs(h2f(A.goal[1][GV_POS + 1]) - y) <= tol(y) && std::fabs(h2f(A.goal[1][GV_POS + 2]) - z) <= tol(z), "point pos");
+    CHECK(std::fabs(h2f(A.goal[1][GV_DIST]) - d) <= tol(d) && std::fabs(h2f(A.goal[1][GV_SIN]) - y / d) <= 2e-3f && std::fabs(h2f(A.goal[1][GV_COS]) - x / d) <= 2e-3f, "point dist/sincos");
+    CHECK(std::fabs(h2f(A.goal[1][GV_EEF]) - (x - a.eef_b[0])) <= tol(x - a.eef_b[0]) && std::fabs(h2f(A.goal[1][GV_EEF + 2]) - (z - a.eef_b[2])) <= tol(z - a.eef_b[2]), "point eef");
+    CHECK(h2f(A.goal[0][GV_KOBJ]) == 1.f && h2f(A.goal[0][GV_LOST]) == 0.f && h2f(A.goal[0][GV_KNOWN]) == 1.f, "pick flags");
+    for (int q = GV_EEF + 3; q < N_GV; ++q) CHECK(A.goal[0][q] == 0 && A.goal[1][q] == 0, "reserved zero");
+    // 강체 불변(점도 같이)
+    SmTokIn b = moved(a, R(rng), T(rng), T(rng));
+    {
+      const float th = b.yaw - a.yaw, cc = std::cos(th), ss = std::sin(th);
+      const float tx = b.x - (cc * a.x - ss * a.y), ty = b.y - (ss * a.x + cc * a.y);
+      b.goal[GE_PLACE].pt[0] = cc * P[0] - ss * P[1] + tx; b.goal[GE_PLACE].pt[1] = ss * P[0] + cc * P[1] + ty;
+    }
+    MapTok B;
+    make_sm_tokens(b, &B);
+    for (int e = 0; e < N_GENT; ++e)
+      for (int q = 0; q < N_GV; ++q) CHECK(std::fabs(h2f(A.goal[e][q]) - h2f(B.goal[e][q])) <= std::fmax(4e-3f, std::fabs(h2f(A.goal[e][q])) * 4e-3f), "rigid goal e%d q%d %f %f", e, q, h2f(A.goal[e][q]), h2f(B.goal[e][q]));
+    // 사라짐 → 잃음(같은 자리), 스냅숏에 없음 → 호출자 마지막 자리, 없음 → 모름
+    SmTokIn g = a;
+    g.objs[2].state = 1;
+    MapTok G;
+    make_sm_tokens(g, &G);
+    CHECK(h2f(G.goal[0][GV_LOST]) == 1.f && G.goal[0][GV_POS] == A.goal[0][GV_POS], "gone -> lost at last position");
+    g = a;
+    g.goal[GE_PICK].have_last = true;
+    for (int k = 0; k < 3; ++k) g.goal[GE_PICK].last[k] = a.objs[2].pos[k];
+    g.objs.erase(g.objs.begin() + 2);
+    make_sm_tokens(g, &G);
+    CHECK(h2f(G.goal[0][GV_LOST]) == 1.f && h2f(G.goal[0][GV_KNOWN]) == 1.f && G.goal[0][GV_POS] == A.goal[0][GV_POS], "missing -> caller's last position");
+    g.goal[GE_PICK].have_last = false;
+    g.goto_point = true;
+    make_sm_tokens(g, &G);
+    CHECK(h2f(G.goal[0][GV_PRESENT]) == 1.f && h2f(G.goal[0][GV_KNOWN]) == 0.f && G.goal[0][GV_POS] == 0 && (G.flags & 2), "unknown object / goto flag");
+    n_cases += 1;
+  }
   std::printf("sm_tok_test: %d cases, %d failures\n", n_cases, g_fail);
   return g_fail ? 1 : 0;
 }

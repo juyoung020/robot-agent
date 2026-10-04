@@ -706,3 +706,723 @@
 {"text": "치아파스트의 튜브 좀 바구니에서 가져와서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 58, "tpl": 9, "obj": "tube of toothpaste", "i": 705}
 {"text": "could you get the tube of toothpaste off the basket and drop it on the furniture", "lang": "en", "heldout": true, "combo": 58, "tpl": 10, "obj": "tube of toothpaste", "i": 706}
 {"text": "바구니에 놓인 치아파스트의 튜브를 집어 가구 위에 올려줘", "lang": "ko", "heldout": true, "combo": 58, "tpl": 11, "obj": "tube of toothpaste", "i": 707}
+{"text": "put the battery here", "lang": "en", "heldout": false, "combo": 0, "tpl": 0, "obj": "battery", "block": "point", "i": 708}
+{"text": "place the electric battery right here", "lang": "en", "heldout": false, "combo": 0, "tpl": 1, "obj": "electric battery", "block": "point", "i": 709}
+{"text": "set the battery down at this spot", "lang": "en", "heldout": false, "combo": 0, "tpl": 2, "obj": "battery", "block": "point", "i": 710}
+{"text": "drop the electric battery off here", "lang": "en", "heldout": false, "combo": 0, "tpl": 3, "obj": "electric battery", "block": "point", "i": 711}
+{"text": "leave the battery over there", "lang": "en", "heldout": false, "combo": 0, "tpl": 4, "obj": "battery", "block": "point", "i": 712}
+{"text": "move the electric battery to this spot", "lang": "en", "heldout": false, "combo": 0, "tpl": 5, "obj": "electric battery", "block": "point", "i": 713}
+{"text": "배터리를 여기에 놔", "lang": "ko", "heldout": false, "combo": 0, "tpl": 6, "obj": "battery", "block": "point", "i": 714}
+{"text": "배터리를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 0, "tpl": 7, "obj": "electric battery", "block": "point", "i": 715}
+{"text": "배터리를 거기에 둬", "lang": "ko", "heldout": false, "combo": 0, "tpl": 8, "obj": "battery", "block": "point", "i": 716}
+{"text": "배터리 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 0, "tpl": 9, "obj": "electric battery", "block": "point", "i": 717}
+{"text": "could you bring the battery over to this point", "lang": "en", "heldout": true, "combo": 0, "tpl": 10, "obj": "battery", "block": "point", "i": 718}
+{"text": "배터리를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 0, "tpl": 11, "obj": "battery", "block": "point", "i": 719}
+{"text": "put the battery here", "lang": "en", "heldout": false, "combo": 1, "tpl": 0, "obj": "battery", "block": "point", "i": 720}
+{"text": "place the electric battery right here", "lang": "en", "heldout": false, "combo": 1, "tpl": 1, "obj": "electric battery", "block": "point", "i": 721}
+{"text": "set the battery down at this spot", "lang": "en", "heldout": false, "combo": 1, "tpl": 2, "obj": "battery", "block": "point", "i": 722}
+{"text": "drop the electric battery off here", "lang": "en", "heldout": false, "combo": 1, "tpl": 3, "obj": "electric battery", "block": "point", "i": 723}
+{"text": "leave the battery over there", "lang": "en", "heldout": false, "combo": 1, "tpl": 4, "obj": "battery", "block": "point", "i": 724}
+{"text": "move the electric battery to this spot", "lang": "en", "heldout": false, "combo": 1, "tpl": 5, "obj": "electric battery", "block": "point", "i": 725}
+{"text": "배터리를 여기에 놔", "lang": "ko", "heldout": false, "combo": 1, "tpl": 6, "obj": "battery", "block": "point", "i": 726}
+{"text": "배터리를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 1, "tpl": 7, "obj": "electric battery", "block": "point", "i": 727}
+{"text": "배터리를 거기에 둬", "lang": "ko", "heldout": false, "combo": 1, "tpl": 8, "obj": "battery", "block": "point", "i": 728}
+{"text": "배터리 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 1, "tpl": 9, "obj": "electric battery", "block": "point", "i": 729}
+{"text": "could you bring the battery over to this point", "lang": "en", "heldout": true, "combo": 1, "tpl": 10, "obj": "battery", "block": "point", "i": 730}
+{"text": "배터리를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 1, "tpl": 11, "obj": "battery", "block": "point", "i": 731}
+{"text": "put the broken glass here", "lang": "en", "heldout": false, "combo": 2, "tpl": 0, "obj": "broken glass", "block": "point", "i": 732}
+{"text": "place the broken glass right here", "lang": "en", "heldout": false, "combo": 2, "tpl": 1, "obj": "broken glass", "block": "point", "i": 733}
+{"text": "set the broken glass down at this spot", "lang": "en", "heldout": false, "combo": 2, "tpl": 2, "obj": "broken glass", "block": "point", "i": 734}
+{"text": "drop the broken glass off here", "lang": "en", "heldout": false, "combo": 2, "tpl": 3, "obj": "broken glass", "block": "point", "i": 735}
+{"text": "leave the broken glass over there", "lang": "en", "heldout": false, "combo": 2, "tpl": 4, "obj": "broken glass", "block": "point", "i": 736}
+{"text": "move the broken glass to this spot", "lang": "en", "heldout": false, "combo": 2, "tpl": 5, "obj": "broken glass", "block": "point", "i": 737}
+{"text": "깨진 유리를 여기에 놔", "lang": "ko", "heldout": false, "combo": 2, "tpl": 6, "obj": "broken glass", "block": "point", "i": 738}
+{"text": "깨진 유리를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 2, "tpl": 7, "obj": "broken glass", "block": "point", "i": 739}
+{"text": "깨진 유리를 거기에 둬", "lang": "ko", "heldout": false, "combo": 2, "tpl": 8, "obj": "broken glass", "block": "point", "i": 740}
+{"text": "깨진 유리 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 2, "tpl": 9, "obj": "broken glass", "block": "point", "i": 741}
+{"text": "could you bring the broken glass over to this point", "lang": "en", "heldout": true, "combo": 2, "tpl": 10, "obj": "broken glass", "block": "point", "i": 742}
+{"text": "깨진 유리를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 2, "tpl": 11, "obj": "broken glass", "block": "point", "i": 743}
+{"text": "put the candy cane here", "lang": "en", "heldout": false, "combo": 3, "tpl": 0, "obj": "candy cane", "block": "point", "i": 744}
+{"text": "place the candy cane right here", "lang": "en", "heldout": false, "combo": 3, "tpl": 1, "obj": "candy cane", "block": "point", "i": 745}
+{"text": "set the candy cane down at this spot", "lang": "en", "heldout": false, "combo": 3, "tpl": 2, "obj": "candy cane", "block": "point", "i": 746}
+{"text": "drop the candy cane off here", "lang": "en", "heldout": false, "combo": 3, "tpl": 3, "obj": "candy cane", "block": "point", "i": 747}
+{"text": "leave the candy cane over there", "lang": "en", "heldout": false, "combo": 3, "tpl": 4, "obj": "candy cane", "block": "point", "i": 748}
+{"text": "move the candy cane to this spot", "lang": "en", "heldout": false, "combo": 3, "tpl": 5, "obj": "candy cane", "block": "point", "i": 749}
+{"text": "캔디 케인을 여기에 놔", "lang": "ko", "heldout": false, "combo": 3, "tpl": 6, "obj": "candy cane", "block": "point", "i": 750}
+{"text": "캔디 케인을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 3, "tpl": 7, "obj": "candy cane", "block": "point", "i": 751}
+{"text": "캔디 케인을 거기에 둬", "lang": "ko", "heldout": false, "combo": 3, "tpl": 8, "obj": "candy cane", "block": "point", "i": 752}
+{"text": "캔디 케인 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 3, "tpl": 9, "obj": "candy cane", "block": "point", "i": 753}
+{"text": "could you bring the candy cane over to this point", "lang": "en", "heldout": true, "combo": 3, "tpl": 10, "obj": "candy cane", "block": "point", "i": 754}
+{"text": "캔디 케인을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 3, "tpl": 11, "obj": "candy cane", "block": "point", "i": 755}
+{"text": "put the candy cane here", "lang": "en", "heldout": false, "combo": 4, "tpl": 0, "obj": "candy cane", "block": "point", "i": 756}
+{"text": "place the candy cane right here", "lang": "en", "heldout": false, "combo": 4, "tpl": 1, "obj": "candy cane", "block": "point", "i": 757}
+{"text": "set the candy cane down at this spot", "lang": "en", "heldout": false, "combo": 4, "tpl": 2, "obj": "candy cane", "block": "point", "i": 758}
+{"text": "drop the candy cane off here", "lang": "en", "heldout": false, "combo": 4, "tpl": 3, "obj": "candy cane", "block": "point", "i": 759}
+{"text": "leave the candy cane over there", "lang": "en", "heldout": false, "combo": 4, "tpl": 4, "obj": "candy cane", "block": "point", "i": 760}
+{"text": "move the candy cane to this spot", "lang": "en", "heldout": false, "combo": 4, "tpl": 5, "obj": "candy cane", "block": "point", "i": 761}
+{"text": "캔디 케인을 여기에 놔", "lang": "ko", "heldout": false, "combo": 4, "tpl": 6, "obj": "candy cane", "block": "point", "i": 762}
+{"text": "캔디 케인을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 4, "tpl": 7, "obj": "candy cane", "block": "point", "i": 763}
+{"text": "캔디 케인을 거기에 둬", "lang": "ko", "heldout": false, "combo": 4, "tpl": 8, "obj": "candy cane", "block": "point", "i": 764}
+{"text": "캔디 케인 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 4, "tpl": 9, "obj": "candy cane", "block": "point", "i": 765}
+{"text": "could you bring the candy cane over to this point", "lang": "en", "heldout": true, "combo": 4, "tpl": 10, "obj": "candy cane", "block": "point", "i": 766}
+{"text": "캔디 케인을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 4, "tpl": 11, "obj": "candy cane", "block": "point", "i": 767}
+{"text": "put the candy cane here", "lang": "en", "heldout": false, "combo": 5, "tpl": 0, "obj": "candy cane", "block": "point", "i": 768}
+{"text": "place the candy cane right here", "lang": "en", "heldout": false, "combo": 5, "tpl": 1, "obj": "candy cane", "block": "point", "i": 769}
+{"text": "set the candy cane down at this spot", "lang": "en", "heldout": false, "combo": 5, "tpl": 2, "obj": "candy cane", "block": "point", "i": 770}
+{"text": "drop the candy cane off here", "lang": "en", "heldout": false, "combo": 5, "tpl": 3, "obj": "candy cane", "block": "point", "i": 771}
+{"text": "leave the candy cane over there", "lang": "en", "heldout": false, "combo": 5, "tpl": 4, "obj": "candy cane", "block": "point", "i": 772}
+{"text": "move the candy cane to this spot", "lang": "en", "heldout": false, "combo": 5, "tpl": 5, "obj": "candy cane", "block": "point", "i": 773}
+{"text": "캔디 케인을 여기에 놔", "lang": "ko", "heldout": false, "combo": 5, "tpl": 6, "obj": "candy cane", "block": "point", "i": 774}
+{"text": "캔디 케인을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 5, "tpl": 7, "obj": "candy cane", "block": "point", "i": 775}
+{"text": "캔디 케인을 거기에 둬", "lang": "ko", "heldout": false, "combo": 5, "tpl": 8, "obj": "candy cane", "block": "point", "i": 776}
+{"text": "캔디 케인 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 5, "tpl": 9, "obj": "candy cane", "block": "point", "i": 777}
+{"text": "could you bring the candy cane over to this point", "lang": "en", "heldout": true, "combo": 5, "tpl": 10, "obj": "candy cane", "block": "point", "i": 778}
+{"text": "캔디 케인을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 5, "tpl": 11, "obj": "candy cane", "block": "point", "i": 779}
+{"text": "put the candy cane here", "lang": "en", "heldout": false, "combo": 6, "tpl": 0, "obj": "candy cane", "block": "point", "i": 780}
+{"text": "place the candy cane right here", "lang": "en", "heldout": false, "combo": 6, "tpl": 1, "obj": "candy cane", "block": "point", "i": 781}
+{"text": "set the candy cane down at this spot", "lang": "en", "heldout": false, "combo": 6, "tpl": 2, "obj": "candy cane", "block": "point", "i": 782}
+{"text": "drop the candy cane off here", "lang": "en", "heldout": false, "combo": 6, "tpl": 3, "obj": "candy cane", "block": "point", "i": 783}
+{"text": "leave the candy cane over there", "lang": "en", "heldout": false, "combo": 6, "tpl": 4, "obj": "candy cane", "block": "point", "i": 784}
+{"text": "move the candy cane to this spot", "lang": "en", "heldout": false, "combo": 6, "tpl": 5, "obj": "candy cane", "block": "point", "i": 785}
+{"text": "캔디 케인을 여기에 놔", "lang": "ko", "heldout": false, "combo": 6, "tpl": 6, "obj": "candy cane", "block": "point", "i": 786}
+{"text": "캔디 케인을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 6, "tpl": 7, "obj": "candy cane", "block": "point", "i": 787}
+{"text": "캔디 케인을 거기에 둬", "lang": "ko", "heldout": false, "combo": 6, "tpl": 8, "obj": "candy cane", "block": "point", "i": 788}
+{"text": "캔디 케인 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 6, "tpl": 9, "obj": "candy cane", "block": "point", "i": 789}
+{"text": "could you bring the candy cane over to this point", "lang": "en", "heldout": true, "combo": 6, "tpl": 10, "obj": "candy cane", "block": "point", "i": 790}
+{"text": "캔디 케인을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 6, "tpl": 11, "obj": "candy cane", "block": "point", "i": 791}
+{"text": "put the candy cane here", "lang": "en", "heldout": false, "combo": 7, "tpl": 0, "obj": "candy cane", "block": "point", "i": 792}
+{"text": "place the candy cane right here", "lang": "en", "heldout": false, "combo": 7, "tpl": 1, "obj": "candy cane", "block": "point", "i": 793}
+{"text": "set the candy cane down at this spot", "lang": "en", "heldout": false, "combo": 7, "tpl": 2, "obj": "candy cane", "block": "point", "i": 794}
+{"text": "drop the candy cane off here", "lang": "en", "heldout": false, "combo": 7, "tpl": 3, "obj": "candy cane", "block": "point", "i": 795}
+{"text": "leave the candy cane over there", "lang": "en", "heldout": false, "combo": 7, "tpl": 4, "obj": "candy cane", "block": "point", "i": 796}
+{"text": "move the candy cane to this spot", "lang": "en", "heldout": false, "combo": 7, "tpl": 5, "obj": "candy cane", "block": "point", "i": 797}
+{"text": "캔디 케인을 여기에 놔", "lang": "ko", "heldout": false, "combo": 7, "tpl": 6, "obj": "candy cane", "block": "point", "i": 798}
+{"text": "캔디 케인을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 7, "tpl": 7, "obj": "candy cane", "block": "point", "i": 799}
+{"text": "캔디 케인을 거기에 둬", "lang": "ko", "heldout": false, "combo": 7, "tpl": 8, "obj": "candy cane", "block": "point", "i": 800}
+{"text": "캔디 케인 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 7, "tpl": 9, "obj": "candy cane", "block": "point", "i": 801}
+{"text": "could you bring the candy cane over to this point", "lang": "en", "heldout": true, "combo": 7, "tpl": 10, "obj": "candy cane", "block": "point", "i": 802}
+{"text": "캔디 케인을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 7, "tpl": 11, "obj": "candy cane", "block": "point", "i": 803}
+{"text": "put the candy cane here", "lang": "en", "heldout": false, "combo": 8, "tpl": 0, "obj": "candy cane", "block": "point", "i": 804}
+{"text": "place the candy cane right here", "lang": "en", "heldout": false, "combo": 8, "tpl": 1, "obj": "candy cane", "block": "point", "i": 805}
+{"text": "set the candy cane down at this spot", "lang": "en", "heldout": false, "combo": 8, "tpl": 2, "obj": "candy cane", "block": "point", "i": 806}
+{"text": "drop the candy cane off here", "lang": "en", "heldout": false, "combo": 8, "tpl": 3, "obj": "candy cane", "block": "point", "i": 807}
+{"text": "leave the candy cane over there", "lang": "en", "heldout": false, "combo": 8, "tpl": 4, "obj": "candy cane", "block": "point", "i": 808}
+{"text": "move the candy cane to this spot", "lang": "en", "heldout": false, "combo": 8, "tpl": 5, "obj": "candy cane", "block": "point", "i": 809}
+{"text": "캔디 케인을 여기에 놔", "lang": "ko", "heldout": false, "combo": 8, "tpl": 6, "obj": "candy cane", "block": "point", "i": 810}
+{"text": "캔디 케인을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 8, "tpl": 7, "obj": "candy cane", "block": "point", "i": 811}
+{"text": "캔디 케인을 거기에 둬", "lang": "ko", "heldout": false, "combo": 8, "tpl": 8, "obj": "candy cane", "block": "point", "i": 812}
+{"text": "캔디 케인 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 8, "tpl": 9, "obj": "candy cane", "block": "point", "i": 813}
+{"text": "could you bring the candy cane over to this point", "lang": "en", "heldout": true, "combo": 8, "tpl": 10, "obj": "candy cane", "block": "point", "i": 814}
+{"text": "캔디 케인을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 8, "tpl": 11, "obj": "candy cane", "block": "point", "i": 815}
+{"text": "put the candy cane here", "lang": "en", "heldout": false, "combo": 9, "tpl": 0, "obj": "candy cane", "block": "point", "i": 816}
+{"text": "place the candy cane right here", "lang": "en", "heldout": false, "combo": 9, "tpl": 1, "obj": "candy cane", "block": "point", "i": 817}
+{"text": "set the candy cane down at this spot", "lang": "en", "heldout": false, "combo": 9, "tpl": 2, "obj": "candy cane", "block": "point", "i": 818}
+{"text": "drop the candy cane off here", "lang": "en", "heldout": false, "combo": 9, "tpl": 3, "obj": "candy cane", "block": "point", "i": 819}
+{"text": "leave the candy cane over there", "lang": "en", "heldout": false, "combo": 9, "tpl": 4, "obj": "candy cane", "block": "point", "i": 820}
+{"text": "move the candy cane to this spot", "lang": "en", "heldout": false, "combo": 9, "tpl": 5, "obj": "candy cane", "block": "point", "i": 821}
+{"text": "캔디 케인을 여기에 놔", "lang": "ko", "heldout": false, "combo": 9, "tpl": 6, "obj": "candy cane", "block": "point", "i": 822}
+{"text": "캔디 케인을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 9, "tpl": 7, "obj": "candy cane", "block": "point", "i": 823}
+{"text": "캔디 케인을 거기에 둬", "lang": "ko", "heldout": false, "combo": 9, "tpl": 8, "obj": "candy cane", "block": "point", "i": 824}
+{"text": "캔디 케인 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 9, "tpl": 9, "obj": "candy cane", "block": "point", "i": 825}
+{"text": "could you bring the candy cane over to this point", "lang": "en", "heldout": true, "combo": 9, "tpl": 10, "obj": "candy cane", "block": "point", "i": 826}
+{"text": "캔디 케인을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 9, "tpl": 11, "obj": "candy cane", "block": "point", "i": 827}
+{"text": "put the candy cane here", "lang": "en", "heldout": false, "combo": 10, "tpl": 0, "obj": "candy cane", "block": "point", "i": 828}
+{"text": "place the candy cane right here", "lang": "en", "heldout": false, "combo": 10, "tpl": 1, "obj": "candy cane", "block": "point", "i": 829}
+{"text": "set the candy cane down at this spot", "lang": "en", "heldout": false, "combo": 10, "tpl": 2, "obj": "candy cane", "block": "point", "i": 830}
+{"text": "drop the candy cane off here", "lang": "en", "heldout": false, "combo": 10, "tpl": 3, "obj": "candy cane", "block": "point", "i": 831}
+{"text": "leave the candy cane over there", "lang": "en", "heldout": false, "combo": 10, "tpl": 4, "obj": "candy cane", "block": "point", "i": 832}
+{"text": "move the candy cane to this spot", "lang": "en", "heldout": false, "combo": 10, "tpl": 5, "obj": "candy cane", "block": "point", "i": 833}
+{"text": "캔디 케인을 여기에 놔", "lang": "ko", "heldout": false, "combo": 10, "tpl": 6, "obj": "candy cane", "block": "point", "i": 834}
+{"text": "캔디 케인을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 10, "tpl": 7, "obj": "candy cane", "block": "point", "i": 835}
+{"text": "캔디 케인을 거기에 둬", "lang": "ko", "heldout": false, "combo": 10, "tpl": 8, "obj": "candy cane", "block": "point", "i": 836}
+{"text": "캔디 케인 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 10, "tpl": 9, "obj": "candy cane", "block": "point", "i": 837}
+{"text": "could you bring the candy cane over to this point", "lang": "en", "heldout": true, "combo": 10, "tpl": 10, "obj": "candy cane", "block": "point", "i": 838}
+{"text": "캔디 케인을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 10, "tpl": 11, "obj": "candy cane", "block": "point", "i": 839}
+{"text": "put the candy cane here", "lang": "en", "heldout": false, "combo": 11, "tpl": 0, "obj": "candy cane", "block": "point", "i": 840}
+{"text": "place the candy cane right here", "lang": "en", "heldout": false, "combo": 11, "tpl": 1, "obj": "candy cane", "block": "point", "i": 841}
+{"text": "set the candy cane down at this spot", "lang": "en", "heldout": false, "combo": 11, "tpl": 2, "obj": "candy cane", "block": "point", "i": 842}
+{"text": "drop the candy cane off here", "lang": "en", "heldout": false, "combo": 11, "tpl": 3, "obj": "candy cane", "block": "point", "i": 843}
+{"text": "leave the candy cane over there", "lang": "en", "heldout": false, "combo": 11, "tpl": 4, "obj": "candy cane", "block": "point", "i": 844}
+{"text": "move the candy cane to this spot", "lang": "en", "heldout": false, "combo": 11, "tpl": 5, "obj": "candy cane", "block": "point", "i": 845}
+{"text": "캔디 케인을 여기에 놔", "lang": "ko", "heldout": false, "combo": 11, "tpl": 6, "obj": "candy cane", "block": "point", "i": 846}
+{"text": "캔디 케인을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 11, "tpl": 7, "obj": "candy cane", "block": "point", "i": 847}
+{"text": "캔디 케인을 거기에 둬", "lang": "ko", "heldout": false, "combo": 11, "tpl": 8, "obj": "candy cane", "block": "point", "i": 848}
+{"text": "캔디 케인 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 11, "tpl": 9, "obj": "candy cane", "block": "point", "i": 849}
+{"text": "could you bring the candy cane over to this point", "lang": "en", "heldout": true, "combo": 11, "tpl": 10, "obj": "candy cane", "block": "point", "i": 850}
+{"text": "캔디 케인을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 11, "tpl": 11, "obj": "candy cane", "block": "point", "i": 851}
+{"text": "put the candy cane here", "lang": "en", "heldout": false, "combo": 12, "tpl": 0, "obj": "candy cane", "block": "point", "i": 852}
+{"text": "place the candy cane right here", "lang": "en", "heldout": false, "combo": 12, "tpl": 1, "obj": "candy cane", "block": "point", "i": 853}
+{"text": "set the candy cane down at this spot", "lang": "en", "heldout": false, "combo": 12, "tpl": 2, "obj": "candy cane", "block": "point", "i": 854}
+{"text": "drop the candy cane off here", "lang": "en", "heldout": false, "combo": 12, "tpl": 3, "obj": "candy cane", "block": "point", "i": 855}
+{"text": "leave the candy cane over there", "lang": "en", "heldout": false, "combo": 12, "tpl": 4, "obj": "candy cane", "block": "point", "i": 856}
+{"text": "move the candy cane to this spot", "lang": "en", "heldout": false, "combo": 12, "tpl": 5, "obj": "candy cane", "block": "point", "i": 857}
+{"text": "캔디 케인을 여기에 놔", "lang": "ko", "heldout": false, "combo": 12, "tpl": 6, "obj": "candy cane", "block": "point", "i": 858}
+{"text": "캔디 케인을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 12, "tpl": 7, "obj": "candy cane", "block": "point", "i": 859}
+{"text": "캔디 케인을 거기에 둬", "lang": "ko", "heldout": false, "combo": 12, "tpl": 8, "obj": "candy cane", "block": "point", "i": 860}
+{"text": "캔디 케인 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 12, "tpl": 9, "obj": "candy cane", "block": "point", "i": 861}
+{"text": "could you bring the candy cane over to this point", "lang": "en", "heldout": true, "combo": 12, "tpl": 10, "obj": "candy cane", "block": "point", "i": 862}
+{"text": "캔디 케인을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 12, "tpl": 11, "obj": "candy cane", "block": "point", "i": 863}
+{"text": "put the candy cane here", "lang": "en", "heldout": false, "combo": 13, "tpl": 0, "obj": "candy cane", "block": "point", "i": 864}
+{"text": "place the candy cane right here", "lang": "en", "heldout": false, "combo": 13, "tpl": 1, "obj": "candy cane", "block": "point", "i": 865}
+{"text": "set the candy cane down at this spot", "lang": "en", "heldout": false, "combo": 13, "tpl": 2, "obj": "candy cane", "block": "point", "i": 866}
+{"text": "drop the candy cane off here", "lang": "en", "heldout": false, "combo": 13, "tpl": 3, "obj": "candy cane", "block": "point", "i": 867}
+{"text": "leave the candy cane over there", "lang": "en", "heldout": false, "combo": 13, "tpl": 4, "obj": "candy cane", "block": "point", "i": 868}
+{"text": "move the candy cane to this spot", "lang": "en", "heldout": false, "combo": 13, "tpl": 5, "obj": "candy cane", "block": "point", "i": 869}
+{"text": "캔디 케인을 여기에 놔", "lang": "ko", "heldout": false, "combo": 13, "tpl": 6, "obj": "candy cane", "block": "point", "i": 870}
+{"text": "캔디 케인을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 13, "tpl": 7, "obj": "candy cane", "block": "point", "i": 871}
+{"text": "캔디 케인을 거기에 둬", "lang": "ko", "heldout": false, "combo": 13, "tpl": 8, "obj": "candy cane", "block": "point", "i": 872}
+{"text": "캔디 케인 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 13, "tpl": 9, "obj": "candy cane", "block": "point", "i": 873}
+{"text": "could you bring the candy cane over to this point", "lang": "en", "heldout": true, "combo": 13, "tpl": 10, "obj": "candy cane", "block": "point", "i": 874}
+{"text": "캔디 케인을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 13, "tpl": 11, "obj": "candy cane", "block": "point", "i": 875}
+{"text": "put the candy cane here", "lang": "en", "heldout": false, "combo": 14, "tpl": 0, "obj": "candy cane", "block": "point", "i": 876}
+{"text": "place the candy cane right here", "lang": "en", "heldout": false, "combo": 14, "tpl": 1, "obj": "candy cane", "block": "point", "i": 877}
+{"text": "set the candy cane down at this spot", "lang": "en", "heldout": false, "combo": 14, "tpl": 2, "obj": "candy cane", "block": "point", "i": 878}
+{"text": "drop the candy cane off here", "lang": "en", "heldout": false, "combo": 14, "tpl": 3, "obj": "candy cane", "block": "point", "i": 879}
+{"text": "leave the candy cane over there", "lang": "en", "heldout": false, "combo": 14, "tpl": 4, "obj": "candy cane", "block": "point", "i": 880}
+{"text": "move the candy cane to this spot", "lang": "en", "heldout": false, "combo": 14, "tpl": 5, "obj": "candy cane", "block": "point", "i": 881}
+{"text": "캔디 케인을 여기에 놔", "lang": "ko", "heldout": false, "combo": 14, "tpl": 6, "obj": "candy cane", "block": "point", "i": 882}
+{"text": "캔디 케인을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 14, "tpl": 7, "obj": "candy cane", "block": "point", "i": 883}
+{"text": "캔디 케인을 거기에 둬", "lang": "ko", "heldout": false, "combo": 14, "tpl": 8, "obj": "candy cane", "block": "point", "i": 884}
+{"text": "캔디 케인 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 14, "tpl": 9, "obj": "candy cane", "block": "point", "i": 885}
+{"text": "could you bring the candy cane over to this point", "lang": "en", "heldout": true, "combo": 14, "tpl": 10, "obj": "candy cane", "block": "point", "i": 886}
+{"text": "캔디 케인을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 14, "tpl": 11, "obj": "candy cane", "block": "point", "i": 887}
+{"text": "put the candy cane here", "lang": "en", "heldout": false, "combo": 15, "tpl": 0, "obj": "candy cane", "block": "point", "i": 888}
+{"text": "place the candy cane right here", "lang": "en", "heldout": false, "combo": 15, "tpl": 1, "obj": "candy cane", "block": "point", "i": 889}
+{"text": "set the candy cane down at this spot", "lang": "en", "heldout": false, "combo": 15, "tpl": 2, "obj": "candy cane", "block": "point", "i": 890}
+{"text": "drop the candy cane off here", "lang": "en", "heldout": false, "combo": 15, "tpl": 3, "obj": "candy cane", "block": "point", "i": 891}
+{"text": "leave the candy cane over there", "lang": "en", "heldout": false, "combo": 15, "tpl": 4, "obj": "candy cane", "block": "point", "i": 892}
+{"text": "move the candy cane to this spot", "lang": "en", "heldout": false, "combo": 15, "tpl": 5, "obj": "candy cane", "block": "point", "i": 893}
+{"text": "캔디 케인을 여기에 놔", "lang": "ko", "heldout": false, "combo": 15, "tpl": 6, "obj": "candy cane", "block": "point", "i": 894}
+{"text": "캔디 케인을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 15, "tpl": 7, "obj": "candy cane", "block": "point", "i": 895}
+{"text": "캔디 케인을 거기에 둬", "lang": "ko", "heldout": false, "combo": 15, "tpl": 8, "obj": "candy cane", "block": "point", "i": 896}
+{"text": "캔디 케인 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 15, "tpl": 9, "obj": "candy cane", "block": "point", "i": 897}
+{"text": "could you bring the candy cane over to this point", "lang": "en", "heldout": true, "combo": 15, "tpl": 10, "obj": "candy cane", "block": "point", "i": 898}
+{"text": "캔디 케인을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 15, "tpl": 11, "obj": "candy cane", "block": "point", "i": 899}
+{"text": "put the candy cane here", "lang": "en", "heldout": false, "combo": 16, "tpl": 0, "obj": "candy cane", "block": "point", "i": 900}
+{"text": "place the candy cane right here", "lang": "en", "heldout": false, "combo": 16, "tpl": 1, "obj": "candy cane", "block": "point", "i": 901}
+{"text": "set the candy cane down at this spot", "lang": "en", "heldout": false, "combo": 16, "tpl": 2, "obj": "candy cane", "block": "point", "i": 902}
+{"text": "drop the candy cane off here", "lang": "en", "heldout": false, "combo": 16, "tpl": 3, "obj": "candy cane", "block": "point", "i": 903}
+{"text": "leave the candy cane over there", "lang": "en", "heldout": false, "combo": 16, "tpl": 4, "obj": "candy cane", "block": "point", "i": 904}
+{"text": "move the candy cane to this spot", "lang": "en", "heldout": false, "combo": 16, "tpl": 5, "obj": "candy cane", "block": "point", "i": 905}
+{"text": "캔디 케인을 여기에 놔", "lang": "ko", "heldout": false, "combo": 16, "tpl": 6, "obj": "candy cane", "block": "point", "i": 906}
+{"text": "캔디 케인을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 16, "tpl": 7, "obj": "candy cane", "block": "point", "i": 907}
+{"text": "캔디 케인을 거기에 둬", "lang": "ko", "heldout": false, "combo": 16, "tpl": 8, "obj": "candy cane", "block": "point", "i": 908}
+{"text": "캔디 케인 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 16, "tpl": 9, "obj": "candy cane", "block": "point", "i": 909}
+{"text": "could you bring the candy cane over to this point", "lang": "en", "heldout": true, "combo": 16, "tpl": 10, "obj": "candy cane", "block": "point", "i": 910}
+{"text": "캔디 케인을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 16, "tpl": 11, "obj": "candy cane", "block": "point", "i": 911}
+{"text": "put the cigar lighter here", "lang": "en", "heldout": false, "combo": 17, "tpl": 0, "obj": "cigar lighter", "block": "point", "i": 912}
+{"text": "place the cigarette lighter right here", "lang": "en", "heldout": false, "combo": 17, "tpl": 1, "obj": "cigarette lighter", "block": "point", "i": 913}
+{"text": "set the pocket lighter down at this spot", "lang": "en", "heldout": false, "combo": 17, "tpl": 2, "obj": "pocket lighter", "block": "point", "i": 914}
+{"text": "drop the cigar lighter off here", "lang": "en", "heldout": false, "combo": 17, "tpl": 3, "obj": "cigar lighter", "block": "point", "i": 915}
+{"text": "leave the cigarette lighter over there", "lang": "en", "heldout": false, "combo": 17, "tpl": 4, "obj": "cigarette lighter", "block": "point", "i": 916}
+{"text": "move the pocket lighter to this spot", "lang": "en", "heldout": false, "combo": 17, "tpl": 5, "obj": "pocket lighter", "block": "point", "i": 917}
+{"text": "시카라 연장을 여기에 놔", "lang": "ko", "heldout": false, "combo": 17, "tpl": 6, "obj": "cigar lighter", "block": "point", "i": 918}
+{"text": "담배 연장기를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 17, "tpl": 7, "obj": "cigarette lighter", "block": "point", "i": 919}
+{"text": "주머니 연장기를 거기에 둬", "lang": "ko", "heldout": false, "combo": 17, "tpl": 8, "obj": "pocket lighter", "block": "point", "i": 920}
+{"text": "시카라 연장 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 17, "tpl": 9, "obj": "cigar lighter", "block": "point", "i": 921}
+{"text": "could you bring the cigar lighter over to this point", "lang": "en", "heldout": true, "combo": 17, "tpl": 10, "obj": "cigar lighter", "block": "point", "i": 922}
+{"text": "시카라 연장을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 17, "tpl": 11, "obj": "cigar lighter", "block": "point", "i": 923}
+{"text": "put the cigar lighter here", "lang": "en", "heldout": false, "combo": 18, "tpl": 0, "obj": "cigar lighter", "block": "point", "i": 924}
+{"text": "place the cigarette lighter right here", "lang": "en", "heldout": false, "combo": 18, "tpl": 1, "obj": "cigarette lighter", "block": "point", "i": 925}
+{"text": "set the pocket lighter down at this spot", "lang": "en", "heldout": false, "combo": 18, "tpl": 2, "obj": "pocket lighter", "block": "point", "i": 926}
+{"text": "drop the cigar lighter off here", "lang": "en", "heldout": false, "combo": 18, "tpl": 3, "obj": "cigar lighter", "block": "point", "i": 927}
+{"text": "leave the cigarette lighter over there", "lang": "en", "heldout": false, "combo": 18, "tpl": 4, "obj": "cigarette lighter", "block": "point", "i": 928}
+{"text": "move the pocket lighter to this spot", "lang": "en", "heldout": false, "combo": 18, "tpl": 5, "obj": "pocket lighter", "block": "point", "i": 929}
+{"text": "시카라 연장을 여기에 놔", "lang": "ko", "heldout": false, "combo": 18, "tpl": 6, "obj": "cigar lighter", "block": "point", "i": 930}
+{"text": "담배 연장기를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 18, "tpl": 7, "obj": "cigarette lighter", "block": "point", "i": 931}
+{"text": "주머니 연장기를 거기에 둬", "lang": "ko", "heldout": false, "combo": 18, "tpl": 8, "obj": "pocket lighter", "block": "point", "i": 932}
+{"text": "시카라 연장 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 18, "tpl": 9, "obj": "cigar lighter", "block": "point", "i": 933}
+{"text": "could you bring the cigar lighter over to this point", "lang": "en", "heldout": true, "combo": 18, "tpl": 10, "obj": "cigar lighter", "block": "point", "i": 934}
+{"text": "시카라 연장을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 18, "tpl": 11, "obj": "cigar lighter", "block": "point", "i": 935}
+{"text": "put the cigar lighter here", "lang": "en", "heldout": false, "combo": 19, "tpl": 0, "obj": "cigar lighter", "block": "point", "i": 936}
+{"text": "place the cigarette lighter right here", "lang": "en", "heldout": false, "combo": 19, "tpl": 1, "obj": "cigarette lighter", "block": "point", "i": 937}
+{"text": "set the pocket lighter down at this spot", "lang": "en", "heldout": false, "combo": 19, "tpl": 2, "obj": "pocket lighter", "block": "point", "i": 938}
+{"text": "drop the cigar lighter off here", "lang": "en", "heldout": false, "combo": 19, "tpl": 3, "obj": "cigar lighter", "block": "point", "i": 939}
+{"text": "leave the cigarette lighter over there", "lang": "en", "heldout": false, "combo": 19, "tpl": 4, "obj": "cigarette lighter", "block": "point", "i": 940}
+{"text": "move the pocket lighter to this spot", "lang": "en", "heldout": false, "combo": 19, "tpl": 5, "obj": "pocket lighter", "block": "point", "i": 941}
+{"text": "시카라 연장을 여기에 놔", "lang": "ko", "heldout": false, "combo": 19, "tpl": 6, "obj": "cigar lighter", "block": "point", "i": 942}
+{"text": "담배 연장기를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 19, "tpl": 7, "obj": "cigarette lighter", "block": "point", "i": 943}
+{"text": "주머니 연장기를 거기에 둬", "lang": "ko", "heldout": false, "combo": 19, "tpl": 8, "obj": "pocket lighter", "block": "point", "i": 944}
+{"text": "시카라 연장 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 19, "tpl": 9, "obj": "cigar lighter", "block": "point", "i": 945}
+{"text": "could you bring the cigar lighter over to this point", "lang": "en", "heldout": true, "combo": 19, "tpl": 10, "obj": "cigar lighter", "block": "point", "i": 946}
+{"text": "시카라 연장을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 19, "tpl": 11, "obj": "cigar lighter", "block": "point", "i": 947}
+{"text": "put the cigar lighter here", "lang": "en", "heldout": false, "combo": 20, "tpl": 0, "obj": "cigar lighter", "block": "point", "i": 948}
+{"text": "place the cigarette lighter right here", "lang": "en", "heldout": false, "combo": 20, "tpl": 1, "obj": "cigarette lighter", "block": "point", "i": 949}
+{"text": "set the pocket lighter down at this spot", "lang": "en", "heldout": false, "combo": 20, "tpl": 2, "obj": "pocket lighter", "block": "point", "i": 950}
+{"text": "drop the cigar lighter off here", "lang": "en", "heldout": false, "combo": 20, "tpl": 3, "obj": "cigar lighter", "block": "point", "i": 951}
+{"text": "leave the cigarette lighter over there", "lang": "en", "heldout": false, "combo": 20, "tpl": 4, "obj": "cigarette lighter", "block": "point", "i": 952}
+{"text": "move the pocket lighter to this spot", "lang": "en", "heldout": false, "combo": 20, "tpl": 5, "obj": "pocket lighter", "block": "point", "i": 953}
+{"text": "시카라 연장을 여기에 놔", "lang": "ko", "heldout": false, "combo": 20, "tpl": 6, "obj": "cigar lighter", "block": "point", "i": 954}
+{"text": "담배 연장기를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 20, "tpl": 7, "obj": "cigarette lighter", "block": "point", "i": 955}
+{"text": "주머니 연장기를 거기에 둬", "lang": "ko", "heldout": false, "combo": 20, "tpl": 8, "obj": "pocket lighter", "block": "point", "i": 956}
+{"text": "시카라 연장 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 20, "tpl": 9, "obj": "cigar lighter", "block": "point", "i": 957}
+{"text": "could you bring the cigar lighter over to this point", "lang": "en", "heldout": true, "combo": 20, "tpl": 10, "obj": "cigar lighter", "block": "point", "i": 958}
+{"text": "시카라 연장을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 20, "tpl": 11, "obj": "cigar lighter", "block": "point", "i": 959}
+{"text": "put the die here", "lang": "en", "heldout": false, "combo": 21, "tpl": 0, "obj": "die", "block": "point", "i": 960}
+{"text": "place the dice right here", "lang": "en", "heldout": false, "combo": 21, "tpl": 1, "obj": "dice", "block": "point", "i": 961}
+{"text": "set the die down at this spot", "lang": "en", "heldout": false, "combo": 21, "tpl": 2, "obj": "die", "block": "point", "i": 962}
+{"text": "drop the dice off here", "lang": "en", "heldout": false, "combo": 21, "tpl": 3, "obj": "dice", "block": "point", "i": 963}
+{"text": "leave the die over there", "lang": "en", "heldout": false, "combo": 21, "tpl": 4, "obj": "die", "block": "point", "i": 964}
+{"text": "move the dice to this spot", "lang": "en", "heldout": false, "combo": 21, "tpl": 5, "obj": "dice", "block": "point", "i": 965}
+{"text": "주사위를 여기에 놔", "lang": "ko", "heldout": false, "combo": 21, "tpl": 6, "obj": "die", "block": "point", "i": 966}
+{"text": "주사위를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 21, "tpl": 7, "obj": "dice", "block": "point", "i": 967}
+{"text": "주사위를 거기에 둬", "lang": "ko", "heldout": false, "combo": 21, "tpl": 8, "obj": "die", "block": "point", "i": 968}
+{"text": "주사위 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 21, "tpl": 9, "obj": "dice", "block": "point", "i": 969}
+{"text": "could you bring the die over to this point", "lang": "en", "heldout": true, "combo": 21, "tpl": 10, "obj": "die", "block": "point", "i": 970}
+{"text": "주사위를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 21, "tpl": 11, "obj": "die", "block": "point", "i": 971}
+{"text": "put the die here", "lang": "en", "heldout": false, "combo": 22, "tpl": 0, "obj": "die", "block": "point", "i": 972}
+{"text": "place the dice right here", "lang": "en", "heldout": false, "combo": 22, "tpl": 1, "obj": "dice", "block": "point", "i": 973}
+{"text": "set the die down at this spot", "lang": "en", "heldout": false, "combo": 22, "tpl": 2, "obj": "die", "block": "point", "i": 974}
+{"text": "drop the dice off here", "lang": "en", "heldout": false, "combo": 22, "tpl": 3, "obj": "dice", "block": "point", "i": 975}
+{"text": "leave the die over there", "lang": "en", "heldout": false, "combo": 22, "tpl": 4, "obj": "die", "block": "point", "i": 976}
+{"text": "move the dice to this spot", "lang": "en", "heldout": false, "combo": 22, "tpl": 5, "obj": "dice", "block": "point", "i": 977}
+{"text": "주사위를 여기에 놔", "lang": "ko", "heldout": false, "combo": 22, "tpl": 6, "obj": "die", "block": "point", "i": 978}
+{"text": "주사위를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 22, "tpl": 7, "obj": "dice", "block": "point", "i": 979}
+{"text": "주사위를 거기에 둬", "lang": "ko", "heldout": false, "combo": 22, "tpl": 8, "obj": "die", "block": "point", "i": 980}
+{"text": "주사위 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 22, "tpl": 9, "obj": "dice", "block": "point", "i": 981}
+{"text": "could you bring the die over to this point", "lang": "en", "heldout": true, "combo": 22, "tpl": 10, "obj": "die", "block": "point", "i": 982}
+{"text": "주사위를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 22, "tpl": 11, "obj": "die", "block": "point", "i": 983}
+{"text": "put the die here", "lang": "en", "heldout": false, "combo": 23, "tpl": 0, "obj": "die", "block": "point", "i": 984}
+{"text": "place the dice right here", "lang": "en", "heldout": false, "combo": 23, "tpl": 1, "obj": "dice", "block": "point", "i": 985}
+{"text": "set the die down at this spot", "lang": "en", "heldout": false, "combo": 23, "tpl": 2, "obj": "die", "block": "point", "i": 986}
+{"text": "drop the dice off here", "lang": "en", "heldout": false, "combo": 23, "tpl": 3, "obj": "dice", "block": "point", "i": 987}
+{"text": "leave the die over there", "lang": "en", "heldout": false, "combo": 23, "tpl": 4, "obj": "die", "block": "point", "i": 988}
+{"text": "move the dice to this spot", "lang": "en", "heldout": false, "combo": 23, "tpl": 5, "obj": "dice", "block": "point", "i": 989}
+{"text": "주사위를 여기에 놔", "lang": "ko", "heldout": false, "combo": 23, "tpl": 6, "obj": "die", "block": "point", "i": 990}
+{"text": "주사위를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 23, "tpl": 7, "obj": "dice", "block": "point", "i": 991}
+{"text": "주사위를 거기에 둬", "lang": "ko", "heldout": false, "combo": 23, "tpl": 8, "obj": "die", "block": "point", "i": 992}
+{"text": "주사위 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 23, "tpl": 9, "obj": "dice", "block": "point", "i": 993}
+{"text": "could you bring the die over to this point", "lang": "en", "heldout": true, "combo": 23, "tpl": 10, "obj": "die", "block": "point", "i": 994}
+{"text": "주사위를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 23, "tpl": 11, "obj": "die", "block": "point", "i": 995}
+{"text": "put the die here", "lang": "en", "heldout": false, "combo": 24, "tpl": 0, "obj": "die", "block": "point", "i": 996}
+{"text": "place the dice right here", "lang": "en", "heldout": false, "combo": 24, "tpl": 1, "obj": "dice", "block": "point", "i": 997}
+{"text": "set the die down at this spot", "lang": "en", "heldout": false, "combo": 24, "tpl": 2, "obj": "die", "block": "point", "i": 998}
+{"text": "drop the dice off here", "lang": "en", "heldout": false, "combo": 24, "tpl": 3, "obj": "dice", "block": "point", "i": 999}
+{"text": "leave the die over there", "lang": "en", "heldout": false, "combo": 24, "tpl": 4, "obj": "die", "block": "point", "i": 1000}
+{"text": "move the dice to this spot", "lang": "en", "heldout": false, "combo": 24, "tpl": 5, "obj": "dice", "block": "point", "i": 1001}
+{"text": "주사위를 여기에 놔", "lang": "ko", "heldout": false, "combo": 24, "tpl": 6, "obj": "die", "block": "point", "i": 1002}
+{"text": "주사위를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 24, "tpl": 7, "obj": "dice", "block": "point", "i": 1003}
+{"text": "주사위를 거기에 둬", "lang": "ko", "heldout": false, "combo": 24, "tpl": 8, "obj": "die", "block": "point", "i": 1004}
+{"text": "주사위 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 24, "tpl": 9, "obj": "dice", "block": "point", "i": 1005}
+{"text": "could you bring the die over to this point", "lang": "en", "heldout": true, "combo": 24, "tpl": 10, "obj": "die", "block": "point", "i": 1006}
+{"text": "주사위를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 24, "tpl": 11, "obj": "die", "block": "point", "i": 1007}
+{"text": "put the insectifuge atomizer here", "lang": "en", "heldout": false, "combo": 25, "tpl": 0, "obj": "insectifuge atomizer", "block": "point", "i": 1008}
+{"text": "place the insectifuge atomizer right here", "lang": "en", "heldout": false, "combo": 25, "tpl": 1, "obj": "insectifuge atomizer", "block": "point", "i": 1009}
+{"text": "set the insectifuge atomizer down at this spot", "lang": "en", "heldout": false, "combo": 25, "tpl": 2, "obj": "insectifuge atomizer", "block": "point", "i": 1010}
+{"text": "drop the insectifuge atomizer off here", "lang": "en", "heldout": false, "combo": 25, "tpl": 3, "obj": "insectifuge atomizer", "block": "point", "i": 1011}
+{"text": "leave the insectifuge atomizer over there", "lang": "en", "heldout": false, "combo": 25, "tpl": 4, "obj": "insectifuge atomizer", "block": "point", "i": 1012}
+{"text": "move the insectifuge atomizer to this spot", "lang": "en", "heldout": false, "combo": 25, "tpl": 5, "obj": "insectifuge atomizer", "block": "point", "i": 1013}
+{"text": "곤충성 원자격화를 여기에 놔", "lang": "ko", "heldout": false, "combo": 25, "tpl": 6, "obj": "insectifuge atomizer", "block": "point", "i": 1014}
+{"text": "곤충성 원자격화를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 25, "tpl": 7, "obj": "insectifuge atomizer", "block": "point", "i": 1015}
+{"text": "곤충성 원자격화를 거기에 둬", "lang": "ko", "heldout": false, "combo": 25, "tpl": 8, "obj": "insectifuge atomizer", "block": "point", "i": 1016}
+{"text": "곤충성 원자격화 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 25, "tpl": 9, "obj": "insectifuge atomizer", "block": "point", "i": 1017}
+{"text": "could you bring the insectifuge atomizer over to this point", "lang": "en", "heldout": true, "combo": 25, "tpl": 10, "obj": "insectifuge atomizer", "block": "point", "i": 1018}
+{"text": "곤충성 원자격화를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 25, "tpl": 11, "obj": "insectifuge atomizer", "block": "point", "i": 1019}
+{"text": "put the leek here", "lang": "en", "heldout": false, "combo": 26, "tpl": 0, "obj": "leek", "block": "point", "i": 1020}
+{"text": "place the leek right here", "lang": "en", "heldout": false, "combo": 26, "tpl": 1, "obj": "leek", "block": "point", "i": 1021}
+{"text": "set the leek down at this spot", "lang": "en", "heldout": false, "combo": 26, "tpl": 2, "obj": "leek", "block": "point", "i": 1022}
+{"text": "drop the leek off here", "lang": "en", "heldout": false, "combo": 26, "tpl": 3, "obj": "leek", "block": "point", "i": 1023}
+{"text": "leave the leek over there", "lang": "en", "heldout": false, "combo": 26, "tpl": 4, "obj": "leek", "block": "point", "i": 1024}
+{"text": "move the leek to this spot", "lang": "en", "heldout": false, "combo": 26, "tpl": 5, "obj": "leek", "block": "point", "i": 1025}
+{"text": "대파를 여기에 놔", "lang": "ko", "heldout": false, "combo": 26, "tpl": 6, "obj": "leek", "block": "point", "i": 1026}
+{"text": "대파를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 26, "tpl": 7, "obj": "leek", "block": "point", "i": 1027}
+{"text": "대파를 거기에 둬", "lang": "ko", "heldout": false, "combo": 26, "tpl": 8, "obj": "leek", "block": "point", "i": 1028}
+{"text": "대파 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 26, "tpl": 9, "obj": "leek", "block": "point", "i": 1029}
+{"text": "could you bring the leek over to this point", "lang": "en", "heldout": true, "combo": 26, "tpl": 10, "obj": "leek", "block": "point", "i": 1030}
+{"text": "대파를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 26, "tpl": 11, "obj": "leek", "block": "point", "i": 1031}
+{"text": "put the leek here", "lang": "en", "heldout": false, "combo": 27, "tpl": 0, "obj": "leek", "block": "point", "i": 1032}
+{"text": "place the leek right here", "lang": "en", "heldout": false, "combo": 27, "tpl": 1, "obj": "leek", "block": "point", "i": 1033}
+{"text": "set the leek down at this spot", "lang": "en", "heldout": false, "combo": 27, "tpl": 2, "obj": "leek", "block": "point", "i": 1034}
+{"text": "drop the leek off here", "lang": "en", "heldout": false, "combo": 27, "tpl": 3, "obj": "leek", "block": "point", "i": 1035}
+{"text": "leave the leek over there", "lang": "en", "heldout": false, "combo": 27, "tpl": 4, "obj": "leek", "block": "point", "i": 1036}
+{"text": "move the leek to this spot", "lang": "en", "heldout": false, "combo": 27, "tpl": 5, "obj": "leek", "block": "point", "i": 1037}
+{"text": "대파를 여기에 놔", "lang": "ko", "heldout": false, "combo": 27, "tpl": 6, "obj": "leek", "block": "point", "i": 1038}
+{"text": "대파를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 27, "tpl": 7, "obj": "leek", "block": "point", "i": 1039}
+{"text": "대파를 거기에 둬", "lang": "ko", "heldout": false, "combo": 27, "tpl": 8, "obj": "leek", "block": "point", "i": 1040}
+{"text": "대파 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 27, "tpl": 9, "obj": "leek", "block": "point", "i": 1041}
+{"text": "could you bring the leek over to this point", "lang": "en", "heldout": true, "combo": 27, "tpl": 10, "obj": "leek", "block": "point", "i": 1042}
+{"text": "대파를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 27, "tpl": 11, "obj": "leek", "block": "point", "i": 1043}
+{"text": "put the leek here", "lang": "en", "heldout": false, "combo": 28, "tpl": 0, "obj": "leek", "block": "point", "i": 1044}
+{"text": "place the leek right here", "lang": "en", "heldout": false, "combo": 28, "tpl": 1, "obj": "leek", "block": "point", "i": 1045}
+{"text": "set the leek down at this spot", "lang": "en", "heldout": false, "combo": 28, "tpl": 2, "obj": "leek", "block": "point", "i": 1046}
+{"text": "drop the leek off here", "lang": "en", "heldout": false, "combo": 28, "tpl": 3, "obj": "leek", "block": "point", "i": 1047}
+{"text": "leave the leek over there", "lang": "en", "heldout": false, "combo": 28, "tpl": 4, "obj": "leek", "block": "point", "i": 1048}
+{"text": "move the leek to this spot", "lang": "en", "heldout": false, "combo": 28, "tpl": 5, "obj": "leek", "block": "point", "i": 1049}
+{"text": "대파를 여기에 놔", "lang": "ko", "heldout": false, "combo": 28, "tpl": 6, "obj": "leek", "block": "point", "i": 1050}
+{"text": "대파를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 28, "tpl": 7, "obj": "leek", "block": "point", "i": 1051}
+{"text": "대파를 거기에 둬", "lang": "ko", "heldout": false, "combo": 28, "tpl": 8, "obj": "leek", "block": "point", "i": 1052}
+{"text": "대파 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 28, "tpl": 9, "obj": "leek", "block": "point", "i": 1053}
+{"text": "could you bring the leek over to this point", "lang": "en", "heldout": true, "combo": 28, "tpl": 10, "obj": "leek", "block": "point", "i": 1054}
+{"text": "대파를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 28, "tpl": 11, "obj": "leek", "block": "point", "i": 1055}
+{"text": "put the leek here", "lang": "en", "heldout": false, "combo": 29, "tpl": 0, "obj": "leek", "block": "point", "i": 1056}
+{"text": "place the leek right here", "lang": "en", "heldout": false, "combo": 29, "tpl": 1, "obj": "leek", "block": "point", "i": 1057}
+{"text": "set the leek down at this spot", "lang": "en", "heldout": false, "combo": 29, "tpl": 2, "obj": "leek", "block": "point", "i": 1058}
+{"text": "drop the leek off here", "lang": "en", "heldout": false, "combo": 29, "tpl": 3, "obj": "leek", "block": "point", "i": 1059}
+{"text": "leave the leek over there", "lang": "en", "heldout": false, "combo": 29, "tpl": 4, "obj": "leek", "block": "point", "i": 1060}
+{"text": "move the leek to this spot", "lang": "en", "heldout": false, "combo": 29, "tpl": 5, "obj": "leek", "block": "point", "i": 1061}
+{"text": "대파를 여기에 놔", "lang": "ko", "heldout": false, "combo": 29, "tpl": 6, "obj": "leek", "block": "point", "i": 1062}
+{"text": "대파를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 29, "tpl": 7, "obj": "leek", "block": "point", "i": 1063}
+{"text": "대파를 거기에 둬", "lang": "ko", "heldout": false, "combo": 29, "tpl": 8, "obj": "leek", "block": "point", "i": 1064}
+{"text": "대파 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 29, "tpl": 9, "obj": "leek", "block": "point", "i": 1065}
+{"text": "could you bring the leek over to this point", "lang": "en", "heldout": true, "combo": 29, "tpl": 10, "obj": "leek", "block": "point", "i": 1066}
+{"text": "대파를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 29, "tpl": 11, "obj": "leek", "block": "point", "i": 1067}
+{"text": "put the leek here", "lang": "en", "heldout": false, "combo": 30, "tpl": 0, "obj": "leek", "block": "point", "i": 1068}
+{"text": "place the leek right here", "lang": "en", "heldout": false, "combo": 30, "tpl": 1, "obj": "leek", "block": "point", "i": 1069}
+{"text": "set the leek down at this spot", "lang": "en", "heldout": false, "combo": 30, "tpl": 2, "obj": "leek", "block": "point", "i": 1070}
+{"text": "drop the leek off here", "lang": "en", "heldout": false, "combo": 30, "tpl": 3, "obj": "leek", "block": "point", "i": 1071}
+{"text": "leave the leek over there", "lang": "en", "heldout": false, "combo": 30, "tpl": 4, "obj": "leek", "block": "point", "i": 1072}
+{"text": "move the leek to this spot", "lang": "en", "heldout": false, "combo": 30, "tpl": 5, "obj": "leek", "block": "point", "i": 1073}
+{"text": "대파를 여기에 놔", "lang": "ko", "heldout": false, "combo": 30, "tpl": 6, "obj": "leek", "block": "point", "i": 1074}
+{"text": "대파를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 30, "tpl": 7, "obj": "leek", "block": "point", "i": 1075}
+{"text": "대파를 거기에 둬", "lang": "ko", "heldout": false, "combo": 30, "tpl": 8, "obj": "leek", "block": "point", "i": 1076}
+{"text": "대파 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 30, "tpl": 9, "obj": "leek", "block": "point", "i": 1077}
+{"text": "could you bring the leek over to this point", "lang": "en", "heldout": true, "combo": 30, "tpl": 10, "obj": "leek", "block": "point", "i": 1078}
+{"text": "대파를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 30, "tpl": 11, "obj": "leek", "block": "point", "i": 1079}
+{"text": "put the leek here", "lang": "en", "heldout": false, "combo": 31, "tpl": 0, "obj": "leek", "block": "point", "i": 1080}
+{"text": "place the leek right here", "lang": "en", "heldout": false, "combo": 31, "tpl": 1, "obj": "leek", "block": "point", "i": 1081}
+{"text": "set the leek down at this spot", "lang": "en", "heldout": false, "combo": 31, "tpl": 2, "obj": "leek", "block": "point", "i": 1082}
+{"text": "drop the leek off here", "lang": "en", "heldout": false, "combo": 31, "tpl": 3, "obj": "leek", "block": "point", "i": 1083}
+{"text": "leave the leek over there", "lang": "en", "heldout": false, "combo": 31, "tpl": 4, "obj": "leek", "block": "point", "i": 1084}
+{"text": "move the leek to this spot", "lang": "en", "heldout": false, "combo": 31, "tpl": 5, "obj": "leek", "block": "point", "i": 1085}
+{"text": "대파를 여기에 놔", "lang": "ko", "heldout": false, "combo": 31, "tpl": 6, "obj": "leek", "block": "point", "i": 1086}
+{"text": "대파를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 31, "tpl": 7, "obj": "leek", "block": "point", "i": 1087}
+{"text": "대파를 거기에 둬", "lang": "ko", "heldout": false, "combo": 31, "tpl": 8, "obj": "leek", "block": "point", "i": 1088}
+{"text": "대파 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 31, "tpl": 9, "obj": "leek", "block": "point", "i": 1089}
+{"text": "could you bring the leek over to this point", "lang": "en", "heldout": true, "combo": 31, "tpl": 10, "obj": "leek", "block": "point", "i": 1090}
+{"text": "대파를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 31, "tpl": 11, "obj": "leek", "block": "point", "i": 1091}
+{"text": "put the pen here", "lang": "en", "heldout": false, "combo": 32, "tpl": 0, "obj": "pen", "block": "point", "i": 1092}
+{"text": "place the pen right here", "lang": "en", "heldout": false, "combo": 32, "tpl": 1, "obj": "pen", "block": "point", "i": 1093}
+{"text": "set the pen down at this spot", "lang": "en", "heldout": false, "combo": 32, "tpl": 2, "obj": "pen", "block": "point", "i": 1094}
+{"text": "drop the pen off here", "lang": "en", "heldout": false, "combo": 32, "tpl": 3, "obj": "pen", "block": "point", "i": 1095}
+{"text": "leave the pen over there", "lang": "en", "heldout": false, "combo": 32, "tpl": 4, "obj": "pen", "block": "point", "i": 1096}
+{"text": "move the pen to this spot", "lang": "en", "heldout": false, "combo": 32, "tpl": 5, "obj": "pen", "block": "point", "i": 1097}
+{"text": "펜을 여기에 놔", "lang": "ko", "heldout": false, "combo": 32, "tpl": 6, "obj": "pen", "block": "point", "i": 1098}
+{"text": "펜을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 32, "tpl": 7, "obj": "pen", "block": "point", "i": 1099}
+{"text": "펜을 거기에 둬", "lang": "ko", "heldout": false, "combo": 32, "tpl": 8, "obj": "pen", "block": "point", "i": 1100}
+{"text": "펜 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 32, "tpl": 9, "obj": "pen", "block": "point", "i": 1101}
+{"text": "could you bring the pen over to this point", "lang": "en", "heldout": true, "combo": 32, "tpl": 10, "obj": "pen", "block": "point", "i": 1102}
+{"text": "펜을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 32, "tpl": 11, "obj": "pen", "block": "point", "i": 1103}
+{"text": "put the pen here", "lang": "en", "heldout": false, "combo": 33, "tpl": 0, "obj": "pen", "block": "point", "i": 1104}
+{"text": "place the pen right here", "lang": "en", "heldout": false, "combo": 33, "tpl": 1, "obj": "pen", "block": "point", "i": 1105}
+{"text": "set the pen down at this spot", "lang": "en", "heldout": false, "combo": 33, "tpl": 2, "obj": "pen", "block": "point", "i": 1106}
+{"text": "drop the pen off here", "lang": "en", "heldout": false, "combo": 33, "tpl": 3, "obj": "pen", "block": "point", "i": 1107}
+{"text": "leave the pen over there", "lang": "en", "heldout": false, "combo": 33, "tpl": 4, "obj": "pen", "block": "point", "i": 1108}
+{"text": "move the pen to this spot", "lang": "en", "heldout": false, "combo": 33, "tpl": 5, "obj": "pen", "block": "point", "i": 1109}
+{"text": "펜을 여기에 놔", "lang": "ko", "heldout": false, "combo": 33, "tpl": 6, "obj": "pen", "block": "point", "i": 1110}
+{"text": "펜을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 33, "tpl": 7, "obj": "pen", "block": "point", "i": 1111}
+{"text": "펜을 거기에 둬", "lang": "ko", "heldout": false, "combo": 33, "tpl": 8, "obj": "pen", "block": "point", "i": 1112}
+{"text": "펜 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 33, "tpl": 9, "obj": "pen", "block": "point", "i": 1113}
+{"text": "could you bring the pen over to this point", "lang": "en", "heldout": true, "combo": 33, "tpl": 10, "obj": "pen", "block": "point", "i": 1114}
+{"text": "펜을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 33, "tpl": 11, "obj": "pen", "block": "point", "i": 1115}
+{"text": "put the pen here", "lang": "en", "heldout": false, "combo": 34, "tpl": 0, "obj": "pen", "block": "point", "i": 1116}
+{"text": "place the pen right here", "lang": "en", "heldout": false, "combo": 34, "tpl": 1, "obj": "pen", "block": "point", "i": 1117}
+{"text": "set the pen down at this spot", "lang": "en", "heldout": false, "combo": 34, "tpl": 2, "obj": "pen", "block": "point", "i": 1118}
+{"text": "drop the pen off here", "lang": "en", "heldout": false, "combo": 34, "tpl": 3, "obj": "pen", "block": "point", "i": 1119}
+{"text": "leave the pen over there", "lang": "en", "heldout": false, "combo": 34, "tpl": 4, "obj": "pen", "block": "point", "i": 1120}
+{"text": "move the pen to this spot", "lang": "en", "heldout": false, "combo": 34, "tpl": 5, "obj": "pen", "block": "point", "i": 1121}
+{"text": "펜을 여기에 놔", "lang": "ko", "heldout": false, "combo": 34, "tpl": 6, "obj": "pen", "block": "point", "i": 1122}
+{"text": "펜을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 34, "tpl": 7, "obj": "pen", "block": "point", "i": 1123}
+{"text": "펜을 거기에 둬", "lang": "ko", "heldout": false, "combo": 34, "tpl": 8, "obj": "pen", "block": "point", "i": 1124}
+{"text": "펜 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 34, "tpl": 9, "obj": "pen", "block": "point", "i": 1125}
+{"text": "could you bring the pen over to this point", "lang": "en", "heldout": true, "combo": 34, "tpl": 10, "obj": "pen", "block": "point", "i": 1126}
+{"text": "펜을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 34, "tpl": 11, "obj": "pen", "block": "point", "i": 1127}
+{"text": "put the pencil here", "lang": "en", "heldout": false, "combo": 35, "tpl": 0, "obj": "pencil", "block": "point", "i": 1128}
+{"text": "place the colored pencil right here", "lang": "en", "heldout": false, "combo": 35, "tpl": 1, "obj": "colored pencil", "block": "point", "i": 1129}
+{"text": "set the pencil down at this spot", "lang": "en", "heldout": false, "combo": 35, "tpl": 2, "obj": "pencil", "block": "point", "i": 1130}
+{"text": "drop the colored pencil off here", "lang": "en", "heldout": false, "combo": 35, "tpl": 3, "obj": "colored pencil", "block": "point", "i": 1131}
+{"text": "leave the pencil over there", "lang": "en", "heldout": false, "combo": 35, "tpl": 4, "obj": "pencil", "block": "point", "i": 1132}
+{"text": "move the colored pencil to this spot", "lang": "en", "heldout": false, "combo": 35, "tpl": 5, "obj": "colored pencil", "block": "point", "i": 1133}
+{"text": "연필을 여기에 놔", "lang": "ko", "heldout": false, "combo": 35, "tpl": 6, "obj": "pencil", "block": "point", "i": 1134}
+{"text": "연필을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 35, "tpl": 7, "obj": "colored pencil", "block": "point", "i": 1135}
+{"text": "연필을 거기에 둬", "lang": "ko", "heldout": false, "combo": 35, "tpl": 8, "obj": "pencil", "block": "point", "i": 1136}
+{"text": "연필 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 35, "tpl": 9, "obj": "colored pencil", "block": "point", "i": 1137}
+{"text": "could you bring the pencil over to this point", "lang": "en", "heldout": true, "combo": 35, "tpl": 10, "obj": "pencil", "block": "point", "i": 1138}
+{"text": "연필을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 35, "tpl": 11, "obj": "pencil", "block": "point", "i": 1139}
+{"text": "put the pencil here", "lang": "en", "heldout": false, "combo": 36, "tpl": 0, "obj": "pencil", "block": "point", "i": 1140}
+{"text": "place the colored pencil right here", "lang": "en", "heldout": false, "combo": 36, "tpl": 1, "obj": "colored pencil", "block": "point", "i": 1141}
+{"text": "set the pencil down at this spot", "lang": "en", "heldout": false, "combo": 36, "tpl": 2, "obj": "pencil", "block": "point", "i": 1142}
+{"text": "drop the colored pencil off here", "lang": "en", "heldout": false, "combo": 36, "tpl": 3, "obj": "colored pencil", "block": "point", "i": 1143}
+{"text": "leave the pencil over there", "lang": "en", "heldout": false, "combo": 36, "tpl": 4, "obj": "pencil", "block": "point", "i": 1144}
+{"text": "move the colored pencil to this spot", "lang": "en", "heldout": false, "combo": 36, "tpl": 5, "obj": "colored pencil", "block": "point", "i": 1145}
+{"text": "연필을 여기에 놔", "lang": "ko", "heldout": false, "combo": 36, "tpl": 6, "obj": "pencil", "block": "point", "i": 1146}
+{"text": "연필을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 36, "tpl": 7, "obj": "colored pencil", "block": "point", "i": 1147}
+{"text": "연필을 거기에 둬", "lang": "ko", "heldout": false, "combo": 36, "tpl": 8, "obj": "pencil", "block": "point", "i": 1148}
+{"text": "연필 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 36, "tpl": 9, "obj": "colored pencil", "block": "point", "i": 1149}
+{"text": "could you bring the pencil over to this point", "lang": "en", "heldout": true, "combo": 36, "tpl": 10, "obj": "pencil", "block": "point", "i": 1150}
+{"text": "연필을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 36, "tpl": 11, "obj": "pencil", "block": "point", "i": 1151}
+{"text": "put the pencil here", "lang": "en", "heldout": false, "combo": 37, "tpl": 0, "obj": "pencil", "block": "point", "i": 1152}
+{"text": "place the colored pencil right here", "lang": "en", "heldout": false, "combo": 37, "tpl": 1, "obj": "colored pencil", "block": "point", "i": 1153}
+{"text": "set the pencil down at this spot", "lang": "en", "heldout": false, "combo": 37, "tpl": 2, "obj": "pencil", "block": "point", "i": 1154}
+{"text": "drop the colored pencil off here", "lang": "en", "heldout": false, "combo": 37, "tpl": 3, "obj": "colored pencil", "block": "point", "i": 1155}
+{"text": "leave the pencil over there", "lang": "en", "heldout": false, "combo": 37, "tpl": 4, "obj": "pencil", "block": "point", "i": 1156}
+{"text": "move the colored pencil to this spot", "lang": "en", "heldout": false, "combo": 37, "tpl": 5, "obj": "colored pencil", "block": "point", "i": 1157}
+{"text": "연필을 여기에 놔", "lang": "ko", "heldout": false, "combo": 37, "tpl": 6, "obj": "pencil", "block": "point", "i": 1158}
+{"text": "연필을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 37, "tpl": 7, "obj": "colored pencil", "block": "point", "i": 1159}
+{"text": "연필을 거기에 둬", "lang": "ko", "heldout": false, "combo": 37, "tpl": 8, "obj": "pencil", "block": "point", "i": 1160}
+{"text": "연필 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 37, "tpl": 9, "obj": "colored pencil", "block": "point", "i": 1161}
+{"text": "could you bring the pencil over to this point", "lang": "en", "heldout": true, "combo": 37, "tpl": 10, "obj": "pencil", "block": "point", "i": 1162}
+{"text": "연필을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 37, "tpl": 11, "obj": "pencil", "block": "point", "i": 1163}
+{"text": "put the scraper here", "lang": "en", "heldout": false, "combo": 38, "tpl": 0, "obj": "scraper", "block": "point", "i": 1164}
+{"text": "place the scraper right here", "lang": "en", "heldout": false, "combo": 38, "tpl": 1, "obj": "scraper", "block": "point", "i": 1165}
+{"text": "set the scraper down at this spot", "lang": "en", "heldout": false, "combo": 38, "tpl": 2, "obj": "scraper", "block": "point", "i": 1166}
+{"text": "drop the scraper off here", "lang": "en", "heldout": false, "combo": 38, "tpl": 3, "obj": "scraper", "block": "point", "i": 1167}
+{"text": "leave the scraper over there", "lang": "en", "heldout": false, "combo": 38, "tpl": 4, "obj": "scraper", "block": "point", "i": 1168}
+{"text": "move the scraper to this spot", "lang": "en", "heldout": false, "combo": 38, "tpl": 5, "obj": "scraper", "block": "point", "i": 1169}
+{"text": "스크래퍼를 여기에 놔", "lang": "ko", "heldout": false, "combo": 38, "tpl": 6, "obj": "scraper", "block": "point", "i": 1170}
+{"text": "스크래퍼를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 38, "tpl": 7, "obj": "scraper", "block": "point", "i": 1171}
+{"text": "스크래퍼를 거기에 둬", "lang": "ko", "heldout": false, "combo": 38, "tpl": 8, "obj": "scraper", "block": "point", "i": 1172}
+{"text": "스크래퍼 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 38, "tpl": 9, "obj": "scraper", "block": "point", "i": 1173}
+{"text": "could you bring the scraper over to this point", "lang": "en", "heldout": true, "combo": 38, "tpl": 10, "obj": "scraper", "block": "point", "i": 1174}
+{"text": "스크래퍼를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 38, "tpl": 11, "obj": "scraper", "block": "point", "i": 1175}
+{"text": "put the scrub brush here", "lang": "en", "heldout": false, "combo": 39, "tpl": 0, "obj": "scrub brush", "block": "point", "i": 1176}
+{"text": "place the scrubbing brush right here", "lang": "en", "heldout": false, "combo": 39, "tpl": 1, "obj": "scrubbing brush", "block": "point", "i": 1177}
+{"text": "set the scrubber down at this spot", "lang": "en", "heldout": false, "combo": 39, "tpl": 2, "obj": "scrubber", "block": "point", "i": 1178}
+{"text": "drop the scrub brush off here", "lang": "en", "heldout": false, "combo": 39, "tpl": 3, "obj": "scrub brush", "block": "point", "i": 1179}
+{"text": "leave the scrubbing brush over there", "lang": "en", "heldout": false, "combo": 39, "tpl": 4, "obj": "scrubbing brush", "block": "point", "i": 1180}
+{"text": "move the scrubber to this spot", "lang": "en", "heldout": false, "combo": 39, "tpl": 5, "obj": "scrubber", "block": "point", "i": 1181}
+{"text": "스크러브 브러쉬를 여기에 놔", "lang": "ko", "heldout": false, "combo": 39, "tpl": 6, "obj": "scrub brush", "block": "point", "i": 1182}
+{"text": "스크러핑 브러쉬를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 39, "tpl": 7, "obj": "scrubbing brush", "block": "point", "i": 1183}
+{"text": "스크러버를 거기에 둬", "lang": "ko", "heldout": false, "combo": 39, "tpl": 8, "obj": "scrubber", "block": "point", "i": 1184}
+{"text": "스크러브 브러쉬 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 39, "tpl": 9, "obj": "scrub brush", "block": "point", "i": 1185}
+{"text": "could you bring the scrub brush over to this point", "lang": "en", "heldout": true, "combo": 39, "tpl": 10, "obj": "scrub brush", "block": "point", "i": 1186}
+{"text": "스크러브 브러쉬를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 39, "tpl": 11, "obj": "scrub brush", "block": "point", "i": 1187}
+{"text": "put the scrub brush here", "lang": "en", "heldout": false, "combo": 40, "tpl": 0, "obj": "scrub brush", "block": "point", "i": 1188}
+{"text": "place the scrubbing brush right here", "lang": "en", "heldout": false, "combo": 40, "tpl": 1, "obj": "scrubbing brush", "block": "point", "i": 1189}
+{"text": "set the scrubber down at this spot", "lang": "en", "heldout": false, "combo": 40, "tpl": 2, "obj": "scrubber", "block": "point", "i": 1190}
+{"text": "drop the scrub brush off here", "lang": "en", "heldout": false, "combo": 40, "tpl": 3, "obj": "scrub brush", "block": "point", "i": 1191}
+{"text": "leave the scrubbing brush over there", "lang": "en", "heldout": false, "combo": 40, "tpl": 4, "obj": "scrubbing brush", "block": "point", "i": 1192}
+{"text": "move the scrubber to this spot", "lang": "en", "heldout": false, "combo": 40, "tpl": 5, "obj": "scrubber", "block": "point", "i": 1193}
+{"text": "스크러브 브러쉬를 여기에 놔", "lang": "ko", "heldout": false, "combo": 40, "tpl": 6, "obj": "scrub brush", "block": "point", "i": 1194}
+{"text": "스크러핑 브러쉬를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 40, "tpl": 7, "obj": "scrubbing brush", "block": "point", "i": 1195}
+{"text": "스크러버를 거기에 둬", "lang": "ko", "heldout": false, "combo": 40, "tpl": 8, "obj": "scrubber", "block": "point", "i": 1196}
+{"text": "스크러브 브러쉬 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 40, "tpl": 9, "obj": "scrub brush", "block": "point", "i": 1197}
+{"text": "could you bring the scrub brush over to this point", "lang": "en", "heldout": true, "combo": 40, "tpl": 10, "obj": "scrub brush", "block": "point", "i": 1198}
+{"text": "스크러브 브러쉬를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 40, "tpl": 11, "obj": "scrub brush", "block": "point", "i": 1199}
+{"text": "put the scrub brush here", "lang": "en", "heldout": false, "combo": 41, "tpl": 0, "obj": "scrub brush", "block": "point", "i": 1200}
+{"text": "place the scrubbing brush right here", "lang": "en", "heldout": false, "combo": 41, "tpl": 1, "obj": "scrubbing brush", "block": "point", "i": 1201}
+{"text": "set the scrubber down at this spot", "lang": "en", "heldout": false, "combo": 41, "tpl": 2, "obj": "scrubber", "block": "point", "i": 1202}
+{"text": "drop the scrub brush off here", "lang": "en", "heldout": false, "combo": 41, "tpl": 3, "obj": "scrub brush", "block": "point", "i": 1203}
+{"text": "leave the scrubbing brush over there", "lang": "en", "heldout": false, "combo": 41, "tpl": 4, "obj": "scrubbing brush", "block": "point", "i": 1204}
+{"text": "move the scrubber to this spot", "lang": "en", "heldout": false, "combo": 41, "tpl": 5, "obj": "scrubber", "block": "point", "i": 1205}
+{"text": "스크러브 브러쉬를 여기에 놔", "lang": "ko", "heldout": false, "combo": 41, "tpl": 6, "obj": "scrub brush", "block": "point", "i": 1206}
+{"text": "스크러핑 브러쉬를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 41, "tpl": 7, "obj": "scrubbing brush", "block": "point", "i": 1207}
+{"text": "스크러버를 거기에 둬", "lang": "ko", "heldout": false, "combo": 41, "tpl": 8, "obj": "scrubber", "block": "point", "i": 1208}
+{"text": "스크러브 브러쉬 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 41, "tpl": 9, "obj": "scrub brush", "block": "point", "i": 1209}
+{"text": "could you bring the scrub brush over to this point", "lang": "en", "heldout": true, "combo": 41, "tpl": 10, "obj": "scrub brush", "block": "point", "i": 1210}
+{"text": "스크러브 브러쉬를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 41, "tpl": 11, "obj": "scrub brush", "block": "point", "i": 1211}
+{"text": "put the stapler here", "lang": "en", "heldout": false, "combo": 42, "tpl": 0, "obj": "stapler", "block": "point", "i": 1212}
+{"text": "place the stapling machine right here", "lang": "en", "heldout": false, "combo": 42, "tpl": 1, "obj": "stapling machine", "block": "point", "i": 1213}
+{"text": "set the stapler down at this spot", "lang": "en", "heldout": false, "combo": 42, "tpl": 2, "obj": "stapler", "block": "point", "i": 1214}
+{"text": "drop the stapling machine off here", "lang": "en", "heldout": false, "combo": 42, "tpl": 3, "obj": "stapling machine", "block": "point", "i": 1215}
+{"text": "leave the stapler over there", "lang": "en", "heldout": false, "combo": 42, "tpl": 4, "obj": "stapler", "block": "point", "i": 1216}
+{"text": "move the stapling machine to this spot", "lang": "en", "heldout": false, "combo": 42, "tpl": 5, "obj": "stapling machine", "block": "point", "i": 1217}
+{"text": "스테이플러를 여기에 놔", "lang": "ko", "heldout": false, "combo": 42, "tpl": 6, "obj": "stapler", "block": "point", "i": 1218}
+{"text": "스테이플러를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 42, "tpl": 7, "obj": "stapling machine", "block": "point", "i": 1219}
+{"text": "스테이플러를 거기에 둬", "lang": "ko", "heldout": false, "combo": 42, "tpl": 8, "obj": "stapler", "block": "point", "i": 1220}
+{"text": "스테이플러 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 42, "tpl": 9, "obj": "stapling machine", "block": "point", "i": 1221}
+{"text": "could you bring the stapler over to this point", "lang": "en", "heldout": true, "combo": 42, "tpl": 10, "obj": "stapler", "block": "point", "i": 1222}
+{"text": "스테이플러를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 42, "tpl": 11, "obj": "stapler", "block": "point", "i": 1223}
+{"text": "put the stapler here", "lang": "en", "heldout": false, "combo": 43, "tpl": 0, "obj": "stapler", "block": "point", "i": 1224}
+{"text": "place the stapling machine right here", "lang": "en", "heldout": false, "combo": 43, "tpl": 1, "obj": "stapling machine", "block": "point", "i": 1225}
+{"text": "set the stapler down at this spot", "lang": "en", "heldout": false, "combo": 43, "tpl": 2, "obj": "stapler", "block": "point", "i": 1226}
+{"text": "drop the stapling machine off here", "lang": "en", "heldout": false, "combo": 43, "tpl": 3, "obj": "stapling machine", "block": "point", "i": 1227}
+{"text": "leave the stapler over there", "lang": "en", "heldout": false, "combo": 43, "tpl": 4, "obj": "stapler", "block": "point", "i": 1228}
+{"text": "move the stapling machine to this spot", "lang": "en", "heldout": false, "combo": 43, "tpl": 5, "obj": "stapling machine", "block": "point", "i": 1229}
+{"text": "스테이플러를 여기에 놔", "lang": "ko", "heldout": false, "combo": 43, "tpl": 6, "obj": "stapler", "block": "point", "i": 1230}
+{"text": "스테이플러를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 43, "tpl": 7, "obj": "stapling machine", "block": "point", "i": 1231}
+{"text": "스테이플러를 거기에 둬", "lang": "ko", "heldout": false, "combo": 43, "tpl": 8, "obj": "stapler", "block": "point", "i": 1232}
+{"text": "스테이플러 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 43, "tpl": 9, "obj": "stapling machine", "block": "point", "i": 1233}
+{"text": "could you bring the stapler over to this point", "lang": "en", "heldout": true, "combo": 43, "tpl": 10, "obj": "stapler", "block": "point", "i": 1234}
+{"text": "스테이플러를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 43, "tpl": 11, "obj": "stapler", "block": "point", "i": 1235}
+{"text": "put the sweet corn here", "lang": "en", "heldout": false, "combo": 44, "tpl": 0, "obj": "sweet corn", "block": "point", "i": 1236}
+{"text": "place the green corn right here", "lang": "en", "heldout": false, "combo": 44, "tpl": 1, "obj": "green corn", "block": "point", "i": 1237}
+{"text": "set the sweet corn down at this spot", "lang": "en", "heldout": false, "combo": 44, "tpl": 2, "obj": "sweet corn", "block": "point", "i": 1238}
+{"text": "drop the green corn off here", "lang": "en", "heldout": false, "combo": 44, "tpl": 3, "obj": "green corn", "block": "point", "i": 1239}
+{"text": "leave the sweet corn over there", "lang": "en", "heldout": false, "combo": 44, "tpl": 4, "obj": "sweet corn", "block": "point", "i": 1240}
+{"text": "move the green corn to this spot", "lang": "en", "heldout": false, "combo": 44, "tpl": 5, "obj": "green corn", "block": "point", "i": 1241}
+{"text": "달콤한 옥수수를 여기에 놔", "lang": "ko", "heldout": false, "combo": 44, "tpl": 6, "obj": "sweet corn", "block": "point", "i": 1242}
+{"text": "녹색 옥수수를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 44, "tpl": 7, "obj": "green corn", "block": "point", "i": 1243}
+{"text": "달콤한 옥수수를 거기에 둬", "lang": "ko", "heldout": false, "combo": 44, "tpl": 8, "obj": "sweet corn", "block": "point", "i": 1244}
+{"text": "녹색 옥수수 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 44, "tpl": 9, "obj": "green corn", "block": "point", "i": 1245}
+{"text": "could you bring the sweet corn over to this point", "lang": "en", "heldout": true, "combo": 44, "tpl": 10, "obj": "sweet corn", "block": "point", "i": 1246}
+{"text": "달콤한 옥수수를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 44, "tpl": 11, "obj": "sweet corn", "block": "point", "i": 1247}
+{"text": "put the sweet corn here", "lang": "en", "heldout": false, "combo": 45, "tpl": 0, "obj": "sweet corn", "block": "point", "i": 1248}
+{"text": "place the green corn right here", "lang": "en", "heldout": false, "combo": 45, "tpl": 1, "obj": "green corn", "block": "point", "i": 1249}
+{"text": "set the sweet corn down at this spot", "lang": "en", "heldout": false, "combo": 45, "tpl": 2, "obj": "sweet corn", "block": "point", "i": 1250}
+{"text": "drop the green corn off here", "lang": "en", "heldout": false, "combo": 45, "tpl": 3, "obj": "green corn", "block": "point", "i": 1251}
+{"text": "leave the sweet corn over there", "lang": "en", "heldout": false, "combo": 45, "tpl": 4, "obj": "sweet corn", "block": "point", "i": 1252}
+{"text": "move the green corn to this spot", "lang": "en", "heldout": false, "combo": 45, "tpl": 5, "obj": "green corn", "block": "point", "i": 1253}
+{"text": "달콤한 옥수수를 여기에 놔", "lang": "ko", "heldout": false, "combo": 45, "tpl": 6, "obj": "sweet corn", "block": "point", "i": 1254}
+{"text": "녹색 옥수수를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 45, "tpl": 7, "obj": "green corn", "block": "point", "i": 1255}
+{"text": "달콤한 옥수수를 거기에 둬", "lang": "ko", "heldout": false, "combo": 45, "tpl": 8, "obj": "sweet corn", "block": "point", "i": 1256}
+{"text": "녹색 옥수수 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 45, "tpl": 9, "obj": "green corn", "block": "point", "i": 1257}
+{"text": "could you bring the sweet corn over to this point", "lang": "en", "heldout": true, "combo": 45, "tpl": 10, "obj": "sweet corn", "block": "point", "i": 1258}
+{"text": "달콤한 옥수수를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 45, "tpl": 11, "obj": "sweet corn", "block": "point", "i": 1259}
+{"text": "put the sweet corn here", "lang": "en", "heldout": false, "combo": 46, "tpl": 0, "obj": "sweet corn", "block": "point", "i": 1260}
+{"text": "place the green corn right here", "lang": "en", "heldout": false, "combo": 46, "tpl": 1, "obj": "green corn", "block": "point", "i": 1261}
+{"text": "set the sweet corn down at this spot", "lang": "en", "heldout": false, "combo": 46, "tpl": 2, "obj": "sweet corn", "block": "point", "i": 1262}
+{"text": "drop the green corn off here", "lang": "en", "heldout": false, "combo": 46, "tpl": 3, "obj": "green corn", "block": "point", "i": 1263}
+{"text": "leave the sweet corn over there", "lang": "en", "heldout": false, "combo": 46, "tpl": 4, "obj": "sweet corn", "block": "point", "i": 1264}
+{"text": "move the green corn to this spot", "lang": "en", "heldout": false, "combo": 46, "tpl": 5, "obj": "green corn", "block": "point", "i": 1265}
+{"text": "달콤한 옥수수를 여기에 놔", "lang": "ko", "heldout": false, "combo": 46, "tpl": 6, "obj": "sweet corn", "block": "point", "i": 1266}
+{"text": "녹색 옥수수를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 46, "tpl": 7, "obj": "green corn", "block": "point", "i": 1267}
+{"text": "달콤한 옥수수를 거기에 둬", "lang": "ko", "heldout": false, "combo": 46, "tpl": 8, "obj": "sweet corn", "block": "point", "i": 1268}
+{"text": "녹색 옥수수 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 46, "tpl": 9, "obj": "green corn", "block": "point", "i": 1269}
+{"text": "could you bring the sweet corn over to this point", "lang": "en", "heldout": true, "combo": 46, "tpl": 10, "obj": "sweet corn", "block": "point", "i": 1270}
+{"text": "달콤한 옥수수를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 46, "tpl": 11, "obj": "sweet corn", "block": "point", "i": 1271}
+{"text": "put the sweet corn here", "lang": "en", "heldout": false, "combo": 47, "tpl": 0, "obj": "sweet corn", "block": "point", "i": 1272}
+{"text": "place the green corn right here", "lang": "en", "heldout": false, "combo": 47, "tpl": 1, "obj": "green corn", "block": "point", "i": 1273}
+{"text": "set the sweet corn down at this spot", "lang": "en", "heldout": false, "combo": 47, "tpl": 2, "obj": "sweet corn", "block": "point", "i": 1274}
+{"text": "drop the green corn off here", "lang": "en", "heldout": false, "combo": 47, "tpl": 3, "obj": "green corn", "block": "point", "i": 1275}
+{"text": "leave the sweet corn over there", "lang": "en", "heldout": false, "combo": 47, "tpl": 4, "obj": "sweet corn", "block": "point", "i": 1276}
+{"text": "move the green corn to this spot", "lang": "en", "heldout": false, "combo": 47, "tpl": 5, "obj": "green corn", "block": "point", "i": 1277}
+{"text": "달콤한 옥수수를 여기에 놔", "lang": "ko", "heldout": false, "combo": 47, "tpl": 6, "obj": "sweet corn", "block": "point", "i": 1278}
+{"text": "녹색 옥수수를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 47, "tpl": 7, "obj": "green corn", "block": "point", "i": 1279}
+{"text": "달콤한 옥수수를 거기에 둬", "lang": "ko", "heldout": false, "combo": 47, "tpl": 8, "obj": "sweet corn", "block": "point", "i": 1280}
+{"text": "녹색 옥수수 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 47, "tpl": 9, "obj": "green corn", "block": "point", "i": 1281}
+{"text": "could you bring the sweet corn over to this point", "lang": "en", "heldout": true, "combo": 47, "tpl": 10, "obj": "sweet corn", "block": "point", "i": 1282}
+{"text": "달콤한 옥수수를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 47, "tpl": 11, "obj": "sweet corn", "block": "point", "i": 1283}
+{"text": "put the sweet corn here", "lang": "en", "heldout": false, "combo": 48, "tpl": 0, "obj": "sweet corn", "block": "point", "i": 1284}
+{"text": "place the green corn right here", "lang": "en", "heldout": false, "combo": 48, "tpl": 1, "obj": "green corn", "block": "point", "i": 1285}
+{"text": "set the sweet corn down at this spot", "lang": "en", "heldout": false, "combo": 48, "tpl": 2, "obj": "sweet corn", "block": "point", "i": 1286}
+{"text": "drop the green corn off here", "lang": "en", "heldout": false, "combo": 48, "tpl": 3, "obj": "green corn", "block": "point", "i": 1287}
+{"text": "leave the sweet corn over there", "lang": "en", "heldout": false, "combo": 48, "tpl": 4, "obj": "sweet corn", "block": "point", "i": 1288}
+{"text": "move the green corn to this spot", "lang": "en", "heldout": false, "combo": 48, "tpl": 5, "obj": "green corn", "block": "point", "i": 1289}
+{"text": "달콤한 옥수수를 여기에 놔", "lang": "ko", "heldout": false, "combo": 48, "tpl": 6, "obj": "sweet corn", "block": "point", "i": 1290}
+{"text": "녹색 옥수수를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 48, "tpl": 7, "obj": "green corn", "block": "point", "i": 1291}
+{"text": "달콤한 옥수수를 거기에 둬", "lang": "ko", "heldout": false, "combo": 48, "tpl": 8, "obj": "sweet corn", "block": "point", "i": 1292}
+{"text": "녹색 옥수수 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 48, "tpl": 9, "obj": "green corn", "block": "point", "i": 1293}
+{"text": "could you bring the sweet corn over to this point", "lang": "en", "heldout": true, "combo": 48, "tpl": 10, "obj": "sweet corn", "block": "point", "i": 1294}
+{"text": "달콤한 옥수수를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 48, "tpl": 11, "obj": "sweet corn", "block": "point", "i": 1295}
+{"text": "put the sweet corn here", "lang": "en", "heldout": false, "combo": 49, "tpl": 0, "obj": "sweet corn", "block": "point", "i": 1296}
+{"text": "place the green corn right here", "lang": "en", "heldout": false, "combo": 49, "tpl": 1, "obj": "green corn", "block": "point", "i": 1297}
+{"text": "set the sweet corn down at this spot", "lang": "en", "heldout": false, "combo": 49, "tpl": 2, "obj": "sweet corn", "block": "point", "i": 1298}
+{"text": "drop the green corn off here", "lang": "en", "heldout": false, "combo": 49, "tpl": 3, "obj": "green corn", "block": "point", "i": 1299}
+{"text": "leave the sweet corn over there", "lang": "en", "heldout": false, "combo": 49, "tpl": 4, "obj": "sweet corn", "block": "point", "i": 1300}
+{"text": "move the green corn to this spot", "lang": "en", "heldout": false, "combo": 49, "tpl": 5, "obj": "green corn", "block": "point", "i": 1301}
+{"text": "달콤한 옥수수를 여기에 놔", "lang": "ko", "heldout": false, "combo": 49, "tpl": 6, "obj": "sweet corn", "block": "point", "i": 1302}
+{"text": "녹색 옥수수를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 49, "tpl": 7, "obj": "green corn", "block": "point", "i": 1303}
+{"text": "달콤한 옥수수를 거기에 둬", "lang": "ko", "heldout": false, "combo": 49, "tpl": 8, "obj": "sweet corn", "block": "point", "i": 1304}
+{"text": "녹색 옥수수 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 49, "tpl": 9, "obj": "green corn", "block": "point", "i": 1305}
+{"text": "could you bring the sweet corn over to this point", "lang": "en", "heldout": true, "combo": 49, "tpl": 10, "obj": "sweet corn", "block": "point", "i": 1306}
+{"text": "달콤한 옥수수를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 49, "tpl": 11, "obj": "sweet corn", "block": "point", "i": 1307}
+{"text": "put the toothbrush here", "lang": "en", "heldout": false, "combo": 50, "tpl": 0, "obj": "toothbrush", "block": "point", "i": 1308}
+{"text": "place the toothbrush right here", "lang": "en", "heldout": false, "combo": 50, "tpl": 1, "obj": "toothbrush", "block": "point", "i": 1309}
+{"text": "set the toothbrush down at this spot", "lang": "en", "heldout": false, "combo": 50, "tpl": 2, "obj": "toothbrush", "block": "point", "i": 1310}
+{"text": "drop the toothbrush off here", "lang": "en", "heldout": false, "combo": 50, "tpl": 3, "obj": "toothbrush", "block": "point", "i": 1311}
+{"text": "leave the toothbrush over there", "lang": "en", "heldout": false, "combo": 50, "tpl": 4, "obj": "toothbrush", "block": "point", "i": 1312}
+{"text": "move the toothbrush to this spot", "lang": "en", "heldout": false, "combo": 50, "tpl": 5, "obj": "toothbrush", "block": "point", "i": 1313}
+{"text": "칫솔을 여기에 놔", "lang": "ko", "heldout": false, "combo": 50, "tpl": 6, "obj": "toothbrush", "block": "point", "i": 1314}
+{"text": "칫솔을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 50, "tpl": 7, "obj": "toothbrush", "block": "point", "i": 1315}
+{"text": "칫솔을 거기에 둬", "lang": "ko", "heldout": false, "combo": 50, "tpl": 8, "obj": "toothbrush", "block": "point", "i": 1316}
+{"text": "칫솔 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 50, "tpl": 9, "obj": "toothbrush", "block": "point", "i": 1317}
+{"text": "could you bring the toothbrush over to this point", "lang": "en", "heldout": true, "combo": 50, "tpl": 10, "obj": "toothbrush", "block": "point", "i": 1318}
+{"text": "칫솔을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 50, "tpl": 11, "obj": "toothbrush", "block": "point", "i": 1319}
+{"text": "put the toothbrush here", "lang": "en", "heldout": false, "combo": 51, "tpl": 0, "obj": "toothbrush", "block": "point", "i": 1320}
+{"text": "place the toothbrush right here", "lang": "en", "heldout": false, "combo": 51, "tpl": 1, "obj": "toothbrush", "block": "point", "i": 1321}
+{"text": "set the toothbrush down at this spot", "lang": "en", "heldout": false, "combo": 51, "tpl": 2, "obj": "toothbrush", "block": "point", "i": 1322}
+{"text": "drop the toothbrush off here", "lang": "en", "heldout": false, "combo": 51, "tpl": 3, "obj": "toothbrush", "block": "point", "i": 1323}
+{"text": "leave the toothbrush over there", "lang": "en", "heldout": false, "combo": 51, "tpl": 4, "obj": "toothbrush", "block": "point", "i": 1324}
+{"text": "move the toothbrush to this spot", "lang": "en", "heldout": false, "combo": 51, "tpl": 5, "obj": "toothbrush", "block": "point", "i": 1325}
+{"text": "칫솔을 여기에 놔", "lang": "ko", "heldout": false, "combo": 51, "tpl": 6, "obj": "toothbrush", "block": "point", "i": 1326}
+{"text": "칫솔을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 51, "tpl": 7, "obj": "toothbrush", "block": "point", "i": 1327}
+{"text": "칫솔을 거기에 둬", "lang": "ko", "heldout": false, "combo": 51, "tpl": 8, "obj": "toothbrush", "block": "point", "i": 1328}
+{"text": "칫솔 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 51, "tpl": 9, "obj": "toothbrush", "block": "point", "i": 1329}
+{"text": "could you bring the toothbrush over to this point", "lang": "en", "heldout": true, "combo": 51, "tpl": 10, "obj": "toothbrush", "block": "point", "i": 1330}
+{"text": "칫솔을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 51, "tpl": 11, "obj": "toothbrush", "block": "point", "i": 1331}
+{"text": "put the toothbrush here", "lang": "en", "heldout": false, "combo": 52, "tpl": 0, "obj": "toothbrush", "block": "point", "i": 1332}
+{"text": "place the toothbrush right here", "lang": "en", "heldout": false, "combo": 52, "tpl": 1, "obj": "toothbrush", "block": "point", "i": 1333}
+{"text": "set the toothbrush down at this spot", "lang": "en", "heldout": false, "combo": 52, "tpl": 2, "obj": "toothbrush", "block": "point", "i": 1334}
+{"text": "drop the toothbrush off here", "lang": "en", "heldout": false, "combo": 52, "tpl": 3, "obj": "toothbrush", "block": "point", "i": 1335}
+{"text": "leave the toothbrush over there", "lang": "en", "heldout": false, "combo": 52, "tpl": 4, "obj": "toothbrush", "block": "point", "i": 1336}
+{"text": "move the toothbrush to this spot", "lang": "en", "heldout": false, "combo": 52, "tpl": 5, "obj": "toothbrush", "block": "point", "i": 1337}
+{"text": "칫솔을 여기에 놔", "lang": "ko", "heldout": false, "combo": 52, "tpl": 6, "obj": "toothbrush", "block": "point", "i": 1338}
+{"text": "칫솔을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 52, "tpl": 7, "obj": "toothbrush", "block": "point", "i": 1339}
+{"text": "칫솔을 거기에 둬", "lang": "ko", "heldout": false, "combo": 52, "tpl": 8, "obj": "toothbrush", "block": "point", "i": 1340}
+{"text": "칫솔 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 52, "tpl": 9, "obj": "toothbrush", "block": "point", "i": 1341}
+{"text": "could you bring the toothbrush over to this point", "lang": "en", "heldout": true, "combo": 52, "tpl": 10, "obj": "toothbrush", "block": "point", "i": 1342}
+{"text": "칫솔을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 52, "tpl": 11, "obj": "toothbrush", "block": "point", "i": 1343}
+{"text": "put the toothbrush here", "lang": "en", "heldout": false, "combo": 53, "tpl": 0, "obj": "toothbrush", "block": "point", "i": 1344}
+{"text": "place the toothbrush right here", "lang": "en", "heldout": false, "combo": 53, "tpl": 1, "obj": "toothbrush", "block": "point", "i": 1345}
+{"text": "set the toothbrush down at this spot", "lang": "en", "heldout": false, "combo": 53, "tpl": 2, "obj": "toothbrush", "block": "point", "i": 1346}
+{"text": "drop the toothbrush off here", "lang": "en", "heldout": false, "combo": 53, "tpl": 3, "obj": "toothbrush", "block": "point", "i": 1347}
+{"text": "leave the toothbrush over there", "lang": "en", "heldout": false, "combo": 53, "tpl": 4, "obj": "toothbrush", "block": "point", "i": 1348}
+{"text": "move the toothbrush to this spot", "lang": "en", "heldout": false, "combo": 53, "tpl": 5, "obj": "toothbrush", "block": "point", "i": 1349}
+{"text": "칫솔을 여기에 놔", "lang": "ko", "heldout": false, "combo": 53, "tpl": 6, "obj": "toothbrush", "block": "point", "i": 1350}
+{"text": "칫솔을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 53, "tpl": 7, "obj": "toothbrush", "block": "point", "i": 1351}
+{"text": "칫솔을 거기에 둬", "lang": "ko", "heldout": false, "combo": 53, "tpl": 8, "obj": "toothbrush", "block": "point", "i": 1352}
+{"text": "칫솔 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 53, "tpl": 9, "obj": "toothbrush", "block": "point", "i": 1353}
+{"text": "could you bring the toothbrush over to this point", "lang": "en", "heldout": true, "combo": 53, "tpl": 10, "obj": "toothbrush", "block": "point", "i": 1354}
+{"text": "칫솔을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 53, "tpl": 11, "obj": "toothbrush", "block": "point", "i": 1355}
+{"text": "put the trowel here", "lang": "en", "heldout": false, "combo": 54, "tpl": 0, "obj": "trowel", "block": "point", "i": 1356}
+{"text": "place the trowel right here", "lang": "en", "heldout": false, "combo": 54, "tpl": 1, "obj": "trowel", "block": "point", "i": 1357}
+{"text": "set the trowel down at this spot", "lang": "en", "heldout": false, "combo": 54, "tpl": 2, "obj": "trowel", "block": "point", "i": 1358}
+{"text": "drop the trowel off here", "lang": "en", "heldout": false, "combo": 54, "tpl": 3, "obj": "trowel", "block": "point", "i": 1359}
+{"text": "leave the trowel over there", "lang": "en", "heldout": false, "combo": 54, "tpl": 4, "obj": "trowel", "block": "point", "i": 1360}
+{"text": "move the trowel to this spot", "lang": "en", "heldout": false, "combo": 54, "tpl": 5, "obj": "trowel", "block": "point", "i": 1361}
+{"text": "모종삽을 여기에 놔", "lang": "ko", "heldout": false, "combo": 54, "tpl": 6, "obj": "trowel", "block": "point", "i": 1362}
+{"text": "모종삽을 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 54, "tpl": 7, "obj": "trowel", "block": "point", "i": 1363}
+{"text": "모종삽을 거기에 둬", "lang": "ko", "heldout": false, "combo": 54, "tpl": 8, "obj": "trowel", "block": "point", "i": 1364}
+{"text": "모종삽 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 54, "tpl": 9, "obj": "trowel", "block": "point", "i": 1365}
+{"text": "could you bring the trowel over to this point", "lang": "en", "heldout": true, "combo": 54, "tpl": 10, "obj": "trowel", "block": "point", "i": 1366}
+{"text": "모종삽을 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 54, "tpl": 11, "obj": "trowel", "block": "point", "i": 1367}
+{"text": "put the tube of toothpaste here", "lang": "en", "heldout": false, "combo": 55, "tpl": 0, "obj": "tube of toothpaste", "block": "point", "i": 1368}
+{"text": "place the tube of toothpaste right here", "lang": "en", "heldout": false, "combo": 55, "tpl": 1, "obj": "tube of toothpaste", "block": "point", "i": 1369}
+{"text": "set the tube of toothpaste down at this spot", "lang": "en", "heldout": false, "combo": 55, "tpl": 2, "obj": "tube of toothpaste", "block": "point", "i": 1370}
+{"text": "drop the tube of toothpaste off here", "lang": "en", "heldout": false, "combo": 55, "tpl": 3, "obj": "tube of toothpaste", "block": "point", "i": 1371}
+{"text": "leave the tube of toothpaste over there", "lang": "en", "heldout": false, "combo": 55, "tpl": 4, "obj": "tube of toothpaste", "block": "point", "i": 1372}
+{"text": "move the tube of toothpaste to this spot", "lang": "en", "heldout": false, "combo": 55, "tpl": 5, "obj": "tube of toothpaste", "block": "point", "i": 1373}
+{"text": "치아파스트의 튜브를 여기에 놔", "lang": "ko", "heldout": false, "combo": 55, "tpl": 6, "obj": "tube of toothpaste", "block": "point", "i": 1374}
+{"text": "치아파스트의 튜브를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 55, "tpl": 7, "obj": "tube of toothpaste", "block": "point", "i": 1375}
+{"text": "치아파스트의 튜브를 거기에 둬", "lang": "ko", "heldout": false, "combo": 55, "tpl": 8, "obj": "tube of toothpaste", "block": "point", "i": 1376}
+{"text": "치아파스트의 튜브 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 55, "tpl": 9, "obj": "tube of toothpaste", "block": "point", "i": 1377}
+{"text": "could you bring the tube of toothpaste over to this point", "lang": "en", "heldout": true, "combo": 55, "tpl": 10, "obj": "tube of toothpaste", "block": "point", "i": 1378}
+{"text": "치아파스트의 튜브를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 55, "tpl": 11, "obj": "tube of toothpaste", "block": "point", "i": 1379}
+{"text": "put the tube of toothpaste here", "lang": "en", "heldout": false, "combo": 56, "tpl": 0, "obj": "tube of toothpaste", "block": "point", "i": 1380}
+{"text": "place the tube of toothpaste right here", "lang": "en", "heldout": false, "combo": 56, "tpl": 1, "obj": "tube of toothpaste", "block": "point", "i": 1381}
+{"text": "set the tube of toothpaste down at this spot", "lang": "en", "heldout": false, "combo": 56, "tpl": 2, "obj": "tube of toothpaste", "block": "point", "i": 1382}
+{"text": "drop the tube of toothpaste off here", "lang": "en", "heldout": false, "combo": 56, "tpl": 3, "obj": "tube of toothpaste", "block": "point", "i": 1383}
+{"text": "leave the tube of toothpaste over there", "lang": "en", "heldout": false, "combo": 56, "tpl": 4, "obj": "tube of toothpaste", "block": "point", "i": 1384}
+{"text": "move the tube of toothpaste to this spot", "lang": "en", "heldout": false, "combo": 56, "tpl": 5, "obj": "tube of toothpaste", "block": "point", "i": 1385}
+{"text": "치아파스트의 튜브를 여기에 놔", "lang": "ko", "heldout": false, "combo": 56, "tpl": 6, "obj": "tube of toothpaste", "block": "point", "i": 1386}
+{"text": "치아파스트의 튜브를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 56, "tpl": 7, "obj": "tube of toothpaste", "block": "point", "i": 1387}
+{"text": "치아파스트의 튜브를 거기에 둬", "lang": "ko", "heldout": false, "combo": 56, "tpl": 8, "obj": "tube of toothpaste", "block": "point", "i": 1388}
+{"text": "치아파스트의 튜브 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 56, "tpl": 9, "obj": "tube of toothpaste", "block": "point", "i": 1389}
+{"text": "could you bring the tube of toothpaste over to this point", "lang": "en", "heldout": true, "combo": 56, "tpl": 10, "obj": "tube of toothpaste", "block": "point", "i": 1390}
+{"text": "치아파스트의 튜브를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 56, "tpl": 11, "obj": "tube of toothpaste", "block": "point", "i": 1391}
+{"text": "put the tube of toothpaste here", "lang": "en", "heldout": false, "combo": 57, "tpl": 0, "obj": "tube of toothpaste", "block": "point", "i": 1392}
+{"text": "place the tube of toothpaste right here", "lang": "en", "heldout": false, "combo": 57, "tpl": 1, "obj": "tube of toothpaste", "block": "point", "i": 1393}
+{"text": "set the tube of toothpaste down at this spot", "lang": "en", "heldout": false, "combo": 57, "tpl": 2, "obj": "tube of toothpaste", "block": "point", "i": 1394}
+{"text": "drop the tube of toothpaste off here", "lang": "en", "heldout": false, "combo": 57, "tpl": 3, "obj": "tube of toothpaste", "block": "point", "i": 1395}
+{"text": "leave the tube of toothpaste over there", "lang": "en", "heldout": false, "combo": 57, "tpl": 4, "obj": "tube of toothpaste", "block": "point", "i": 1396}
+{"text": "move the tube of toothpaste to this spot", "lang": "en", "heldout": false, "combo": 57, "tpl": 5, "obj": "tube of toothpaste", "block": "point", "i": 1397}
+{"text": "치아파스트의 튜브를 여기에 놔", "lang": "ko", "heldout": false, "combo": 57, "tpl": 6, "obj": "tube of toothpaste", "block": "point", "i": 1398}
+{"text": "치아파스트의 튜브를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 57, "tpl": 7, "obj": "tube of toothpaste", "block": "point", "i": 1399}
+{"text": "치아파스트의 튜브를 거기에 둬", "lang": "ko", "heldout": false, "combo": 57, "tpl": 8, "obj": "tube of toothpaste", "block": "point", "i": 1400}
+{"text": "치아파스트의 튜브 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 57, "tpl": 9, "obj": "tube of toothpaste", "block": "point", "i": 1401}
+{"text": "could you bring the tube of toothpaste over to this point", "lang": "en", "heldout": true, "combo": 57, "tpl": 10, "obj": "tube of toothpaste", "block": "point", "i": 1402}
+{"text": "치아파스트의 튜브를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 57, "tpl": 11, "obj": "tube of toothpaste", "block": "point", "i": 1403}
+{"text": "put the tube of toothpaste here", "lang": "en", "heldout": false, "combo": 58, "tpl": 0, "obj": "tube of toothpaste", "block": "point", "i": 1404}
+{"text": "place the tube of toothpaste right here", "lang": "en", "heldout": false, "combo": 58, "tpl": 1, "obj": "tube of toothpaste", "block": "point", "i": 1405}
+{"text": "set the tube of toothpaste down at this spot", "lang": "en", "heldout": false, "combo": 58, "tpl": 2, "obj": "tube of toothpaste", "block": "point", "i": 1406}
+{"text": "drop the tube of toothpaste off here", "lang": "en", "heldout": false, "combo": 58, "tpl": 3, "obj": "tube of toothpaste", "block": "point", "i": 1407}
+{"text": "leave the tube of toothpaste over there", "lang": "en", "heldout": false, "combo": 58, "tpl": 4, "obj": "tube of toothpaste", "block": "point", "i": 1408}
+{"text": "move the tube of toothpaste to this spot", "lang": "en", "heldout": false, "combo": 58, "tpl": 5, "obj": "tube of toothpaste", "block": "point", "i": 1409}
+{"text": "치아파스트의 튜브를 여기에 놔", "lang": "ko", "heldout": false, "combo": 58, "tpl": 6, "obj": "tube of toothpaste", "block": "point", "i": 1410}
+{"text": "치아파스트의 튜브를 이 자리에 내려놔", "lang": "ko", "heldout": false, "combo": 58, "tpl": 7, "obj": "tube of toothpaste", "block": "point", "i": 1411}
+{"text": "치아파스트의 튜브를 거기에 둬", "lang": "ko", "heldout": false, "combo": 58, "tpl": 8, "obj": "tube of toothpaste", "block": "point", "i": 1412}
+{"text": "치아파스트의 튜브 여기 갖다 놔", "lang": "ko", "heldout": false, "combo": 58, "tpl": 9, "obj": "tube of toothpaste", "block": "point", "i": 1413}
+{"text": "could you bring the tube of toothpaste over to this point", "lang": "en", "heldout": true, "combo": 58, "tpl": 10, "obj": "tube of toothpaste", "block": "point", "i": 1414}
+{"text": "치아파스트의 튜브를 이쪽에 놓아 줄래", "lang": "ko", "heldout": true, "combo": 58, "tpl": 11, "obj": "tube of toothpaste", "block": "point", "i": 1415}
+{"text": "go here", "lang": "en", "heldout": false, "combo": -1, "tpl": 0, "obj": "", "block": "goto", "i": 1416}
+{"text": "move to this spot", "lang": "en", "heldout": false, "combo": -1, "tpl": 1, "obj": "", "block": "goto", "i": 1417}
+{"text": "drive over there", "lang": "en", "heldout": false, "combo": -1, "tpl": 2, "obj": "", "block": "goto", "i": 1418}
+{"text": "go to this point", "lang": "en", "heldout": false, "combo": -1, "tpl": 3, "obj": "", "block": "goto", "i": 1419}
+{"text": "head to the spot I marked", "lang": "en", "heldout": false, "combo": -1, "tpl": 4, "obj": "", "block": "goto", "i": 1420}
+{"text": "come over here", "lang": "en", "heldout": false, "combo": -1, "tpl": 5, "obj": "", "block": "goto", "i": 1421}
+{"text": "여기로 가", "lang": "ko", "heldout": false, "combo": -1, "tpl": 6, "obj": "", "block": "goto", "i": 1422}
+{"text": "이 자리로 이동해", "lang": "ko", "heldout": false, "combo": -1, "tpl": 7, "obj": "", "block": "goto", "i": 1423}
+{"text": "저기로 가 줘", "lang": "ko", "heldout": false, "combo": -1, "tpl": 8, "obj": "", "block": "goto", "i": 1424}
+{"text": "표시한 곳으로 가", "lang": "ko", "heldout": false, "combo": -1, "tpl": 9, "obj": "", "block": "goto", "i": 1425}
+{"text": "please make your way to this location", "lang": "en", "heldout": true, "combo": -1, "tpl": 10, "obj": "", "block": "goto", "i": 1426}
+{"text": "이 위치까지 가 줄래", "lang": "ko", "heldout": true, "combo": -1, "tpl": 11, "obj": "", "block": "goto", "i": 1427}

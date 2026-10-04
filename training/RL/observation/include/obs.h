@@ -5,7 +5,8 @@
 //  X0 줄(432, bf16): [0,128) 집합(여기서 안 씀, 칸 MLP 뒤 집합 커널이 씀) | [128,208) G1 관측 80 | [208,264) 벽 56 | [264,274) 방 10 |
 //                    [274,278) 완성도 4 | 278 = 1 | [279,287) 안 본 곳 광선 8 | [287,291) 다음 경유 지점 4 (둘 다 use_map 2 만) |
 //                    [291,294) 스킬 B1·B2·B3 원-핫(지도 토큰 bkind, 상자 방 0) | 0 | [304,432) 지시문 128(지도 토큰 instr1 → pnp_v1 표 행, 없으면 0)
-//  스킬·지시문은 지도 값이 아니라 과제 값이라 use_map·지도 끄기 흔들기와 무관하게 늘 넣는다(교사·학생 같음 — POLICY 4.2 (가), README "지시문")
+//                    [432,464) 목표 칸 2 × 16(지도 토큰 goal — 집을 것·놓을 곳, VLA_INPUT 2.1, goal_val 정규화)
+//  스킬·지시문·목표 칸은 지도 값이 아니라 과제 값이라 use_map·지도 끄기 흔들기와 무관하게 늘 넣는다(교사·학생 같음 — POLICY 4.2 (가), README "지시문")
 //  use_map: 0 = 지도 입력 모두 0, 1 = 지도 토큰(안 본 곳 광선·경유 지점 칸은 0), 2 = + 안 본 곳 광선 + 경유 지점
 //  칸 줄 16 × 304(bf16): 숫자 33(정규화 v2) | 이름 뜻 128 | 생김새 128 | 289 = 1 | 0.  빈 칸은 모두 0
 //  돌려주는 값: 채운 칸 비트(집합 평균·최댓값의 가림 — 칸 지우기 흔들기 뒤)
@@ -21,6 +22,7 @@
 //      확정 여부 = 지도 토큰의 목표 칸(T_TARGET, 참 컵에 짝 문턱 안 확정 "컵" 칸 — map_tok.h). 아니면 아래 칸을 0 으로:
 //      몸 상태의 "손끝 → 목표" 3 (G1 관측 53–55), 목표 칸 8 (72–79: 몸 기준 xy, 거리, 방위, 보임, 겉면, 카메라 거리, 표시).
 //      목표 칸 79(표시)는 "목표를 앎" 1 / 0 이 된다. 지도 토큰 끔(use_map 0)이어도 목표는 지도에서 온다(지도는 늘 돈다).
+//      점으로 가기(지도 토큰 flags 비트 1)는 점을 늘 안다(사용자가 준 점 — 특권 아님) → 늘 넣는다.
 //  G1 관측 배치(env.h step_core)는 그대로이고 롤아웃 버퍼에는 참값을 둔다(보상·모양 잡기는 참값으로 — 관측이 아님).
 //
 // 학습 때 흔들기(VLA_INPUT 6절, 장치 값 ObsAug — 바꿔도 다시 잡기 없음, on 0 이면 예전과 같은 입력):
@@ -142,7 +144,8 @@ static_assert(G_PREV + env::N_ACT == G_EE_TGT, "body state 56 layout (VLA_INPUT 
 static_assert(G_TGT + env::N_TGT == env::N_OBS, "target cell is the tail of the G1 obs");
 NDEV bool vel_col(int c) { return (c >= G_QD && c < G_QD + env::N_Q) || (c >= G_EEV && c < G_BV + 3); }
 // 지도 토큰에 목표 칸이 있나(목표 칸은 맨 앞 칸, T_TARGET = FP16 1.0)
-NDEV bool goal_known(const gmap::MapTok& tok) { return tok.n_slot > 0 && tok.slot[0][gmap::T_TARGET] == 0x3c00u; }
+NDEV bool goal_point_active(const gmap::MapTok& tok) { return (tok.flags & 2) != 0; }   // 지금 가는 목표 = 점(점으로 가기)
+NDEV bool goal_known(const gmap::MapTok& tok) { return (tok.n_slot > 0 && tok.slot[0][gmap::T_TARGET] == 0x3c00u) || goal_point_active(tok); }
 NDEV bool goal_col(int c) { return (c >= G_EE_TGT && c < G_EE_TGT + 3) || (c >= G_TGT && c < G_TGT + env::N_TGT); }
 
 // ---- 흔들기 난수(열쇠 = 씨앗, key0, key1, 칸) ----
@@ -213,6 +216,22 @@ NDEV int aug_name(const ObsAug* a, const VecTab& vt, int row, uint64_t k0, uint6
   return row;
 }
 
+// 목표 칸 값 하나(k = 칸 × 16 + GoalVal, 0..31) → 정규화 값(VLA_INPUT 2.1): 표시·꼴·앎·잃음·sin·cos 는 그대로, 위치 xyz·거리·손끝 기준 xyz 는
+// 물체 칸과 같은 특징(T_POS·T_DIST·T_POS_EEF — tok_norm.h 같은 μ·σ, 길이 로그 누름). 위치를 모르면(GV_KNOWN 0) 위치 값 0, 칸이 없으면 모두 0.
+// gdrop(학생 목표 감추기): **물체** 목표 칸은 통째로 0(목표 없음과 같은 입력), **점** 목표 칸은 감추지 않는다(점은 지시문에서 알 수 없음 — POLICY 4.4)
+NDEV float goal_val(const gmap::MapTok& tok, int k, bool gdrop) {
+  using namespace gmap;
+  const int e = k / N_GV, q = k % N_GV;
+  const uint16_t* g = tok.goal[e];
+  if (g[GV_PRESENT] != 0x3c00u || (gdrop && g[GV_KOBJ] == 0x3c00u) || q >= GV_EEF + 3) return 0.f;
+  const float raw = net::h2f(g[q]);
+  if (q < GV_POS || q == GV_SIN || q == GV_COS) return clamp10(raw);
+  if (g[GV_KNOWN] != 0x3c00u) return 0.f;
+  const int f = q == GV_DIST ? F_SLOT + T_DIST : q < GV_DIST ? F_SLOT + T_POS + (q - GV_POS) : F_SLOT + T_POS_EEF + (q - GV_EEF);
+  return feat_norm(f, raw);
+}
+static_assert(net::N_GOAL_E == gmap::N_GENT && net::N_GOAL_V == gmap::N_GV, "goal entries in X0 = map token goal entries");
+
 // 칸 숫자 하나(칸 b, 숫자 c < 33) → 정규화 값
 NDEV float slot_num(const gmap::MapTok& tok, int b, int c, bool gdrop = false) {
   return (gdrop && c == gmap::T_TARGET) ? 0.f : feat_norm(F_SLOT + c, net::h2f(tok.slot[b][c]));
@@ -242,7 +261,8 @@ NDEV uint32_t assemble(const float* obs, int stride, int i, const gmap::MapTok& 
                        int lane, int nl, const VecTab& vt, const ObsAug* aug = nullptr, uint64_t k0 = 0, uint64_t k1 = 0, bool compact = false) {
   const AugRow ar = aug_row(aug, k0, k1);
   const bool gdrop = ar.goal_off;
-  const bool show = !gdrop && (goal_mode == 0 || goal_known(tok));
+  const bool gdrop_g1 = gdrop && !goal_point_active(tok);   // 점으로 가기면 G1 목표 값·경유 지점은 점 쪽이라 감추지 않음
+  const bool show = !gdrop_g1 && (goal_mode == 0 || goal_known(tok));
   const int um = ar.map_off ? 0 : use_map;
   const bool on = aug && aug->on;
   // 8 칸(16 B)씩: 레인마다 덩이 하나를 계산해 한 번에 씀
@@ -281,7 +301,9 @@ NDEV uint32_t assemble(const float* obs, int stride, int i, const gmap::MapTok& 
     uint16_t h[8];
     const int col0 = net::X0_OBS + q * 8;
     for (int e = 0; e < 8; ++e) h[e] = x0v(q * 8 + e);
-    if (col0 >= net::X0_INSTR) {   // 지시문 128: 표 행 bf16 그대로
+    if (col0 >= net::X0_GOAL) {   // 목표 칸 2 × 16
+      for (int e = 0; e < 8; ++e) h[e] = f2bf(goal_val(tok, col0 - net::X0_GOAL + e, gdrop));
+    } else if (col0 >= net::X0_INSTR) {   // 지시문 128: 표 행 bf16 그대로
       for (int e = 0; e < 8; ++e) h[e] = isrc ? isrc[col0 - net::X0_INSTR + e] : (uint16_t)0;
     } else if (col0 + 8 > net::X0_SKILL && col0 < net::X0_SKILL + net::N_SKILL) {   // 스킬 원-핫
       for (int e = 0; e < 8; ++e) {
@@ -289,7 +311,7 @@ NDEV uint32_t assemble(const float* obs, int stride, int i, const gmap::MapTok& 
         if (col >= net::X0_SKILL && col < net::X0_SKILL + net::N_SKILL) h[e] = f2bf(skill == 1 + col - net::X0_SKILL ? 1.f : 0.f);
       }
     }
-    if (gdrop && col0 + 8 > net::X0_WAY && col0 < net::X0_WAY + net::N_WAY)   // 목표 감춤: 경유 지점 0(덩이 둘에 걸침)
+    if (gdrop_g1 && col0 + 8 > net::X0_WAY && col0 < net::X0_WAY + net::N_WAY)   // 목표 감춤: 경유 지점 0(덩이 둘에 걸침)
       for (int e = 0; e < 8; ++e) if (col0 + e >= net::X0_WAY && col0 + e < net::X0_WAY + net::N_WAY) h[e] = 0;
     put8(x0 + net::X0_OBS + q * 8, h);
   }
