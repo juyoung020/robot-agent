@@ -17,14 +17,15 @@ cmake -S . -B ~/ra_envbuild && cmake --build ~/ra_envbuild -j
 ```
 
 ## 결과 (RTX, sm_120)
-- 2048 env × 600 스텝 비트 동일(상태·관측·보상·done·rng), 에피소드 종료: 성공 8,879 / 충돌 3,420 / 시간초과 1,543. 음성 대조는 약 5천만 불일치로 실패(정상).
+- 2048 env × 600 스텝 비트 동일(상태·관측·보상·done·rng), 에피소드 종료: 성공 8,907 / 충돌 3,420 / 시간초과 1,543(카메라를 렌즈 프레임 x 0.094 m·FOV 67.9° 로 바꾼 뒤. 전: 0.084 m·71° 에서 성공 8,879). 음성 대조는 49,587,736 불일치로 실패(정상).
 - 처리량: N=262,144 → 7.3e8 env-step/s, N=1,048,576 → 7.8e8 env-step/s (1 env-step = 0.1 s 시뮬 = 10 서브스텝+FK+관측+보상).
 
 ## 사양 출처
 | 값 | 출처 |
 |---|---|
 | LIMO 322×220×251 mm, tread 175 mm, 최대 1 m/s | Trossen LIMO specs |
-| 카메라 컬러 H-FOV 71° | Orbbec Dabai |
+| 카메라 렌즈 프레임 base_footprint (0.094, 0, 0.18) m | URDF depth_camera_lens_link(커밋 72a9f7a), scenemap LIMO cam 0 과 같음 |
+| 카메라 H-FOV 67.9°(`K::cam_hfov`, 보임 판정·성공 조건) | Orbbec Dabai 깊이 H-FOV. 시뮬은 RGB·깊이 모두 67.9° 로 렌더(72a9f7a). 컬러 사양 71° 는 쓰지 않음 |
 | OMX-F 관절 범위, XL430(61 rpm@12 V)/XL330, 도달 400 mm | ROBOTIS OMX specifications |
 
 ## 아직 가정인 값 (`env.h` 의 K, `(가정)` 표시)

@@ -90,7 +90,7 @@ struct MP {
   static constexpr int q_hit = qround(0.85f), q_miss = qround(-0.4f), q_min = qround(-4.f), q_max = qround(4.f);
   // 깊이 범위(Dabai 데이터시트: 0.3–3.0 m). 높이 띠는 scan.hpp ScanParams (scenemap)
   static constexpr float zmin = 0.3f, zmax = 3.0f, band_lo = 0.10f, band_hi = 1.80f;
-  static constexpr float depth_hfov = 1.18508f;                  // 깊이 가로 FOV 67.9° (Dabai 데이터시트). env 의 cam_hfov 71° 는 컬러 FOV
+  static constexpr float depth_hfov = env::K::cam_hfov;        // 깊이 가로 FOV 67.9° (Dabai 데이터시트) — 환경 K::cam_hfov 와 같은 값(시뮬 RGB·깊이 모두 67.9°)
   // slam2d.hpp SlamParams (움직임 거르기 update_policy 0, 제자리 규칙) (scenemap)
   static constexpr float mf_xy = 0.05f, mf_yaw = 0.034906585f /*2도*/, still_v = 0.01f, still_w = 0.01f;
   static constexpr int mf_kf = 50;
