@@ -2,6 +2,8 @@
 
 작성 2026-10-04. **설계 문서**다. 코드·학습 실행은 없다(GPU 는 쓰지 않았다).
 사용자 결정 두 가지를 따른다: ① 커리큘럼은 **BEHAVIOR Challenge 2026** 을 따른다. ② 학습을 더 돌리기 전에 **학습 환경부터** 고친다.
+
+> **범위 확정 (2026-10-04, 사용자):** 대회에는 나가지 않는다. 목표는 **리모 + OMX-F 의 집기·놓기(pick & place)** 하나이고, [VLA_INPUT.md](VLA_INPUT.md) 설계대로 **지도를 관측(지도 토큰)으로 주면서** 학습한다. BEHAVIOR 2026 의 장면·물체는 **학습 무대**로만 쓴다. 그래서 아래에서 q_score·100 과제 상한·대회 전략(0절 일부, 8절 질문 1·2), B6(관절체·버튼)·B7(전체 과제), E5(관절체)는 **범위 밖**이다. 커리큘럼은 B0–B5(이동 → 찾기 → 다가가기 → 집기 → 놓기)만 쓰고, 집기·놓기 대상은 E1 변환기가 뽑는 "팔이 닿는 작은 물체 × 닿는 높이의 받침" 표에서 고른다. 높이 때문에 안 되는 배치는 학습 장면에서 빼거나 낮은 받침으로 옮긴다(8절 질문 3 → 예).
 앞 문서: 이동 커리큘럼 [CURRICULUM_APPROACH.md](CURRICULUM_APPROACH.md)(A0–A5), GPU 학습 [GPU_TRAINING.md](GPU_TRAINING.md), 입력 [VLA_INPUT.md](VLA_INPUT.md), 정책 [POLICY.md](POLICY.md), 팀 엔진 검토 [BEHAVIOR_ENGINE_REVIEW.md](BEHAVIOR_ENGINE_REVIEW.md), 시뮬 포팅 [SIM_PORTING.md](SIM_PORTING.md).
 환경 코드: [training/RL/env](../../training/RL/env/README.md)(G1), [training/RL/map](../../training/RL/map/README.md)(자라는 지도), [training/RL/ppo](../../training/RL/ppo/README.md), [training/BC](../../training/BC/README.md).
 
