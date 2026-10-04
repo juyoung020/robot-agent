@@ -2,6 +2,7 @@
 // 출력 원소마다 FP32 누산 값이 gemm2_k 와 비트까지 같다. 다른 것은 끝단뿐(tkern.cuh EpiK). 공유 RL 헤더(gemm.cuh)는 고치지 않는다.
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 
 #include "gemm.cuh"
 #include "tkern.cuh"
@@ -76,6 +77,12 @@ __device__ __forceinline__ void vg_epi(const Epi& e, int r, int c, float x0, flo
       e.Cb[(long long)r * e.ldcb + c + j] = net::f2bf(xs[j] * us[j] * (e.bug == 1 ? 1.f : vdsilu(gs[j])));
       e.Cb[(long long)r * e.ldcb + e.I + c + j] = net::f2bf(xs[j] * vsilu(gs[j]));
     }
+  } else if (KIND == EK_CEGRAD) {
+    const int m = r, t = e.tid[m];
+    const float rmm = e.rm[m], rsm = e.rs[m], lw = e.lam * e.wrow[m];
+    const float p0 = e.bug == 4 ? 0.f : expf(x0 - rmm) / rsm, p1 = e.bug == 4 ? 0.f : expf(x1 - rmm) / rsm;
+    const float g0 = lw * (p0 - (e.v0 + c == t ? 1.f : 0.f)), g1 = lw * (p1 - (e.v0 + c + 1 == t ? 1.f : 0.f));
+    reinterpret_cast<uint32_t*>(e.Cb)[((long long)r * e.ldcb + c) >> 1] = (uint32_t)net::f2bf(g0) | ((uint32_t)net::f2bf(g1) << 16);
   } else {   // EK_DW: G bf16 = acc 또는 gacc += acc(예전 dwred 의 조각 하나와 같음: 0 + acc)
     const float y0 = 0.f + x0, y1 = 0.f + x1;
     if (e.gacc) {
@@ -144,6 +151,50 @@ __global__ void __launch_bounds__((BM / WM) * (BN / WN) * 32) vg_k(const __grid_
     __syncthreads();
     buf ^= 1;
   }
+  if (KIND == EK_CESTAT) {
+    // 행마다 이 워프의 WN 열: 레인 4 개(t4)가 나눠 가짐 → xor 1·2 로 고정 순서 합
+#pragma unroll
+    for (int mi = 0; mi < MI; ++mi)
+#pragma unroll
+      for (int h = 0; h < 2; ++h) {
+        const int r = m0 + wm + mi * 16 + g + h * 8;
+        float mx = -INFINITY;
+#pragma unroll
+        for (int ni = 0; ni < NI; ++ni) {
+          const int c = n0 + wn + ni * 8 + 2 * t4;
+          if (c < p.N) mx = fmaxf(mx, acc[mi][ni][2 * h]);
+          if (c + 1 < p.N) mx = fmaxf(mx, acc[mi][ni][2 * h + 1]);
+        }
+        mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 1));
+        mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, 2));
+        float se = 0.f;
+        if (mx > -INFINITY) {
+#pragma unroll
+          for (int ni = 0; ni < NI; ++ni) {
+            const int c = n0 + wn + ni * 8 + 2 * t4;
+            if (c < p.N) se = se + expf(acc[mi][ni][2 * h] - mx);
+            if (c + 1 < p.N) se = se + expf(acc[mi][ni][2 * h + 1] - mx);
+          }
+        }
+        se = se + __shfl_xor_sync(0xffffffffu, se, 1);
+        se = se + __shfl_xor_sync(0xffffffffu, se, 2);
+        if (r < p.M) {
+          if (t4 == 0 && n0 + wn < p.N) {
+            const long long o = ((long long)r * p.e.nslot + (n0 + wn) / WN) * 2;
+            p.e.part[o] = mx;
+            p.e.part[o + 1] = se;
+          }
+          const int t = p.e.tid[r] - p.e.v0;
+#pragma unroll
+          for (int ni = 0; ni < NI; ++ni) {
+            const int c = n0 + wn + ni * 8 + 2 * t4;
+            if (c == t && c < p.N) p.e.tl[r] = acc[mi][ni][2 * h];
+            if (c + 1 == t && c + 1 < p.N) p.e.tl[r] = acc[mi][ni][2 * h + 1];
+          }
+        }
+      }
+    return;
+  }
 #pragma unroll
   for (int mi = 0; mi < MI; ++mi)
 #pragma unroll
@@ -200,6 +251,23 @@ void mme_dx(const uint16_t* dZ, int ldz, int M, const uint16_t* W, int N, int K,
     case EK_RES: vgl<false, true, EK_RES>(p, st); break;
     default: chk(false, "mme_dx kind");
   }
+}
+// 타일 고르기(vgl 과 같음)의 워프 열 폭 WN
+static int vg_wn(int M, int N) { return N <= 16 ? 16 : 32; }
+int ce_nslot(int M, int N) { const int wn = vg_wn(M, N); return (N + wn - 1) / wn; }
+void mm_cestat(const uint16_t* A, int lda, int M, const uint16_t* W, int N, int K, const Epi& e, cudaStream_t st) {
+  if (M == 0) return;
+  chk(lda % 8 == 0 && K % 8 == 0 && N % 2 == 0 && e.nslot >= ce_nslot(M, N), "cestat shape");
+  VgP p{};
+  p.A = A; p.lda = lda; p.B = W; p.ldb = K; p.M = M; p.N = N; p.K = K; p.e = e;
+  vgl<false, false, EK_CESTAT>(p, st);
+}
+void mm_cegrad(const uint16_t* A, int lda, int M, const uint16_t* W, int N, int K, const Epi& e, cudaStream_t st) {
+  if (M == 0) return;
+  chk(lda % 8 == 0 && K % 8 == 0 && N % 2 == 0, "cegrad shape");
+  VgP p{};
+  p.A = A; p.lda = lda; p.B = W; p.ldb = K; p.M = M; p.N = N; p.K = K; p.e = e;
+  vgl<false, false, EK_CEGRAD>(p, st);
 }
 void mme_dw1(const uint16_t* dZ, int ldz, const uint16_t* X, int ldx, int M, int N, int K, uint16_t* G, float* gacc, cudaStream_t st) {
   VgP p{};

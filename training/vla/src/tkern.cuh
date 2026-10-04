@@ -25,7 +25,7 @@ void mm_dx(const uint16_t* dZ, int ldz, int M, const uint16_t* W, int N, int K, 
 void mm_dw(const uint16_t* dZ, int ldz, const uint16_t* X, int ldx, int M, int N, int K, float* ws, int chunk, uint16_t* G, float* gacc, cudaStream_t st);
 
 // ---- 끝단 붙인 GEMM(vgemm.cu): 본 계산은 mm·mm_dx 와 비트까지 같고 끝단만 다르다 ----
-enum EpiKind { EK_RES = 0, EK_BIAS = 1, EK_SWI = 2, EK_DSWI = 3, EK_DW = 4 };
+enum EpiKind { EK_RES = 0, EK_BIAS = 1, EK_SWI = 2, EK_DSWI = 3, EK_DW = 4, EK_CESTAT = 5, EK_CEGRAD = 6 };
 struct Epi {
   int kind = EK_RES;
   float* C = nullptr; long long ldc = 0;          // F32 출력
@@ -36,12 +36,20 @@ struct Epi {
   const float* GU = nullptr; long long ldgu = 0;  // EK_DSWI: 끼운 꼴 GU [R][2I]
   int I = 0, bug = 0;
   float* gacc = nullptr;                          // EK_DW: FP32 += (nullptr 이면 Cb bf16 =)
+  // LM 머리 + CE(G): 어휘 조각 v0.. 의 로짓 acc. EK_CESTAT: 워프 조각(행, WN 열)마다 (최댓값, Σ e^(x−최댓값)) → part[(행·nslot + 조각)·2], 정답 로짓 → tl.
+  // EK_CEGRAD: Cb[행][열] = bf16(λ·w·(e^(x−rm)/rs − [열 = 정답])) (bug 4: 확률 0)
+  const int* tid = nullptr; const float* wrow = nullptr; const float* rm = nullptr; const float* rs = nullptr;
+  float* tl = nullptr; float* part = nullptr; int nslot = 0, v0 = 0; float lam = 0.f;
 };
 // 앞: A·Wᵀ → 끝단. EK_RES: C = R + acc (+ b). EK_BIAS: C = acc + b, Cb = bf16(gelu?(·)). EK_SWI: W = [gate I | up I] 를 짝 끼운 순서로 읽어
 // C(선택) = 끼운 꼴 GU [M][2I] F32, Cb = Hh [M][I] bf16 = silu(g)·u
 void mme(const uint16_t* A, int lda, int M, const uint16_t* W, int N, int K, const Epi& e, cudaStream_t st);
 // dX: dZ·W → 끝단. EK_DSWI: acc = dHh [M][I], GU 끼운 꼴 → Cb = dGU bf16 [M][2I] 원래 꼴(swiglu_bwd 와 같은 식). EK_RES: C = R + acc
 void mme_dx(const uint16_t* dZ, int ldz, int M, const uint16_t* W, int N, int K, const Epi& e, cudaStream_t st);
+// LM 머리 + CE(G): 행 M(정답 토큰) × 어휘 조각 [v0, v0 + N). 조각 수 = ce_nslot(N)
+int ce_nslot(int M, int N);
+void mm_cestat(const uint16_t* A, int lda, int M, const uint16_t* W, int N, int K, const Epi& e, cudaStream_t st);
+void mm_cegrad(const uint16_t* A, int lda, int M, const uint16_t* W, int N, int K, const Epi& e, cudaStream_t st);
 // dW 조각 하나(split 1): mm_dw 의 GEMM + dwred 를 끝단 하나로
 void mme_dw1(const uint16_t* dZ, int ldz, const uint16_t* X, int ldx, int M, int N, int K, uint16_t* G, float* gacc, cudaStream_t st);
 

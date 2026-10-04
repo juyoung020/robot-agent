@@ -99,6 +99,7 @@ struct Model::WS {
   float *mI = nullptr, *nullb, *drl, *rpart, *mdz, *mda, *mdO, *mdQKV, *mdQ, *mDd, *mdHh, *mdKV, *mdmk, *mdnull, *mdI, *mwt, *mpart;
   uint16_t *mdzb, *mdGU, *mdKVb, *mdIb;
   float *dexl, *epart;
+  float* cep = nullptr;     // LM 머리 CE 워프 조각 통계(융합 G)
   float* npart = nullptr;   // 정규화 w 기울기 조각(커널 안 합, 융합 D)
   float* cpart = nullptr;   // 합성곱 가중치 기울기 판 조각 [B][lin_in·K](융합 E)
   long long rows_all = 0;   // φ 줄 수(Bmax·16 + Bmax·nmax)
@@ -388,7 +389,7 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
   }
   // 글
   s.hnT = alloc<uint16_t>((size_t)c.Mtmax * H); s.dLg = alloc<uint16_t>((size_t)c.Mtmax * Q.vocab);
-  s.lg = alloc<float>((size_t)c.Mtmax * c.vocab_chunk); s.dHnT = alloc<float>((size_t)c.Mtmax * H);
+  s.lg = nullptr; s.cep = alloc<float>((size_t)c.Mtmax * tk::ce_nslot(c.Mtmax, c.vocab_chunk) * 2 + 64); s.dHnT = alloc<float>((size_t)c.Mtmax * H);
   s.rm = alloc<float>(c.Mtmax); s.rs = alloc<float>(c.Mtmax); s.tl = alloc<float>(c.Mtmax);
   s.dEc = alloc<float>((size_t)c.vocab_chunk * H); s.lpart = alloc<float>(c.Mtmax + RA + 64);
   // 전문가
@@ -467,42 +468,21 @@ __global__ void scatter_rows_k(const float* dT, const int* rows, int M, int H, f
   dX[(long long)rows[m] * H + c] = dT[q];
 }
 // 어휘 조각 통계: 블록 = 행
-__global__ void ce_stats_k(const float* lg, int M, int vc, int v0, const int* tid, float* rm, float* rs, float* tl, int first) {
-  __shared__ float sh[256];
-  const int m = blockIdx.x;
-  const float* l = lg + (long long)m * vc;
-  float mx = -INFINITY;
-  for (int v = threadIdx.x; v < vc; v += 256) mx = fmaxf(mx, l[v]);
-  sh[threadIdx.x] = mx;
-  __syncthreads();
-  for (int s = 128; s > 0; s >>= 1) { if (threadIdx.x < s) sh[threadIdx.x] = fmaxf(sh[threadIdx.x], sh[threadIdx.x + s]); __syncthreads(); }
-  const float cm = sh[0];
-  __syncthreads();
-  float se = 0.f;
-  for (int v = threadIdx.x; v < vc; v += 256) se = se + expf(l[v] - cm);
-  sh[threadIdx.x] = se;
-  __syncthreads();
-  for (int s = 128; s > 0; s >>= 1) { if (threadIdx.x < s) sh[threadIdx.x] = sh[threadIdx.x] + sh[threadIdx.x + s]; __syncthreads(); }
-  if (threadIdx.x == 0) {
-    const float cs = sh[0];
-    if (first) { rm[m] = cm; rs[m] = cs; }
-    else {
-      const float nm = fmaxf(rm[m], cm);
-      rs[m] = rs[m] * expf(rm[m] - nm) + cs * expf(cm - nm);
-      rm[m] = nm;
-    }
-    const int t = tid[m];
-    if (t >= v0 && t < v0 + vc) tl[m] = l[t - v0];
+// 조각 합(G): 행마다 이 어휘 조각의 (최댓값, Σ e^(x−최댓값)) 조각들을 조각 순서대로 → 조각 통계(cm, cs) → 앞 조각들과 합침(ce_stats_k 와 같은 꼴)
+__global__ void ce_merge_k(const float* part, int M, int ns, int first, float* rm, float* rs) {
+  const int m = blockIdx.x * blockDim.x + threadIdx.x;
+  if (m >= M) return;
+  const float* pp = part + (long long)m * ns * 2;
+  float cm = -INFINITY;
+  for (int k = 0; k < ns; ++k) cm = fmaxf(cm, pp[2 * k]);
+  float cs = 0.f;
+  for (int k = 0; k < ns; ++k) if (pp[2 * k + 1] > 0.f) cs = cs + pp[2 * k + 1] * expf(pp[2 * k] - cm);
+  if (first) { rm[m] = cm; rs[m] = cs; }
+  else {
+    const float nm = fmaxf(rm[m], cm);
+    rs[m] = rs[m] * expf(rm[m] - nm) + cs * expf(cm - nm);
+    rm[m] = nm;
   }
-}
-__global__ void ce_grad_k(const float* lg, int M, int vc, int v0, int V, const int* tid, const float* w, const float* rm, const float* rs, float lam, int bug,
-                          uint16_t* dLg) {
-  const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-  if (q >= (long long)M * vc) return;
-  const int m = (int)(q / vc), v = (int)(q % vc);
-  const float p = bug == 4 ? 0.f : expf(lg[q] - rm[m]) / rs[m];
-  const float g = lam * w[m] * (p - (v0 + v == tid[m] ? 1.f : 0.f));
-  dLg[(long long)m * V + v0 + v] = f2bf(g);
 }
 __global__ void ce_loss_k(int M, const float* w, const float* rm, const float* rs, const float* tl, float* out) {
   if (threadIdx.x != 0) return;
@@ -1193,14 +1173,21 @@ static void forward_all(Model& m, const VBatch& bt, bool train, cudaStream_t st)
   if (Mt > 0) {
     gather_rows_k<<<nb((long long)Mt * H), 256, 0, st>>>(s.hn, bt.tgt_row, Mt, H, s.hnT);
     MKC();
+    // 융합 G: 로짓을 메모리에 안 남김. 1 회 = GEMM 끝단이 행·워프 조각 통계 + 정답 로짓, 2 회(학습) = 같은 GEMM 을 다시 하고 끝단이 dlogits bf16 을 바로
     for (int pass = 0; pass < (train ? 2 : 1); ++pass) {
       for (int v0 = 0; v0 < V; v0 += VC) {
         const int vc = std::min(VC, V - v0);
-        tk::mm(s.hnT, H, Mt, m.q.Wb + m.q.lay.emb.off + (long long)v0 * H, vc, H, s.lg, vc, false, st);
-        if (pass == 0) ce_stats_k<<<Mt, 256, 0, st>>>(s.lg, Mt, vc, v0, bt.tgt_id, s.rm, s.rs, s.tl, v0 == 0 ? 1 : 0);
-        else {
-          ce_grad_k<<<nb((long long)Mt * vc), 256, 0, st>>>(s.lg, Mt, vc, v0, V, bt.tgt_id, bt.tgt_w, s.rm, s.rs, c.lam_txt, m.bug, s.dLg);
-          tk::mm_dx(s.dLg + v0, V, Mt, m.q.Wb + m.q.lay.emb.off + (long long)v0 * H, vc, H, s.dHnT, H, v0 > 0, st);
+        const uint16_t* We = m.q.Wb + m.q.lay.emb.off + (long long)v0 * H;
+        tk::Epi e;
+        e.tid = bt.tgt_id; e.v0 = v0;
+        if (pass == 0) {
+          e.kind = tk::EK_CESTAT; e.tl = s.tl; e.part = s.cep; e.nslot = tk::ce_nslot(Mt, vc);
+          tk::mm_cestat(s.hnT, H, Mt, We, vc, H, e, st);
+          ce_merge_k<<<nb(Mt, 128), 128, 0, st>>>(s.cep, Mt, e.nslot, v0 == 0 ? 1 : 0, s.rm, s.rs);
+        } else {
+          e.kind = tk::EK_CEGRAD; e.wrow = bt.tgt_w; e.rm = s.rm; e.rs = s.rs; e.lam = c.lam_txt; e.bug = m.bug; e.Cb = s.dLg + v0; e.ldcb = V;
+          tk::mm_cegrad(s.hnT, H, Mt, We, vc, H, e, st);
+          tk::mm_dx(s.dLg + v0, V, Mt, We, vc, H, s.dHnT, H, v0 > 0, st);
         }
         MKC();
       }
