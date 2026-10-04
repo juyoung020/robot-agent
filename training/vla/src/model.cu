@@ -87,6 +87,7 @@ struct Model::WS {
   float *mI = nullptr, *nullb, *drl, *rpart, *mdz, *mda, *mdO, *mdQKV, *mdQ, *mDd, *mdHh, *mdKV, *mdmk, *mdnull, *mdI, *mwt, *mpart;
   uint16_t *mdzb, *mdGU, *mdKVb, *mdIb;
   float *dexl, *epart;
+  float* npart = nullptr;   // 정규화 w 기울기 조각(커널 안 합, 융합 D)
   long long rows_all = 0;   // φ 줄 수(Bmax·16 + Bmax·nmax)
 };
 
@@ -302,6 +303,9 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
                                             (long long)Rv * 3 * c.vD, (long long)RA * std::max(c.De, (Q.nq + Q.nkv) * Q.hd), (long long)c.Bmax * 16 * H});
   s.wt = alloc<float>(wtn);
   s.part = alloc<float>((size_t)((std::max({R, Rv, RA}) + 255) / 256 + 1) * std::max<long long>({(long long)s.W0, (long long)Q.lin_in() * Q.conv, 3LL * c.vD, (long long)c.vMLP, (long long)c.vT * c.vD, (long long)H, 2LL * c.Ie}));
+  s.npart = alloc<float>((size_t)std::max({tk::npart_floats(R, H), tk::npart_floats((long long)R * Q.lh, Q.dv), 2 * tk::npart_floats(Rv, c.vD),
+                                           tk::npart_floats(RA, c.De), tk::npart_floats((long long)c.Bmax * c.mem_nmax, H),
+                                           tk::npart_floats((long long)c.Bmax * c.mem_lat, H)}) + 64);
   s.dnws = alloc<float>(tk::dnc_ws_floats(c.Bmax, c.Lmax, Q.lh, Q.dk, Q.dv));
   if (dn_old()) s.dnws0 = alloc<float>(tk::dn_ws_floats(c.Bmax, c.Lmax, Q.lh, Q.dk, Q.dv));
   long long wsn = 0;
@@ -794,24 +798,21 @@ static void q_layer_bwd(Model& m, int l, int B, int L, cudaStream_t st) {
   float* GV = m.qp.GV;
   // 다시 계산(Xout 은 버림 — dA 를 임시로)
   q_layer_fwd(m, l, B, L, s.Xs[l], s.dA, st, true);   // 검문점도 씀
-  // MLP
-  tk::f2bf(s.dR, (long long)R * H, s.dRb, st);
+  // MLP(dRb = 위 층 ln1 / 끝 RMSN 의 뒤가 함께 씀 — 융합 B)
   tk::mm_dw(s.dRb, H, s.Hh, c.I, R, H, c.I, s.ws, DWCH, GW + Ly.wdn.off, nullptr, st);
   tk::mm_dx(s.dRb, H, R, W + Ly.wdn.off, H, c.I, s.dHh, c.I, false, st);
   tk::swiglu_bwd(s.GU, s.dHh, R, c.I, s.dGU, m.bug == 1 ? 1 : 0, st);
   tk::mm_dw(s.dGU, 2 * c.I, s.A2, H, R, 2 * c.I, H, s.ws, DWCH, GW + Ly.wgu.off, nullptr, st);
   tk::mm_dx(s.dGU, 2 * c.I, R, W + Ly.wgu.off, 2 * c.I, H, s.dA, H, false, st);
-  tk::rms_bwd(s.dA, H, s.Xmid, H, R, 1, H, P + Ly.ln2, true, c.eps, s.dR, H, true, s.wt, 0, st);
-  tk::colsum(s.wt, R, H, H, s.part, GV + Ly.ln2, false, st);
+  tk::rms_bwd(s.dA, H, s.Xmid, H, R, 1, H, P + Ly.ln2, true, c.eps, s.dR, H, true, s.npart, GV + Ly.ln2, 0, st, s.dRb);
   // 섞개
-  tk::f2bf(s.dR, (long long)R * H, s.dRb, st);
   if (c.full[l]) {
     int f = 0;
     for (int i = 0; i < l; ++i) f += c.full[i];
     const int ldT = Ly.wqkv.N, QW = c.nq * c.hd;
     tk::mm_dw(s.dRb, H, s.Ag, QW, R, H, QW, s.ws, DWCH, GW + Ly.wo.off, nullptr, st);
     tk::mm_dx(s.dRb, H, R, W + Ly.wo.off, H, QW, s.dAg, QW, false, st);
-    tk::gate_bwd(s.dAg, s.O, s.T0, ldT, R, c.nq, c.hd, s.dO, s.dT0, st);
+    tk::gate_bwd(s.dAg, s.O, s.T0, ldT, R, c.nq, c.hd, s.dO, s.dT0, st, s.dT0b);
     tk::AttP a;
     a.Q = s.QK; a.ldq = QW; a.K1 = s.Kf[f]; a.V1 = s.Vf[f]; a.ldk1 = c.kvw(); a.L1 = L; a.n1c = L; a.causal = 1;
     a.B = B; a.n = L; a.nq = c.nq; a.nkv = c.nkv; a.hd = c.hd; a.scale = 1.f / std::sqrt((float)c.hd); a.O = s.O; a.ldo = QW; a.lse = s.lse;
@@ -824,18 +825,16 @@ static void q_layer_bwd(Model& m, int l, int B, int L, cudaStream_t st) {
     float* qnt = s.wt;
     float* knt = s.wt + (size_t)R * c.nq * c.hd;
     tk::full_prep_bwd(s.T0, ldT, R, L, 0, c.nq, c.nkv, c.hd, c.rot, c.theta, c.eps, P + Ly.qn, P + Ly.kn, s.dQK, s.dK, s.dV, L, s.dT0, qnt, knt,
-                      m.bug == 2 ? 2 : 0, st);
+                      m.bug == 2 ? 2 : 0, st, nullptr, s.dT0b);
     tk::colsum(qnt, R * c.nq, c.hd, c.hd, s.part, GV + Ly.qn, false, st);
     tk::colsum(knt, R * c.nkv, c.hd, c.hd, s.part, GV + Ly.kn, false, st);
-    tk::f2bf(s.dT0, (long long)R * ldT, s.dT0b, st);
     tk::mm_dw(s.dT0b, ldT, s.A1, H, R, ldT, H, s.ws, DWCH, GW + Ly.wqkv.off, nullptr, st);
     tk::mm_dx(s.dT0b, ldT, R, W + Ly.wqkv.off, ldT, H, s.dA, H, false, st);
   } else {
     const int li = c.lin_in(), la = c.lin_all(), VW = c.lh * c.dv;
     tk::mm_dw(s.dRb, H, s.Ag, VW, R, H, VW, s.ws, DWCH, GW + Ly.wout.off, nullptr, st);
     tk::mm_dx(s.dRb, H, R, W + Ly.wout.off, H, VW, s.dAg, VW, false, st);
-    tk::gnorm_bwd(s.O, s.T0 + li, la, R, c.lh, c.dv, P + Ly.gnw, c.eps, s.dAg, s.dO, s.dT0 + li, la, s.wt, st);
-    tk::colsum(s.wt, R * c.lh, c.dv, c.dv, s.part, GV + Ly.gnw, false, st);
+    tk::gnorm_bwd(s.O, s.T0 + li, la, R, c.lh, c.dv, P + Ly.gnw, c.eps, s.dAg, s.dO, s.dT0 + li, la, s.npart, GV + Ly.gnw, st, s.dT0b + li);
     float* Qn = s.QK;
     float* Kn = s.QK + (size_t)R * c.lh * c.dk;
     float* dQn = s.dQK;
@@ -846,17 +845,15 @@ static void q_layer_bwd(Model& m, int l, int B, int L, cudaStream_t st) {
     else tk::dnc_bwd(s.T1 + 2 * c.lh * c.dk, li, s.dO, B, L, c.lh, c.dk, c.dv, false, s.dnws, dQn, dKn, s.dT1 + 2 * c.lh * c.dk, li, s.dG, s.dBt, m.bug == 3 ? 3 : 0, st);
     float* alt = s.wt;
     float* dtt = s.wt + (size_t)R * c.lh;
-    tk::lin_prep_bwd(s.T1, li, s.T0, la, li + VW, R, c.lh, c.dk, P + Ly.alog, P + Ly.dtb, dQn, dKn, s.dG, s.dBt, s.dT1, s.dT0, alt, dtt, st);
+    tk::lin_prep_bwd(s.T1, li, s.T0, la, li + VW, R, c.lh, c.dk, P + Ly.alog, P + Ly.dtb, dQn, dKn, s.dG, s.dBt, s.dT1, s.dT0, alt, dtt, st, s.dT0b);
     tk::colsum(alt, R, c.lh, c.lh, s.part, GV + Ly.alog, false, st);
     tk::colsum(dtt, R, c.lh, c.lh, s.part, GV + Ly.dtb, false, st);
-    tk::conv_bwd(s.T0, la, B, L, li, c.conv, P + Ly.convw, s.dT1, s.dp, s.dT0, st);
+    tk::conv_bwd(s.T0, la, B, L, li, c.conv, P + Ly.convw, s.dT1, s.dp, s.dT0, st, s.dT0b);
     tk::convw_grad(s.T0, la, s.dp, B, L, li, c.conv, s.part, GV + Ly.convw, st);
-    tk::f2bf(s.dT0, (long long)R * la, s.dT0b, st);
     tk::mm_dw(s.dT0b, la, s.A1, H, R, la, H, s.ws, DWCH, GW + Ly.win.off, nullptr, st);
     tk::mm_dx(s.dT0b, la, R, W + Ly.win.off, la, H, s.dA, H, false, st);
   }
-  tk::rms_bwd(s.dA, H, s.Xs[l], H, R, 1, H, P + Ly.ln1, true, c.eps, s.dR, H, true, s.wt, 0, st);
-  tk::colsum(s.wt, R, H, H, s.part, GV + Ly.ln1, false, st);
+  tk::rms_bwd(s.dA, H, s.Xs[l], H, R, 1, H, P + Ly.ln1, true, c.eps, s.dR, H, true, s.npart, GV + Ly.ln1, 0, st, s.dRb);
 }
 
 // ---- 영상 블록 ----
@@ -889,8 +886,7 @@ static void v_block_bwd(Model& m, int l, int Rv, cudaStream_t st) {
   uint16_t* GW = m.ap.GW;
   float* GV = m.ap.GV;
   const int D = c.vD, M = c.vMLP;
-  v_block_fwd(m, l, Rv, s.vX[l], s.vdA, st);   // 다시 계산(출력은 버림)
-  tk::f2bf(s.vdR, (long long)Rv * D, s.vdb, st);
+  v_block_fwd(m, l, Rv, s.vX[l], s.vdA, st);   // 다시 계산(출력은 버림). vdb = 위 블록 ln1 / 끝 LN 의 뒤가 씀(B)
   tk::mm_dw(s.vdb, D, s.vAg, M, Rv, D, M, s.ws, DWCH, GW + b.fc2.off, nullptr, st);
   tk::colsum(s.vdR, Rv, D, D, s.part, GV + b.fc2b, false, st);
   tk::mm_dx(s.vdb, D, Rv, W + b.fc2.off, D, M, s.vdH, M, false, st);
@@ -898,10 +894,7 @@ static void v_block_bwd(Model& m, int l, int Rv, cudaStream_t st) {
   tk::colsum(s.vdH, Rv, M, M, s.part, GV + b.fc1b, false, st);
   tk::mm_dw(s.vdb, M, s.vA2, D, Rv, M, D, s.ws, DWCH, GW + b.fc1.off, nullptr, st);
   tk::mm_dx(s.vdb, M, Rv, W + b.fc1.off, M, D, s.vdA, D, false, st);
-  tk::ln_bwd(s.vdA, s.vXm, Rv, D, P + b.ln2g, c.vEps, s.vdR, s.wt, st);
-  tk::colsum(s.wt, Rv, D, D, s.part, GV + b.ln2g, false, st);
-  tk::colsum(s.vdA, Rv, D, D, s.part, GV + b.ln2b, false, st);
-  tk::f2bf(s.vdR, (long long)Rv * D, s.vdb, st);
+  tk::ln_bwd(s.vdA, s.vXm, Rv, D, P + b.ln2g, c.vEps, s.vdR, s.npart, GV + b.ln2g, GV + b.ln2b, st, s.vdb);
   tk::mm_dw(s.vdb, D, s.vAo, D, Rv, D, D, s.ws, DWCH, GW + b.proj.off, nullptr, st);
   tk::colsum(s.vdR, Rv, D, D, s.part, GV + b.projb, false, st);
   tk::mm_dx(s.vdb, D, Rv, W + b.proj.off, D, D, s.vdO, D, false, st);
@@ -915,9 +908,7 @@ static void v_block_bwd(Model& m, int l, int Rv, cudaStream_t st) {
   tk::f2bf(s.vdQKV, (long long)Rv * 3 * D, s.vdb, st);
   tk::mm_dw(s.vdb, 3 * D, s.vA1, D, Rv, 3 * D, D, s.ws, DWCH, GW + b.qkv.off, nullptr, st);
   tk::mm_dx(s.vdb, 3 * D, Rv, W + b.qkv.off, 3 * D, D, s.vdA, D, false, st);
-  tk::ln_bwd(s.vdA, s.vX[l], Rv, D, P + b.ln1g, c.vEps, s.vdR, s.wt, st);
-  tk::colsum(s.wt, Rv, D, D, s.part, GV + b.ln1g, false, st);
-  tk::colsum(s.vdA, Rv, D, D, s.part, GV + b.ln1b, false, st);
+  tk::ln_bwd(s.vdA, s.vX[l], Rv, D, P + b.ln1g, c.vEps, s.vdR, s.npart, GV + b.ln1g, GV + b.ln1b, st, s.vdb);
 }
 
 // ---- 전문가 블록 ----
@@ -954,19 +945,16 @@ static void e_block_bwd(Model& m, int f, const VBatch& bt, cudaStream_t st) {
   uint16_t* GW = m.ap.GW;
   float* GV = m.ap.GV;
   const int B = bt.B, RA = B * c.Hc, De = c.De, ldT = e.qkv.N, QW = Q.nq * Q.hd;
-  e_block_fwd(m, f, bt, s.eX[f], s.edA, st);
-  tk::f2bf(s.edR, (long long)RA * De, s.edRb, st);
+  e_block_fwd(m, f, bt, s.eX[f], s.edA, st);   // edRb = 위 블록 ln1 / 끝 RMSN 의 뒤가 씀(B)
   tk::mm_dw(s.edRb, De, s.eHh, c.Ie, RA, De, c.Ie, s.ws, DWCH, GW + e.dn.off, nullptr, st);
   tk::mm_dx(s.edRb, De, RA, W + e.dn.off, De, c.Ie, s.edHh, c.Ie, false, st);
   tk::swiglu_bwd(s.eGU, s.edHh, RA, c.Ie, s.edGU, m.bug == 1 ? 1 : 0, st);
   tk::mm_dw(s.edGU, 2 * c.Ie, s.eA2, De, RA, 2 * c.Ie, De, s.ws, DWCH, GW + e.gu.off, nullptr, st);
   tk::mm_dx(s.edGU, 2 * c.Ie, RA, W + e.gu.off, 2 * c.Ie, De, s.edA, De, false, st);
-  tk::rms_bwd(s.edA, De, s.eXm, De, RA, 1, De, P + e.ln2, true, Q.eps, s.edR, De, true, s.wt, 0, st);
-  tk::colsum(s.wt, RA, De, De, s.part, GV + e.ln2, false, st);
-  tk::f2bf(s.edR, (long long)RA * De, s.edRb, st);
+  tk::rms_bwd(s.edA, De, s.eXm, De, RA, 1, De, P + e.ln2, true, Q.eps, s.edR, De, true, s.npart, GV + e.ln2, 0, st, s.edRb);
   tk::mm_dw(s.edRb, De, s.eAg, QW, RA, De, QW, s.ws, DWCH, GW + e.o.off, nullptr, st);
   tk::mm_dx(s.edRb, De, RA, W + e.o.off, De, QW, s.edAg, QW, false, st);
-  tk::gate_bwd(s.edAg, s.eO, s.eT, ldT, RA, Q.nq, Q.hd, s.edO, s.edT0, st);
+  tk::gate_bwd(s.edAg, s.eO, s.eT, ldT, RA, Q.nq, Q.hd, s.edO, s.edT0, st, s.edT0b);
   tk::AttP a;
   a.Q = s.eQ; a.ldq = QW; a.K1 = s.Kf[f]; a.V1 = s.Vf[f]; a.ldk1 = Q.kvw(); a.L1 = bt.L; a.len1 = bt.plen;
   a.K2 = s.eK; a.V2 = s.eV; a.ldk2 = Q.kvw(); a.n2 = c.Hc;
@@ -977,14 +965,12 @@ static void e_block_bwd(Model& m, int f, const VBatch& bt, cudaStream_t st) {
   float* qnt = s.wt;
   float* knt = s.wt + (size_t)RA * QW;
   tk::full_prep_bwd(s.eT, ldT, RA, c.Hc, 0, Q.nq, Q.nkv, Q.hd, Q.rot, Q.theta, Q.eps, P + e.qn, P + e.kn, s.edQ, s.edK, s.edV, c.Hc, s.edT0, qnt, knt,
-                    m.bug == 2 ? 2 : 0, st, bt.plen);
+                    m.bug == 2 ? 2 : 0, st, bt.plen, s.edT0b);
   tk::colsum(qnt, RA * Q.nq, Q.hd, Q.hd, s.part, GV + e.qn, false, st);
   tk::colsum(knt, RA * Q.nkv, Q.hd, Q.hd, s.part, GV + e.kn, false, st);
-  tk::f2bf(s.edT0, (long long)RA * ldT, s.edT0b, st);
   tk::mm_dw(s.edT0b, ldT, s.eA1, De, RA, ldT, De, s.ws, DWCH, GW + e.qkv.off, nullptr, st);
   tk::mm_dx(s.edT0b, ldT, RA, W + e.qkv.off, ldT, De, s.edA, De, false, st);
-  tk::rms_bwd(s.edA, De, s.eX[f], De, RA, 1, De, P + e.ln1, true, Q.eps, s.edR, De, true, s.wt, 0, st);
-  tk::colsum(s.wt, RA, De, De, s.part, GV + e.ln1, false, st);
+  tk::rms_bwd(s.edA, De, s.eX[f], De, RA, 1, De, P + e.ln1, true, Q.eps, s.edR, De, true, s.npart, GV + e.ln1, 0, st, s.edRb);
 }
 
 // ---- 기억 요약 인코더 ----
@@ -1094,22 +1080,18 @@ static void mem_bwd(Model& m, const VBatch& bt, cudaStream_t st) {
   ex_dw_k<<<nb(H + 1, 128), 128, 0, st>>>(s.dexl, s.gOut[VG_MEM], B, nl, H, GV + m.m_ex);
   if (m.bug != 9) ex_dt_k<<<nb((long long)B * 2 * H), 256, 0, st>>>(s.dexl, P + m.m_ex, B, nl, H, s.dgOut[VG_MEM]);
   MKC();
-  tk::rms_bwd(s.dgOut[VG_MEM], H, s.mz[c.mem_blk], H, (int)Rl, 1, H, P + m.m_lnout, true, Q.eps, s.mdz, H, false, s.mwt, 0, st);
-  tk::colsum(s.mwt, (int)Rl, H, H, s.mpart, GV + m.m_lnout, false, st);
+  tk::rms_bwd(s.dgOut[VG_MEM], H, s.mz[c.mem_blk], H, (int)Rl, 1, H, P + m.m_lnout, true, Q.eps, s.mdz, H, false, s.npart, GV + m.m_lnout, 0, st, s.mdzb);
   for (int k = c.mem_blk - 1; k >= 0; --k) {
     const auto& e = m.mb[k];
     auto& b = s.mbk[k];
-    // MLP
-    tk::f2bf(s.mdz, Rl * H, s.mdzb, st);
+    // MLP(mdzb = 앞 RMSN 뒤가 씀)
     tk::mm_dw(s.mdzb, H, b.Hh, I, (int)Rl, H, I, s.ws, DWCH, GW + e.dn.off, nullptr, st);
     tk::mm_dx(s.mdzb, H, (int)Rl, W + e.dn.off, H, I, s.mdHh, I, false, st);
     tk::swiglu_bwd(b.GU, s.mdHh, (int)Rl, I, s.mdGU, m.bug == 1 ? 1 : 0, st);
     tk::mm_dw(s.mdGU, 2 * I, b.am, H, (int)Rl, 2 * I, H, s.ws, DWCH, GW + e.gu.off, nullptr, st);
     tk::mm_dx(s.mdGU, 2 * I, (int)Rl, W + e.gu.off, 2 * I, H, s.mda, H, false, st);
-    tk::rms_bwd(s.mda, H, b.zs, H, (int)Rl, 1, H, P + e.lnm, true, Q.eps, s.mdz, H, true, s.mwt, 0, st);
-    tk::colsum(s.mwt, (int)Rl, H, H, s.mpart, GV + e.lnm, false, st);
+    tk::rms_bwd(s.mda, H, b.zs, H, (int)Rl, 1, H, P + e.lnm, true, Q.eps, s.mdz, H, true, s.npart, GV + e.lnm, 0, st, s.mdzb);
     // 자기 어텐션
-    tk::f2bf(s.mdz, Rl * H, s.mdzb, st);
     tk::mm_dw(s.mdzb, H, b.Osb, H, (int)Rl, H, H, s.ws, DWCH, GW + e.so.off, nullptr, st);
     tk::mm_dx(s.mdzb, H, (int)Rl, W + e.so.off, H, H, s.mdO, H, false, st);
     {
@@ -1120,10 +1102,8 @@ static void mem_bwd(Model& m, const VBatch& bt, cudaStream_t st) {
     tk::f2bf(s.mdQKV, Rl * 3 * H, s.mdzb, st);
     tk::mm_dw(s.mdzb, 3 * H, b.as, H, (int)Rl, 3 * H, H, s.ws, DWCH, GW + e.sqkv.off, nullptr, st);
     tk::mm_dx(s.mdzb, 3 * H, (int)Rl, W + e.sqkv.off, 3 * H, H, s.mda, H, false, st);
-    tk::rms_bwd(s.mda, H, b.zx, H, (int)Rl, 1, H, P + e.lns, true, Q.eps, s.mdz, H, true, s.mwt, 0, st);
-    tk::colsum(s.mwt, (int)Rl, H, H, s.mpart, GV + e.lns, false, st);
+    tk::rms_bwd(s.mda, H, b.zx, H, (int)Rl, 1, H, P + e.lns, true, Q.eps, s.mdz, H, true, s.npart, GV + e.lns, 0, st, s.mdzb);
     // 교차 어텐션
-    tk::f2bf(s.mdz, Rl * H, s.mdzb, st);
     tk::mm_dw(s.mdzb, H, b.Ob, H, (int)Rl, H, H, s.ws, DWCH, GW + e.wo.off, nullptr, st);
     tk::mm_dx(s.mdzb, H, (int)Rl, W + e.wo.off, H, H, s.mdO, H, false, st);
     bcast_k<<<nb((long long)B * 2 * H), 256, 0, st>>>(P + e.nullkv, B, 2 * H, s.nullb);   // 앞의 nullb 는 끝 블록 값 — 이 블록 것으로 다시
@@ -1150,14 +1130,12 @@ static void mem_bwd(Model& m, const VBatch& bt, cudaStream_t st) {
     tk::f2bf(s.mdQ, Rl * H, s.mdzb, st);
     tk::mm_dw(s.mdzb, H, b.aq, H, (int)Rl, H, H, s.ws, DWCH, GW + e.wq.off, nullptr, st);
     tk::mm_dx(s.mdzb, H, (int)Rl, W + e.wq.off, H, H, s.mda, H, false, st);
-    tk::rms_bwd(s.mda, H, s.mz[k], H, (int)Rl, 1, H, P + e.lnq, true, Q.eps, s.mdz, H, true, s.mwt, 0, st);
-    tk::colsum(s.mwt, (int)Rl, H, H, s.mpart, GV + e.lnq, false, st);
+    tk::rms_bwd(s.mda, H, s.mz[k], H, (int)Rl, 1, H, P + e.lnq, true, Q.eps, s.mdz, H, true, s.npart, GV + e.lnq, 0, st, s.mdzb);
     // 열쇠·값 쪽 → 기억 줄 φ
     tk::f2bf(s.mdKV, Rm * 2 * H, s.mdKVb, st);
     tk::mm_dw(s.mdKVb, 2 * H, b.mk, H, (int)Rm, 2 * H, H, s.ws, DWCH, GW + e.wkv.off, nullptr, st);
     tk::mm_dx(s.mdKVb, 2 * H, (int)Rm, W + e.wkv.off, 2 * H, H, s.mdmk, H, false, st);
-    tk::rms_bwd(s.mdmk, H, phim, H, (int)Rm, 1, H, P + e.lnk, true, Q.eps, dphim, H, true, s.mwt, 0, st);
-    tk::colsum(s.mwt, (int)Rm, H, H, s.mpart, GV + e.lnk, false, st);
+    tk::rms_bwd(s.mdmk, H, phim, H, (int)Rm, 1, H, P + e.lnk, true, Q.eps, dphim, H, true, s.npart, GV + e.lnk, 0, st);
   }
   // 잠재·지시 사영
   tk::colsum(s.mdz, B, nl * H, nl * H, s.mpart, GV + m.m_lat, false, st);
@@ -1252,10 +1230,8 @@ void Model::step_grads(const VBatch& bt, cudaStream_t st) {
   tk::mm_dw(s.dz, c.A, s.Ao, c.De, RA, c.A, c.De, s.ws, DWCH, ap.GW + e_out.off, nullptr, st);
   tk::mm_dx(s.dz, c.A, RA, ap.W + e_out.off, c.A, c.De, s.edA, c.De, false, st);
   MCK(cudaMemsetAsync(s.edR, 0, sizeof(float) * (size_t)RA * c.De, st));
-  tk::rms_bwd(s.edA, c.De, s.eX[nf], c.De, RA, 1, c.De, ap.V + e_lnf, true, Q.eps, s.edR, c.De, true, s.wt, 0, st);
-  tk::colsum(s.wt, RA, c.De, c.De, s.part, ap.GV + e_lnf, false, st);
+  tk::rms_bwd(s.edA, c.De, s.eX[nf], c.De, RA, 1, c.De, ap.V + e_lnf, true, Q.eps, s.edR, c.De, true, s.npart, ap.GV + e_lnf, 0, st, s.edRb);
   for (int f = nf - 1; f >= 0; --f) e_block_bwd(*this, f, bt, st);
-  tk::f2bf(s.edR, (long long)RA * c.De, s.edRb, st);
   tk::mm_dw(s.edRb, c.De, s.ain, c.kpad(), RA, c.De, c.kpad(), s.ws, DWCH, ap.GW + e_in.off, nullptr, st);
   // 몸통 뒤: 끝 RMSN
   MCK(cudaMemsetAsync(s.dHn, 0, sizeof(float) * (size_t)R * H, st));
@@ -1264,8 +1240,7 @@ void Model::step_grads(const VBatch& bt, cudaStream_t st) {
     MKC();
   }
   MCK(cudaMemsetAsync(s.dR, 0, sizeof(float) * (size_t)R * H, st));
-  tk::rms_bwd(s.dHn, H, s.Xs[Q.layers], H, R, 1, H, q.Pv + q.lay.lnf, true, Q.eps, s.dR, H, true, s.wt, 0, st);
-  tk::colsum(s.wt, R, H, H, s.part, qp.GV + q.lay.lnf, false, st);
+  tk::rms_bwd(s.dHn, H, s.Xs[Q.layers], H, R, 1, H, q.Pv + q.lay.lnf, true, Q.eps, s.dR, H, true, s.npart, qp.GV + q.lay.lnf, 0, st, s.dRb);
   for (int l = Q.layers - 1; l >= 0; --l) q_layer_bwd(*this, l, B, L, st);
   // 임베딩(= LM 머리): 어휘 조각마다 dlogitsᵀ·hnT + 입력 자리 기울기
   const int V = Q.vocab, VC = c.vocab_chunk;
@@ -1323,13 +1298,10 @@ void Model::step_grads(const VBatch& bt, cudaStream_t st) {
   if (c.vis_train) {
     tk::mm_dx(s.vdb, H, Rv, ap.W + v_proj.off, H, c.vD, s.vdA, c.vD, false, st);
     MCK(cudaMemsetAsync(s.vdR, 0, sizeof(float) * (size_t)Rv * c.vD, st));
-    tk::ln_bwd(s.vdA, s.vX[c.vL], Rv, c.vD, ap.V + v_lnfg, c.vEps, s.vdR, s.wt, st);
-    tk::colsum(s.wt, Rv, c.vD, c.vD, s.part, ap.GV + v_lnfg, false, st);
-    tk::colsum(s.vdA, Rv, c.vD, c.vD, s.part, ap.GV + v_lnfb, false, st);
+    tk::ln_bwd(s.vdA, s.vX[c.vL], Rv, c.vD, ap.V + v_lnfg, c.vEps, s.vdR, s.npart, ap.GV + v_lnfg, ap.GV + v_lnfb, st, s.vdb);
     for (int l = c.vL - 1; l >= 0; --l) v_block_bwd(*this, l, Rv, st);
     tk::colsum(s.vdR, Rv, c.vD, c.vD, s.part, ap.GV + v_patchb, false, st);
     tk::colsum(s.vdR, Rv / c.vT, c.vT * c.vD, c.vT * c.vD, s.part, ap.GV + v_pos, false, st);
-    tk::f2bf(s.vdR, (long long)Rv * c.vD, s.vdb, st);
     tk::mm_dw(s.vdb, c.vD, bt.patches, c.vK, Rv, c.vD, c.vK, s.ws, DWCH, ap.GW + v_patch.off, nullptr, st);
   }
 }

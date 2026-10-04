@@ -48,13 +48,17 @@ void mme_dw1(const uint16_t* dZ, int ldz, const uint16_t* X, int ldx, int M, int
 // ---- RMSNorm ----
 // y = x·r·(w1 ? (1 + w) : w), r = (mean x² + ε)^−½. 벡터 NV 개(길이 D), 벡터 v 의 자리 = base + (v / per)·ld + (v % per)·D
 // 뒤: dX (=|+=), wt[NV][D] = dy·x·r (w 기울기 기여, nullptr 이면 안 씀). bug 1: g = dy 로(w 곱 빠뜨림)
+// gw(nullptr 아니면) = Σ_v dy·x·r — 커널 안 조각(npart ≥ npart_floats(NV, D)) + colred(D). dXb(선택) = bf16(dX 최종값)
 void rms_bwd(const float* dY, int lddy, const float* X, int ldx, int NV, int per, int D, const float* w, bool w1, float eps, float* dX, int lddx,
-             bool acc, float* wt, int bug, cudaStream_t st);
+             bool acc, float* npart, float* gw, int bug, cudaStream_t st, uint16_t* dXb = nullptr);
+long long npart_floats(long long rows, int D);   // 조각 작업 공간(벡터 32 개당 D)
 
 // ---- LayerNorm(SigLIP) ----
 void ln_fwd(const float* X, int R, int D, const float* g, const float* b, float eps, uint16_t* out, float* outf, cudaStream_t st);
 // dX (+=), gt[R][D] = dy·x̂ (γ 기여), β 기여는 dy 그대로(colsum)
-void ln_bwd(const float* dY, const float* X, int R, int D, const float* g, float eps, float* dX, float* gt, cudaStream_t st);
+// dX += , gg = Σ dy·x̂, gb = Σ dy(커널 안 조각, npart ≥ 2·npart_floats(R, D)), dXb(선택) = bf16(dX)
+void ln_bwd(const float* dY, const float* X, int R, int D, const float* g, float eps, float* dX, float* npart, float* gg, float* gb, cudaStream_t st,
+            uint16_t* dXb = nullptr);
 void bias_add(float* Y, int R, int N, int ld, const float* b, cudaStream_t st);
 // GELU tanh: out bf16 = gelu(x) (x F32 [R][N]); 뒤: dx = dy·gelu'(x) → bf16
 void gelu_fwd(const float* X, long long n, uint16_t* out, cudaStream_t st);
@@ -89,16 +93,16 @@ bool att_old();
 
 // ---- Qwen 풀 어텐션 준비의 뒤: dQ(정규화·RoPE 뒤 q 기울기 [R][nq·hd]), dK·dV(캐시 배치 [B][Lc][kvw]) → dT0([q|gate],k,v 칸), qn·kn 기여 ----
 // 어텐션 출력 게이트의 뒤: dG(게이트 곱 뒤 기울기) → dO(어텐션 출력 기울기), dT0 의 gate 칸
-void gate_bwd(const float* dG, const float* O, const float* T0, int ldT, int R, int nq, int hd, float* dOut, float* dT0, cudaStream_t st);
+void gate_bwd(const float* dG, const float* O, const float* T0, int ldT, int R, int nq, int hd, float* dOut, float* dT0, cudaStream_t st, uint16_t* dT0b = nullptr);
 void full_prep_bwd(const float* T0, int ldT, int R, int n, int pos0, int nq, int nkv, int hd, int rot, float theta, float eps, const float* qn,
                    const float* kn, const float* dQ, const float* dKc, const float* dVc, int Lc, float* dT0, float* qnt, float* knt, int bug,
-                   cudaStream_t st, const int* poff = nullptr);
+                   cudaStream_t st, const int* poff = nullptr, uint16_t* dT0b = nullptr);
 // ---- DeltaNet ----
 void lin_prep_bwd(const float* T1, int ld1, const float* T0, int ld0, int boff, int R, int lh, int dk, const float* alog, const float* dtb,
                   const float* dQn, const float* dKn, const float* dG, const float* dBeta, float* dT1, float* dT0, float* alt, float* dtt,
-                  cudaStream_t st);
+                  cudaStream_t st, uint16_t* dT0b = nullptr);
 // 합성곱 + SiLU 의 뒤(학습: 열 시작 0, 캐시 없음): dT1 [R][C] → dX(=, dT0 의 qkv 칸, 줄 간격 ld), dpre 를 dp [R][C] 에 남김
-void conv_bwd(const float* X, int ld, int B, int n, int C, int K, const float* w, const float* dT1, float* dp, float* dX, cudaStream_t st);
+void conv_bwd(const float* X, int ld, int B, int n, int C, int K, const float* w, const float* dT1, float* dp, float* dX, cudaStream_t st, uint16_t* dXb = nullptr);
 // 합성곱 가중치 기울기 [C][K] = Σ_(b,t) dp[t][c]·x[t−K+1+k][c]
 void convw_grad(const float* X, int ld, const float* dp, int B, int n, int C, int K, float* part, float* out, cudaStream_t st);
 // 덩이 꼴(WY/UT 변환, 텐서 코어) 덩이 크기: dk 64 이상 = 64, 작은 구성 = 16(덩이 여럿을 시험하게)
@@ -117,7 +121,7 @@ long long dn_ws_floats(int B, int n, int lh, int dk, int dv);
 void deltanet_bwd(const float* Qn, const float* Kn, const float* V, int ldv, const float* G, const float* Beta, const float* dO, int B, int n, int lh, int dk,
                   int dv, bool nodecay, bool hasck, float* ws, float* dQn, float* dKn, float* dV, int lddv, float* dG, float* dBeta, int bug, cudaStream_t st);
 void gnorm_bwd(const float* O, const float* Z, int ldz, int R, int lh, int dv, const float* w, float eps, const float* dY, float* dO, float* dZ, int lddz,
-               float* wt, cudaStream_t st);
+               float* npart, float* gw, cudaStream_t st, uint16_t* dZb = nullptr);
 // SwiGLU 뒤: dH [R][I] F32 → dGU bf16 [R][2I]. bug 1: silu' 빠뜨림
 void swiglu_bwd(const float* T0, const float* dH, int R, int I, uint16_t* dGU, int bug, cudaStream_t st);
 

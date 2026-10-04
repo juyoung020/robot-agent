@@ -543,7 +543,10 @@ static int run_v67(bool real, int B, int Lmin) {
   {   // 비트 같은 융합 확인용: 기울기·손실 전부의 FNV-1a(융합 전 빌드와 같아야 함)
     uint64_t hsh = 1469598103934665603ull;
     for (uint16_t v : r0) { hsh ^= v; hsh *= 1099511628211ull; }
-    std::printf("[hash] %s mem %d: %016llx over %zu words\n", real ? "real" : "tiny", (int)c.mem, (unsigned long long)hsh, r0.size());
+    uint64_t hw = 1469598103934665603ull;   // 행렬 기울기(qp.GW + ap.GW)만
+    for (size_t i = 0; i < (size_t)(m.qp.nW + m.ap.nW); ++i) { hw ^= r0[i]; hw *= 1099511628211ull; }
+    std::printf("[hash] %s mem %d: %016llx over %zu words; matrix grads %016llx\n", real ? "real" : "tiny", (int)c.mem, (unsigned long long)hsh, r0.size(),
+                (unsigned long long)hw);
   }
   std::printf("[v7] %s: same input twice %zu / %zu words differ; [v6] graph vs eager %zu differ; other noise key -> %zu differ (should be > 0)\n",
               real ? "real" : "tiny", d7, r0.size(), d6, dk);

@@ -121,34 +121,74 @@ void mm_dw(const uint16_t* dZ, int ldz, const uint16_t* X, int ldx, int M, int N
   KCK();
 }
 
-// ---- RMSNorm 뒤: 워프 = 벡터 ----
-__global__ void rms_bwd_k(const float* dY, int lddy, const float* X, int ldx, int NV, int per, int D, const float* w, int w1, float eps, float* dX,
-                          int lddx, int acc, float* wt, int bug) {
-  const int v = (blockIdx.x * blockDim.x + threadIdx.x) / 32, lane = threadIdx.x & 31;
-  if (v >= NV) return;
-  const long long ox = (long long)(v / per) * ldx + (v % per) * D, oy = (long long)(v / per) * lddy + (v % per) * D,
-                  od = (long long)(v / per) * lddx + (v % per) * D;
-  float s = 0.f;
-  for (int d = lane; d < D; d += 32) s = s + X[ox + d] * X[ox + d];
-  s = wsum(s);
-  const float r = 1.f / sqrtf(s / (float)D + eps);
-  float gx = 0.f;
-  for (int d = lane; d < D; d += 32) {
-    const float g = bug == 1 ? dY[oy + d] : dY[oy + d] * (w1 ? 1.f + w[d] : w[d]);
-    gx = gx + g * X[ox + d];
+// ---- 줄마다 더하는 변수 기울기를 커널 안에서(D): 블록 = 벡터 RPB 개(워프 8, 워프마다 RPB/8 개), 레인이 d = lane + 32j 를 레지스터에 더하고
+// 블록 끝에 워프 0..7 순서로 합해 조각 part[블록][D] → colred(조각 순서대로). 결정적(원자 없음). wt 행렬을 쓰고 다시 읽던 것을 없앰.
+constexpr int RPB = 32, PJ = 32;   // D ≤ 1024
+struct PAcc {
+  float a[PJ];
+  __device__ __forceinline__ void zero() {
+#pragma unroll
+    for (int j = 0; j < PJ; ++j) a[j] = 0.f;
   }
-  gx = wsum(gx);
-  const float c = r * r * r * gx / (float)D;
-  for (int d = lane; d < D; d += 32) {
-    const float g = bug == 1 ? dY[oy + d] : dY[oy + d] * (w1 ? 1.f + w[d] : w[d]);
-    const float dx = r * g - X[ox + d] * c;
-    dX[od + d] = acc ? dX[od + d] + dx : dx;
-    if (wt) wt[(long long)v * D + d] = dY[oy + d] * X[ox + d] * r;
+};
+// 블록 합: 워프 순서 고정
+__device__ __forceinline__ void pacc_flush(PAcc& A, int D, float* part, int ldp) {
+  __shared__ float sm[8][PJ * 32];
+  const int w = threadIdx.x >> 5, lane = threadIdx.x & 31;
+#pragma unroll
+  for (int j = 0; j < PJ; ++j) { const int d = lane + 32 * j; if (d < D) sm[w][d] = A.a[j]; }
+  __syncthreads();
+  for (int d = threadIdx.x; d < D; d += blockDim.x) {
+    float s = 0.f;
+#pragma unroll
+    for (int k = 0; k < 8; ++k) s = s + sm[k][d];
+    part[(long long)blockIdx.x * ldp + d] = s;
   }
 }
+long long npart_floats(long long rows, int D) { return ((rows + RPB - 1) / RPB) * (long long)D; }
+
+// ---- RMSNorm 뒤: 블록 = 벡터 RPB 개, 워프 = 벡터 ----
+__global__ void __launch_bounds__(256) rms_bwd_k(const float* dY, int lddy, const float* X, int ldx, int NV, int per, int D, const float* w, int w1, float eps,
+                                                 float* dX, int lddx, int acc, uint16_t* dXb, float* part, int bug) {
+  const int wl = threadIdx.x >> 5, lane = threadIdx.x & 31;
+  PAcc A;
+  A.zero();
+  for (int vi = wl; vi < RPB; vi += 8) {
+    const int v = blockIdx.x * RPB + vi;
+    if (v >= NV) break;
+    const long long ox = (long long)(v / per) * ldx + (v % per) * D, oy = (long long)(v / per) * lddy + (v % per) * D,
+                    od = (long long)(v / per) * lddx + (v % per) * D;
+    float s = 0.f;
+    for (int d = lane; d < D; d += 32) s = s + X[ox + d] * X[ox + d];
+    s = wsum(s);
+    const float r = 1.f / sqrtf(s / (float)D + eps);
+    float gx = 0.f;
+    for (int d = lane; d < D; d += 32) {
+      const float g = bug == 1 ? dY[oy + d] : dY[oy + d] * (w1 ? 1.f + w[d] : w[d]);
+      gx = gx + g * X[ox + d];
+    }
+    gx = wsum(gx);
+    const float c = r * r * r * gx / (float)D;
+#pragma unroll
+    for (int j = 0; j < PJ; ++j) {
+      const int d = lane + 32 * j;
+      if (d >= D) break;
+      const float g = bug == 1 ? dY[oy + d] : dY[oy + d] * (w1 ? 1.f + w[d] : w[d]);
+      const float dx = r * g - X[ox + d] * c;
+      const float o = acc ? dX[od + d] + dx : dx;
+      dX[od + d] = o;
+      if (dXb) dXb[od + d] = net::f2bf(o);
+      A.a[j] = A.a[j] + dY[oy + d] * X[ox + d] * r;
+    }
+  }
+  if (part) pacc_flush(A, D, part, D);
+}
 void rms_bwd(const float* dY, int lddy, const float* X, int ldx, int NV, int per, int D, const float* w, bool w1, float eps, float* dX, int lddx,
-             bool acc, float* wt, int bug, cudaStream_t st) {
-  rms_bwd_k<<<nb((long long)NV * 32, 128), 128, 0, st>>>(dY, lddy, X, ldx, NV, per, D, w, w1 ? 1 : 0, eps, dX, lddx, acc ? 1 : 0, wt, bug);
+             bool acc, float* npart, float* gw, int bug, cudaStream_t st, uint16_t* dXb) {
+  if (D > PJ * 32) { std::fprintf(stderr, "rms_bwd D > 1024\n"); std::abort(); }
+  const int nbk = (NV + RPB - 1) / RPB;
+  rms_bwd_k<<<nbk, 256, 0, st>>>(dY, lddy, X, ldx, NV, per, D, w, w1 ? 1 : 0, eps, dX, lddx, acc ? 1 : 0, dXb, gw ? npart : nullptr, bug);
+  if (gw) colred_k<<<nb(D), 256, 0, st>>>(npart, nbk, D, gw, 0);
   KCK();
 }
 
@@ -173,31 +213,52 @@ void ln_fwd(const float* X, int R, int D, const float* g, const float* b, float 
   ln_fwd_k<<<nb((long long)R * 32, 128), 128, 0, st>>>(X, R, D, g, b, eps, out, outf);
   KCK();
 }
-__global__ void ln_bwd_k(const float* dY, const float* X, int R, int D, const float* g, float eps, float* dX, float* gt) {
-  const int r = (blockIdx.x * blockDim.x + threadIdx.x) / 32, lane = threadIdx.x & 31;
-  if (r >= R) return;
-  const float* x = X + (long long)r * D;
-  const float* dy = dY + (long long)r * D;
-  float s = 0.f;
-  for (int d = lane; d < D; d += 32) s = s + x[d];
-  const float m = wsum(s) / (float)D;
-  float q = 0.f;
-  for (int d = lane; d < D; d += 32) { const float e = x[d] - m; q = q + e * e; }
-  const float rs = 1.f / sqrtf(wsum(q) / (float)D + eps);
-  float s1 = 0.f, s2 = 0.f;
-  for (int d = lane; d < D; d += 32) {
-    const float xh = (x[d] - m) * rs, gd = dy[d] * g[d];
-    s1 = s1 + gd; s2 = s2 + gd * xh;
+__global__ void __launch_bounds__(256) ln_bwd_k(const float* dY, const float* X, int R, int D, const float* g, float eps, float* dX, uint16_t* dXb,
+                                                float* pg, float* pb) {
+  const int wl = threadIdx.x >> 5, lane = threadIdx.x & 31;
+  PAcc Ag, Ab;
+  Ag.zero(); Ab.zero();
+  for (int ri = wl; ri < RPB; ri += 8) {
+    const int r = blockIdx.x * RPB + ri;
+    if (r >= R) break;
+    const float* x = X + (long long)r * D;
+    const float* dy = dY + (long long)r * D;
+    float s = 0.f;
+    for (int d = lane; d < D; d += 32) s = s + x[d];
+    const float m = wsum(s) / (float)D;
+    float q = 0.f;
+    for (int d = lane; d < D; d += 32) { const float e = x[d] - m; q = q + e * e; }
+    const float rs = 1.f / sqrtf(wsum(q) / (float)D + eps);
+    float s1 = 0.f, s2 = 0.f;
+    for (int d = lane; d < D; d += 32) {
+      const float xh = (x[d] - m) * rs, gd = dy[d] * g[d];
+      s1 = s1 + gd; s2 = s2 + gd * xh;
+    }
+    s1 = wsum(s1) / (float)D; s2 = wsum(s2) / (float)D;
+#pragma unroll
+    for (int j = 0; j < PJ; ++j) {
+      const int d = lane + 32 * j;
+      if (d >= D) break;
+      const float xh = (x[d] - m) * rs, gd = dy[d] * g[d];
+      const float o = dX[(long long)r * D + d] + rs * (gd - s1 - xh * s2);
+      dX[(long long)r * D + d] = o;
+      if (dXb) dXb[(long long)r * D + d] = net::f2bf(o);
+      Ag.a[j] = Ag.a[j] + dy[d] * xh;
+      Ab.a[j] = Ab.a[j] + dy[d];
+    }
   }
-  s1 = wsum(s1) / (float)D; s2 = wsum(s2) / (float)D;
-  for (int d = lane; d < D; d += 32) {
-    const float xh = (x[d] - m) * rs, gd = dy[d] * g[d];
-    dX[(long long)r * D + d] = dX[(long long)r * D + d] + rs * (gd - s1 - xh * s2);
-    gt[(long long)r * D + d] = dy[d] * xh;
-  }
+  pacc_flush(Ag, D, pg, D);
+  __syncthreads();
+  pacc_flush(Ab, D, pb, D);
 }
-void ln_bwd(const float* dY, const float* X, int R, int D, const float* g, float eps, float* dX, float* gt, cudaStream_t st) {
-  ln_bwd_k<<<nb((long long)R * 32, 128), 128, 0, st>>>(dY, X, R, D, g, eps, dX, gt);
+void ln_bwd(const float* dY, const float* X, int R, int D, const float* g, float eps, float* dX, float* npart, float* gg, float* gb, cudaStream_t st,
+            uint16_t* dXb) {
+  if (D > PJ * 32) { std::fprintf(stderr, "ln_bwd D > 1024\n"); std::abort(); }
+  const int nbk = (R + RPB - 1) / RPB;
+  float* pb = npart + (long long)nbk * D;
+  ln_bwd_k<<<nbk, 256, 0, st>>>(dY, X, R, D, g, eps, dX, dXb, npart, pb);
+  colred_k<<<nb(D), 256, 0, st>>>(npart, nbk, D, gg, 0);
+  colred_k<<<nb(D), 256, 0, st>>>(pb, nbk, D, gb, 0);
   KCK();
 }
 __global__ void bias_k(float* Y, int R, int N, int ld, const float* b) {
@@ -374,7 +435,7 @@ void att_bwd(const AttP& p, cudaStream_t st) {
 }
 
 // ---- 게이트·풀 어텐션 준비의 뒤 ----
-__global__ void gate_bwd_k(const float* dG, const float* O, const float* T0, int ldT, int R, int nq, int hd, float* dOut, float* dT0) {
+__global__ void gate_bwd_k(const float* dG, const float* O, const float* T0, int ldT, int R, int nq, int hd, float* dOut, float* dT0, uint16_t* dT0b) {
   const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
   const int W = nq * hd;
   if (q >= (long long)R * W) return;
@@ -382,17 +443,19 @@ __global__ void gate_bwd_k(const float* dG, const float* O, const float* T0, int
   const long long gi = (long long)r * ldT + h * 2 * hd + hd + d;
   const float s = sigm(T0[gi]);
   dOut[q] = dG[q] * s;
-  dT0[gi] = dG[q] * O[q] * s * (1.f - s);
+  const float v = dG[q] * O[q] * s * (1.f - s);
+  if (dT0b) dT0b[gi] = net::f2bf(v);
+  else dT0[gi] = v;
 }
-void gate_bwd(const float* dG, const float* O, const float* T0, int ldT, int R, int nq, int hd, float* dOut, float* dT0, cudaStream_t st) {
-  gate_bwd_k<<<nb((long long)R * nq * hd), 256, 0, st>>>(dG, O, T0, ldT, R, nq, hd, dOut, dT0);
+void gate_bwd(const float* dG, const float* O, const float* T0, int ldT, int R, int nq, int hd, float* dOut, float* dT0, cudaStream_t st, uint16_t* dT0b) {
+  gate_bwd_k<<<nb((long long)R * nq * hd), 256, 0, st>>>(dG, O, T0, ldT, R, nq, hd, dOut, dT0, dT0b);
   KCK();
 }
 constexpr int MAXHD = 256;
 // 워프 = (행, 머리). RoPE 의 전치 → 머리 RMSNorm(1 + w) 의 뒤. bug 2: RoPE 전치 대신 앞 회전을 다시 씀
 __global__ void full_prep_bwd_k(const float* T0, int ldT, int R, int n, int pos0, int nq, int nkv, int hd, int rot, float theta, float eps, const float* qn,
                                 const float* kn, const float* dQ, const float* dKc, const float* dVc, int Lc, float* dT0, float* qnt, float* knt, int bug,
-                                const int* poff) {
+                                const int* poff, uint16_t* dT0b) {
   __shared__ float sg[8][MAXHD];
   const int w = blockIdx.x * 8 + threadIdx.x / 32, lane = threadIdx.x & 31, wl = threadIdx.x / 32;
   const int nh = nq + nkv;
@@ -428,26 +491,32 @@ __global__ void full_prep_bwd_k(const float* T0, int ldT, int R, int n, int pos0
   ii = 0;
   for (int d = lane; d < hd; d += 32, ++ii) {
     const float x = T0[so + d];
-    dT0[so + d] = rs * dy0[ii] * (1.f + nw[d]) - x * c3;
+    const float v = rs * dy0[ii] * (1.f + nw[d]) - x * c3;
+    if (dT0b) dT0b[so + d] = net::f2bf(v);
+    else dT0[so + d] = v;
     wt[d] = dy0[ii] * x * rs;
   }
   if (!isq) {
     const float* dv = dVc + ((long long)b * Lc + kpos) * nkv * hd + kh * hd;
-    float* o = dT0 + (long long)r * ldT + nq * 2 * hd + nkv * hd + kh * hd;
-    for (int d = lane; d < hd; d += 32) o[d] = dv[d];
+    const long long oo = (long long)r * ldT + nq * 2 * hd + nkv * hd + kh * hd;
+    for (int d = lane; d < hd; d += 32) {
+      if (dT0b) dT0b[oo + d] = net::f2bf(dv[d]);
+      else dT0[oo + d] = dv[d];
+    }
   }
 }
 void full_prep_bwd(const float* T0, int ldT, int R, int n, int pos0, int nq, int nkv, int hd, int rot, float theta, float eps, const float* qn,
                    const float* kn, const float* dQ, const float* dKc, const float* dVc, int Lc, float* dT0, float* qnt, float* knt, int bug,
-                   cudaStream_t st, const int* poff) {
+                   cudaStream_t st, const int* poff, uint16_t* dT0b) {
   full_prep_bwd_k<<<nb((long long)R * (nq + nkv), 8), 256, 0, st>>>(T0, ldT, R, n, pos0, nq, nkv, hd, rot, theta, eps, qn, kn, dQ, dKc, dVc, Lc, dT0, qnt,
-                                                                   knt, bug, poff);
+                                                                   knt, bug, poff, dT0b);
   KCK();
 }
 
 // ---- DeltaNet 준비의 뒤: 워프 = (행, 머리) ----
 __global__ void lin_prep_bwd_k(const float* T1, int ld1, const float* T0, int ld0, int boff, int R, int lh, int dk, const float* alog, const float* dtb,
-                               const float* dQn, const float* dKn, const float* dG, const float* dBeta, float* dT1, float* dT0, float* alt, float* dtt) {
+                               const float* dQn, const float* dKn, const float* dG, const float* dBeta, float* dT1, float* dT0, float* alt, float* dtt,
+                               uint16_t* dT0b) {
   const int w = (blockIdx.x * blockDim.x + threadIdx.x) / 32, lane = threadIdx.x & 31;
   if (w >= R * lh) return;
   const int r = w / lh, h = w % lh;
@@ -466,20 +535,24 @@ __global__ void lin_prep_bwd_k(const float* T1, int ld1, const float* T0, int ld
   if (lane == 0) {
     const float bb = T0[(long long)r * ld0 + boff + h], aa = T0[(long long)r * ld0 + boff + lh + h];
     const float be = sigm(bb);
-    dT0[(long long)r * ld0 + boff + h] = dBeta[(long long)r * lh + h] * be * (1.f - be);
+    const float db = dBeta[(long long)r * lh + h] * be * (1.f - be);
+    if (dT0b) dT0b[(long long)r * ld0 + boff + h] = net::f2bf(db);
+    else dT0[(long long)r * ld0 + boff + h] = db;
     const float x = aa + dtb[h], ea = expf(alog[h]);
     const float sp = x > 20.f ? x : log1pf(expf(x)), dsp = x > 20.f ? 1.f : sigm(x);
     const float dg = dG[(long long)r * lh + h];
     const float dx = dg * (-ea) * dsp;
-    dT0[(long long)r * ld0 + boff + lh + h] = dx;
+    if (dT0b) dT0b[(long long)r * ld0 + boff + lh + h] = net::f2bf(dx);
+    else dT0[(long long)r * ld0 + boff + lh + h] = dx;
     alt[(long long)r * lh + h] = dg * (-ea * sp);
     dtt[(long long)r * lh + h] = dx;
   }
 }
 void lin_prep_bwd(const float* T1, int ld1, const float* T0, int ld0, int boff, int R, int lh, int dk, const float* alog, const float* dtb,
                   const float* dQn, const float* dKn, const float* dG, const float* dBeta, float* dT1, float* dT0, float* alt, float* dtt,
-                  cudaStream_t st) {
-  lin_prep_bwd_k<<<nb((long long)R * lh * 32, 128), 128, 0, st>>>(T1, ld1, T0, ld0, boff, R, lh, dk, alog, dtb, dQn, dKn, dG, dBeta, dT1, dT0, alt, dtt);
+                  cudaStream_t st, uint16_t* dT0b) {
+  lin_prep_bwd_k<<<nb((long long)R * lh * 32, 128), 128, 0, st>>>(T1, ld1, T0, ld0, boff, R, lh, dk, alog, dtb, dQn, dKn, dG, dBeta, dT1, dT0, alt, dtt,
+                                                                   dT0b);
   KCK();
 }
 
@@ -495,7 +568,7 @@ __global__ void convp_k(const float* X, int ld, int n, int C, int K, const float
   }
   dp[q] = dT1[q] * dsilu(s);
 }
-__global__ void convx_k(const float* dp, int ld, int n, int C, int K, const float* w, float* dX, long long tot) {
+__global__ void convx_k(const float* dp, int ld, int n, int C, int K, const float* w, float* dX, uint16_t* dXb, long long tot) {
   const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
   if (q >= tot) return;
   const int r = (int)(q / C), c = (int)(q % C), b = r / n, t = r % n;
@@ -504,12 +577,13 @@ __global__ void convx_k(const float* dp, int ld, int n, int C, int K, const floa
     const int o = t + (K - 1) - k;
     if (o < n) s = s + w[c * K + k] * dp[((long long)b * n + o) * C + c];
   }
-  dX[(long long)r * ld + c] = s;
+  if (dXb) dXb[(long long)r * ld + c] = net::f2bf(s);
+  else dX[(long long)r * ld + c] = s;
 }
-void conv_bwd(const float* X, int ld, int B, int n, int C, int K, const float* w, const float* dT1, float* dp, float* dX, cudaStream_t st) {
+void conv_bwd(const float* X, int ld, int B, int n, int C, int K, const float* w, const float* dT1, float* dp, float* dX, cudaStream_t st, uint16_t* dXb) {
   const long long tot = (long long)B * n * C;
   convp_k<<<nb(tot), 256, 0, st>>>(X, ld, n, C, K, w, dT1, dp, tot);
-  convx_k<<<nb(tot), 256, 0, st>>>(dp, ld, n, C, K, w, dX, tot);
+  convx_k<<<nb(tot), 256, 0, st>>>(dp, ld, n, C, K, w, dX, dXb, tot);
   KCK();
 }
 // 조각: 블록 y = 행 256 개, 스레드 = (c, k)
@@ -729,30 +803,43 @@ void deltanet_bwd(const float* Qn, const float* Kn, const float* V, int ldv, con
 }
 
 // ---- 게이트 RMSNorm 의 뒤: 워프 = (행, 머리) ----
-__global__ void gnorm_bwd_k(const float* O, const float* Z, int ldz, int R, int lh, int dv, const float* w, float eps, const float* dY, float* dO, float* dZ,
-                            int lddz, float* wt) {
-  const int wi = (blockIdx.x * blockDim.x + threadIdx.x) / 32, lane = threadIdx.x & 31;
-  if (wi >= R * lh) return;
-  const int r = wi / lh, h = wi % lh;
-  const long long oo = (long long)r * lh * dv + h * dv, zo = (long long)r * ldz + h * dv;
-  float s = 0.f;
-  for (int d = lane; d < dv; d += 32) s = s + O[oo + d] * O[oo + d];
-  s = wsum(s);
-  const float rs = 1.f / sqrtf(s / (float)dv + eps);
-  float g = 0.f;
-  for (int d = lane; d < dv; d += 32) g = g + dY[oo + d] * w[d] * silu(Z[zo + d]) * O[oo + d];
-  g = wsum(g);
-  const float c3 = rs * rs * rs * g / (float)dv;
-  for (int d = lane; d < dv; d += 32) {
-    const float z = Z[zo + d], o = O[oo + d], dy = dY[oo + d];
-    dZ[(long long)r * lddz + h * dv + d] = dy * w[d] * o * rs * dsilu(z);
-    dO[oo + d] = rs * dy * w[d] * silu(z) - o * c3;
-    wt[oo + d] = dy * o * rs * silu(z);
+__global__ void __launch_bounds__(256) gnorm_bwd_k(const float* O, const float* Z, int ldz, int R, int lh, int dv, const float* w, float eps, const float* dY,
+                                                   float* dO, float* dZ, uint16_t* dZb, int lddz, float* part) {
+  const int wl = threadIdx.x >> 5, lane = threadIdx.x & 31;
+  PAcc A;
+  A.zero();
+  for (int vi = wl; vi < RPB; vi += 8) {
+    const int wi = blockIdx.x * RPB + vi;
+    if (wi >= R * lh) break;
+    const int r = wi / lh, h = wi % lh;
+    const long long oo = (long long)r * lh * dv + h * dv, zo = (long long)r * ldz + h * dv;
+    float s = 0.f;
+    for (int d = lane; d < dv; d += 32) s = s + O[oo + d] * O[oo + d];
+    s = wsum(s);
+    const float rs = 1.f / sqrtf(s / (float)dv + eps);
+    float g = 0.f;
+    for (int d = lane; d < dv; d += 32) g = g + dY[oo + d] * w[d] * silu(Z[zo + d]) * O[oo + d];
+    g = wsum(g);
+    const float c3 = rs * rs * rs * g / (float)dv;
+#pragma unroll
+    for (int j = 0; j < PJ; ++j) {
+      const int d = lane + 32 * j;
+      if (d >= dv) break;
+      const float z = Z[zo + d], o = O[oo + d], dy = dY[oo + d];
+      const float vz = dy * w[d] * o * rs * dsilu(z);
+      if (dZb) dZb[(long long)r * lddz + h * dv + d] = net::f2bf(vz);
+      else dZ[(long long)r * lddz + h * dv + d] = vz;
+      dO[oo + d] = rs * dy * w[d] * silu(z) - o * c3;
+      A.a[j] = A.a[j] + dy * o * rs * silu(z);
+    }
   }
+  pacc_flush(A, dv, part, dv);
 }
 void gnorm_bwd(const float* O, const float* Z, int ldz, int R, int lh, int dv, const float* w, float eps, const float* dY, float* dO, float* dZ, int lddz,
-               float* wt, cudaStream_t st) {
-  gnorm_bwd_k<<<nb((long long)R * lh * 32, 128), 128, 0, st>>>(O, Z, ldz, R, lh, dv, w, eps, dY, dO, dZ, lddz, wt);
+               float* npart, float* gw, cudaStream_t st, uint16_t* dZb) {
+  const int nbk = (R * lh + RPB - 1) / RPB;
+  gnorm_bwd_k<<<nbk, 256, 0, st>>>(O, Z, ldz, R, lh, dv, w, eps, dY, dO, dZ, dZb, lddz, npart);
+  colred_k<<<nb(dv), 256, 0, st>>>(npart, nbk, dv, gw, 0);
   KCK();
 }
 
