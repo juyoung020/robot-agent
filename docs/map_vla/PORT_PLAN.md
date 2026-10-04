@@ -1,5 +1,7 @@
 # MuJoCo Warp 전체 포팅 계획
 
+> **대체됨 (10-04)**: 이 포팅은 하지 않는다. [BEHAVIOR_ENGINE_REVIEW.md](BEHAVIOR_ENGINE_REVIEW.md) 6절 제안대로 물리는 **우리 환경 커널**(G1, `training/RL/env`, `0eddb72` — LIMO + OMX, CPU/GPU 비트 동일)로, 영상은 **팀 `RenderBatch`**(서브모듈 `src/behavior-2026/src/sim/engine`, include 로 읽기만 — `training/BC/src/bc_render.cu`, `b27aafd`)로 간다. 저장소에 MuJoCo 코드는 없다. 지금 계획은 [GPU_TRAINING.md](GPU_TRAINING.md) 11절, 상태는 [TODO_TRACKER.md](TODO_TRACKER.md). 아래는 기록으로 남긴다.
+
 > **주의 (10-03)**: `~/behavior-2026/src/sim/engine`에 CUDA 물리와 배치 렌더러가 이미 있다. 이 계획과 겹치는지 먼저 `BEHAVIOR_ENGINE_REVIEW.md`를 볼 것. 빌드 기준 CUDA는 12.8이다(13.2 아님).
 
 결정: `refs/code/mujoco_warp` **전체**를 C++/CUDA 네이티브로 포팅한다 (`CLAUDE.md`: PyTorch/Python 금지).

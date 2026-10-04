@@ -47,19 +47,20 @@
 ## 어떻게 동작하나요
 
 ```
-카메라·라이다 ──▶ ① 물체 기억 (scene graph) ──▶ ② 큰 계획·대화 (LLM) ──▶ ③ 작은 계획·행동 (VLA, π0.5) ──▶ 로봇
+카메라·라이다 ──▶ ① 물체 기억 (scene graph) ──▶ ② 큰 계획·대화 (LLM) ──▶ ③ 작은 계획·행동 (우리 VLA) ──▶ 로봇
                    "무엇이 어디에 있나"          "무엇을 어떤 순서로"           "지금 이 단계를 어떻게"
                           ▲                                                                   │
                           └─────────────────────── 움직이며 본 것으로 기억 갱신 ◀─────────────┘
 ```
 
 1. **물체 기억** — 로봇이 본 물체를 2D 지도 위에 등록하고, 옮겨지거나 사라지면 고친다.
-2. **큰 계획·대화 (LLM)** — 사람과 채팅으로 대화하고, 물체 기억을 읽어 π0.5 에게 상황을 풀어 준다 ("컵은 주방 식탁 위, 놓을 곳은 거실 식탁"). 물체가 화면 밖으로 벗어나 π0.5 가 움직일 수 없으면, 기억을 보고 다시 계획한다.
+2. **큰 계획·대화 (LLM)** — 사람과 채팅으로 대화하고, 물체 기억을 읽어 VLA 에게 상황을 풀어 준다 ("컵은 주방 식탁 위, 놓을 곳은 거실 식탁"). 물체가 화면 밖으로 벗어나 VLA 가 움직일 수 없으면, 기억을 보고 다시 계획한다.
 3. **작은 계획·행동 (VLA)** — LLM 의 지시와 카메라 영상을 받아, 할 일을 잘게 나눠(팔 뻗기 → 잡기 → 들기) 로봇 팔·바퀴를 실제로 움직인다. 집다가 놓치는 것처럼 눈앞에서 생긴 실패는 스스로 복구한다.
+   - VLA 는 π0.5 가 아니라 **우리가 만든 작은 VLA** 다(10-04, π0.5 는 버림): 얼린 SigLIP 2 영상 탑 + 물체 기억 지도 토큰 + 지시 문장 → flow matching 행동. 시뮬 RL 교사에게서 BC·DAgger 로 배운다([`training/BC`](training/BC/README.md), G5). 얼린 Qwen 을 쓰는 큰 판은 G7 계획.
 
 ## 로봇
 
-AgileX 리모(LIMO) 기본형(가정, **프로를 받을 수도 있음**) + 매니퓰레이터(모델 미정). 자세한 전제와 할 일은 [`docs/plan.md`](docs/plan.md).
+AgileX 리모(LIMO) 기본형(가정, **프로를 받을 수도 있음**) + 매니퓰레이터 ROBOTIS OMX-F. 자세한 전제와 할 일은 [`docs/plan.md`](docs/plan.md).
 
 ## 폴더 구조
 
@@ -73,7 +74,7 @@ robot-agent/
 │   │   ├── skills/  #   스킬(한 가지 일을 끝까지 하는 단위, 지금은 explore)
 │   │   ├── tools/   #   LLM 에게 보이는 도구(move_robot, Rust)
 │   │   └── prompts/ #   공통 프롬프트
-│   ├── vla/         # ③ 작은 계획·행동 (VLA, π0.5)
+│   ├── vla/         # ③ 작은 계획·행동 (우리 VLA — 지금은 README 만, 학습 코드는 training/BC)
 │   ├── app/         # 휴대폰 앱 (iOS·Android, 채팅으로 명령)
 │   └── behavior-2026/ # 서브모듈: BEHAVIOR Challenge 2026 (시뮬레이터에서 같은 구조를 시험)
 │       ├── src/scene_graph/ # 물체 기억 원본: scenemap·da·ovdet·clip(물체 영상 임베딩)·runtime(sgrt)·sgview
@@ -110,7 +111,7 @@ robot-agent/
 
 ## BEHAVIOR Challenge 2026 (서브모듈)
 
-[`src/behavior-2026`](https://github.com/juyoung020/behavior-2026) 은 같은 구조(물체 기억 + LLM 계획 + π0.5)를 Stanford BEHAVIOR Challenge 2026 시뮬레이터(OmniGibson, Isaac Sim 5.1)에서 시험하는 저장소다. 물체 기억은 scenemap(2D SLAM + YOLOE 물체 지도), 행동은 π0.5 네이티브 CUDA 엔진. 실행 환경은 Ubuntu 22.04 + RTX 4090(자세히는 그 저장소의 `docs/Linux_설치.md`).
+[`src/behavior-2026`](https://github.com/juyoung020/behavior-2026) 은 같은 구조(물체 기억 + LLM 계획 + VLA)를 Stanford BEHAVIOR Challenge 2026 시뮬레이터(OmniGibson, Isaac Sim 5.1)에서 시험하는 저장소다. 물체 기억은 scenemap(2D SLAM + YOLOE 물체 지도), 행동은 π0.5 네이티브 CUDA 엔진(그 저장소 것 — 우리 VLA 는 π0.5 를 쓰지 않는다). 실행 환경은 Ubuntu 22.04 + RTX 4090(자세히는 그 저장소의 `docs/Linux_설치.md`).
 
 ```bash
 git submodule update --init src/behavior-2026   # 서브모듈 받기 (그 안의 BEHAVIOR-1K 등은 필요할 때 --recursive)

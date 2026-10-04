@@ -7,7 +7,7 @@
 - 모델 하나에 폴더 하나.
   - `embed/`: 물체 이름 붙이기·검색용 영상–글 임베딩(증류). 설계와 결과는 [embed/README.md](embed/README.md).
   - `RL/`: 시뮬에서 RL 전문가(교사) 정책 학습 — 관측·보상·신경망·설정. [RL/README.md](RL/README.md)
-  - `BC/`: 전문가 궤적 + 자연어 단계 지시로 Qwen 기반 VLA 모방학습(증류). G5: 교사 기록·BF16 BC 학습기·DAgger 를 GPU 그래프로. 영상 학생 = 학습 때 다시 렌더(팀 RenderBatch 그래프) → 얼린 SigLIP 2 패치 토큰(C++/CUDA) + 지도·글 토큰 → flow matching 청크, DAgger 8 번 0.946(교사 0.944). [BC/README.md](BC/README.md)
+  - `BC/`: 전문가 궤적 + 자연어 단계 지시로 우리 작은 VLA 모방학습(증류) — 얼린 SigLIP 2 영상 탑 + 지도·글 토큰 + flow matching 행동. 얼린 Qwen 을 쓰는 큰 VLA 는 G7(아직 안 함). G5: 교사 기록·BF16 BC 학습기·DAgger 를 GPU 그래프로. 영상 학생 = 학습 때 다시 렌더(팀 RenderBatch 그래프) → 얼린 SigLIP 2 패치 토큰(C++/CUDA) + 지도·글 토큰 → flow matching 청크, DAgger 8 번 0.946(교사 0.944). [BC/README.md](BC/README.md)
   - `model/`: 베이스 모델 가중치(저장소에 없음, 받는 방법은 [model/README.md](model/README.md)).
 - 폴더마다 `README.md` 를 둔다(한국어). 내용은 목표, 데이터와 라이선스, 실행 순서, 결과 표, 남은 일.
 
@@ -21,7 +21,8 @@
   - `uv venv -p 3.11 ~/embed_venv` → `uv pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128` → 나머지(`open_clip_torch timm transformers datasets onnx onnxruntime pycocotools nltk`).
 - **GPU 를 같이 쓴다**. 긴 작업 전에 `nvidia-smi` 를 본다. 우리 작업은 VRAM 8 GB 아래로 잡는다.
 - **결과 기록**
-  - 실행마다 `~/<모델>_work/runs/<이름>/` 에 설정(`args.json`), 로그, 평가 json 을 남긴다.
+  - 실행마다 `~/<모델>_work/runs/<이름>/` 에 설정(`args.json`), 로그, 평가 json 을 남긴다(embed).
+  - RL·BC 는 `--out` 으로 준 폴더(`~/ra_*` 아래, 예: `~/ra_bc/runs/<이름>/`)에 설정 `config.json`, 로그 `log.csv` 를 남긴다. RL 은 `events.txt`·체크포인트, BC 는 평가 `results.json` 도.
   - 모델 폴더 README 의 결과 표에는 실행 이름과 숫자를 옮겨 적는다.
   - 평가셋은 남의 것을 읽기만 한다(예: `~/clip_bench/evalset.json`).
 - 커밋은 `training/<모델>/` 경로만 지정해서 한다(`git add -A` 금지).

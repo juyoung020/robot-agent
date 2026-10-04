@@ -2,6 +2,8 @@
 
 작성 2026-10-03. **추천만 하는 문서**다. 결정은 팀이 [모델 선택](model_selection.md) 에서 한다.
 
+> **10-04 메모**: 아래 메모리·NPU·지연 예산("π0.5 와 나눔", "π0.5 가 약 6 GB", "Isaac Sim + π0.5 를 같이 띄운 상태")은 π0.5 가 돈다고 가정한 값이다. π0.5 는 버렸고(가중치도 지움), VLA 는 우리 작은 VLA(`training/BC`: 얼린 SigLIP 2 B/32 영상 탑 + 지도 토큰 + flow matching 행동)다. 그 VLA 의 리모·DX-M1·시뮬 PC 메모리는 아직 안 쟀으므로 예산은 다시 볼 것.
+
 - CLIP 류 임베딩(FastSAM-s 마스크 → 이름·임베딩, Nano 단독) 후보·측정: [CLIP 후보](clip_candidates.md) (10-03).
 - 자체 임베딩 머리(SigLIP 2 B/32 위 128-d MLP, PE-L 증류) + 한국어 질의 학생 + 라벨 표 형식: [training/embed](../training/embed/README.md) (10-03, 시범).
 - 이 문서를 쓸 때 쓰던 것(코드에는 아직 있음): `src/behavior-2026/src/scene_graph/ovdet` = **YOLOE-11 text-prompt seg**, TensorRT FP16, C API, 어휘 272개.
@@ -141,7 +143,7 @@ Orbbec DaBai RGB-D ──▶ [GPU] YOLOE-26n-seg 416 FP16 (5 Hz) ── 마스�
 | DX-M1 INT8 정확도 | Sixfab 기준 FP32 대비 약 2% 손실 [D7]. 교정 이미지에 따라 달라진다 | 작은 물체·낮은 conf 쪽이 먼저 깨진다(추정). 교정 이미지는 우리 집·실험실 프레임으로 고른다 |
 | DX-M1 속도 | RPi5 + DX-M1 YOLO26 seg: end-to-end 55 FPS(n). RPi5 는 PCIe Gen3 ×1 이 병목이라 **seg 는 large 까지 같은 FPS** 다 [D6]. m-seg 모델 처리량은 80 FPS [D6] | 크기를 키워도 거의 공짜다 → **s/m-seg 를 기본으로** |
 | DX-RT (런타임) 지원 OS | x86_64·aarch64, **Ubuntu 20.04 이상**, Debian 12/13 [D8]. Ubuntu 18.04(JetPack 4.6, 커널 4.9)는 목록에 없다 | Nano 에 직접 꽂으면 커널 드라이버 빌드부터 막힐 가능성이 크다(추정). Nano 개발 키트의 M.2 는 Key E(PCIe ×1)라 어댑터도 필요하다. **RPi5 + DX-M1 을 따로 두고 Ethernet 으로 Nano 와 잇는다** |
-| DX-M1 를 π0.5 와 나눔 | 팀 문서는 π0.5(INT8 약 3.3 GB)도 DX-M1 에 올릴 수 있다고 본다 | 인지 모델(합쳐 약 0.1–0.2 GB)은 메모리에 들어간다. 다만 **NPU 시간을 나눠 써서 π0.5 지연이 늘어난다**. π0.5 를 올리면 검출은 2–5 Hz 로 낮춘다 |
+| DX-M1 를 π0.5 와 나눔 (π0.5 가정, 위 10-04 메모) | 팀 문서는 π0.5(INT8 약 3.3 GB)도 DX-M1 에 올릴 수 있다고 본다 | 인지 모델(합쳐 약 0.1–0.2 GB)은 메모리에 들어간다. 다만 **NPU 시간을 나눠 써서 π0.5 지연이 늘어난다**. π0.5 를 올리면 검출은 2–5 Hz 로 낮춘다 |
 
 ### A.2 Nano 메모리 예산 (추정)
 
@@ -189,7 +191,7 @@ Orbbec DaBai RGB-D ──▶ [GPU] YOLOE-26n-seg 416 FP16 (5 Hz) ── 마스�
 |---|---|
 | 머리 검출 | YOLO26s/m-seg 640: NPU 처리 12–20 ms, RPi5 쪽 전후처리 포함 end-to-end 20–30 ms → 30 FPS 이상 가능. **실제로는 5–10 Hz 로 묶어** π0.5·임베딩과 NPU 를 나눈다 |
 | 임베딩 | crop 당 2–5 ms. 초당 수 개 |
-| DX-M1 메모리 | seg 20–40 MB + CLIP 영상 약 90 MB → 약 0.15 GB. π0.5 를 올려도 4 GB 안 |
+| DX-M1 메모리 | seg 20–40 MB + CLIP 영상 약 90 MB → 약 0.15 GB. π0.5 를 올려도 4 GB 안 (π0.5 가정, 위 10-04 메모) |
 | RPi5 메모리 | 디코딩·전후처리·DX-RT 0.3–0.5 GB. SmolVLM 을 쓰면 +0.3–0.8 GB |
 | Nano 추가 부담 | 검출 메시지를 받는 데 수십 MB, GPU 0 |
 | DX-M1 이 없을 때 | Nano GPU 에 YOLO26n-seg 416 FP16 → 8–10 FPS(추정), +0.4–0.6 GB. 임베딩은 빼거나, best view 때만 CPU 에서 MobileCLIP 2-S0/CLIP(장당 0.5–1 s, 추정) |
@@ -266,7 +268,7 @@ Orbbec DaBai RGB-D ──▶ [GPU] YOLOE-26n-seg 416 FP16 (5 Hz) ── 마스�
 | 필수 | **열린 어휘 또는 아주 큰 어휘** | BEHAVIOR-1K 물체 상당수가 COCO-80 밖이다(radio receiver, electric refrigerator, coffee table, pumpkin, candle, 공구, 음식). `vocab_all.txt` 에 272개 |
 | 필수 | **프레임 사이 이름 안정** | 같은 물체 판단(DA)이 "같은 이름끼리 위치 비교"다. `cup` ↔ `bowl` 로 흔들리면 노드가 둘로 갈라진다. 팀 벤치마크는 시간에 걸친 obj_id 를 채점한다 |
 | 필수 | **네이티브 실행** (TensorRT 또는 DX-COM, C/C++) | 실행 중에는 파이썬이 없다. 평가기 프로세스 안에서 C ABI 로 부른다 |
-| 필수 | **메모리·속도** | 시뮬 PC 는 16 GB 중 Isaac Sim 이 약 8 GB, π0.5 가 약 6 GB 를 쓰므로 남는 게 **약 2 GB**다. 검출은 약 6 step 마다, step 예산 40 ms 안에서 **수 ms** 여야 한다. 로봇은 SLAM(+π0.5) 옆에서 **수 Hz** |
+| 필수 | **메모리·속도** | 시뮬 PC 는 16 GB 중 Isaac Sim 이 약 8 GB, π0.5 가 약 6 GB 를 쓰므로 남는 게 **약 2 GB**다(π0.5 가정, 위 10-04 메모). 검출은 약 6 step 마다, step 예산 40 ms 안에서 **수 ms** 여야 한다. 로봇은 SLAM(+π0.5) 옆에서 **수 Hz** |
 | 필수 | **공개 저장소와 맞는 라이선스** | 제출물은 AGPL 공개로 이미 정했다(09-30). 연구 전용(비상업) 가중치는 공개 데모·논문에 걸림돌이 된다 |
 | 있으면 좋음 | crop 임베딩 | 노드의 `semantic_feature` 칸. 동의어·한국어 검색, 같은 이름 물체 여럿 구분(빨간 컵 / 파란 컵) |
 | 있으면 좋음 | 프롬프트 없이 "보이는 건 다" | 과제 밖 물체도 기억해야 "리모컨 어디 있어?" 에 답한다 |
@@ -396,7 +398,7 @@ Orbbec DaBai RGB-D ──▶ [GPU] YOLOE-26n-seg 416 FP16 (5 Hz) ── 마스�
 | 프롬프트 밖 | 가끔(예: 10 keyframe 마다) YOLOE-26 프롬프트 없음 모드로 "과제 밖 물체" 등록. 같은 엔진은 아니다 | 없음 |
 | 임베딩 | YOLOE 물체 임베딩으로 시작한다. 모자라면 best view 갱신 때 SigLIP 2 | 4090 에서 crop 을 받아 SigLIP 2 |
 | 확인 | 새 노드, 이름 흔들림, 과제 물체를 오래 못 찾음 → Qwen3.5-9B(4090). 라벨 만들기는 SAM 3 | 같음 |
-| 메모리 | 시뮬 PC 기준 약 0.4 GB (추정) — 남는 2 GB 안 | DX-M1 4 GB 중 수십 MB (π0.5 와 나눔) |
+| 메모리 | 시뮬 PC 기준 약 0.4 GB (추정) — 남는 2 GB 안 | DX-M1 4 GB 중 수십 MB (π0.5 와 나눔 — π0.5 가정, 위 10-04 메모) |
 
 ### 4.2 비교 계획 (우리 데이터)
 
@@ -406,7 +408,7 @@ Orbbec DaBai RGB-D ──▶ [GPU] YOLOE-26n-seg 416 FP16 (5 Hz) ── 마스�
 | 후보 | YOLOE-11m(기준) · YOLOE-26s · YOLOE-26m · YOLOE-26 프롬프트 없음 · YOLO26s-seg 미세조정. 확인은 위 출력에 SAM 3 · Qwen3.5-9B 를 덧붙인 것 |
 | 지표 (프레임) | 과제 물체 재현율(마스크 IoU ≥ 0.5 + 이름 맞음, BDDL 조상 synset 인정). 오검출 = 프레임당 정답과 안 겹치거나 이름이 틀린 비구조물 검출 수. 이름 정밀도. 조각남 |
 | 지표 (시간) | **이름 안정성**: 한 정답 물체에 붙은 검출 이름이 프레임 사이에 바뀌는 비율. DA 를 거친 뒤 같은 물체가 노드 둘 이상이 된 수 |
-| 지표 (비용) | ms/frame p50·p99, **Isaac Sim + π0.5 를 같이 띄운 상태**의 VRAM(nvidia-smi 최대치). Orin·DX-M1 은 같은 프레임을 오프라인으로 재생해 잰다 |
+| 지표 (비용) | ms/frame p50·p99, **Isaac Sim + π0.5 를 같이 띄운 상태**(π0.5 가정 — 지금은 우리 VLA)의 VRAM(nvidia-smi 최대치). Orin·DX-M1 은 같은 프레임을 오프라인으로 재생해 잰다 |
 | 임베딩 | 질의 100개(과제 물체 × 영어 동의어 · 한국어 이름, 예: "머그잔"→cup, "휴지통"→ashcan). top-1/top-5 로 맞는 노드를 찾는 비율. YOLOE 임베딩과 SigLIP 2 를 비교한다 |
 | 팀 벤치마크 | `refs/code/dynamic-object-mapping-benchmark` office 시퀀스(`scenarios/office_classes.json`)에 scenemap 을 돌려 `map_timeline.csv` 로 낸다. 검출기만 바꿔 obj_id 유지·위치·옮김/사라짐/생김 점수를 비교한다 → 프레임 지표가 좋아도 지도 점수가 좋은지 확인 |
 | 고르기 | 조건: 시뮬 PC p99 ≤ 8 ms, VRAM ≤ 0.5 GB. 이걸 통과한 것 중 과제 물체 재현율·이름 안정성이 가장 좋은 것을 고른다. 차이가 작으면 가벼운 것을 고른다(팀 규칙) |

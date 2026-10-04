@@ -14,9 +14,11 @@
 | `render/test_render_synth` | 판 64 × 카메라 3(720², 480², 480²) = 1152 ms → **56 판·프레임/초**. 층 1(CPU) = 층 2(CUDA) 비트 불일치 0 (판 4개 비교) |
 - 나머지 GPU 시험(`test_contact_solver_gpu`, `test_art_solver_gpu`, `test_omni_gpu`)은 입력 파일이 필요해서 돌리지 않았다.
 - 224² 해상도에서의 렌더 속도는 재지 않았다. 화소 수 비례로 약 10배 빠를 것으로 추정할 뿐이다(추정).
+  - **(10-04 잼)** G5 에서 팀 `RenderBatch` 로 A2 장면·카메라 2 대 224² 를 쟀다: 팀 기본 설정 3,000, 싼 설정 21,027 판·프레임/s(`training/BC/README.md` 렌더 절, `44b409c`).
 
 ## 3. 이 PC에 있는 것
 - 장면 에셋 `BEHAVIOR-1K/datasets` 37 GB, 시뮬레이터 env `behavior`(Isaac Sim 5.1), 데모 4.9 GB(과제 0만), π0.5 체크포인트들(`data/pi05_native` 23 GB).
+  - **(10-04 바뀜)** π0.5 체크포인트(`data/pi05_native` 23 GB)는 일부러 지웠다. π0.5 를 쓰지 않기로 해서다. 다시 받지 않는다.
 - 엔진 시험 바이너리는 `~/engine-build/tests`에 빌드되어 있다.
 
 ## 4. 이 엔진에 이미 있는 것 (문서 기준, `docs/엔진_자체구현.md`)
@@ -33,8 +35,8 @@
 | 폐루프 빈 곳 | 보조 잡기(시연 0)와 성공 판정이 native 루프에 없다. 렌더가 느리다(판 1, 원해상도 116 ms/프레임) | `docs/미해결과제.md` B19 |
 | GPU 풀이 고정비 | 커널 한 번 3.2 ms(시험)·9 ms(radio). 판 64에서 CPU보다 느림 | 미해결과제 B16 |
 | 과제 범위 | 100과제 중 지원 64, 부분 14, 막힘 22 | `docs/엔진_자체구현.md` 15.2 |
-| 학습기 | `vla/pi05_train`은 π0.5용. 우리 VLA(SigLIP2 + Qwen3.5 + 액션 헤드)용 학습기는 없다 | `src/vla/pi05_train` |
-| π0.5 학습 메모리 | LoRA도 22.5 GB 초과라 이 PC(16 GB)에서는 불가. 학습은 보류 상태 | `docs/학습환경_가속.md`, 미해결과제 A7 |
+| 학습기 | `vla/pi05_train`은 π0.5용. 우리 VLA(SigLIP2 + Qwen3.5 + 액션 헤드)용 학습기는 없다. **(10-04 바뀜)** 우리 학습기는 `training/` 에 있다: G1 환경 커널, G2 GPU 지도, G3·G4 RL 교사 PPO, G5 BC 작은 VLA(얼린 SigLIP 2 + 지도 토큰 + flow matching 행동, DAgger). 큰 VLA(얼린 Qwen)는 G7 계획 | `src/vla/pi05_train`, `training/RL`, `training/BC`, [GPU_TRAINING.md](GPU_TRAINING.md) 11절 |
+| π0.5 학습 메모리 | LoRA도 22.5 GB 초과라 이 PC(16 GB)에서는 불가. 학습은 보류 상태. **(10-04)** π0.5 는 쓰지 않기로 해서 이 행은 기록으로만 남긴다 | `docs/학습환경_가속.md`, 미해결과제 A7 |
 
 ## 6. 방향 제안 (결정은 사용자)
 1. 새 엔진을 처음부터 포팅하지 말고 **`sim/engine`을 확장**한다. 물리, 렌더, 판 묶음이 이미 검증되어 있다.

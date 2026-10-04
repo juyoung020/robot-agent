@@ -15,4 +15,4 @@
 | `runtime/` | sgrt — scenemap + 검출기 + 임베딩을 한 C ABI 로 |
 | `ovdet/`, `clip/` | 물체 검출기(YOLOE), 물체 이미지 임베딩(SigLIP 2) |
 
-빌드·시험: `cmake -S src/scene_graph/scenemap -B build/scenemap && cmake --build build/scenemap -j && (cd build/scenemap && ctest)` (9/9), 뷰어는 `cd src/scene_graph/sgview && cargo build --release`.
+빌드·시험: `cmake -S src/scene_graph/scenemap -B build/scenemap && cmake --build build/scenemap -j && (cd build/scenemap && ctest)` (12/12, 10-04 이 사본으로 빌드해 확인 — `limo_fk`·`limo_e2e` 등 추가), 뷰어는 `cd src/scene_graph/sgview && cargo build --release`.

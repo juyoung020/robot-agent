@@ -6,13 +6,13 @@
 |---|---|
 | `robot/` | 리모(AgileX LIMO) + 매니퓰레이터(ROBOTIS OMX-F) 로봇 설명: 통합 URDF·RViz(`map_vla_description`), 업스트림 패키지 받기(`fetch_upstream.sh`). [robot/README.md](robot/README.md) |
 | `scene_graph/` | 동적 scene graph: 로봇이 본 물체를 2D 지도에 등록·갱신 (로봇의 기억). [scene_graph/README.md](scene_graph/README.md) |
-| `agent/` | LLM: 사람과 대화, 물체 기억을 읽어 π0.5 에게 상황 풀어 주기, 물체를 놓치면 다시 계획 |
+| `agent/` | LLM: 사람과 대화, 물체 기억을 읽어 VLA 에게 상황 풀어 주기, 물체를 놓치면 다시 계획 |
 | `agent/skills/` | 스킬: LLM 에이전트가 한 가지 일을 끝까지 해내는 단위(시스템 프롬프트·도구·과제 문장). 지금은 `explore/` (Rust). [agent/skills/README.md](agent/skills/README.md) |
 | `agent/tools/` | LLM 에게 보이는 도구. 지금은 `move_robot/` (Rust, 닫힌 고리 실행기). [agent/tools/README.md](agent/tools/README.md) |
 | `agent/prompts/` | 스킬이 같이 쓰는 공통 프롬프트. [agent/prompts/README.md](agent/prompts/README.md) |
-| `vla/` | VLA(π0.5): 지시 + 카메라 영상 → 작은 계획·행동, 눈앞의 실패 복구 |
+| `vla/` | 우리 VLA(π0.5 아님, 10-04 버림): 지시 + 카메라 영상 + 지도 토큰 → 작은 계획·행동, 눈앞의 실패 복구. 지금은 README 만, 학습은 `training/BC` |
 | `app/` | 휴대폰 앱 (iOS·Android 네이티브). 카카오톡식 채팅으로 로봇에게 명령, 지금은 로봇1 만 |
-| `behavior-2026/` | 서브모듈 [juyoung020/behavior-2026](https://github.com/juyoung020/behavior-2026): BEHAVIOR Challenge 2026 작업(시뮬레이터 평가·π0.5 네이티브 엔진·물체 기억). 받기: `git submodule update --init src/behavior-2026` |
+| `behavior-2026/` | 서브모듈 [juyoung020/behavior-2026](https://github.com/juyoung020/behavior-2026): BEHAVIOR Challenge 2026 작업(시뮬레이터 평가·π0.5 네이티브 엔진(그 저장소 것, 우리는 안 씀)·물체 기억). 받기: `git submodule update --init src/behavior-2026` |
 
 ## 물체 기억 (`scene_graph/`)
 
