@@ -1,10 +1,17 @@
 // RecallVLA 학습 검증·측정(MAPVLA_SPEC M2·M3, GPU_TRAINING 9절).
-//   vla_verify v5 [--ki0] [--frozen-vis]  작은 구성: 손실·모든 변수 기울기를 CPU FP64 와 비교(바닥 = EMUL), FP64 참조판 대 유한 차분
+//   vla_verify v5 [--ki0] [--frozen-vis] [--seed S] [--nb N]  작은 구성: 손실·모든 변수 기울기를 CPU FP64 와 비교(바닥 = EMUL), 묶음 N 개(기본 4)
+//                                         제곱 평균 제곱근으로 모아 2 배 규칙, FP64 참조판 대 유한 차분(첫 묶음)
 //   vla_verify neg                        뒤 계산 버그 1–5 가 v5 를 실패시켜야 통과
 //   vla_verify v67 [real B L]             같은 입력 두 번 비트 동일(V7), 그래프 == 즉시(V6), 다른 난수 열쇠 → 다름
 //   vla_verify opt                        8 비트 Adam GPU == CPU 흉내(비트), 8 비트 대 FP32 상태 궤적 차이
 //   vla_verify bench B L [--no-vis] [--fp32opt]   실제 크기(Qwen3.5-0.8B + SigLIP 2 B/32): 메모리·스텝 시간·표본/s
 //   vla_verify smoke B L STEPS            실제 크기 짧은 학습(같은 배치 반복) — 손실이 내려가는지(≤ 2 분)
+//   vla_verify dnref                      DeltaNet 덩이 꼴 CPU 참조판 == 재귀 꼴(FP64), 재귀 뒤 == 유한 차분
+//   vla_verify dn                         DeltaNet 덩이 꼴 GPU 앞·뒤 대 CPU(덩이 EMUL — 같은 반올림 자리, 재귀 FP64)
+//   vla_verify dnbench B n                DeltaNet 한 층 시간(덩이 꼴 대 예전 재귀 꼴)
+//   vla_verify att                        텐서 코어 어텐션 앞·뒤 대 CPU(EMUL·FP64): 인과 GQA·전문가(구간 1 유효 길이 + 구간 2)·영상
+// 환경 변수(비교·진단): RVLA_DN_OLD=1 학습 DeltaNet 예전 재귀 꼴, RVLA_ATT_OLD=1 예전 FP32 어텐션, VREF_ATT_EXACT=1 EMUL 어텐션 반올림 흉내 끔,
+//   VREF_DN_REC=1 EMUL DeltaNet 을 재귀 꼴(반올림 흉내 없음)로, BENCH_NOFWD=1 bench 에서 앞만 재는 것 생략
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -21,6 +28,8 @@
 #include "model.h"
 #include "net.h"
 #include "optim.h"
+#include "qkern.cuh"
+#include "tkern.cuh"
 #include "vref.h"
 
 using namespace rvla;
@@ -216,16 +225,15 @@ static double rel(const vref::V& a, const vref::V& r, long long off, long long n
 }
 
 struct V5Res { int pass = 0, tot = 0; double worst_ratio = 0; };
-static V5Res run_v5(bool ki0, bool frozen, int bug, bool fd, bool verbose) {
-  VCfg c = tiny_vcfg();
-  c.ki = !ki0;
-  c.vis_train = !frozen;
-  Model m;
-  std::string err;
-  if (!m.init(c, "", "", &err)) { std::fprintf(stderr, "init %s\n", err.c_str()); std::exit(2); }
-  m.bug = bug;
+// V5: 작은 구성에서 손실·몸통 출력·변수 기울기 텐서마다 GPU 오차(대 FP64) ≤ 2 × 바닥(EMUL 대 FP64).
+// 바닥 하나는 반올림 잡음의 한 표본이라 묶음(입력)에 따라 크게 흔들린다(같은 뿌리를 가진 텐서 무리 — 지도 인코더 g.*, 영상 ln1 — 가 함께 2 배를 넘나듦).
+// 그래서 묶음 V5_NB 개(씨앗 11, 12, …)의 오차·바닥을 각각 제곱 평균 제곱근으로 모은 뒤 같은 2 배 규칙을 쓴다(검사 수는 그대로). 유한 차분은 첫 묶음에서.
+static int g_v5seed = 11, g_v5nb = 4;
+struct V5One { std::vector<std::string> nm; std::vector<double> eg, ef, ge; double fdw = 0; std::string fdn; int nfd = 0; };
+static V5One run_v5_one(Model& m, const VCfg& c, bool frozen, uint64_t seed, bool fd) {
+  V5One r;
   HB h;
-  make_batch(h, m.c, 2, 0, 11, nullptr);
+  make_batch(h, m.c, 2, 0, seed, nullptr);
   m.step_grads(h.vb, 0);
   CK(cudaDeviceSynchronize());
   const auto lossg = down(m.loss, 3);
@@ -244,48 +252,33 @@ static V5Res run_v5(bool ki0, bool frozen, int bug, bool fd, bool verbose) {
   vref::Out o64, oem;
   vref::run(vref::FP64, m, P, in, o64, true);
   vref::run(vref::EMUL, m, P, in, oem, true);
-  V5Res res;
-  auto chk = [&](const char* nm, double g, double r64, double rem) {
-    const double eg = std::fabs(g - r64) / std::max(1e-12, std::fabs(r64)), ef = std::fabs(rem - r64) / std::max(1e-12, std::fabs(r64));
-    const bool ok = eg <= std::max(2 * ef, 1e-5);
-    res.pass += ok; res.tot++;
-    res.worst_ratio = std::max(res.worst_ratio, eg / std::max(ef, 1e-12));
-    if (verbose) std::printf("  %-26s GPU %.7f  FP64 %.7f  EMUL %.7f  err %.2e floor %.2e %s\n", nm, g, r64, rem, eg, ef, ok ? "" : "FAIL");
+  auto put = [&](const std::string& nm, double eg, double ef, double ge) { r.nm.push_back(nm); r.eg.push_back(eg); r.ef.push_back(ef); r.ge.push_back(ge); };
+  auto sc = [&](const char* nm, double g, double r64, double rem) {
+    const double d = std::max(1e-12, std::fabs(r64));
+    put(nm, std::fabs(g - r64) / d, std::fabs(rem - r64) / d, std::fabs(g - rem) / d);
   };
-  chk("loss total", lossg[0], o64.loss, oem.loss);
-  chk("loss text CE", lossg[1], o64.ltxt, oem.ltxt);
-  chk("loss flow", lossg[2], o64.lfm, oem.lfm);
-  // 몸통 출력(앞): 상대 L2
+  sc("loss total", lossg[0], o64.loss, oem.loss);
+  sc("loss text CE", lossg[1], o64.ltxt, oem.ltxt);
+  sc("loss flow", lossg[2], o64.lfm, oem.lfm);
   {
     const auto hg = tod(down(m.hidden, (size_t)h.B * h.L * c.q.H));
-    double e = 0, f = 0, z = 0;
+    double e = 0, f = 0, z = 0, x = 0;
     for (int b = 0; b < h.B; ++b)
       for (int t = 0; t < h.plen[b]; ++t)
         for (int k = 0; k < c.q.H; ++k) {
           const size_t i = ((size_t)b * h.L + t) * c.q.H + k;
-          e += (hg[i] - o64.hidden[i]) * (hg[i] - o64.hidden[i]); f += (oem.hidden[i] - o64.hidden[i]) * (oem.hidden[i] - o64.hidden[i]); z += o64.hidden[i] * o64.hidden[i];
+          e += (hg[i] - o64.hidden[i]) * (hg[i] - o64.hidden[i]); f += (oem.hidden[i] - o64.hidden[i]) * (oem.hidden[i] - o64.hidden[i]);
+          x += (hg[i] - oem.hidden[i]) * (hg[i] - oem.hidden[i]); z += o64.hidden[i] * o64.hidden[i];
         }
-    const double eg = std::sqrt(e / z), ef = std::sqrt(f / z);
-    const bool ok = eg <= std::max(2 * ef, 1e-5);
-    res.pass += ok; res.tot++;
-    if (verbose) std::printf("  %-26s rel L2 err %.2e floor %.2e ratio %.2f %s\n", "fwd backbone hidden", eg, ef, eg / ef, ok ? "" : "FAIL");
+    put("fwd backbone hidden", std::sqrt(e / z), std::sqrt(f / z), std::sqrt(x / z));
   }
-  int tfail = 0;
   for (const auto& t : tensors(m)) {
-    const double eg = rel(pick(G, t), pick(o64.g, t), t.off, t.n), ef = rel(pick(oem.g, t), pick(o64.g, t), t.off, t.n);
     if (frozen && t.name.rfind("v.", 0) == 0 && t.name.rfind("v.proj", 0) != 0) continue;
-    const bool ok = eg <= std::max(2 * ef, 1e-5);
-    res.pass += ok; res.tot++;
-    res.worst_ratio = std::max(res.worst_ratio, eg / std::max(ef, 1e-12));
-    if (!ok) ++tfail;
-    if (verbose) std::printf("  grad %-21s n %7lld  err %.2e  floor %.2e  ratio %5.2f %s\n", t.name.c_str(), t.n, eg, ef, eg / std::max(ef, 1e-12), ok ? "" : "FAIL");
+    put("grad " + t.name, rel(pick(G, t), pick(o64.g, t), t.off, t.n), rel(pick(oem.g, t), pick(o64.g, t), t.off, t.n), rel(pick(G, t), pick(oem.g, t), t.off, t.n));
   }
   if (fd) {
     // FP64 참조판 대 유한 차분: 텐서마다 원소 3 개
     std::mt19937_64 g(5);
-    double worst = 0;
-    int nfd = 0;
-    std::string wn;
     for (const auto& t : tensors(m)) {
       if (frozen && t.name.rfind("v.", 0) == 0 && t.name.rfind("v.proj", 0) != 0) continue;
       for (int k = 0; k < 3; ++k) {
@@ -302,17 +295,53 @@ static V5Res run_v5(bool ki0, bool frozen, int bug, bool fd, bool verbose) {
         in.kvfix = nullptr;
         const double fdv = (a.loss - b.loss) / (2 * hh), an = pick(o64.g, t)[i];
         const double e = std::fabs(fdv - an) / std::max(1e-6, std::fabs(an) + std::fabs(fdv));
-        if (std::fabs(fdv - an) > 1e-9 && e > worst) { worst = e; wn = t.name; }
+        if (std::fabs(fdv - an) > 1e-9 && e > r.fdw) { r.fdw = e; r.fdn = t.name; }
         if (getenv("FDV") && e > 1e-4) std::printf("    fd %s[%lld]: fd %.6e analytic %.6e\n", t.name.c_str(), i - t.off, fdv, an);
-        ++nfd;
+        ++r.nfd;
       }
     }
-    const bool ok = worst < 1e-4;
-    std::printf("  FD (FP64 ref vs central differences, %d params, h = 2e-5%s): worst rel err %.2e (%s) %s\n", nfd, c.ki ? ", expert prefix K/V held fixed = stop-gradient" : ", full gradient", worst, wn.c_str(), ok ? "" : "FAIL");
+  }
+  return r;
+}
+static V5Res run_v5(bool ki0, bool frozen, int bug, bool fd, bool verbose) {
+  VCfg c = tiny_vcfg();
+  c.ki = !ki0;
+  c.vis_train = !frozen;
+  Model m;
+  std::string err;
+  if (!m.init(c, "", "", &err)) { std::fprintf(stderr, "init %s\n", err.c_str()); std::exit(2); }
+  m.bug = bug;
+  std::vector<V5One> rs;
+  for (int k = 0; k < g_v5nb; ++k) rs.push_back(run_v5_one(m, c, frozen, (uint64_t)(g_v5seed + k), fd && k == 0));
+  V5Res res;
+  int tfail = 0;
+  const size_t nc = rs[0].nm.size();
+  std::vector<double> wseed(rs.size(), 0.0);
+  for (size_t i = 0; i < nc; ++i) {
+    double e2 = 0, f2 = 0, x2 = 0;
+    for (size_t k = 0; k < rs.size(); ++k) {
+      e2 += rs[k].eg[i] * rs[k].eg[i]; f2 += rs[k].ef[i] * rs[k].ef[i]; x2 += rs[k].ge[i] * rs[k].ge[i];
+      wseed[k] = std::max(wseed[k], rs[k].eg[i] / std::max(rs[k].ef[i], 1e-12));
+    }
+    const double eg = std::sqrt(e2 / rs.size()), ef = std::sqrt(f2 / rs.size()), ge = std::sqrt(x2 / rs.size());
+    const bool ok = eg <= std::max(2 * ef, 1e-5);
+    res.pass += ok; res.tot++;
+    res.worst_ratio = std::max(res.worst_ratio, eg / std::max(ef, 1e-12));
+    if (!ok && rs[0].nm[i].rfind("grad", 0) == 0) ++tfail;
+    if (verbose) std::printf("  %-27s err %.2e  floor %.2e  ratio %5.2f  GPU-EMUL %.2e %s\n", rs[0].nm[i].c_str(), eg, ef, eg / std::max(ef, 1e-12), ge, ok ? "" : "FAIL");
+  }
+  if (fd) {
+    const bool ok = rs[0].fdw < 1e-4;
+    std::printf("  FD (FP64 ref vs central differences, batch seed %d, %d params, h = 2e-5%s): worst rel err %.2e (%s) %s\n", g_v5seed, rs[0].nfd,
+                c.ki ? ", expert prefix K/V held fixed = stop-gradient" : ", full gradient", rs[0].fdw, rs[0].fdn.c_str(), ok ? "" : "FAIL");
     res.pass += ok; res.tot++;
   }
-  if (verbose) std::printf("[v5] ki %d vis_train %d bug %d: %d / %d checks pass, %d tensor grads fail, worst err/floor ratio %.2f\n", c.ki, c.vis_train, bug, res.pass,
-                           res.tot, tfail, res.worst_ratio);
+  if (verbose) {
+    std::printf("  per-batch worst err/floor ratio (seeds %d..%d):", g_v5seed, g_v5seed + g_v5nb - 1);
+    for (double w : wseed) std::printf(" %.2f", w);
+    std::printf("\n[v5] ki %d vis_train %d bug %d, %d batches (RMS): %d / %d checks pass, %d tensor grads fail, worst err/floor ratio %.2f\n", c.ki, c.vis_train,
+                bug, g_v5nb, res.pass, res.tot, tfail, res.worst_ratio);
+  }
   return res;
 }
 
@@ -462,6 +491,281 @@ static int run_opt() {
   return (bad == 0 && caught) ? 0 : 1;
 }
 
+
+// ---- DeltaNet 덩이 꼴: CPU 참조판끼리(덩이 FP64 == 재귀 FP64) + GPU 대 참조 ----
+static double relv(const vref::V& a, const vref::V& r) {
+  double e = 0, z = 0;
+  for (size_t i = 0; i < a.size(); ++i) { e += (a[i] - r[i]) * (a[i] - r[i]); z += r[i] * r[i]; }
+  return std::sqrt(e / std::max(z, 1e-300));
+}
+struct DnIn { int n, dk, dv; vref::V q, k, v, g, be, S0, dO, dS1; };
+static DnIn dn_rand(int n, int dk, int dv, uint64_t seed, bool s0) {
+  DnIn d{n, dk, dv};
+  std::mt19937_64 rg(seed);
+  std::normal_distribution<double> N(0, 1);
+  std::uniform_real_distribution<double> U(0, 1);
+  d.q.resize((size_t)n * dk); d.k.resize((size_t)n * dk); d.v.resize((size_t)n * dv); d.g.resize(n); d.be.resize(n);
+  for (int t = 0; t < n; ++t) {
+    double sq = 0, sk = 0;
+    std::vector<double> a(dk), b(dk);
+    for (int i = 0; i < dk; ++i) { a[i] = N(rg); b[i] = N(rg); sq += a[i] * a[i]; sk += b[i] * b[i]; }
+    for (int i = 0; i < dk; ++i) { d.q[(size_t)t * dk + i] = a[i] / std::sqrt(sq) / std::sqrt((double)dk); d.k[(size_t)t * dk + i] = b[i] / std::sqrt(sk); }
+    for (int j = 0; j < dv; ++j) d.v[(size_t)t * dv + j] = N(rg);
+    d.g[t] = -std::exp(-1.5 + 1.5 * N(rg)) * 0.5;
+    d.be[t] = 1.0 / (1.0 + std::exp(-1.5 * N(rg)));
+  }
+  d.dO.resize((size_t)n * dv);
+  for (auto& x : d.dO) x = N(rg);
+  if (s0) {
+    d.S0.resize((size_t)dk * dv); d.dS1.resize((size_t)dk * dv);
+    for (auto& x : d.S0) x = 0.3 * N(rg);
+    for (auto& x : d.dS1) x = 0.3 * N(rg);
+  }
+  return d;
+}
+static int run_dnref() {
+  int bad = 0;
+  for (int cfg = 0; cfg < 4; ++cfg) {
+    const int dk = cfg < 2 ? 16 : 128, C = cfg < 2 ? 16 : 64, n = cfg < 2 ? 45 : 150;
+    const bool s0 = cfg % 2 == 1;
+    DnIn d = dn_rand(n, dk, dk, 100 + cfg, s0);
+    const double* S0 = s0 ? d.S0.data() : nullptr;
+    const double* dS1 = s0 ? d.dS1.data() : nullptr;
+    vref::V o1((size_t)n * dk), o2((size_t)n * dk), S1a((size_t)dk * dk), S1b((size_t)dk * dk);
+    vref::dn_rec_fwd(n, dk, dk, d.q.data(), d.k.data(), d.v.data(), d.g.data(), d.be.data(), S0, o1.data(), S1a.data());
+    vref::dn_chk_fwd(n, dk, dk, C, false, d.q.data(), d.k.data(), d.v.data(), d.g.data(), d.be.data(), S0, o2.data(), S1b.data());
+    vref::V g1[6], g2[6];
+    const size_t sz[6] = {(size_t)n * dk, (size_t)n * dk, (size_t)n * dk, (size_t)n, (size_t)n, (size_t)dk * dk};
+    for (int i = 0; i < 6; ++i) { g1[i].assign(sz[i], 0); g2[i].assign(sz[i], 0); }
+    vref::dn_rec_bwd(n, dk, dk, d.q.data(), d.k.data(), d.v.data(), d.g.data(), d.be.data(), S0, d.dO.data(), dS1, g1[0].data(), g1[1].data(), g1[2].data(),
+                     g1[3].data(), g1[4].data(), g1[5].data());
+    vref::dn_chk_bwd(n, dk, dk, C, false, d.q.data(), d.k.data(), d.v.data(), d.g.data(), d.be.data(), S0, d.dO.data(), dS1, g2[0].data(), g2[1].data(),
+                     g2[2].data(), g2[3].data(), g2[4].data(), g2[5].data());
+    const char* nm[6] = {"dq", "dk", "dv", "dg", "dbeta", "dS0"};
+    double w = std::max(relv(o2, o1), relv(S1b, S1a));
+    std::printf("[dnref] dk %d C %d n %d S0 %d: o %.2e S1 %.2e", dk, C, n, (int)s0, relv(o2, o1), relv(S1b, S1a));
+    for (int i = 0; i < 6; ++i) { const double e = relv(g2[i], g1[i]); w = std::max(w, e); std::printf(" %s %.2e", nm[i], e); }
+    // 재귀 뒤 대 유한 차분(손실 = Σ dO·o + Σ dS1·S1)
+    auto loss = [&](const DnIn& x) {
+      vref::V o((size_t)n * dk), S1((size_t)dk * dk);
+      vref::dn_rec_fwd(n, dk, dk, x.q.data(), x.k.data(), x.v.data(), x.g.data(), x.be.data(), s0 ? x.S0.data() : nullptr, o.data(), S1.data());
+      double L = 0;
+      for (size_t i = 0; i < o.size(); ++i) L += o[i] * d.dO[i];
+      if (s0) for (size_t i = 0; i < S1.size(); ++i) L += S1[i] * d.dS1[i];
+      return L;
+    };
+    double wf = 0;
+    std::mt19937_64 rg(7);
+    for (int which = 0; which < 5; ++which)
+      for (int rep = 0; rep < 4; ++rep) {
+        DnIn a = d, b = d;
+        vref::V* pa[5] = {&a.q, &a.k, &a.v, &a.g, &a.be};
+        vref::V* pb[5] = {&b.q, &b.k, &b.v, &b.g, &b.be};
+        const size_t i = rg() % pa[which]->size();
+        const double h = 1e-6;
+        (*pa[which])[i] += h; (*pb[which])[i] -= h;
+        const double fd = (loss(a) - loss(b)) / (2 * h), an = g1[which][i];
+        wf = std::max(wf, std::fabs(fd - an) / std::max(1e-6, std::fabs(fd) + std::fabs(an)));
+      }
+    std::printf(" | rec vs FD %.1e\n", wf);
+    if (w > 1e-9 || wf > 1e-5) ++bad;
+  }
+  std::printf("[dnref] %s\n", bad ? "FAIL" : "PASS (chunked FP64 == recurrent FP64, recurrent bwd == FD)");
+  return bad ? 1 : 0;
+}
+
+// GPU 덩이 꼴 대 CPU(덩이 EMUL = 같은 반올림 자리, 재귀 FP64 = 정답). 비율 = GPU 대 FP64 오차 / EMUL 대 FP64 오차
+static int run_dngpu(bool verbose) {
+  int bad = 0;
+  for (int cfg = 0; cfg < 2; ++cfg) {
+    const int dk = cfg == 0 ? 16 : 128, dv = dk, lh = cfg == 0 ? 3 : 2, B = 2, n = cfg == 0 ? 45 : 150, C = tk::dn_chunk(dk), R = B * n;
+    std::vector<DnIn> ins;
+    for (int b = 0; b < B; ++b) for (int h = 0; h < lh; ++h) ins.push_back(dn_rand(n, dk, dv, 1000 + cfg * 10 + b * lh + h, false));
+    std::vector<float> q((size_t)R * lh * dk), k(q.size()), v((size_t)R * lh * dv), g((size_t)R * lh), be(g.size()), dO(v.size());
+    for (int b = 0; b < B; ++b) for (int h = 0; h < lh; ++h) {
+      const DnIn& d = ins[b * lh + h];
+      for (int t = 0; t < n; ++t) {
+        const size_t r = (size_t)b * n + t;
+        for (int i = 0; i < dk; ++i) { q[(r * lh + h) * dk + i] = (float)d.q[(size_t)t * dk + i]; k[(r * lh + h) * dk + i] = (float)d.k[(size_t)t * dk + i]; }
+        for (int j = 0; j < dv; ++j) { v[(r * lh + h) * dv + j] = (float)d.v[(size_t)t * dv + j]; dO[(r * lh + h) * dv + j] = (float)d.dO[(size_t)t * dv + j]; }
+        g[r * lh + h] = (float)d.g[t]; be[r * lh + h] = (float)d.be[t];
+      }
+    }
+    // 참조판은 GPU 가 받은 FP32 값 그대로
+    for (int b = 0; b < B; ++b) for (int h = 0; h < lh; ++h) {
+      DnIn& d = ins[b * lh + h];
+      for (int t = 0; t < n; ++t) {
+        const size_t r = (size_t)b * n + t;
+        for (int i = 0; i < dk; ++i) { d.q[(size_t)t * dk + i] = q[(r * lh + h) * dk + i]; d.k[(size_t)t * dk + i] = k[(r * lh + h) * dk + i]; }
+        for (int j = 0; j < dv; ++j) { d.v[(size_t)t * dv + j] = v[(r * lh + h) * dv + j]; d.dO[(size_t)t * dv + j] = dO[(r * lh + h) * dv + j]; }
+        d.g[t] = g[r * lh + h]; d.be[t] = be[r * lh + h];
+      }
+    }
+    auto upf = [](const std::vector<float>& x) { float* p; CK(cudaMalloc(&p, x.size() * 4 + 64)); CK(cudaMemcpy(p, x.data(), x.size() * 4, cudaMemcpyHostToDevice)); return p; };
+    float *dq = upf(q), *dkk = upf(k), *dvv = upf(v), *dg = upf(g), *db = upf(be), *ddo = upf(dO);
+    float *O, *gq, *gk, *gv, *gg, *gb, *ws;
+    CK(cudaMalloc(&O, v.size() * 4)); CK(cudaMalloc(&gq, q.size() * 4)); CK(cudaMalloc(&gk, q.size() * 4)); CK(cudaMalloc(&gv, v.size() * 4));
+    CK(cudaMalloc(&gg, g.size() * 4)); CK(cudaMalloc(&gb, g.size() * 4));
+    CK(cudaMalloc(&ws, tk::dnc_ws_floats(B, n, lh, dk, dv) * 4));
+    tk::dnc_fwd(dq, dkk, dvv, lh * dv, dg, db, B, n, lh, dk, dv, nullptr, nullptr, false, O, ws, true, 0);
+    tk::dnc_bwd(dvv, lh * dv, ddo, B, n, lh, dk, dv, false, ws, gq, gk, gv, lh * dv, gg, gb, 0, 0);
+    CK(cudaDeviceSynchronize());
+    auto dl = [](const float* p, size_t nn) { std::vector<float> x(nn); CK(cudaMemcpy(x.data(), p, nn * 4, cudaMemcpyDeviceToHost)); return x; };
+    std::vector<float> hO = dl(O, v.size()), hq = dl(gq, q.size()), hk = dl(gk, q.size()), hv = dl(gv, v.size()), hg = dl(gg, g.size()), hb = dl(gb, g.size());
+    // 모아서 비교(텐서 하나 = 모든 판·머리)
+    const char* nm[6] = {"o", "dq", "dk", "dv", "dg", "dbeta"};
+    vref::V G6[6], E6[6], F6[6];
+    for (int b = 0; b < B; ++b) for (int h = 0; h < lh; ++h) {
+      const DnIn& d = ins[b * lh + h];
+      vref::V oe((size_t)n * dv), of((size_t)n * dv), x[3][5];
+      for (int m = 0; m < 3; ++m) { x[m][0].assign((size_t)n * dk, 0); x[m][1].assign((size_t)n * dk, 0); x[m][2].assign((size_t)n * dv, 0); x[m][3].assign(n, 0); x[m][4].assign(n, 0); }
+      vref::dn_chk_fwd(n, dk, dv, C, true, d.q.data(), d.k.data(), d.v.data(), d.g.data(), d.be.data(), nullptr, oe.data(), nullptr);
+      vref::dn_rec_fwd(n, dk, dv, d.q.data(), d.k.data(), d.v.data(), d.g.data(), d.be.data(), nullptr, of.data(), nullptr);
+      vref::dn_chk_bwd(n, dk, dv, C, true, d.q.data(), d.k.data(), d.v.data(), d.g.data(), d.be.data(), nullptr, d.dO.data(), nullptr, x[0][0].data(), x[0][1].data(),
+                       x[0][2].data(), x[0][3].data(), x[0][4].data(), nullptr);
+      vref::dn_rec_bwd(n, dk, dv, d.q.data(), d.k.data(), d.v.data(), d.g.data(), d.be.data(), nullptr, d.dO.data(), nullptr, x[1][0].data(), x[1][1].data(),
+                       x[1][2].data(), x[1][3].data(), x[1][4].data(), nullptr);
+      for (int t = 0; t < n; ++t) {
+        const size_t r = (size_t)b * n + t;
+        for (int j = 0; j < dv; ++j) { G6[0].push_back(hO[(r * lh + h) * dv + j]); E6[0].push_back(oe[(size_t)t * dv + j]); F6[0].push_back(of[(size_t)t * dv + j]); }
+        for (int i = 0; i < dk; ++i) {
+          G6[1].push_back(hq[(r * lh + h) * dk + i]); E6[1].push_back(x[0][0][(size_t)t * dk + i]); F6[1].push_back(x[1][0][(size_t)t * dk + i]);
+          G6[2].push_back(hk[(r * lh + h) * dk + i]); E6[2].push_back(x[0][1][(size_t)t * dk + i]); F6[2].push_back(x[1][1][(size_t)t * dk + i]);
+        }
+        for (int j = 0; j < dv; ++j) { G6[3].push_back(hv[(r * lh + h) * dv + j]); E6[3].push_back(x[0][2][(size_t)t * dv + j]); F6[3].push_back(x[1][2][(size_t)t * dv + j]); }
+        G6[4].push_back(hg[r * lh + h]); E6[4].push_back(x[0][3][t]); F6[4].push_back(x[1][3][t]);
+        G6[5].push_back(hb[r * lh + h]); E6[5].push_back(x[0][4][t]); F6[5].push_back(x[1][4][t]);
+      }
+    }
+    std::printf("[dn] dk %d C %d B %d lh %d n %d:", dk, C, B, lh, n);
+    for (int i = 0; i < 6; ++i) {
+      const double ge = relv(G6[i], E6[i]), gf = relv(G6[i], F6[i]), ef = relv(E6[i], F6[i]);
+      const bool ok = ge < 2e-3 && gf <= std::max(2 * ef, 1e-5);
+      bad += !ok;
+      std::printf(" %s GPU-EMUL %.1e GPU-FP64 %.1e EMUL-FP64 %.1e%s;", nm[i], ge, gf, ef, ok ? "" : " FAIL");
+    }
+    std::printf("\n");
+    (void)verbose;
+    cudaFree(dq); cudaFree(dkk); cudaFree(dvv); cudaFree(dg); cudaFree(db); cudaFree(ddo); cudaFree(O); cudaFree(gq); cudaFree(gk); cudaFree(gv); cudaFree(gg); cudaFree(gb); cudaFree(ws);
+  }
+  std::printf("[dn] %s\n", bad ? "FAIL" : "PASS");
+  return bad ? 1 : 0;
+}
+
+// DeltaNet 한 층 시간(실제 모양: lh 16, dk = dv = 128): 덩이 꼴 앞·뒤 대 예전 재귀 꼴
+static int run_dnbench(int B, int n) {
+  const int lh = 16, dk = 128, dv = 128, R = B * n;
+  std::mt19937_64 rg(3);
+  std::normal_distribution<float> N(0.f, 1.f);
+  std::vector<float> q((size_t)R * lh * dk), v((size_t)R * lh * dv), g((size_t)R * lh), be(g.size());
+  for (auto& x : q) x = N(rg) * 0.0884f;
+  for (auto& x : v) x = N(rg);
+  for (size_t i = 0; i < g.size(); ++i) { g[i] = -0.1f * std::fabs(N(rg)); be[i] = 0.5f; }
+  auto upf = [](const std::vector<float>& x) { float* p; CK(cudaMalloc(&p, x.size() * 4 + 64)); CK(cudaMemcpy(p, x.data(), x.size() * 4, cudaMemcpyHostToDevice)); return p; };
+  float *dq = upf(q), *dk2 = upf(q), *dv2 = upf(v), *dg = upf(g), *db = upf(be), *ddo = upf(v);
+  float *O, *gq, *gk, *gv, *gg, *gb, *ws, *ws0;
+  CK(cudaMalloc(&O, v.size() * 4)); CK(cudaMalloc(&gq, q.size() * 4)); CK(cudaMalloc(&gk, q.size() * 4)); CK(cudaMalloc(&gv, v.size() * 4));
+  CK(cudaMalloc(&gg, g.size() * 4)); CK(cudaMalloc(&gb, g.size() * 4));
+  CK(cudaMalloc(&ws, tk::dnc_ws_floats(B, n, lh, dk, dv) * 4));
+  CK(cudaMalloc(&ws0, tk::dn_ws_floats(B, n, lh, dk, dv) * 4));
+  cudaEvent_t e[5];
+  for (auto& x : e) cudaEventCreate(&x);
+  float t[4] = {0, 0, 0, 0};
+  const int reps = 5;
+  for (int r = 0; r <= reps; ++r) {
+    cudaEventRecord(e[0]);
+    tk::dnc_fwd(dq, dk2, dv2, lh * dv, dg, db, B, n, lh, dk, dv, nullptr, nullptr, false, O, ws, true, 0);
+    cudaEventRecord(e[1]);
+    tk::dnc_bwd(dv2, lh * dv, ddo, B, n, lh, dk, dv, false, ws, gq, gk, gv, lh * dv, gg, gb, 0, 0);
+    cudaEventRecord(e[2]);
+    qk::deltanet(dq, dk2, dv2, lh * dv, dg, db, B, n, lh, dk, dv, nullptr, nullptr, false, O, 0, ws0);
+    cudaEventRecord(e[3]);
+    tk::deltanet_bwd(dq, dk2, dv2, lh * dv, dg, db, ddo, B, n, lh, dk, dv, false, true, ws0, gq, gk, gv, lh * dv, gg, gb, 0, 0);
+    cudaEventRecord(e[4]);
+    CK(cudaEventSynchronize(e[4]));
+    if (r == 0) continue;
+    for (int k = 0; k < 4; ++k) { float ms; cudaEventElapsedTime(&ms, e[k], e[k + 1]); t[k] += ms / reps; }
+  }
+  std::printf("[dnbench] B %d n %d lh %d: chunked fwd %.3f ms bwd %.3f ms | recurrent fwd(+ck) %.3f ms bwd %.3f ms\n", B, n, lh, t[0], t[1], t[2], t[3]);
+  return 0;
+}
+
+// 텐서 코어 어텐션 대 CPU(EMUL = 같은 반올림 자리, FP64): 인과(GQA) / 구간 1 유효 길이 + 구간 2(전문가) / 양방향(영상)
+static int run_attgpu() {
+  int bad = 0;
+  struct Cs { const char* nm; int hd, nq, nkv, n, L1, n2, causal, ki; };
+  const Cs cs[] = {{"causal hd32", 32, 2, 1, 40, 40, 0, 1, 0}, {"causal hd256 GQA", 256, 8, 2, 100, 100, 0, 1, 0}, {"expert hd32", 32, 2, 1, 4, 40, 4, 0, 0},
+                   {"expert hd256", 256, 8, 2, 16, 120, 16, 0, 0}, {"vision hd64", 64, 12, 12, 64, 64, 0, 0, 0}, {"vision hd32", 32, 2, 2, 4, 4, 0, 0, 0}};
+  for (const Cs& c : cs) {
+    const int B = 2;
+    std::mt19937_64 rg(77);
+    std::normal_distribution<double> N(0, 1);
+    const int qw = c.nq * c.hd, kw = c.nkv * c.hd;
+    std::vector<float> q((size_t)B * c.n * qw), k1((size_t)B * c.L1 * kw), v1(k1.size()), k2((size_t)B * c.n2 * kw + 4), v2(k2.size()), dO(q.size());
+    for (auto& x : q) x = (float)N(rg);
+    for (auto& x : k1) x = (float)N(rg);
+    for (auto& x : v1) x = (float)N(rg);
+    for (auto& x : k2) x = (float)N(rg);
+    for (auto& x : v2) x = (float)N(rg);
+    for (auto& x : dO) x = (float)N(rg);
+    std::vector<int> len = {c.L1 - 7, c.L1};
+    if (c.causal || c.n2 == 0) len = {c.L1, c.L1};
+    auto upf = [](const std::vector<float>& x) { float* p; CK(cudaMalloc(&p, x.size() * 4 + 64)); CK(cudaMemcpy(p, x.data(), x.size() * 4, cudaMemcpyHostToDevice)); return p; };
+    float *dq = upf(q), *dk1 = upf(k1), *dv1 = upf(v1), *dk2 = upf(k2), *dv2 = upf(v2), *ddo = upf(dO);
+    int* dlen;
+    CK(cudaMalloc(&dlen, 8)); CK(cudaMemcpy(dlen, len.data(), 8, cudaMemcpyHostToDevice));
+    std::vector<float> z(q.size(), 0.f), zk1(k1.size(), 0.f), zk2(k2.size(), 0.f);
+    float *O = upf(z), *gq = upf(z), *gk1 = upf(zk1), *gv1 = upf(zk1), *gk2 = upf(zk2), *gv2 = upf(zk2), *lse = upf(z), *Dd = upf(z);
+    tk::AttP a;
+    a.Q = dq; a.ldq = qw; a.K1 = dk1; a.V1 = dv1; a.ldk1 = kw; a.L1 = c.L1; a.n1c = c.L1; a.len1 = c.n2 ? dlen : nullptr;
+    if (c.n2) { a.K2 = dk2; a.V2 = dv2; a.ldk2 = kw; a.n2 = c.n2; }
+    a.causal = c.causal; a.B = B; a.n = c.n; a.nq = c.nq; a.nkv = c.nkv; a.hd = c.hd; a.scale = 1.f / std::sqrt((float)c.hd); a.O = O; a.ldo = qw; a.lse = lse;
+    a.dO = ddo; a.lddo = qw; a.Dd = Dd; a.dQ = gq; a.lddq = qw; a.dK1 = gk1; a.dV1 = gv1;
+    if (c.n2) { a.dK2 = gk2; a.dV2 = gv2; }
+    tk::att_fwd(a, 0);
+    tk::att_bwd(a, 0);
+    CK(cudaDeviceSynchronize());
+    auto dl = [](const float* p, size_t nn) { std::vector<float> x(nn); CK(cudaMemcpy(x.data(), p, nn * 4, cudaMemcpyDeviceToHost)); return x; };
+    std::vector<float> hO = dl(O, q.size()), hq = dl(gq, q.size()), hk1 = dl(gk1, k1.size()), hv1 = dl(gv1, k1.size()), hk2 = dl(gk2, k2.size()), hv2 = dl(gv2, k2.size());
+    vref::V G[4], E[4], F[4];
+    for (int b = 0; b < B; ++b) {
+      const int nk = c.L1 + c.n2, pl = len[b], L1 = c.L1;
+      vref::V Q((size_t)c.n * qw), K((size_t)nk * kw), Vv((size_t)nk * kw), D((size_t)c.n * qw);
+      for (size_t i = 0; i < Q.size(); ++i) { Q[i] = q[(size_t)b * c.n * qw + i]; D[i] = dO[(size_t)b * c.n * qw + i]; }
+      for (int j = 0; j < nk; ++j)
+        for (int e = 0; e < kw; ++e) {
+          K[(size_t)j * kw + e] = j < L1 ? k1[((size_t)b * L1 + j) * kw + e] : k2[((size_t)b * c.n2 + j - L1) * kw + e];
+          Vv[(size_t)j * kw + e] = j < L1 ? v1[((size_t)b * L1 + j) * kw + e] : v2[((size_t)b * c.n2 + j - L1) * kw + e];
+        }
+      const bool causal = c.causal;
+      auto ok = [=](int t, int j) { return j < L1 ? (j < pl && (!causal || j <= t)) : true; };
+      for (int m = 0; m < 2; ++m) {
+        vref::V o((size_t)c.n * qw), gq2((size_t)c.n * qw, 0), gk((size_t)nk * kw, 0), gv((size_t)nk * kw, 0);
+        vref::att_ref(m == 0, c.n, nk, c.nq, c.nkv, c.hd, ok, Q.data(), K.data(), Vv.data(), D.data(), o.data(), gq2.data(), gk.data(), gv.data());
+        vref::V* T = m == 0 ? E : F;
+        T[0].insert(T[0].end(), o.begin(), o.end()); T[1].insert(T[1].end(), gq2.begin(), gq2.end());
+        T[2].insert(T[2].end(), gk.begin(), gk.end()); T[3].insert(T[3].end(), gv.begin(), gv.end());
+      }
+      for (size_t i = 0; i < Q.size(); ++i) { G[0].push_back(hO[(size_t)b * c.n * qw + i]); G[1].push_back(hq[(size_t)b * c.n * qw + i]); }
+      for (int j = 0; j < nk; ++j)
+        for (int e = 0; e < kw; ++e) {
+          G[2].push_back(j < L1 ? hk1[((size_t)b * L1 + j) * kw + e] : hk2[((size_t)b * c.n2 + j - L1) * kw + e]);
+          G[3].push_back(j < L1 ? hv1[((size_t)b * L1 + j) * kw + e] : hv2[((size_t)b * c.n2 + j - L1) * kw + e]);
+        }
+    }
+    const char* nm[4] = {"O", "dQ", "dK", "dV"};
+    std::printf("[att] %-18s", c.nm);
+    for (int i = 0; i < 4; ++i) {
+      const double ge = relv(G[i], E[i]), gf = relv(G[i], F[i]), ef = relv(E[i], F[i]);
+      const bool okk = ge < 1e-4 && gf <= std::max(2 * ef, 1e-5);
+      bad += !okk;
+      std::printf(" %s G-E %.1e G-F %.1e E-F %.1e%s;", nm[i], ge, gf, ef, okk ? "" : " FAIL");
+    }
+    std::printf("\n");
+  }
+  std::printf("[att] %s\n", bad ? "FAIL" : "PASS");
+  return bad ? 1 : 0;
+}
 // ---- 측정 ----
 static size_t used_bytes() { size_t f, t; cudaMemGetInfo(&f, &t); return t - f; }
 static int run_bench(int B, int Lmin, bool novis, bool fp32opt, int steps, bool smoke) {
@@ -497,7 +801,7 @@ static int run_bench(int B, int Lmin, bool novis, bool fp32opt, int steps, bool 
   auto t0 = std::chrono::steady_clock::now();
   for (int s = 0; s < steps; ++s) {
     h.set_iter(100 + s);
-    if (!smoke && s >= 1) { cudaEventRecord(e0, st); m.forward_loss(h.vb, st); cudaEventRecord(e1, st); CK(cudaEventSynchronize(e1)); float a; cudaEventElapsedTime(&a, e0, e1); tf += a; }
+    if (!smoke && s >= 1 && !getenv("BENCH_NOFWD")) { cudaEventRecord(e0, st); m.forward_loss(h.vb, st); cudaEventRecord(e1, st); CK(cudaEventSynchronize(e1)); float a; cudaEventElapsedTime(&a, e0, e1); tf += a; }
     cudaEventRecord(e0, st);
     m.step_grads(h.vb, st);
     cudaEventRecord(e1, st);
@@ -529,6 +833,10 @@ int main(int argc, char** argv) {
   if (argc < 2) { std::fprintf(stderr, "usage: vla_verify v5|neg|v67|opt|bench|smoke ...\n"); return 2; }
   const std::string cmd = argv[1];
   auto has = [&](const char* f) { for (int i = 2; i < argc; ++i) if (std::string(argv[i]) == f) return true; return false; };
+  for (int i = 2; i + 1 < argc; ++i) {
+    if (std::string(argv[i]) == "--seed") g_v5seed = std::atoi(argv[i + 1]);
+    if (std::string(argv[i]) == "--nb") g_v5nb = std::atoi(argv[i + 1]);
+  }
   if (cmd == "v5") {
     V5Res r = run_v5(has("--ki0"), has("--frozen-vis"), 0, true, true);
     return r.pass == r.tot ? 0 : 1;
@@ -552,6 +860,10 @@ int main(int argc, char** argv) {
     return run_v67(real, B, L);
   }
   if (cmd == "opt") return run_opt();
+  if (cmd == "dnref") return run_dnref();
+  if (cmd == "att") return run_attgpu();
+  if (cmd == "dn") return run_dngpu(true);
+  if (cmd == "dnbench") return run_dnbench(std::atoi(argv[2]), std::atoi(argv[3]));
   if (cmd == "bench") return run_bench(std::atoi(argv[2]), std::atoi(argv[3]), has("--no-vis"), has("--fp32opt"), 4, false);
   if (cmd == "smoke") return run_bench(std::atoi(argv[2]), std::atoi(argv[3]), has("--no-vis"), false, std::atoi(argv[4]), true);
   return 2;

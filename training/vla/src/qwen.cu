@@ -11,6 +11,7 @@
 #include "qwen.h"
 #include "qkern.cuh"
 #include "st.h"
+#include "tkern.cuh"
 
 namespace rvla {
 
@@ -116,7 +117,9 @@ void Qwen::alloc_work(int rmax) {
   Bb = alloc<float>(R * std::max<long long>((long long)c.nq * c.hd, (long long)c.lh * c.dv));   // 어텐션·재귀 출력
   lse = alloc<float>(R * c.nq);
   A = alloc<uint16_t>(R * ak);
+  A2 = alloc<uint16_t>(R * ak);
   rs = alloc<float>(R);
+  dnws = alloc<float>(tk::dnc_ws_floats(1, 3 * rmax, c.lh, c.dk, c.dv));   // B·⌈n/C⌉ ≤ 3R/C (n ≥ 32)
 }
 
 bool Qwen::load(const std::string& dir, int rmax, std::string* err) {
@@ -252,8 +255,14 @@ void Qwen::forward(const int* ids, const float* emb, int B, int n, int pos0, QCa
       if (cache) { Kc = cache->K[i]; Vc = cache->V[i]; Lc = cache->Lmax; }
       else { Kc = T1; Vc = T1 + (size_t)R * kvw; Lc = n; }
       const float theta = bug == 1 ? 1e4f : bug == 5 ? c.theta * 10.f : c.theta;
-      qk::full_prep(T0, L.wqkv.N, R, B, n, pos0, c.nq, c.nkv, c.hd, c.rot, theta, c.eps, Pv + L.qn, Pv + L.kn, bug == 4, Qb, Kc, Vc, Lc, st);
-      qk::attn(Qb, Kc, Vc, B, n, pos0, Lc, c.nq, c.nkv, c.hd, Bb, lse, st);
+      qk::full_prep(T0, L.wqkv.N, R, B, n, pos0, c.nq, c.nkv, c.hd, c.rot, theta, c.eps, Pv + L.qn, Pv + L.kn, bug == 4, Qb, Kc, Vc, Lc, st, nullptr,
+                    cache ? dpos : nullptr);
+      if (qk_taps && !cache) {
+        const size_t qw = (size_t)c.nq * c.hd, per = (size_t)R * (qw + kvw);
+        QCK(cudaMemcpyAsync(qk_taps + fi * per, Qb, sizeof(float) * R * qw, cudaMemcpyDeviceToDevice, st));
+        QCK(cudaMemcpyAsync(qk_taps + fi * per + R * qw, Kc, sizeof(float) * R * kvw, cudaMemcpyDeviceToDevice, st));
+      }
+      qk::attn(Qb, Kc, Vc, B, n, pos0, Lc, c.nq, c.nkv, c.hd, Bb, lse, st, cache ? dpos : nullptr);
       qk::gate(Bb, T0, L.wqkv.N, R, c.nq, c.hd, A, st);
       qk::gemm_f32(A, c.nq * c.hd, R, Wb, L.wo, X, c.H, true, st);
       ++fi;
@@ -264,21 +273,30 @@ void Qwen::forward(const int* ids, const float* emb, int B, int n, int pos0, QCa
       int ld = c.lin_all(), Ls = n;
       float* S = nullptr;
       if (cache) {
-        qk::hist_put(T0, c.lin_all(), B, n, pos0, li, cache->hist[i], cache->Lmax, st);
+        qk::hist_put(T0, c.lin_all(), B, n, pos0, li, cache->hist[i], cache->Lmax, st, dpos);
         src = cache->hist[i]; ld = li; Ls = cache->Lmax; S = cache->S[i];
       }
-      qk::conv_silu(src, ld, Ls, B, n, pos0, li, c.conv, Pv + L.convw, T1, st);
+      qk::conv_silu(src, ld, Ls, B, n, pos0, li, c.conv, Pv + L.convw, T1, st, cache ? dpos : nullptr);
       float* Qn = Qb;
       float* Kn = Qb + (size_t)R * c.lh * c.dk;
       qk::lin_prep(T1, li, T0, c.lin_all(), li + c.lh * c.dv, R, c.lh, c.dk, Pv + L.alog, Pv + L.dtb, bug == 4, Qn, Kn, Gb, Gb + (size_t)R * c.lh, st);
-      qk::deltanet(Qn, Kn, T1 + 2 * c.lh * c.dk, li, Gb, Gb + (size_t)R * c.lh, B, n, c.lh, c.dk, c.dv, (cache && pos0 > 0) ? S : nullptr, S, bug == 3, Bb, st);
+      if (n >= 32 && !dn_rec)
+        tk::dnc_fwd(Qn, Kn, T1 + 2 * c.lh * c.dk, li, Gb, Gb + (size_t)R * c.lh, B, n, c.lh, c.dk, c.dv, (cache && pos0 > 0) ? S : nullptr, S, bug == 3, Bb, dnws,
+                    false, st);
+      else
+        qk::deltanet(Qn, Kn, T1 + 2 * c.lh * c.dk, li, Gb, Gb + (size_t)R * c.lh, B, n, c.lh, c.dk, c.dv, (cache && pos0 > 0) ? S : nullptr, S, bug == 3, Bb, st);
       qk::gnorm(Bb, T0 + li, c.lin_all(), R, c.lh, c.dv, Pv + L.gnw, c.eps, A, st);
       qk::gemm_f32(A, c.lh * c.dv, R, Wb, L.wout, X, c.H, true, st);
     }
     qk::rmsnorm(X, R, c.H, Pv + L.ln2, bug != 2, c.eps, A, nullptr, rs, st);
-    qk::gemm_f32(A, c.H, R, Wb, L.wgu, T0, 2 * c.I, false, st);
-    qk::swiglu(T0, R, c.I, A, st);
-    qk::gemm_f32(A, c.I, R, Wb, L.wdn, X, c.H, true, st);
+    if (R <= 8) {   // 디코딩: gate·up GEMV 에 SwiGLU 붙임
+      qk::gemv_swiglu(A, c.H, R, Wb + L.wgu.off, c.I, c.H, A2, st);
+      qk::gemm_f32(A2, c.I, R, Wb, L.wdn, X, c.H, true, st);
+    } else {
+      qk::gemm_f32(A, c.H, R, Wb, L.wgu, T0, 2 * c.I, false, st);
+      qk::swiglu(T0, R, c.I, A, st);
+      qk::gemm_f32(A, c.I, R, Wb, L.wdn, X, c.H, true, st);
+    }
     if (taps) QCK(cudaMemcpyAsync(taps + (size_t)(i + 1) * R * c.H, X, xb, cudaMemcpyDeviceToDevice, st));
   }
   qk::rmsnorm(X, R, c.H, Pv + lay.lnf, true, c.eps, nullptr, hidden, rs, st);
@@ -291,65 +309,106 @@ void Qwen::logits(const float* hidden, int rows, float* out, cudaStream_t st) {
   qk::gemm_f32(A, c.H, rows, Wb, lay.emb, out, c.vocab, false, st);
 }
 
+// 탐욕 디코딩은 스텝 하나(앞 계산 n 1 → LM 머리 → argmax → 토큰을 호스트 고정 메모리로 → 위치 + 1)를 CUDA 그래프 하나로 잡아
+// 스텝마다 그래프 실행 한 번 + 동기 한 번. 위치는 장치 값(m.dpos)이라 다시 잡지 않는다. KV 캐시·합성곱 기록·재귀 상태는 제자리 갱신.
+// top-p 는 호스트에서 뽑으므로 예전처럼 즉시 실행.
 std::vector<std::vector<int>> generate(Qwen& m, const std::vector<std::vector<int>>& prompts, int max_new, int eos, float top_p, float temp,
                                        uint64_t seed, double* ms_per_tok) {
   const int B = (int)prompts.size(), n = (int)prompts[0].size();
   std::vector<int> flat;
   for (auto& p : prompts) flat.insert(flat.end(), p.begin(), p.end());
-  int *dids, *dnext;
+  int *dids, *dnext, *dpos, *hnext;
   float *hid, *lg, *last;
   QCK(cudaMalloc(&dids, sizeof(int) * flat.size()));
   QCK(cudaMalloc(&dnext, sizeof(int) * B));
+  QCK(cudaMalloc(&dpos, sizeof(int)));
+  QCK(cudaMallocHost(&hnext, sizeof(int) * B));
   QCK(cudaMalloc(&hid, sizeof(float) * flat.size() * m.c.H));
   QCK(cudaMalloc(&last, sizeof(float) * B * m.c.H));
   QCK(cudaMalloc(&lg, sizeof(float) * (size_t)B * m.c.vocab));
   QCK(cudaMemcpy(dids, flat.data(), sizeof(int) * flat.size(), cudaMemcpyHostToDevice));
+  QCK(cudaMemcpy(dpos, &n, sizeof(int), cudaMemcpyHostToDevice));
   QCache k = m.make_cache(B, n + max_new + 1);
-  cudaStream_t st = 0;
+  cudaStream_t st;
+  QCK(cudaStreamCreateWithFlags(&st, cudaStreamNonBlocking));
   std::vector<std::vector<int>> out(B);
   std::vector<int> nx(B);
   std::vector<float> hl;
   std::mt19937_64 rng(seed);
   std::vector<char> done(B, 0);
+  const bool greedy = top_p <= 0.f;
   m.forward(dids, nullptr, B, n, 0, &k, hid, nullptr, st);
   qk::gather_last(hid, B, n, m.c.H, last, st);
   cudaEvent_t e0, e1;
   cudaEventCreate(&e0); cudaEventCreate(&e1);
-  int steps = 0;
-  for (int s = 0; s < max_new; ++s) {
-    m.logits(last, B, lg, st);
-    if (top_p <= 0.f) {
+  auto pick = [&](void) {   // lg → nx(호스트)
+    if (greedy) {
       qk::argmax_rows(lg, B, m.c.vocab, dnext, st);
-      QCK(cudaMemcpy(nx.data(), dnext, sizeof(int) * B, cudaMemcpyDeviceToHost));
-    } else {
-      hl.resize((size_t)B * m.c.vocab);
-      QCK(cudaMemcpy(hl.data(), lg, sizeof(float) * hl.size(), cudaMemcpyDeviceToHost));
-      for (int b = 0; b < B; ++b) {
-        const float* l = hl.data() + (size_t)b * m.c.vocab;
-        float mx = -1e30f;
-        for (int v = 0; v < m.c.vocab; ++v) mx = std::max(mx, l[v]);
-        std::vector<std::pair<float, int>> pr;
-        double z = 0;
-        for (int v = 0; v < m.c.vocab; ++v) { const double e = std::exp((l[v] - mx) / temp); z += e; pr.push_back({(float)e, v}); }
-        std::sort(pr.begin(), pr.end(), [](auto a, auto b) { return a.first > b.first || (a.first == b.first && a.second < b.second); });
-        double cum = 0;
-        size_t kk = 0;
-        for (; kk < pr.size(); ++kk) { cum += pr[kk].first / z; if (cum >= top_p) { ++kk; break; } }
-        double tot = 0;
-        for (size_t i = 0; i < kk; ++i) tot += pr[i].first;
-        double r = std::uniform_real_distribution<double>(0, tot)(rng);
-        size_t i = 0;
-        for (; i + 1 < kk; ++i) { r -= pr[i].first; if (r <= 0) break; }
-        nx[b] = pr[i].second;
-      }
-      QCK(cudaMemcpy(dnext, nx.data(), sizeof(int) * B, cudaMemcpyHostToDevice));
+      QCK(cudaMemcpyAsync(hnext, dnext, sizeof(int) * B, cudaMemcpyDeviceToHost, st));
+      QCK(cudaStreamSynchronize(st));
+      for (int b = 0; b < B; ++b) nx[b] = hnext[b];
+      return;
     }
+    hl.resize((size_t)B * m.c.vocab);
+    QCK(cudaMemcpyAsync(hl.data(), lg, sizeof(float) * hl.size(), cudaMemcpyDeviceToHost, st));
+    QCK(cudaStreamSynchronize(st));
+    for (int b = 0; b < B; ++b) {
+      const float* l = hl.data() + (size_t)b * m.c.vocab;
+      float mx = -1e30f;
+      for (int v = 0; v < m.c.vocab; ++v) mx = std::max(mx, l[v]);
+      std::vector<std::pair<float, int>> pr;
+      double z = 0;
+      for (int v = 0; v < m.c.vocab; ++v) { const double e = std::exp((l[v] - mx) / temp); z += e; pr.push_back({(float)e, v}); }
+      std::sort(pr.begin(), pr.end(), [](auto a, auto b) { return a.first > b.first || (a.first == b.first && a.second < b.second); });
+      double cum = 0;
+      size_t kk = 0;
+      for (; kk < pr.size(); ++kk) { cum += pr[kk].first / z; if (cum >= top_p) { ++kk; break; } }
+      double tot = 0;
+      for (size_t i = 0; i < kk; ++i) tot += pr[i].first;
+      double r = std::uniform_real_distribution<double>(0, tot)(rng);
+      size_t i = 0;
+      for (; i + 1 < kk; ++i) { r -= pr[i].first; if (r <= 0) break; }
+      nx[b] = pr[i].second;
+    }
+    QCK(cudaMemcpyAsync(dnext, nx.data(), sizeof(int) * B, cudaMemcpyHostToDevice, st));
+  };
+  auto record = [&](void) {
     bool all = true;
     for (int b = 0; b < B; ++b) { if (!done[b]) { out[b].push_back(nx[b]); if (nx[b] == eos) done[b] = 1; } all = all && done[b]; }
-    if (all || s + 1 == max_new) break;
-    if (s == 1) cudaEventRecord(e0, st);
-    m.forward(dnext, nullptr, B, 1, n + s, &k, last, nullptr, st);
+    return all;
+  };
+  m.logits(last, B, lg, st);
+  pick();
+  int steps = 0;
+  bool fin = record() || max_new <= 1;
+  cudaGraphExec_t ge = nullptr;
+  if (!fin && greedy) {
+    cudaGraph_t g;
+    m.dpos = dpos;
+    QCK(cudaStreamBeginCapture(st, cudaStreamCaptureModeThreadLocal));
+    m.forward(dnext, nullptr, B, 1, n, &k, last, nullptr, st);
+    m.logits(last, B, lg, st);
+    qk::argmax_rows(lg, B, m.c.vocab, dnext, st);
+    QCK(cudaMemcpyAsync(hnext, dnext, sizeof(int) * B, cudaMemcpyDeviceToHost, st));
+    qk::inc(dpos, st);
+    QCK(cudaStreamEndCapture(st, &g));
+    m.dpos = nullptr;
+    QCK(cudaGraphInstantiate(&ge, g, 0));
+    cudaGraphDestroy(g);
+  }
+  for (int s = 1; !fin && s < max_new; ++s) {
+    if (s == 2) cudaEventRecord(e0, st);
+    if (greedy) {
+      QCK(cudaGraphLaunch(ge, st));
+      QCK(cudaStreamSynchronize(st));
+      for (int b = 0; b < B; ++b) nx[b] = hnext[b];
+    } else {
+      m.forward(dnext, nullptr, B, 1, n + s - 1, &k, last, nullptr, st);
+      m.logits(last, B, lg, st);
+      pick();
+    }
     ++steps;
+    fin = record();
   }
   cudaEventRecord(e1, st);
   QCK(cudaEventSynchronize(e1));
@@ -357,8 +416,10 @@ std::vector<std::vector<int>> generate(Qwen& m, const std::vector<std::vector<in
     float ms = 0;
     if (steps > 2) { cudaEventElapsedTime(&ms, e0, e1); *ms_per_tok = ms / (steps - 1); } else *ms_per_tok = 0;
   }
+  if (ge) cudaGraphExecDestroy(ge);
   m.free_cache(k);
-  cudaFree(dids); cudaFree(dnext); cudaFree(hid); cudaFree(last); cudaFree(lg);
+  cudaStreamDestroy(st);
+  cudaFree(dids); cudaFree(dnext); cudaFree(dpos); cudaFreeHost(hnext); cudaFree(hid); cudaFree(last); cudaFree(lg);
   return out;
 }
 

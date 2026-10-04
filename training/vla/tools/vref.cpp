@@ -3,13 +3,16 @@
 
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 #include <functional>
 
 #include "net.h"
+#include "tkern.cuh"
 
 namespace vref {
 using namespace rvla;
 static Mode MD = FP64;
+static bool envf(const char* n) { const char* e = getenv(n); return e && e[0] == '1'; }
 static double Qb(double x) {
   if (MD == FP64) return x;
   return (double)net::bf2f(net::f2bf((float)x));
@@ -113,9 +116,13 @@ static void rope(double* x, int rot, double theta, int pos, bool inv) {
     else { x[i] = a * c + b * s; x[i + h] = b * c - a * s; }
   }
 }
-// 어텐션(한 판): 질의 nq 행 × 머리 Hq, 키 nk 행 × 머리 Hk, ok(t, j) 로 가림
+// 어텐션(한 판): 질의 nq 행 × 머리 Hq, 키 nk 행 × 머리 Hk, ok(t, j) 로 가림.
+// EMUL: GPU 텐서 코어 판(flash.cu)과 같은 자리 반올림 — Q·K·V·dO 는 bf16, P = e^{S − lse}(정규화) 는 PV·dV 에서 bf16, dS 는 dQ·dK 에서 bf16,
+// D = Σ dO·O(반올림 안 한 dO, O = Σ bf(P)·bf(V)).
 struct AttIO { int nqr, nk, Hq, Hk, hd; std::function<bool(int, int)> ok; };
 static void att_f(const AttIO& a, const double* Q, const double* K, const double* Vv, double* O, std::vector<double>& P) {
+  const Mode m0 = MD;
+  if (envf("VREF_ATT_EXACT")) MD = FP64;   // 진단: 어텐션 안 반올림 흉내 끄기
   P.assign((size_t)a.nqr * a.Hq * a.nk, 0.0);
   const double sc = 1.0 / std::sqrt((double)a.hd);
   for (int t = 0; t < a.nqr; ++t)
@@ -126,48 +133,418 @@ static void att_f(const AttIO& a, const double* Q, const double* K, const double
       for (int j = 0; j < a.nk; ++j) {
         if (!a.ok(t, j)) continue;
         double d = 0;
-        for (int e = 0; e < a.hd; ++e) d += Q[((size_t)t * a.Hq + h) * a.hd + e] * K[((size_t)j * a.Hk + kh) * a.hd + e];
+        for (int e = 0; e < a.hd; ++e) d += Qb(Q[((size_t)t * a.Hq + h) * a.hd + e]) * Qb(K[((size_t)j * a.Hk + kh) * a.hd + e]);
         s[j] = d * sc;
         mx = std::max(mx, s[j]);
       }
       double z = 0;
       for (int j = 0; j < a.nk; ++j) if (a.ok(t, j)) z += std::exp(s[j] - mx);
+      const double lse = mx + std::log(z);
       for (int e = 0; e < a.hd; ++e) O[((size_t)t * a.Hq + h) * a.hd + e] = 0;
       for (int j = 0; j < a.nk; ++j) {
         if (!a.ok(t, j)) continue;
-        const double p = std::exp(s[j] - mx) / z;
+        const double p = std::exp(s[j] - lse), pb = Qb(p);
         P[((size_t)t * a.Hq + h) * a.nk + j] = p;
-        for (int e = 0; e < a.hd; ++e) O[((size_t)t * a.Hq + h) * a.hd + e] += p * Vv[((size_t)j * a.Hk + kh) * a.hd + e];
+        for (int e = 0; e < a.hd; ++e) O[((size_t)t * a.Hq + h) * a.hd + e] += pb * Qb(Vv[((size_t)j * a.Hk + kh) * a.hd + e]);
       }
     }
+  MD = m0;
 }
 static void att_b(const AttIO& a, const double* Q, const double* K, const double* Vv, const std::vector<double>& P, const double* dO, double* dQ, double* dK,
                   double* dV) {
+  const Mode m0 = MD;
+  if (envf("VREF_ATT_EXACT")) MD = FP64;   // 진단: 어텐션 안 반올림 흉내 끄기
   const double sc = 1.0 / std::sqrt((double)a.hd);
   for (int t = 0; t < a.nqr; ++t)
     for (int h = 0; h < a.Hq; ++h) {
       const int kh = h / (a.Hq / a.Hk);
-      std::vector<double> dp(a.nk, 0.0);
+      const double* dor = dO + ((size_t)t * a.Hq + h) * a.hd;
+      std::vector<double> dp(a.nk, 0.0), orow(a.hd, 0.0);
       double D = 0;
       for (int j = 0; j < a.nk; ++j) {
         const double p = P[((size_t)t * a.Hq + h) * a.nk + j];
         if (p == 0) continue;
         double s = 0;
-        for (int e = 0; e < a.hd; ++e) s += dO[((size_t)t * a.Hq + h) * a.hd + e] * Vv[((size_t)j * a.Hk + kh) * a.hd + e];
+        for (int e = 0; e < a.hd; ++e) s += Qb(dor[e]) * Qb(Vv[((size_t)j * a.Hk + kh) * a.hd + e]);
         dp[j] = s;
-        D += p * s;
+        if (MD == FP64) D += p * s;
+        else for (int e = 0; e < a.hd; ++e) orow[e] += Qb(p) * Qb(Vv[((size_t)j * a.Hk + kh) * a.hd + e]);
       }
+      if (MD == EMUL) for (int e = 0; e < a.hd; ++e) D += dor[e] * orow[e];
       for (int j = 0; j < a.nk; ++j) {
         const double p = P[((size_t)t * a.Hq + h) * a.nk + j];
         if (p == 0) continue;
-        const double ds = p * (dp[j] - D);
+        const double ds = Qb(p * (dp[j] - D)), pb = Qb(p);
         for (int e = 0; e < a.hd; ++e) {
-          dQ[((size_t)t * a.Hq + h) * a.hd + e] += ds * sc * K[((size_t)j * a.Hk + kh) * a.hd + e];
-          if (dK) dK[((size_t)j * a.Hk + kh) * a.hd + e] += ds * sc * Q[((size_t)t * a.Hq + h) * a.hd + e];
-          if (dV) dV[((size_t)j * a.Hk + kh) * a.hd + e] += p * dO[((size_t)t * a.Hq + h) * a.hd + e];
+          dQ[((size_t)t * a.Hq + h) * a.hd + e] += ds * sc * Qb(K[((size_t)j * a.Hk + kh) * a.hd + e]);
+          if (dK) dK[((size_t)j * a.Hk + kh) * a.hd + e] += ds * sc * Qb(Q[((size_t)t * a.Hq + h) * a.hd + e]);
+          if (dV) dV[((size_t)j * a.Hk + kh) * a.hd + e] += pb * Qb(dor[e]);
         }
       }
     }
+  MD = m0;
+}
+
+void att_ref(bool emul, int nqr, int nk, int Hq, int Hk, int hd, const std::function<bool(int, int)>& ok, const double* Q, const double* K, const double* Vv,
+             const double* dO, double* O, double* dQ, double* dK, double* dV) {
+  const Mode m0 = MD;
+  MD = emul ? EMUL : FP64;
+  AttIO a{nqr, nk, Hq, Hk, hd, ok};
+  std::vector<double> P;
+  att_f(a, Q, K, Vv, O, P);
+  att_b(a, Q, K, Vv, P, dO, dQ, dK, dV);
+  MD = m0;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Gated DeltaNet 한 열: 재귀 꼴(정답)과 덩이 꼴(GPU 와 같은 자리 반올림)
+static double rbf(double x, bool em) { return em ? (double)net::bf2f(net::f2bf((float)x)) : x; }
+
+void dn_rec_fwd(int n, int dk, int dv, const double* q, const double* k, const double* v, const double* g, const double* be, const double* S0, double* o,
+                double* S1) {
+  V S((size_t)dk * dv, 0.0);
+  if (S0) S.assign(S0, S0 + (size_t)dk * dv);
+  for (int t = 0; t < n; ++t) {
+    const double a = std::exp(g[t]);
+    for (auto& x : S) x *= a;
+    for (int j = 0; j < dv; ++j) {
+      double m = 0;
+      for (int i = 0; i < dk; ++i) m += S[(size_t)i * dv + j] * k[(size_t)t * dk + i];
+      const double d = be[t] * (v[(size_t)t * dv + j] - m);
+      for (int i = 0; i < dk; ++i) S[(size_t)i * dv + j] += k[(size_t)t * dk + i] * d;
+    }
+    for (int j = 0; j < dv; ++j) {
+      double s = 0;
+      for (int i = 0; i < dk; ++i) s += S[(size_t)i * dv + j] * q[(size_t)t * dk + i];
+      o[(size_t)t * dv + j] = s;
+    }
+  }
+  if (S1) std::memcpy(S1, S.data(), sizeof(double) * dk * dv);
+}
+void dn_rec_bwd(int n, int dk, int dv, const double* q, const double* k, const double* v, const double* g, const double* be, const double* S0,
+                const double* dO, const double* dS1, double* dq, double* dkk, double* dvv, double* dg, double* dbe, double* dS0) {
+  const size_t NE = (size_t)dk * dv;
+  std::vector<V> Sp(n + 1, V(NE, 0.0));   // Sp[t] = S_{t−1}(t 번째 스텝 전)
+  if (S0) Sp[0].assign(S0, S0 + NE);
+  std::vector<double> otmp((size_t)dv);
+  for (int t = 0; t < n; ++t) {
+    V S = Sp[t];
+    const double a = std::exp(g[t]);
+    for (auto& x : S) x *= a;
+    for (int j = 0; j < dv; ++j) {
+      double m = 0;
+      for (int i = 0; i < dk; ++i) m += S[(size_t)i * dv + j] * k[(size_t)t * dk + i];
+      const double d = be[t] * (v[(size_t)t * dv + j] - m);
+      for (int i = 0; i < dk; ++i) S[(size_t)i * dv + j] += k[(size_t)t * dk + i] * d;
+    }
+    Sp[t + 1] = S;
+  }
+  V dS(NE, 0.0);
+  if (dS1) dS.assign(dS1, dS1 + NE);
+  for (int t = n - 1; t >= 0; --t) {
+    const double a = std::exp(g[t]), b = be[t];
+    const double* kk = k + (size_t)t * dk;
+    const double* qq = q + (size_t)t * dk;
+    const double* Sq = Sp[t].data();
+    std::vector<double> mv(dv), del(dv), vv(dv), dd(dv), dm(dv);
+    for (int j = 0; j < dv; ++j) {
+      double s = 0;
+      for (int i = 0; i < dk; ++i) s += a * Sq[(size_t)i * dv + j] * kk[i];
+      mv[j] = s;
+      vv[j] = v[(size_t)t * dv + j];
+      del[j] = b * (vv[j] - s);
+    }
+    const double* doo = dO + (size_t)t * dv;
+    for (int i = 0; i < dk; ++i) for (int j = 0; j < dv; ++j) dS[(size_t)i * dv + j] += qq[i] * doo[j];
+    for (int i = 0; i < dk; ++i) {
+      double s = 0;
+      for (int j = 0; j < dv; ++j) s += (a * Sq[(size_t)i * dv + j] + kk[i] * del[j]) * doo[j];
+      dq[(size_t)t * dk + i] = s;
+    }
+    double db = 0;
+    for (int j = 0; j < dv; ++j) {
+      double s = 0;
+      for (int i = 0; i < dk; ++i) s += dS[(size_t)i * dv + j] * kk[i];
+      dd[j] = s;
+      dvv[(size_t)t * dv + j] = b * s;
+      db += s * (vv[j] - mv[j]);
+      dm[j] = -b * s;
+    }
+    dbe[t] = db;
+    for (int i = 0; i < dk; ++i) {
+      double s = 0;
+      for (int j = 0; j < dv; ++j) s += dS[(size_t)i * dv + j] * del[j] + a * Sq[(size_t)i * dv + j] * dm[j];
+      dkk[(size_t)t * dk + i] = s;
+    }
+    double da = 0;
+    for (size_t e = 0; e < NE; ++e) {
+      const int i = (int)(e / dv), j = (int)(e % dv);
+      const double gg = dS[e] + kk[i] * dm[j];
+      da += gg * Sq[e];
+      dS[e] = a * gg;
+    }
+    dg[t] = da * a;
+  }
+  if (dS0) std::memcpy(dS0, dS.data(), sizeof(double) * NE);
+}
+
+// 덩이 하나의 앞 값(뒤에서도 다시 씀). 행 Cn 개(나머지 C − Cn 은 0 덧댐: k = v = q = β = g = 0 → 상태에 영향 없음)
+struct DnChunk {
+  int C, dk, dv;
+  V Kb, Qb, Vb, gam, Ga, be, KK, A, T, T1b, T2b, Wb, U, P, Pb;
+  void make(int c0, int Cn, bool em, const double* q, const double* k, const double* v, const double* g, const double* bt) {
+    Kb.assign((size_t)C * dk, 0); Qb.assign((size_t)C * dk, 0); Vb.assign((size_t)C * dv, 0); gam.assign(C, 0); Ga.assign(C, 0); be.assign(C, 0);
+    double acc = 0;
+    for (int t = 0; t < C; ++t) {
+      if (t < Cn) {
+        for (int i = 0; i < dk; ++i) { Kb[(size_t)t * dk + i] = rbf(k[(size_t)(c0 + t) * dk + i], em); Qb[(size_t)t * dk + i] = rbf(q[(size_t)(c0 + t) * dk + i], em); }
+        for (int j = 0; j < dv; ++j) Vb[(size_t)t * dv + j] = rbf(v[(size_t)(c0 + t) * dv + j], em);
+        acc += g[c0 + t];
+        be[t] = bt[c0 + t];
+      }
+      gam[t] = acc;
+      Ga[t] = std::exp(acc);
+    }
+    KK.assign((size_t)C * C, 0); A.assign((size_t)C * C, 0); P.assign((size_t)C * C, 0); Pb.assign((size_t)C * C, 0);
+    for (int t = 0; t < C; ++t)
+      for (int s = 0; s <= t; ++s) {
+        double a = 0, b = 0;
+        for (int i = 0; i < dk; ++i) { a += Kb[(size_t)t * dk + i] * Kb[(size_t)s * dk + i]; b += Qb[(size_t)t * dk + i] * Kb[(size_t)s * dk + i]; }
+        KK[(size_t)t * C + s] = a;
+        const double M = std::exp(gam[t] - gam[s]);
+        if (s < t) A[(size_t)t * C + s] = be[t] * a * M;
+        P[(size_t)t * C + s] = b * M;
+        Pb[(size_t)t * C + s] = rbf(b * M, em);
+      }
+    T.assign((size_t)C * C, 0);
+    for (int u = 0; u < C; ++u) {
+      T[(size_t)u * C + u] = 1;
+      for (int t = u + 1; t < C; ++t) {
+        double s = 0;
+        for (int r = u; r < t; ++r) s += A[(size_t)t * C + r] * T[(size_t)r * C + u];
+        T[(size_t)t * C + u] = -s;
+      }
+    }
+    T1b.assign((size_t)C * C, 0); T2b.assign((size_t)C * C, 0);
+    for (int t = 0; t < C; ++t)
+      for (int s = 0; s <= t; ++s) {
+        T1b[(size_t)t * C + s] = rbf(T[(size_t)t * C + s] * be[s], em);
+        T2b[(size_t)t * C + s] = rbf(T[(size_t)t * C + s] * be[s] * Ga[s], em);
+      }
+    U.assign((size_t)C * dv, 0); Wb.assign((size_t)C * dk, 0);
+    for (int t = 0; t < C; ++t) {
+      for (int j = 0; j < dv; ++j) { double s = 0; for (int r = 0; r <= t; ++r) s += T1b[(size_t)t * C + r] * Vb[(size_t)r * dv + j]; U[(size_t)t * dv + j] = s; }
+      for (int i = 0; i < dk; ++i) { double s = 0; for (int r = 0; r <= t; ++r) s += T2b[(size_t)t * C + r] * Kb[(size_t)r * dk + i]; Wb[(size_t)t * dk + i] = rbf(s, em); }
+    }
+  }
+};
+// 덩이 하나 앞: S(시작 상태, 제자리로 다음 상태) → o 행 Cn 개, Δ 반환
+static void dn_chunk_step(const DnChunk& c, int Cn, bool em, V& S, double* o, V* Dout) {
+  const int C = c.C, dk = c.dk, dv = c.dv;
+  V Sb(S.size());
+  for (size_t e = 0; e < S.size(); ++e) Sb[e] = rbf(S[e], em);
+  V D((size_t)C * dv), Db((size_t)C * dv), Dh((size_t)C * dv);
+  const double gC = c.gam[C - 1], GC = std::exp(gC);
+  for (int t = 0; t < C; ++t)
+    for (int j = 0; j < dv; ++j) {
+      double s = 0;
+      for (int i = 0; i < dk; ++i) s += c.Wb[(size_t)t * dk + i] * Sb[(size_t)i * dv + j];
+      const double d = c.U[(size_t)t * dv + j] - s;
+      D[(size_t)t * dv + j] = d;
+      Db[(size_t)t * dv + j] = rbf(d, em);
+      Dh[(size_t)t * dv + j] = rbf(d * std::exp(gC - c.gam[t]), em);
+    }
+  for (int t = 0; t < Cn; ++t)
+    for (int j = 0; j < dv; ++j) {
+      double s1 = 0, s2 = 0;
+      for (int i = 0; i < dk; ++i) s1 += c.Qb[(size_t)t * dk + i] * Sb[(size_t)i * dv + j];
+      for (int r = 0; r <= t; ++r) s2 += c.Pb[(size_t)t * C + r] * Db[(size_t)r * dv + j];
+      o[(size_t)t * dv + j] = c.Ga[t] * s1 + s2;
+    }
+  for (int i = 0; i < dk; ++i)
+    for (int j = 0; j < dv; ++j) {
+      double s = 0;
+      for (int r = 0; r < C; ++r) s += c.Kb[(size_t)r * dk + i] * Dh[(size_t)r * dv + j];
+      S[(size_t)i * dv + j] = GC * S[(size_t)i * dv + j] + s;
+    }
+  if (Dout) *Dout = D;
+}
+void dn_chk_fwd(int n, int dk, int dv, int C, bool em, const double* q, const double* k, const double* v, const double* g, const double* be, const double* S0,
+                double* o, double* S1) {
+  V S((size_t)dk * dv, 0.0);
+  if (S0) S.assign(S0, S0 + S.size());
+  DnChunk c{C, dk, dv};
+  for (int c0 = 0; c0 < n; c0 += C) {
+    const int Cn = std::min(C, n - c0);
+    c.make(c0, Cn, em, q, k, v, g, be);
+    dn_chunk_step(c, Cn, em, S, o + (size_t)c0 * dv, nullptr);
+  }
+  if (S1) std::memcpy(S1, S.data(), sizeof(double) * S.size());
+}
+void dn_chk_bwd(int n, int dk, int dv, int C, bool em, const double* q, const double* k, const double* v, const double* g, const double* be, const double* S0,
+                const double* dO, const double* dS1, double* dq, double* dkk, double* dvv, double* dg, double* dbe, double* dS0) {
+  const size_t NE = (size_t)dk * dv;
+  const int nck = (n + C - 1) / C;
+  std::vector<V> Sc(nck + 1), Dl(nck);
+  Sc[0].assign(NE, 0.0);
+  if (S0) Sc[0].assign(S0, S0 + NE);
+  std::vector<DnChunk> ch(nck, DnChunk{C, dk, dv});
+  V otmp((size_t)C * dv);
+  for (int c = 0; c < nck; ++c) {
+    const int c0 = c * C, Cn = std::min(C, n - c0);
+    ch[c].make(c0, Cn, em, q, k, v, g, be);
+    Sc[c + 1] = Sc[c];
+    dn_chunk_step(ch[c], Cn, em, Sc[c + 1], otmp.data(), &Dl[c]);
+  }
+  V dS(NE, 0.0);
+  if (dS1) dS.assign(dS1, dS1 + NE);
+  for (int ci = nck - 1; ci >= 0; --ci) {
+    const DnChunk& c = ch[ci];
+    const int c0 = ci * C, Cn = std::min(C, n - c0);
+    const V& S = Sc[ci];
+    const V& D = Dl[ci];
+    const double gC = c.gam[C - 1], GC = std::exp(gC);
+    V Sb(NE), dSb(NE);
+    for (size_t e = 0; e < NE; ++e) { Sb[e] = rbf(S[e], em); dSb[e] = rbf(dS[e], em); }
+    V dOb((size_t)C * dv, 0), dOg((size_t)C * dv, 0), Db((size_t)C * dv), Dh((size_t)C * dv), Dhu((size_t)C * dv);
+    for (int t = 0; t < C; ++t)
+      for (int j = 0; j < dv; ++j) {
+        const double d = D[(size_t)t * dv + j], e = std::exp(gC - c.gam[t]);
+        Db[(size_t)t * dv + j] = rbf(d, em);
+        Dhu[(size_t)t * dv + j] = d * e;
+        Dh[(size_t)t * dv + j] = rbf(d * e, em);
+        if (t < Cn) {
+          dOb[(size_t)t * dv + j] = rbf(dO[(size_t)(c0 + t) * dv + j], em);
+          dOg[(size_t)t * dv + j] = rbf(c.Ga[t] * dO[(size_t)(c0 + t) * dv + j], em);
+        }
+      }
+    // 상태 쪽: dΔ̂ = Kb dSb', dΔ = e^{γC−γ} dΔ̂ + Pbᵀ dOb, dS ← Γ_C dS + Qbᵀ dOg − Wbᵀ dΔb
+    V dDh((size_t)C * dv), dD((size_t)C * dv), dDb((size_t)C * dv);
+    for (int t = 0; t < C; ++t)
+      for (int j = 0; j < dv; ++j) {
+        double s = 0, p = 0;
+        for (int i = 0; i < dk; ++i) s += c.Kb[(size_t)t * dk + i] * dSb[(size_t)i * dv + j];
+        for (int r = t; r < C; ++r) p += c.Pb[(size_t)r * C + t] * dOb[(size_t)r * dv + j];
+        dDh[(size_t)t * dv + j] = s;
+        dD[(size_t)t * dv + j] = std::exp(gC - c.gam[t]) * s + p;
+        dDb[(size_t)t * dv + j] = rbf(dD[(size_t)t * dv + j], em);
+      }
+    V dSn(NE);
+    for (int i = 0; i < dk; ++i)
+      for (int j = 0; j < dv; ++j) {
+        double s = 0;
+        for (int t = 0; t < C; ++t) s += c.Qb[(size_t)t * dk + i] * dOg[(size_t)t * dv + j] - c.Wb[(size_t)t * dk + i] * dDb[(size_t)t * dv + j];
+        dSn[(size_t)i * dv + j] = GC * dS[(size_t)i * dv + j] + s;
+      }
+    // 기울기
+    V dgam(C, 0.0), dbt(C, 0.0), dQ((size_t)C * dk, 0.0), dK((size_t)C * dk, 0.0), dWb((size_t)C * dk);
+    {   // (d) Γ_C Σ dS∘bf(S)(GPU 는 bf16 검문점을 씀)
+      double s = 0;
+      for (size_t e = 0; e < NE; ++e) s += dS[e] * Sb[e];
+      dgam[C - 1] += GC * s;
+    }
+    for (int t = 0; t < C; ++t) {
+      double rho = 0;
+      for (int j = 0; j < dv; ++j) rho += dDh[(size_t)t * dv + j] * Dhu[(size_t)t * dv + j];
+      dgam[C - 1] += rho;
+      dgam[t] -= rho;
+      for (int i = 0; i < dk; ++i) {
+        double a = 0, w = 0, kk = 0;
+        for (int j = 0; j < dv; ++j) {
+          a += dOb[(size_t)t * dv + j] * Sb[(size_t)i * dv + j];
+          w += dDb[(size_t)t * dv + j] * Sb[(size_t)i * dv + j];
+          kk += Dh[(size_t)t * dv + j] * dSb[(size_t)i * dv + j];
+        }
+        dQ[(size_t)t * dk + i] = c.Ga[t] * a;
+        dWb[(size_t)t * dk + i] = rbf(-w, em);
+        dK[(size_t)t * dk + i] = kk;
+      }
+      double qa = 0;
+      for (int i = 0; i < dk; ++i) qa += c.Qb[(size_t)t * dk + i] * dQ[(size_t)t * dk + i];
+      dgam[t] += qa;   // (a)
+    }
+    // dP = dOb Δbᵀ (s ≤ t)
+    V dQKb((size_t)C * C, 0.0);
+    for (int t = 0; t < C; ++t)
+      for (int s = 0; s <= t; ++s) {
+        double dp = 0;
+        for (int j = 0; j < dv; ++j) dp += dOb[(size_t)t * dv + j] * Db[(size_t)s * dv + j];
+        const double x = dp * c.P[(size_t)t * C + s];
+        dgam[t] += x; dgam[s] -= x;
+        dQKb[(size_t)t * C + s] = rbf(dp * std::exp(c.gam[t] - c.gam[s]), em);
+      }
+    for (int t = 0; t < C; ++t)
+      for (int i = 0; i < dk; ++i) {
+        double a = 0, b = 0;
+        for (int s = 0; s <= t; ++s) a += dQKb[(size_t)t * C + s] * c.Kb[(size_t)s * dk + i];
+        for (int r = t; r < C; ++r) b += dQKb[(size_t)r * C + t] * c.Qb[(size_t)r * dk + i];
+        dQ[(size_t)t * dk + i] += a;
+        dK[(size_t)t * dk + i] += b;
+      }
+    // dV = T1bᵀ dΔb, dT1 = dΔb Vbᵀ, dT2 = dWb Kbᵀ, dK += T2bᵀ dWb
+    V dT((size_t)C * C, 0.0);
+    for (int s = 0; s < C; ++s) {
+      if (s < Cn)
+        for (int j = 0; j < dv; ++j) {
+          double a = 0;
+          for (int t = s; t < C; ++t) a += c.T1b[(size_t)t * C + s] * dDb[(size_t)t * dv + j];
+          dvv[(size_t)(c0 + s) * dv + j] = a;
+        }
+      for (int i = 0; i < dk; ++i) {
+        double a = 0;
+        for (int t = s; t < C; ++t) a += c.T2b[(size_t)t * C + s] * dWb[(size_t)t * dk + i];
+        dK[(size_t)s * dk + i] += a;
+      }
+    }
+    for (int t = 0; t < C; ++t)
+      for (int s = 0; s <= t; ++s) {
+        double d1 = 0, d2 = 0;
+        for (int j = 0; j < dv; ++j) d1 += dDb[(size_t)t * dv + j] * c.Vb[(size_t)s * dv + j];
+        for (int i = 0; i < dk; ++i) d2 += dWb[(size_t)t * dk + i] * c.Kb[(size_t)s * dk + i];
+        const double Tt = c.T[(size_t)t * C + s];
+        dbt[s] += d1 * Tt + d2 * Tt * c.Ga[s];
+        dgam[s] += d2 * Tt * c.be[s] * c.Ga[s];
+        if (s < t) dT[(size_t)t * C + s] = d1 * c.be[s] + d2 * c.be[s] * c.Ga[s];
+      }
+    // dA = −Tᵀ dT Tᵀ (s < t): X = Tbᵀ dTb, dA = −Xb Tbᵀ
+    V Tb((size_t)C * C), dTb((size_t)C * C), Xb((size_t)C * C);
+    for (size_t e = 0; e < Tb.size(); ++e) { Tb[e] = rbf(c.T[e], em); dTb[e] = rbf(dT[e], em); }
+    for (int a = 0; a < C; ++a)
+      for (int b = 0; b < C; ++b) {
+        double x = 0;
+        for (int r = 0; r < C; ++r) x += Tb[(size_t)r * C + a] * dTb[(size_t)r * C + b];
+        Xb[(size_t)a * C + b] = rbf(x, em);
+      }
+    V dKKs((size_t)C * C, 0.0);
+    for (int t = 0; t < C; ++t)
+      for (int s = 0; s < t; ++s) {
+        double x = 0;
+        for (int r = 0; r < C; ++r) x += Xb[(size_t)t * C + r] * Tb[(size_t)s * C + r];
+        const double dA = -x, M = std::exp(c.gam[t] - c.gam[s]);
+        dbt[t] += dA * c.KK[(size_t)t * C + s] * M;
+        const double y = dA * c.A[(size_t)t * C + s];
+        dgam[t] += y; dgam[s] -= y;
+        const double dkk2 = dA * c.be[t] * M;
+        dKKs[(size_t)t * C + s] += dkk2;
+        dKKs[(size_t)s * C + t] += dkk2;
+      }
+    for (int t = 0; t < C; ++t)
+      for (int i = 0; i < dk; ++i) {
+        double a = 0;
+        for (int s = 0; s < C; ++s) a += rbf(dKKs[(size_t)t * C + s], em) * c.Kb[(size_t)s * dk + i];
+        dK[(size_t)t * dk + i] += a;
+      }
+    // 내보내기: dg = 역 누적합
+    double acc = 0;
+    for (int t = C - 1; t >= 0; --t) {
+      acc += dgam[t];
+      if (t < Cn) { dg[c0 + t] = acc; dbe[c0 + t] = dbt[t]; }
+    }
+    for (int t = 0; t < Cn; ++t)
+      for (int i = 0; i < dk; ++i) { dq[(size_t)(c0 + t) * dk + i] = dQ[(size_t)t * dk + i]; dkk[(size_t)(c0 + t) * dk + i] = dK[(size_t)t * dk + i]; }
+    dS = dSn;
+  }
+  if (dS0) std::memcpy(dS0, dS.data(), sizeof(double) * NE);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -260,11 +637,20 @@ void run(Mode md, const Model& m, const Params& P, const In& in, Out& out, bool 
   struct LS {
     V x, a1, t0, xm, a2, gu, hh;
     V q, k, v, o, ag; std::vector<std::vector<double>> Pb;   // 풀
-    V pre, t1, qn, kn, be, gg, ov; std::vector<V> Sprev;       // 선형: Sprev[b·lh + h] = [L][dk·dv]
+    V pre, t1, qn, kn, be, gg, ov;                            // 선형
   };
   std::vector<LS> ls(Q.layers);
   const int hd = Q.hd, nq = Q.nq, nkv = Q.nkv, kvw = Q.kvw(), qgw = Q.qg(), li = Q.lin_in(), la = Q.lin_all(), lh = Q.lh, dk = Q.dk, dv = Q.dv;
   std::vector<V> Kf(nf), Vf(nf);   // 풀 층 K·V(RoPE 뒤) [R][kvw]
+  auto dn_gather = [&](const LS& S, int b, int h, int L_, int lh_, int dk_, int dv_, int li_, V& qs, V& ks, V& vs2, V& gs, V& bs) {
+    qs.resize((size_t)L_ * dk_); ks.resize((size_t)L_ * dk_); vs2.resize((size_t)L_ * dv_); gs.resize(L_); bs.resize(L_);
+    for (int t = 0; t < L_; ++t) {
+      const size_t r = (size_t)b * L_ + t;
+      for (int i = 0; i < dk_; ++i) { qs[(size_t)t * dk_ + i] = S.qn[(r * lh_ + h) * dk_ + i]; ks[(size_t)t * dk_ + i] = S.kn[(r * lh_ + h) * dk_ + i]; }
+      for (int j = 0; j < dv_; ++j) vs2[(size_t)t * dv_ + j] = S.t1[r * li_ + 2 * lh_ * dk_ + h * dv_ + j];
+      gs[t] = S.gg[r * lh_ + h]; bs[t] = S.be[r * lh_ + h];
+    }
+  };
   int fi = 0;
   for (int l = 0; l < Q.layers; ++l) {
     const auto& Ly = ql.l[l];
@@ -325,30 +711,12 @@ void run(Mode md, const Model& m, const Params& P, const In& in, Out& out, bool 
         S.gg[(size_t)r * lh + h] = -std::exp(qV[Ly.alog + h]) * sp;
       }
       S.ov.assign((size_t)R * lh * dv, 0);
-      S.Sprev.assign((size_t)B * lh, V());
       for (int b = 0; b < B; ++b) for (int h = 0; h < lh; ++h) {
-        V St((size_t)dk * dv, 0.0);
-        V& sp = S.Sprev[(size_t)b * lh + h];
-        sp.assign((size_t)L * dk * dv, 0.0);
-        for (int t = 0; t < L; ++t) {
-          const size_t r = (size_t)b * L + t;
-          std::memcpy(&sp[(size_t)t * dk * dv], St.data(), sizeof(double) * dk * dv);
-          const double a = std::exp(S.gg[r * lh + h]), be = S.be[r * lh + h];
-          const double* kk = &S.kn[(r * lh + h) * dk];
-          const double* qq = &S.qn[(r * lh + h) * dk];
-          for (auto& x : St) x *= a;
-          for (int j = 0; j < dv; ++j) {
-            double mm2 = 0;
-            for (int i = 0; i < dk; ++i) mm2 += St[(size_t)i * dv + j] * kk[i];
-            const double dl = be * (S.t1[r * li + 2 * lh * dk + h * dv + j] - mm2);
-            for (int i = 0; i < dk; ++i) St[(size_t)i * dv + j] += kk[i] * dl;
-          }
-          for (int j = 0; j < dv; ++j) {
-            double o = 0;
-            for (int i = 0; i < dk; ++i) o += St[(size_t)i * dv + j] * qq[i];
-            S.ov[(r * lh + h) * dv + j] = o;
-          }
-        }
+        V qs, ks, vs2, gs, bs, os((size_t)L * dv);
+        dn_gather(S, b, h, L, lh, dk, dv, li, qs, ks, vs2, gs, bs);
+        if (MD == EMUL && !envf("VREF_DN_REC")) dn_chk_fwd(L, dk, dv, tk::dn_chunk(dk), true, qs.data(), ks.data(), vs2.data(), gs.data(), bs.data(), nullptr, os.data(), nullptr);
+        else dn_rec_fwd(L, dk, dv, qs.data(), ks.data(), vs2.data(), gs.data(), bs.data(), nullptr, os.data(), nullptr);
+        for (int t = 0; t < L; ++t) for (int j = 0; j < dv; ++j) S.ov[(((size_t)b * L + t) * lh + h) * dv + j] = os[(size_t)t * dv + j];
       }
       S.ag.resize((size_t)R * lh * dv);
       for (int r = 0; r < R; ++r) for (int h = 0; h < lh; ++h) {
@@ -604,51 +972,21 @@ void run(Mode md, const Model& m, const Params& P, const In& in, Out& out, bool 
       // 재귀
       V dqn((size_t)R * lh * dk, 0.0), dkn((size_t)R * lh * dk, 0.0), dbe((size_t)R * lh, 0.0), dgg((size_t)R * lh, 0.0);
       for (int b = 0; b < B; ++b) for (int h = 0; h < lh; ++h) {
-        V dS((size_t)dk * dv, 0.0);
-        const V& sp = S.Sprev[(size_t)b * lh + h];
-        for (int t = L - 1; t >= 0; --t) {
+        V qs, ks, vs2, gs, bs, dos((size_t)L * dv), dq((size_t)L * dk), dk2((size_t)L * dk), dv2((size_t)L * dv), dg2(L), db2(L);
+        dn_gather(S, b, h, L, lh, dk, dv, li, qs, ks, vs2, gs, bs);
+        for (int t = 0; t < L; ++t) for (int j = 0; j < dv; ++j) dos[(size_t)t * dv + j] = dov[(((size_t)b * L + t) * lh + h) * dv + j];
+        if (MD == EMUL && !envf("VREF_DN_REC"))
+          dn_chk_bwd(L, dk, dv, tk::dn_chunk(dk), true, qs.data(), ks.data(), vs2.data(), gs.data(), bs.data(), nullptr, dos.data(), nullptr, dq.data(), dk2.data(),
+                     dv2.data(), dg2.data(), db2.data(), nullptr);
+        else
+          dn_rec_bwd(L, dk, dv, qs.data(), ks.data(), vs2.data(), gs.data(), bs.data(), nullptr, dos.data(), nullptr, dq.data(), dk2.data(), dv2.data(), dg2.data(),
+                     db2.data(), nullptr);
+        for (int t = 0; t < L; ++t) {
           const size_t r = (size_t)b * L + t;
-          const double a = std::exp(S.gg[r * lh + h]), be = S.be[r * lh + h];
-          const double* kk = &S.kn[(r * lh + h) * dk];
-          const double* qq = &S.qn[(r * lh + h) * dk];
-          const double* Sp = &sp[(size_t)t * dk * dv];
-          std::vector<double> mvec(dv), del(dv), v(dv), ddel(dv), dm(dv);
-          for (int j = 0; j < dv; ++j) {
-            double s = 0;
-            for (int i = 0; i < dk; ++i) s += a * Sp[(size_t)i * dv + j] * kk[i];
-            mvec[j] = s;
-            v[j] = S.t1[r * li + 2 * lh * dk + h * dv + j];
-            del[j] = be * (v[j] - s);
-          }
-          const double* doo = &dov[(r * lh + h) * dv];
-          for (int i = 0; i < dk; ++i) for (int j = 0; j < dv; ++j) dS[(size_t)i * dv + j] += qq[i] * doo[j];
-          for (int i = 0; i < dk; ++i) {
-            double s = 0;
-            for (int j = 0; j < dv; ++j) s += (a * Sp[(size_t)i * dv + j] + kk[i] * del[j]) * doo[j];
-            dqn[(r * lh + h) * dk + i] = s;
-          }
-          double dbet = 0;
-          for (int j = 0; j < dv; ++j) {
-            double s = 0;
-            for (int i = 0; i < dk; ++i) s += dS[(size_t)i * dv + j] * kk[i];
-            ddel[j] = s;
-            dt1[r * li + 2 * lh * dk + h * dv + j] = be * s;
-            dbet += s * (v[j] - mvec[j]);
-            dm[j] = -be * s;
-          }
-          dbe[r * lh + h] = dbet;
-          for (int i = 0; i < dk; ++i) {
-            double s = 0;
-            for (int j = 0; j < dv; ++j) s += dS[(size_t)i * dv + j] * del[j] + a * Sp[(size_t)i * dv + j] * dm[j];
-            dkn[(r * lh + h) * dk + i] = s;
-          }
-          double da = 0;
-          for (int i = 0; i < dk; ++i) for (int j = 0; j < dv; ++j) {
-            const double g = dS[(size_t)i * dv + j] + kk[i] * dm[j];
-            da += g * Sp[(size_t)i * dv + j];
-            dS[(size_t)i * dv + j] = a * g;
-          }
-          dgg[r * lh + h] = da * a;
+          for (int i = 0; i < dk; ++i) { dqn[(r * lh + h) * dk + i] = dq[(size_t)t * dk + i]; dkn[(r * lh + h) * dk + i] = dk2[(size_t)t * dk + i]; }
+          for (int j = 0; j < dv; ++j) dt1[r * li + 2 * lh * dk + h * dv + j] = dv2[(size_t)t * dv + j];
+          dgg[r * lh + h] = dg2[t];
+          dbe[r * lh + h] = db2[t];
         }
       }
       // 정규화·β·g

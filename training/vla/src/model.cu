@@ -21,6 +21,11 @@ using net::f2bf;
 static unsigned nb(long long n, int t = 256) { return (unsigned)((n + t - 1) / t); }
 constexpr int TEMB = 32;
 constexpr int DWCH = 1024;   // dW split-K 조각 행 수
+// 비교용: RVLA_DN_OLD=1 이면 학습 DeltaNet 을 예전 재귀 꼴(FP32, 검문점 16 스텝)로
+static bool dn_old() {
+  static const bool o = [] { const char* e = getenv("RVLA_DN_OLD"); return e && e[0] == '1'; }();
+  return o;
+}
 
 VCfg tiny_vcfg() {
   VCfg c;
@@ -38,7 +43,7 @@ struct Model::WS {
   std::vector<float*> Xs, Kf, Vf, dKx, dVx, vX, eX;
   float *hn, *T0, *T1, *QK, *O, *lse, *Gb, *Bb, *Xmid, *GU;
   uint16_t *A1, *A2, *Ag, *Hh;
-  float *dR, *dA, *dHh, *dAg, *dO, *dT0, *dT1, *dp, *dQK, *dK, *dV, *Dd, *dG, *dBt, *wt, *part, *dnws, *ws, *dHn;
+  float *dR, *dA, *dHh, *dAg, *dO, *dT0, *dT1, *dp, *dQK, *dK, *dV, *Dd, *dG, *dBt, *wt, *part, *dnws, *dnws0 = nullptr, *ws, *dHn;
   uint16_t *dRb, *dGU, *dT0b;
   // 영상
   float *vQKV, *vO, *vH1, *vlse, *vXm, *vOut, *vdR, *vdA, *vdQKV, *vdO, *vdH, *vDd, *vdOut;
@@ -226,7 +231,8 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
                                             (long long)Rv * 3 * c.vD, (long long)RA * std::max(c.De, (Q.nq + Q.nkv) * Q.hd), (long long)c.Bmax * 16 * H});
   s.wt = alloc<float>(wtn);
   s.part = alloc<float>((size_t)((std::max({R, Rv, RA}) + 255) / 256 + 1) * std::max<long long>({(long long)s.W0, (long long)Q.lin_in() * Q.conv, 3LL * c.vD, (long long)c.vMLP, (long long)c.vT * c.vD, (long long)H, 2LL * c.Ie}));
-  s.dnws = alloc<float>(tk::dn_ws_floats(c.Bmax, c.Lmax, Q.lh, Q.dk, Q.dv));
+  s.dnws = alloc<float>(tk::dnc_ws_floats(c.Bmax, c.Lmax, Q.lh, Q.dk, Q.dv));
+  if (dn_old()) s.dnws0 = alloc<float>(tk::dn_ws_floats(c.Bmax, c.Lmax, Q.lh, Q.dk, Q.dv));
   long long wsn = 0;
   auto need = [&](long long rows, long long N, long long K) { wsn = std::max(wsn, (rows + DWCH - 1) / DWCH * N * K); };
   for (int i = 0; i < Q.layers; ++i) { need(R, s.W0, H); need(R, 2 * Q.I, H); need(R, H, Q.I); need(R, H, s.OW); }
@@ -465,7 +471,8 @@ static void q_layer_fwd(Model& m, int l, int B, int L, const float* Xin, float* 
     float* Qn = s.QK;
     float* Kn = s.QK + (size_t)R * c.lh * c.dk;
     qk::lin_prep(s.T1, li, s.T0, la, li + c.lh * c.dv, R, c.lh, c.dk, P + Ly.alog, P + Ly.dtb, false, Qn, Kn, s.Gb, s.Bb, st);
-    qk::deltanet(Qn, Kn, s.T1 + 2 * c.lh * c.dk, li, s.Gb, s.Bb, B, L, c.lh, c.dk, c.dv, nullptr, nullptr, false, s.O, st, ck ? s.dnws : nullptr);
+    if (dn_old()) qk::deltanet(Qn, Kn, s.T1 + 2 * c.lh * c.dk, li, s.Gb, s.Bb, B, L, c.lh, c.dk, c.dv, nullptr, nullptr, false, s.O, st, ck ? s.dnws0 : nullptr);
+    else tk::dnc_fwd(Qn, Kn, s.T1 + 2 * c.lh * c.dk, li, s.Gb, s.Bb, B, L, c.lh, c.dk, c.dv, nullptr, nullptr, false, s.O, s.dnws, ck, st);
     qk::gnorm(s.O, s.T0 + li, la, R, c.lh, c.dv, P + Ly.gnw, c.eps, s.Ag, st);
     MCK(cudaMemcpyAsync(s.Xmid, Xin, sizeof(float) * (size_t)R * H, cudaMemcpyDeviceToDevice, st));
     tk::mm(s.Ag, c.lh * c.dv, R, W + Ly.wout.off, H, c.lh * c.dv, s.Xmid, H, true, st);
@@ -534,8 +541,10 @@ static void q_layer_bwd(Model& m, int l, int B, int L, cudaStream_t st) {
     float* Kn = s.QK + (size_t)R * c.lh * c.dk;
     float* dQn = s.dQK;
     float* dKn = s.dQK + (size_t)R * c.lh * c.dk;
-    tk::deltanet_bwd(Qn, Kn, s.T1 + 2 * c.lh * c.dk, li, s.Gb, s.Bb, s.dO, B, L, c.lh, c.dk, c.dv, false, true, s.dnws, dQn, dKn, s.dT1 + 2 * c.lh * c.dk, li,
-                     s.dG, s.dBt, m.bug == 3 ? 3 : 0, st);
+    if (dn_old())
+      tk::deltanet_bwd(Qn, Kn, s.T1 + 2 * c.lh * c.dk, li, s.Gb, s.Bb, s.dO, B, L, c.lh, c.dk, c.dv, false, true, s.dnws0, dQn, dKn, s.dT1 + 2 * c.lh * c.dk, li,
+                       s.dG, s.dBt, m.bug == 3 ? 3 : 0, st);
+    else tk::dnc_bwd(s.T1 + 2 * c.lh * c.dk, li, s.dO, B, L, c.lh, c.dk, c.dv, false, s.dnws, dQn, dKn, s.dT1 + 2 * c.lh * c.dk, li, s.dG, s.dBt, m.bug == 3 ? 3 : 0, st);
     float* alt = s.wt;
     float* dtt = s.wt + (size_t)R * c.lh;
     tk::lin_prep_bwd(s.T1, li, s.T0, la, li + VW, R, c.lh, c.dk, P + Ly.alog, P + Ly.dtb, dQn, dKn, s.dG, s.dBt, s.dT1, s.dT0, alt, dtt, st);

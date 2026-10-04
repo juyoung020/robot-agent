@@ -70,6 +70,10 @@ struct Qwen {
   float *X = nullptr, *T0 = nullptr, *T1 = nullptr, *Qb = nullptr, *Gb = nullptr, *Bb = nullptr, *lse = nullptr;
   uint16_t *A = nullptr, *A2 = nullptr;
   float* rs = nullptr;
+  float* dnws = nullptr;   // DeltaNet 덩이 꼴 작업 공간(prefix n ≥ 32)
+  float* qk_taps = nullptr;   // 검증(캐시 없는 앞 계산): 풀 층 f 마다 RoPE 뒤 Q [R][nq·hd] 다음 K [R][kvw] 를 [f][R][nq·hd + kvw] 로
+  const int* dpos = nullptr;   // nullptr 가 아니면 forward 의 위치 pos0 를 장치 값 *dpos 로(디코딩 그래프)
+  bool dn_rec = false;   // 참이면 prefix 도 DeltaNet 재귀 꼴(FP32, 예전 판 — 비교용)
   int bug = 0;   // 음성 대조: 1 RoPE θ = 1e4(옛 기본값), 5 θ × 10(약함 — 잡히는지 보고만), 2 MLP 앞 RMSN 빠뜨림, 3 DeltaNet 감쇠 빠뜨림, 4 q/k 정규화 빠뜨림
   std::vector<void*> allocs;
   size_t bytes = 0;

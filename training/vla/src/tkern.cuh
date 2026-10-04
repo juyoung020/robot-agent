@@ -60,6 +60,11 @@ struct AttP {
 };
 void att_fwd(const AttP& p, cudaStream_t st);
 void att_bwd(const AttP& p, cudaStream_t st);
+// 텐서 코어 판(flash.cu). 모양이 안 맞으면(키 > 512, hd ∉ {32, 64, 256}) false — att_fwd/att_bwd 가 예전 FP32 커널로.
+// 환경 변수 RVLA_ATT_OLD=1 이면 늘 예전 커널(비교용).
+bool fa_fwd(const AttP& p, cudaStream_t st);
+bool fa_bwd(const AttP& p, cudaStream_t st);
+bool att_old();
 
 // ---- Qwen 풀 어텐션 준비의 뒤: dQ(정규화·RoPE 뒤 q 기울기 [R][nq·hd]), dK·dV(캐시 배치 [B][Lc][kvw]) → dT0([q|gate],k,v 칸), qn·kn 기여 ----
 // 어텐션 출력 게이트의 뒤: dG(게이트 곱 뒤 기울기) → dO(어텐션 출력 기울기), dT0 의 gate 칸
@@ -75,7 +80,17 @@ void lin_prep_bwd(const float* T1, int ld1, const float* T0, int ld0, int boff, 
 void conv_bwd(const float* X, int ld, int B, int n, int C, int K, const float* w, const float* dT1, float* dp, float* dX, cudaStream_t st);
 // 합성곱 가중치 기울기 [C][K] = Σ_(b,t) dp[t][c]·x[t−K+1+k][c]
 void convw_grad(const float* X, int ld, const float* dp, int B, int n, int C, int K, float* part, float* out, cudaStream_t st);
-// 재귀의 뒤(검문점 + 구간 다시 계산). ws: dn_ws_floats(...) 개
+// 덩이 꼴(WY/UT 변환, 텐서 코어) 덩이 크기: dk 64 이상 = 64, 작은 구성 = 16(덩이 여럿을 시험하게)
+inline int dn_chunk(int dk) { return dk >= 64 ? 64 : 16; }
+// 덩이 꼴 앞(dnchunk.cu): Qn·Kn [R][lh·dk], V [R][ldv], G·Beta [R][lh] → O [R][lh·dv]; S0·S1 [B][lh][dk][dv](nullptr 가능).
+// ws: dnc_ws_floats(B, n, …) 개. keep: 뒤가 쓸 검문점(덩이 시작 상태)·Δ 도 남김(같은 ws 로 dnc_bwd 를 부르기 전에 같은 입력으로 앞을 돌려 둘 것)
+long long dnc_ws_floats(int B, int n, int lh, int dk, int dv);
+void dnc_fwd(const float* Qn, const float* Kn, const float* V, int ldv, const float* G, const float* Beta, int B, int n, int lh, int dk, int dv, const float* S0,
+             float* S1, bool nodecay, float* O, float* ws, bool keep, cudaStream_t st);
+// 덩이 꼴 뒤(열 시작 상태 0, 끝 상태 기울기 0). bug 3: dS 감쇠 빠뜨림(음성 대조)
+void dnc_bwd(const float* V, int ldv, const float* dO, int B, int n, int lh, int dk, int dv, bool nodecay, float* ws, float* dQn, float* dKn, float* dV, int lddv,
+             float* dG, float* dBeta, int bug, cudaStream_t st);
+// (예전) 재귀의 뒤(검문점 + 구간 다시 계산). ws: dn_ws_floats(...) 개
 long long dn_ws_floats(int B, int n, int lh, int dk, int dv);
 // hasck: 앞 계산(qk::deltanet 에 ws 를 검문점 자리로 준 것)이 검문점을 이미 써 둠
 void deltanet_bwd(const float* Qn, const float* Kn, const float* V, int ldv, const float* G, const float* Beta, const float* dO, int B, int n, int lh, int dk,

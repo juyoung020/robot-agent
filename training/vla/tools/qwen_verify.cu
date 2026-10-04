@@ -1,6 +1,7 @@
 // Qwen3.5 몸통 검증(MAPVLA_SPEC M1): HF FP32 기준값(tools/qwen_ref.py 덤프)과 층별 코사인, 탐욕 디코딩 토큰, 음성 대조, V6(그래프 = 즉시), V7(결정성), 속도.
 //   qwen_verify cos  MODEL REF [--neg]     층별·끝 코사인(토큰마다, 평균·하위 1 %·최저). 통과: 모든 층 평균 ≥ 0.999·하위 1 % ≥ 0.99. --neg: 버그 1–4 가 실패해야 통과
 //   qwen_verify gen  MODEL REF [N]         탐욕 N 토큰(기본 24)이 HF 와 같은지, 글로 풀어 보임
+//   qwen_verify rope MODEL REF           RoPE 위치별 검사(tools/qwen_rope_ref.py 덤프): 우리 정규화 + RoPE 커널 대 HF, 음성 대조, 끝에서 끝 위치별 오차
 //   qwen_verify v67  MODEL                 같은 입력 두 번 비트 동일, CUDA 그래프 == 즉시
 //   qwen_verify bench MODEL B L            prefix 앞 계산 시간·장치 메모리, 디코딩 토큰/s
 #include <algorithm>
@@ -15,6 +16,7 @@
 
 #include <cuda_runtime.h>
 
+#include "qkern.cuh"
 #include "qwen.h"
 
 using namespace rvla;
@@ -90,6 +92,114 @@ static bool run_cos(Qwen& m, const std::string& ref, bool verbose) {
   return ok;
 }
 
+
+// RoPE 검사(코사인 기준이 θ × 10 을 놓친 것을 보완): HF 의 풀 층 q_proj·k_proj 출력을 우리 q·k 머리 정규화 + RoPE 커널(qk::full_prep)에 넣어
+// 위치마다 HF 의 RoPE 뒤 q·k 와 비교(머리 벡터마다 상대 L2, 위치 최대 600). 음성 대조(θ × 1.01·× 10·1e4, 회전 32 차원, 위치 + 1)는 실패해야 함.
+// 끝에서 끝: 우리 앞 계산 전체의 RoPE 뒤 q·k 대 HF(bf16 GEMM 잡음 포함)를 위치 구간별로 — 위치가 커질수록 오차가 자라지 않는지.
+static bool run_rope(Qwen& m, const std::string& ref) {
+  int ns = 0;
+  { std::vector<int> v; while (rd(ref + "/r" + std::to_string(ns) + "_ids.i32", v)) ++ns; }
+  if (!ns) { std::printf("[rope] no r*_ids.i32 in %s (run tools/qwen_rope_ref.py)\n", ref.c_str()); return false; }
+  const int nq = m.c.nq, nkv = m.c.nkv, hd = m.c.hd, qg = m.c.qg(), kvw = m.c.kvw(), ldT = qg + 2 * kvw, nf = m.c.n_full();
+  std::vector<int> fl;
+  for (int i = 0; i < m.c.layers; ++i) if (m.c.full[i]) fl.push_back(i);
+  float *T0, *Q, *K, *V, *taps, *hid;
+  int* dids;
+  CK(cudaMalloc(&T0, sizeof(float) * 1024 * ldT)); CK(cudaMalloc(&Q, sizeof(float) * 1024 * nq * hd)); CK(cudaMalloc(&K, sizeof(float) * 1024 * kvw));
+  CK(cudaMalloc(&V, sizeof(float) * 1024 * kvw)); CK(cudaMalloc(&taps, sizeof(float) * (size_t)nf * 1024 * (nq * hd + kvw)));
+  CK(cudaMalloc(&hid, sizeof(float) * 1024 * m.c.H)); CK(cudaMalloc(&dids, sizeof(int) * 1024));
+  struct Var { const char* nm; float theta; int rot, dp; };
+  const Var vars[] = {{"ours", m.c.theta, m.c.rot, 0}, {"theta x1.01", m.c.theta * 1.01f, m.c.rot, 0}, {"theta x10", m.c.theta * 10.f, m.c.rot, 0},
+                      {"theta 1e4", 1e4f, m.c.rot, 0}, {"rotary 32 dims", m.c.theta, m.c.rot / 2, 0}, {"position + 1", m.c.theta, m.c.rot, 1}};
+  bool ok = true;
+  for (const Var& vr : vars) {
+    double worst = 0, wq = 0, wk = 0;
+    int wpos = -1;
+    for (int si = 0; si < ns; ++si) {
+      std::vector<int> ids;
+      rd(ref + "/r" + std::to_string(si) + "_ids.i32", ids);
+      const int n = (int)ids.size();
+      for (int f = 0; f < nf; ++f) {
+        std::vector<float> pq, pk, rq, rk;
+        const std::string b = ref + "/r" + std::to_string(si) + "_";
+        rd(b + "pq" + std::to_string(f) + ".f32", pq); rd(b + "pk" + std::to_string(f) + ".f32", pk);
+        rd(b + "rq" + std::to_string(f) + ".f32", rq); rd(b + "rk" + std::to_string(f) + ".f32", rk);
+        std::vector<float> t0((size_t)n * ldT, 0.f);
+        for (int t = 0; t < n; ++t) {
+          std::memcpy(&t0[(size_t)t * ldT], &pq[(size_t)t * qg], sizeof(float) * qg);
+          std::memcpy(&t0[(size_t)t * ldT + qg], &pk[(size_t)t * kvw], sizeof(float) * kvw);
+        }
+        CK(cudaMemcpy(T0, t0.data(), sizeof(float) * t0.size(), cudaMemcpyHostToDevice));
+        std::vector<int> poff(1, vr.dp);
+        int* dpo = nullptr;
+        if (vr.dp) { CK(cudaMalloc(&dpo, sizeof(int))); CK(cudaMemcpy(dpo, poff.data(), sizeof(int), cudaMemcpyHostToDevice)); }
+        const auto& L = m.lay.l[fl[f]];
+        qk::full_prep(T0, ldT, n, 1, n, 0, nq, nkv, hd, vr.rot, vr.theta, m.c.eps, m.Pv + L.qn, m.Pv + L.kn, false, Q, K, V, n, 0, dpo);
+        std::vector<float> oq((size_t)n * nq * hd), ok2((size_t)n * kvw);
+        CK(cudaMemcpy(oq.data(), Q, sizeof(float) * oq.size(), cudaMemcpyDeviceToHost));
+        CK(cudaMemcpy(ok2.data(), K, sizeof(float) * ok2.size(), cudaMemcpyDeviceToHost));
+        if (dpo) cudaFree(dpo);
+        for (int t = 0; t < n; ++t) {
+          for (int h = 0; h < nq + nkv; ++h) {
+            const float* a = h < nq ? &oq[((size_t)t * nq + h) * hd] : &ok2[(size_t)t * kvw + (h - nq) * hd];
+            const float* r = h < nq ? &rq[((size_t)t * nq + h) * hd] : &rk[(size_t)t * kvw + (h - nq) * hd];
+            double e = 0, z = 0;
+            for (int d = 0; d < hd; ++d) { e += (double)(a[d] - r[d]) * (a[d] - r[d]); z += (double)r[d] * r[d]; }
+            const double rel = std::sqrt(e / std::max(z, 1e-30));
+            if (rel > worst) { worst = rel; wpos = t; }
+            if (h < nq) wq = std::max(wq, rel); else wk = std::max(wk, rel);
+          }
+        }
+      }
+    }
+    const bool pass = worst <= 2e-4;
+    const bool want = vr.nm == std::string("ours");
+    std::printf("[rope] isolated norm+RoPE, %-15s worst per-head rel err %.2e (q %.2e, k %.2e) at position %d -> %s%s\n", vr.nm, worst, wq, wk, wpos,
+                pass ? "PASS" : "FAIL", want ? "" : (pass ? "  (negative NOT caught)" : "  (negative caught)"));
+    ok = ok && (want ? pass : !pass);
+  }
+  // 끝에서 끝: 우리 전체 앞 계산(bf16 GEMM 입력)의 RoPE 뒤 q·k
+  m.qk_taps = taps;
+  std::vector<double> bin_e(4, 0.0), bin_n(4, 0.0);
+  double e2e_worst = 0;
+  for (int si = 0; si < ns; ++si) {
+    std::vector<int> ids;
+    rd(ref + "/r" + std::to_string(si) + "_ids.i32", ids);
+    const int n = (int)ids.size();
+    CK(cudaMemcpy(dids, ids.data(), sizeof(int) * n, cudaMemcpyHostToDevice));
+    m.forward(dids, nullptr, 1, n, 0, nullptr, hid, nullptr, 0);
+    CK(cudaDeviceSynchronize());
+    const size_t per = (size_t)n * (nq * hd + kvw);
+    std::vector<float> tp(per * nf);
+    CK(cudaMemcpy(tp.data(), taps, sizeof(float) * tp.size(), cudaMemcpyDeviceToHost));
+    for (int f = 0; f < nf; ++f) {
+      std::vector<float> rq, rk;
+      const std::string b = ref + "/r" + std::to_string(si) + "_";
+      rd(b + "rq" + std::to_string(f) + ".f32", rq); rd(b + "rk" + std::to_string(f) + ".f32", rk);
+      for (int t = 0; t < n; ++t)
+        for (int h = 0; h < nq + nkv; ++h) {
+          const float* a = h < nq ? &tp[f * per + ((size_t)t * nq + h) * hd] : &tp[f * per + (size_t)n * nq * hd + (size_t)t * kvw + (h - nq) * hd];
+          const float* r = h < nq ? &rq[((size_t)t * nq + h) * hd] : &rk[(size_t)t * kvw + (h - nq) * hd];
+          double e = 0, z = 0;
+          for (int d = 0; d < hd; ++d) { e += (double)(a[d] - r[d]) * (a[d] - r[d]); z += (double)r[d] * r[d]; }
+          const double rel = std::sqrt(e / std::max(z, 1e-30));
+          const int bin = t < 64 ? 0 : t < 192 ? 1 : t < 384 ? 2 : 3;
+          bin_e[bin] += rel; bin_n[bin] += 1;
+          e2e_worst = std::max(e2e_worst, rel);
+        }
+    }
+  }
+  m.qk_taps = nullptr;
+  const double m0 = bin_e[0] / std::max(1.0, bin_n[0]), m3 = bin_e[3] / std::max(1.0, bin_n[3]);
+  const bool e2e_ok = e2e_worst < 0.05 && m3 < 3 * m0;
+  std::printf("[rope] end-to-end q/k after RoPE vs HF (bf16 GEMM noise included), mean per-head rel err by position: [0,64) %.2e  [64,192) %.2e  [192,384) %.2e  [384,600) %.2e, worst %.2e -> %s (rule: worst < 0.05, last bin < 3 x first)\n",
+              m0, bin_e[1] / std::max(1.0, bin_n[1]), bin_e[2] / std::max(1.0, bin_n[2]), m3, e2e_worst, e2e_ok ? "PASS" : "FAIL");
+  ok = ok && e2e_ok;
+  std::printf("[rope] %s\n", ok ? "PASS" : "FAIL");
+  cudaFree(T0); cudaFree(Q); cudaFree(K); cudaFree(V); cudaFree(taps); cudaFree(hid); cudaFree(dids);
+  return ok;
+}
+
 int main(int argc, char** argv) {
   if (argc < 3) { std::fprintf(stderr, "usage: qwen_verify cos|gen|v67|bench MODEL [REF] ...\n"); return 2; }
   const std::string cmd = argv[1], mdir = argv[2];
@@ -118,6 +228,7 @@ int main(int argc, char** argv) {
     }
     return ok ? 0 : 1;
   }
+  if (cmd == "rope") return run_rope(m, argv[3]) ? 0 : 1;
   if (cmd == "gen") {
     const std::string ref = argv[3];
     const int N = argc > 4 ? std::atoi(argv[4]) : 24;
@@ -171,6 +282,7 @@ int main(int argc, char** argv) {
                   tf, ng, ms);
       if (!eq && hl) std::printf("   first free-run divergence at step %d: HF logit gap (HF token - ours) %.4f\n", k, glog[V * k + gref[k]] - glog[V * k + out[0][k]]);
       if (hv) std::printf("   ours: %s\n   HF  : %s\n", voc.decode(out[0]).c_str(), voc.decode(gref).c_str());
+      std::printf("   ids:"); for (int x : out[0]) std::printf(" %d", x); std::printf("\n");
     }
     const bool okg = worst_all < 0.05;
     std::printf("[gen] free-run identical %d / %d prompts, teacher-forced argmax = HF %d / %d steps, largest HF logit gap at a mismatch %.4f -> %s (rule: every mismatch is a near-tie, gap < 0.05)\n", same, np, tf_all, tf_tot, worst_all, okg ? "PASS" : "FAIL");

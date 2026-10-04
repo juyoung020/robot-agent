@@ -11,6 +11,10 @@ cmake -S training/vla -B ~/ra_vla/build && cmake --build ~/ra_vla/build -j4
 ~/ra_vla/build/qwen_verify gen   training/model/Qwen3.5-0.8B ~/ra_vla/ref/q08
 ~/ra_vla/build/qwen_verify v67   training/model/Qwen3.5-0.8B
 ~/ra_vla/build/qwen_verify bench training/model/Qwen3.5-0.8B 32 232
+~/clip_venv/bin/python training/vla/tools/qwen_rope_ref.py training/model/Qwen3.5-0.8B ~/ra_vla/ref/q08   # 한 번(RoPE 위치별 기준값, 약 7 s)
+~/ra_vla/build/qwen_verify rope  training/model/Qwen3.5-0.8B ~/ra_vla/ref/q08
+~/ra_vla/build/vla_verify v5 [--ki0|--frozen-vis]; ~/ra_vla/build/vla_verify neg|v67|opt|dnref|dn|att   # (ctest 로도)
+~/ra_vla/build/vla_verify bench 24 232; ~/ra_vla/build/vla_verify dnbench 24 232
 ```
 
 ## M1 — Qwen3.5 앞 계산·디코딩 (잰 값, 2026-10-04)
@@ -71,3 +75,44 @@ Qwen3.5-0.8B 몸통 열 [틀 | 영상 64 × 2 | 지도·몸 토큰(팔·몸통·
 - 구성 (b) 2B + 호스트 옵티마이저, (c) 2B + GPU 8 비트는 **구현·측정 안 함**(결정 = 구성 a). 그 판단 근거인 호스트 AdamW 1.9 G 변수/s·PCIe 55/57 GB/s 는 MAPVLA_SPEC 4.5.
 - DAgger 와 같이(계산·추정): 모델 B 8 약 8.3 GB + 렌더 묶음 256 1.45 GB + 환경·지도 판 1,024 약 0.5 GB (추정) ≈ 10.3 GB → 12 GB 안. 롤아웃 추론은 prefix 5.8 ms/표본 + 단계 문장 + 전문가 오일러.
 - 남은 속도 일: DeltaNet 재귀를 덩이(chunk) 행렬 꼴로(텐서 코어), 어텐션을 텐서 코어로, 디코딩 CUDA 그래프·GEMV.
+
+## M4 — 속도판: DeltaNet 덩이 꼴·텐서 코어 어텐션·디코딩 그래프 (잰 값, 2026-10-05 00:23, 예전(11a085e)·새 판을 같은 때 같은 조건에서, GPU 다른 계산 없음, 시작 전 장치 1.23 GB)
+
+구현:
+- **Gated DeltaNet 덩이 꼴**(`src/dnchunk.cu`): WY 표현/UT 변환(Gated DeltaNet·flash-linear-attention `chunk_gated_delta_rule` 식), 덩이 64(작은 구성 16 — V5 가 덩이 여럿을 시험), mma.sync BF16·FP32 누산(`src/mma.cuh`).
+  앞 = `dn_prep_k`(덩이마다: γ, A = β·KKᵀ∘M, T = (I + A)⁻¹ 16 × 16 덩어리 풀기, Wb·U·Pb) → `dn_state_k`(판·머리마다 덩이 차례, 상태 128 × 128 레지스터, 워프 16).
+  뒤 = `dn_dstate_k`(거꾸로: dS, dΔ, ρ) → `dn_g1_k`(dQ·dK·dWb·dP·dγ) → `dn_g2_k`(dV·dT·dβ) → `dn_g3_k`(dA·dKK, dγ 역 누적합). 검문점 = 덩이 시작 상태 bf16. 원자 없음.
+  CPU 참조판에 같은 식·같은 bf16 자리(`vref::dn_chk_*`)를 따로 짜 EMUL 바닥으로 씀(FP64 정답은 재귀 꼴 그대로). 예전 재귀 꼴은 `RVLA_DN_OLD=1`(학습)·`Qwen::dn_rec`(prefix)로 남김.
+- **텐서 코어 어텐션**(`src/flash.cu`, `tk::att_fwd/att_bwd` 가 고름): 블록 = (판, 머리, 질의 32), 점수 행 통째 공유 메모리 2 단 softmax(P = e^{S−lse} 정규화 → bf16 → PV), 뒤 = dQ 블록 + dK·dV 키 블록(GQA 무리 차례 합).
+  가림: 몸통 인과, 전문가 = prefix 유효 길이(판마다) + 자기 행동 토큰 양방향(MAPVLA_SPEC 2.4), 영상 양방향. 키 ≤ 512·hd ∈ {32, 64, 256} 밖은 예전 FP32 커널(`RVLA_ATT_OLD=1` 로 늘 예전).
+- **디코딩**: 스텝 하나(앞 n 1 → LM 머리 → 2 단 argmax → 고정 메모리로 토큰 → 위치 + 1)를 CUDA 그래프 하나로(위치 = 장치 값, 다시 잡지 않음), KV·합성곱 기록·재귀 상태 제자리. 행 ≤ 8 은 GEMV(가중치 한 번 읽기), gate·up GEMV 에 SwiGLU 붙임, 디코딩 어텐션은 키를 워프 8 개로 나눔. prefix(n ≥ 16/32)는 텐서 코어 어텐션·DeltaNet 덩이 꼴.
+- dW split-K 조각 수를 결과 타일 수에 맞춤(GPU 를 채울 만큼만 — 부분합 쓰기·합 커널 줄임).
+- SigLIP 대행 작업의 `training/BC/src/vit_gemm.cuh`(128 × 256 × k64) 를 Qwen 모양(M 5,568)에 재 봄: 앞 GEMM 85.2–87.2 / 75.7–77.4 TFLOPS 대 지금 `gemm2_k` 85.4–86.9 / 73.3–74.4(결과 비트 같음) → 이득 1–4 % 라 바꾸지 않음(BF16 FP32 누산 상한 87.9 에 이미 가까움). vit 커널·API 는 건드리지 않음.
+
+| 잰 것 (B 24 × L 232, 구성 a) | 예전 | 새 판 |
+|---|---|---|
+| BC 갱신 표본/s (앞 + 뒤 + 옵티마이저) | 22.0 (1,066 + 25 ms) — M3 때 24.2 | **35.6** (650 + 25 ms) = 1.62 배 |
+| 영상 탑 얼림 | 23.1 | **37.9** |
+| 앞만(손실) | 181 ms | 145 ms |
+| 장치 사용(B 24) | 11.82 GB | **11.15 GB** |
+| 커널 시간/스텝(nsys, 앞 + 뒤, 옵티마이저 포함): GEMM | 390.7 ms (35.8 %) | 377.3 ms (56.8 %) |
+| DeltaNet 앞(층 재계산 포함) / 뒤 | 58.8 / **336.0** ms | 34.4 / **52.8** ms |
+| 어텐션 앞 / 뒤 | 63.9 / 68.7 ms | 14.0 / 13.2 ms |
+| 합성곱 / 옵티마이저 / 그 밖 요소별 | 45.8 / 25.3 / 102.4 ms | 46.0 / 25.2 / 101.1 ms |
+| 합 | 1,091.6 ms | 664.2 ms |
+| DeltaNet 한 층(lh 16, `dnbench 24 232`) 앞 / 뒤 | 1.66 / 17.0 ms | 0.92 / 2.61 ms |
+| prefix 앞 B 1 / 8 / 24 (ms/표본) | 16.06 / 6.59 / 6.40 | **11.43 / 5.20 / 5.07** |
+| 탐욕 디코딩 B 1 | 5.64 ms = 177 토큰/s (M3 198) | **2.70 ms = 370 토큰/s** |
+| 탐욕 디코딩 B 8 | 1,317 토큰/s (M3 1,470) | **2,449 토큰/s** |
+
+- 실효: 표본당 0.93 TFLOP / 28.1 ms = **약 33 TFLOPS**(예전 약 20–22). 남은 몫: GEMM 57 %(상한 근처), 요소별 15 %(RMSNorm·SwiGLU·f2bf·게이트 — 융합 후보), 합성곱 7 %(합성곱 4 + SiLU 를 in_proj 끝단으로 붙일 수 있음). 과제 4(RMSNorm/RoPE/q·k 정규화 융합)는 하지 않음.
+
+| 정확성 | 결과 |
+|---|---|
+| M1 코사인(HF FP32, 프롬프트 5 개) | 끝 평균 **0.999983** / 하위 1 % 0.999725(예전 0.999992 / 0.999921), 층 최악 평균 0.999983 → 통과(≥ 0.999 / ≥ 0.99). 음성 대조 4/4 |
+| **RoPE 위치별(새, `qwen_verify rope`)** | HF 의 q_proj·k_proj 출력을 우리 머리 정규화 + RoPE 커널에 넣어 HF RoPE 뒤 q·k 와 머리마다 비교, 위치 0–599(긴 프롬프트 600 토큰 더함): 최악 상대 **2.4e-7**(기준 2e-4). 음성 대조 **5/5** 잡힘: θ × 1.01 4.7e-2(위치 591), θ × 10 1.39, θ 1e4 1.44, 회전 32 차원 1.38, 위치 + 1 0.54. 끝에서 끝(우리 앞 전체) 위치 구간 평균 3.2e-3 → 4.8e-3(600 까지 자라지 않음) |
+| 탐욕 디코딩 | HF 대비 자유 실행 **5/5**·교사 강요 120/120. 예전 판과 토큰 번호 비교(24·64 토큰): 4/5 같음, 긴 프롬프트 1 개는 19 번째에서 갈림 — 그 자리는 M1 에서 HF 로짓 차 0.027 인 거의 같은 값(예전 판이 HF 와 달랐던 자리, 새 판은 HF 와 같음). 그래프 디코딩 == 즉시 디코딩(같은 커널) 64 토큰 같음 |
+| V5(KI 켬 / 끔 / 영상 얼림) | **101/101, 101/101, 72/72**(최악 비율 1.80 / 1.15 / 1.80), 유한 차분 2.3e-6 / 4.4e-6 / 1.6e-6. 음성 대조 5/5 |
+| V5 규칙 바꿈(알림) | 묶음 하나(씨앗 11)의 바닥은 반올림 잡음 한 표본이라 흔들린다: 새 판에서 묶음마다 최악 비율 13.6(손실 flow 의 EMUL 바닥이 우연히 1.6e-5)·1.19·1.62·2.15. 그래서 **묶음 4 개(씨앗 11–14)의 오차·바닥을 각각 RMS 로 모은 뒤 2 배 규칙**(`--nb`, 검사 수 같음). 예전 판도 같은 규칙에서 통과 |
+| 커널 단위 | `dn`: GPU 대 같은 자리 CPU EMUL 1e-5–1e-8, GPU 대 FP64 = EMUL 대 FP64(비율 1.00). `dnref`: 덩이 FP64 == 재귀 FP64 4e-15, 재귀 뒤 == 유한 차분. `att`: 6 경우(인과 GQA·전문가·영상, hd 32/64/256) GPU 대 EMUL ≤ 3e-5, 비율 1.00 |
+| V6·V7 | 작은 구성 0 / 367,878, **실제 크기 B 2: 0 / 943,627,782 낱말**, 그래프 == 즉시 0, 다른 난수 열쇠 → 다름. Qwen v67 0 / 819,200, 묶음 무관 0. 옵티마이저 GPU == CPU 0 |

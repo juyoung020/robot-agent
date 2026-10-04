@@ -2,10 +2,12 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 
 #include "gemm.cuh"
 #include "qkern.cuh"
 #include "qwen.h"
+#include "tkern.cuh"
 
 namespace rvla {
 namespace qk {
@@ -93,6 +95,7 @@ template void gl<false, true, EPI_ACC_F32>(const GemmP&, int, cudaStream_t);
 template void gl<false, true, EPI_ACT_BF16>(const GemmP&, int, cudaStream_t);
 template void gl<true, true, EPI_SPLIT_F32>(const GemmP&, int, cudaStream_t);
 void gemm_f32(const uint16_t* A, int lda, int M, const uint16_t* Wb, const MT& w, float* out, int ldo, bool acc, cudaStream_t st) {
+  if (M <= 8) { gemv(A, lda, M, Wb + w.off, w.N, w.K, out, ldo, acc, st); return; }   // 디코딩
   GemmP p{};
   p.A = A; p.lda = lda; p.B = Wb + w.off; p.ldb = w.K; p.M = M; p.N = w.N; p.K = w.K; p.C = out; p.ldc = ldo; p.act = ACT_LIN;
   if (acc) gl<false, false, EPI_ACC_F32>(p, 1, st);
@@ -102,11 +105,12 @@ void gemm_f32(const uint16_t* A, int lda, int M, const uint16_t* Wb, const MT& w
 // ---- 풀 어텐션 준비: 워프 = (행, 머리). 머리 0..nq−1 = q, nq..nq+nkv−1 = k(+ v 복사) ----
 constexpr int MAXHD = 256;
 __global__ void full_prep_k(const float* T0, int ldT, int R, int n, int pos0, int nq, int nkv, int hd, int rot, float theta, float eps, const float* qn,
-                            const float* kn, int skipnorm, float* Q, float* Kc, float* Vc, int Lc, const int* poff) {
+                            const float* kn, int skipnorm, float* Q, float* Kc, float* Vc, int Lc, const int* poff, const int* dpos) {
   __shared__ float sv[8][MAXHD];
   const int w = blockIdx.x * 8 + threadIdx.x / 32, lane = threadIdx.x & 31, wl = threadIdx.x / 32;
   const int nh = nq + nkv;
   if (w >= R * nh) return;
+  if (dpos) pos0 = *dpos;
   const int r = w / nh, h = w % nh, b = r / n, t = r % n, pos = (poff ? poff[b] : pos0) + t, kpos = pos0 + t;
   const bool isq = h < nq;
   const int kh = h - nq;
@@ -138,16 +142,17 @@ __global__ void full_prep_k(const float* T0, int ldT, int R, int n, int pos0, in
   }
 }
 void full_prep(const float* T0, int ldT, int R, int B, int n, int pos0, int nq, int nkv, int hd, int rot, float theta, float eps, const float* qn,
-               const float* kn, bool skipnorm, float* Q, float* Kc, float* Vc, int Lc, cudaStream_t st, const int* poff) {
+               const float* kn, bool skipnorm, float* Q, float* Kc, float* Vc, int Lc, cudaStream_t st, const int* poff, const int* dpos) {
   (void)B;
   if (hd > MAXHD) { std::fprintf(stderr, "hd > 256\n"); std::abort(); }
-  full_prep_k<<<nb((long long)R * (nq + nkv), 8), 256, 0, st>>>(T0, ldT, R, n, pos0, nq, nkv, hd, rot, theta, eps, qn, kn, skipnorm, Q, Kc, Vc, Lc, poff);
+  full_prep_k<<<nb((long long)R * (nq + nkv), 8), 256, 0, st>>>(T0, ldT, R, n, pos0, nq, nkv, hd, rot, theta, eps, qn, kn, skipnorm, Q, Kc, Vc, Lc, poff, dpos);
   KCK();
 }
 
 // ---- 인과 어텐션: 워프 = (행, 질의 머리), 레인마다 E = hd/32 차원, 온라인 softmax(FP32) ----
 template <int E>
-__global__ void attn_k(const float* Q, const float* Kc, const float* Vc, int n, int pos0, int Lc, int nq, int nkv, float scale, int R, float* O, float* lse) {
+__global__ void attn_k(const float* Q, const float* Kc, const float* Vc, int n, int pos0, int Lc, int nq, int nkv, float scale, int R, float* O, float* lse,
+                       const int* dpos) {
   const int w = (blockIdx.x * blockDim.x + threadIdx.x) / 32, lane = threadIdx.x & 31;
   if (w >= R * nq) return;
   constexpr int hd = 32 * E;
@@ -155,7 +160,7 @@ __global__ void attn_k(const float* Q, const float* Kc, const float* Vc, int n, 
   float qv[E], acc[E];
 #pragma unroll
   for (int e = 0; e < E; ++e) { qv[e] = Q[(long long)r * nq * hd + h * hd + lane * E + e]; acc[e] = 0.f; }
-  const int nk = pos0 + t + 1;
+  const int nk = (dpos ? *dpos : pos0) + t + 1;
   float m = -INFINITY, s = 0.f;
   const long long kst = (long long)nkv * hd;
   const float* kb = Kc + (long long)b * Lc * kst + kh * hd + lane * E;
@@ -176,15 +181,80 @@ __global__ void attn_k(const float* Q, const float* Kc, const float* Vc, int n, 
   for (int e = 0; e < E; ++e) O[(long long)r * nq * hd + h * hd + lane * E + e] = acc[e] * inv;
   if (lane == 0 && lse) lse[(long long)r * nq + h] = m + logf(s);
 }
-void attn(const float* Q, const float* Kc, const float* Vc, int B, int n, int pos0, int Lc, int nq, int nkv, int hd, float* O, float* lse, cudaStream_t st) {
+// 디코딩 어텐션(질의 행이 적을 때): 블록 = (행, 머리), 워프 8 개가 키를 나눠(j ≡ w mod 8) 각자 온라인 softmax → 공유 메모리에서 고정 순서로 합침
+template <int E>
+__global__ void __launch_bounds__(256) attn_dec_k(const float* Q, const float* Kc, const float* Vc, int n, int pos0, int Lc, int nq, int nkv, float scale, float* O,
+                                                  float* lse, const int* dpos) {
+  constexpr int hd = 32 * E;
+  __shared__ float sm_[8], ss_[8], sacc[8][hd];
+  const int r = blockIdx.x, h = blockIdx.y, w = threadIdx.x >> 5, lane = threadIdx.x & 31, b = r / n, t = r % n, kh = h / (nq / nkv);
+  const int nk = (dpos ? *dpos : pos0) + t + 1;
+  float qv[E], acc[E];
+#pragma unroll
+  for (int e = 0; e < E; ++e) { qv[e] = Q[(long long)r * nq * hd + h * hd + lane * E + e]; acc[e] = 0.f; }
+  float m = -INFINITY, s = 0.f;
+  const long long kst = (long long)nkv * hd;
+  const float* kb = Kc + (long long)b * Lc * kst + kh * hd + lane * E;
+  const float* vb = Vc + (long long)b * Lc * kst + kh * hd + lane * E;
+  for (int j = w; j < nk; j += 8) {
+    float d = 0.f;
+#pragma unroll
+    for (int e = 0; e < E; ++e) d = d + qv[e] * kb[j * kst + e];
+    d = wsum(d) * scale;
+    const float mn = fmaxf(m, d), cr = expf(m - mn), p = expf(d - mn);
+    s = s * cr + p;
+#pragma unroll
+    for (int e = 0; e < E; ++e) acc[e] = acc[e] * cr + p * vb[j * kst + e];
+    m = mn;
+  }
+  if (lane == 0) { sm_[w] = m; ss_[w] = s; }
+#pragma unroll
+  for (int e = 0; e < E; ++e) sacc[w][lane * E + e] = acc[e];
+  __syncthreads();
+  if (w == 0) {
+    float M = -INFINITY;
+    for (int k = 0; k < 8; ++k) M = fmaxf(M, sm_[k]);
+    float S = 0.f, a[E];
+#pragma unroll
+    for (int e = 0; e < E; ++e) a[e] = 0.f;
+    for (int k = 0; k < 8; ++k) {
+      const float f = sm_[k] > -INFINITY ? expf(sm_[k] - M) : 0.f;
+      S = S + ss_[k] * f;
+#pragma unroll
+      for (int e = 0; e < E; ++e) a[e] = a[e] + sacc[k][lane * E + e] * f;
+    }
+    const float inv = 1.f / S;
+#pragma unroll
+    for (int e = 0; e < E; ++e) O[(long long)r * nq * hd + h * hd + lane * E + e] = a[e] * inv;
+    if (lane == 0 && lse) lse[(long long)r * nq + h] = M + logf(S);
+  }
+}
+void attn(const float* Q, const float* Kc, const float* Vc, int B, int n, int pos0, int Lc, int nq, int nkv, int hd, float* O, float* lse, cudaStream_t st,
+          const int* dpos) {
   const int R = B * n;
   const float sc = 1.f / sqrtf((float)hd);
+  if (n >= 16 && !dpos && !tk::att_old()) {   // prefix: 텐서 코어 판
+    tk::AttP a;
+    a.Q = Q; a.ldq = nq * hd; a.K1 = Kc; a.V1 = Vc; a.ldk1 = nkv * hd; a.L1 = Lc; a.n1c = pos0 + n; a.causal = 1; a.qoff = pos0;
+    a.B = B; a.n = n; a.nq = nq; a.nkv = nkv; a.hd = hd; a.scale = sc; a.O = O; a.ldo = nq * hd; a.lse = lse;
+    if (tk::fa_fwd(a, st)) return;
+  }
+  if (n <= 4 && !tk::att_old()) {   // 디코딩: 키를 워프 8 개로 나눔
+    const dim3 g(R, nq);
+    switch (hd) {
+      case 256: attn_dec_k<8><<<g, 256, 0, st>>>(Q, Kc, Vc, n, pos0, Lc, nq, nkv, sc, O, lse, dpos); KCK(); return;
+      case 128: attn_dec_k<4><<<g, 256, 0, st>>>(Q, Kc, Vc, n, pos0, Lc, nq, nkv, sc, O, lse, dpos); KCK(); return;
+      case 64: attn_dec_k<2><<<g, 256, 0, st>>>(Q, Kc, Vc, n, pos0, Lc, nq, nkv, sc, O, lse, dpos); KCK(); return;
+      case 32: attn_dec_k<1><<<g, 256, 0, st>>>(Q, Kc, Vc, n, pos0, Lc, nq, nkv, sc, O, lse, dpos); KCK(); return;
+      default: break;
+    }
+  }
   const unsigned g = nb((long long)R * nq * 32, 128);
   switch (hd) {
-    case 256: attn_k<8><<<g, 128, 0, st>>>(Q, Kc, Vc, n, pos0, Lc, nq, nkv, sc, R, O, lse); break;
-    case 128: attn_k<4><<<g, 128, 0, st>>>(Q, Kc, Vc, n, pos0, Lc, nq, nkv, sc, R, O, lse); break;
-    case 64: attn_k<2><<<g, 128, 0, st>>>(Q, Kc, Vc, n, pos0, Lc, nq, nkv, sc, R, O, lse); break;
-    case 32: attn_k<1><<<g, 128, 0, st>>>(Q, Kc, Vc, n, pos0, Lc, nq, nkv, sc, R, O, lse); break;
+    case 256: attn_k<8><<<g, 128, 0, st>>>(Q, Kc, Vc, n, pos0, Lc, nq, nkv, sc, R, O, lse, dpos); break;
+    case 128: attn_k<4><<<g, 128, 0, st>>>(Q, Kc, Vc, n, pos0, Lc, nq, nkv, sc, R, O, lse, dpos); break;
+    case 64: attn_k<2><<<g, 128, 0, st>>>(Q, Kc, Vc, n, pos0, Lc, nq, nkv, sc, R, O, lse, dpos); break;
+    case 32: attn_k<1><<<g, 128, 0, st>>>(Q, Kc, Vc, n, pos0, Lc, nq, nkv, sc, R, O, lse, dpos); break;
     default: std::fprintf(stderr, "attn hd %d\n", hd); std::abort();
   }
   KCK();
@@ -202,21 +272,23 @@ void gate(const float* O, const float* T0, int ldT, int R, int nq, int hd, uint1
   KCK();
 }
 
-__global__ void hist_k(const float* T0, int ld, int n, int pos0, int C, float* hist, int Lmax, long long tot) {
+__global__ void hist_k(const float* T0, int ld, int n, int pos0, int C, float* hist, int Lmax, long long tot, const int* dpos) {
   const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
   if (q >= tot) return;
+  if (dpos) pos0 = *dpos;
   const int r = (int)(q / C), c = (int)(q % C), b = r / n, t = r % n;
   hist[((long long)b * Lmax + pos0 + t) * C + c] = T0[(long long)r * ld + c];
 }
-void hist_put(const float* T0, int ld, int B, int n, int pos0, int C, float* hist, int Lmax, cudaStream_t st) {
+void hist_put(const float* T0, int ld, int B, int n, int pos0, int C, float* hist, int Lmax, cudaStream_t st, const int* dpos) {
   const long long tot = (long long)B * n * C;
-  hist_k<<<nb(tot), 256, 0, st>>>(T0, ld, n, pos0, C, hist, Lmax, tot);
+  hist_k<<<nb(tot), 256, 0, st>>>(T0, ld, n, pos0, C, hist, Lmax, tot, dpos);
   KCK();
 }
 
-__global__ void conv_k(const float* src, int ld, int Ls, int n, int pos0, int C, int K, const float* w, float* out, long long tot) {
+__global__ void conv_k(const float* src, int ld, int Ls, int n, int pos0, int C, int K, const float* w, float* out, long long tot, const int* dpos) {
   const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
   if (q >= tot) return;
+  if (dpos) pos0 = *dpos;
   const int r = (int)(q / C), c = (int)(q % C), b = r / n, t = r % n;
   float s = 0.f;
   for (int k = 0; k < K; ++k) {
@@ -225,9 +297,9 @@ __global__ void conv_k(const float* src, int ld, int Ls, int n, int pos0, int C,
   }
   out[q] = silu(s);
 }
-void conv_silu(const float* src, int ld, int Ls, int B, int n, int pos0, int C, int K, const float* w, float* out, cudaStream_t st) {
+void conv_silu(const float* src, int ld, int Ls, int B, int n, int pos0, int C, int K, const float* w, float* out, cudaStream_t st, const int* dpos) {
   const long long tot = (long long)B * n * C;
-  conv_k<<<nb(tot), 256, 0, st>>>(src, ld, Ls, n, pos0, C, K, w, out, tot);
+  conv_k<<<nb(tot), 256, 0, st>>>(src, ld, Ls, n, pos0, C, K, w, out, tot, dpos);
   KCK();
 }
 
@@ -354,29 +426,126 @@ void gather_last(const float* hid, int B, int n, int H, float* out, cudaStream_t
   last_k<<<nb((long long)B * H), 256, 0, st>>>(hid, B, n, H, out);
   KCK();
 }
-__global__ void argmax_k(const float* L, int V, int* out) {
+// argmax: 1 단 = 행마다 조각 AMB 개(블록), 2 단 = 조각 최댓값 중(같으면 작은 번호)
+constexpr int AMB = 64;
+__device__ __forceinline__ void am_better(float& bv, int& bi, float ov, int oi) {
+  if (ov > bv || (ov == bv && oi < bi)) { bv = ov; bi = oi; }
+}
+__device__ __forceinline__ void am_block(float& bv, int& bi) {
   __shared__ float sv[256];
   __shared__ int si[256];
-  const float* l = L + (long long)blockIdx.x * V;
-  float bv = -INFINITY;
-  int bi = 0x7fffffff;
-  for (int v = threadIdx.x; v < V; v += 256) if (l[v] > bv) { bv = l[v]; bi = v; }
   sv[threadIdx.x] = bv; si[threadIdx.x] = bi;
   __syncthreads();
   for (int s = 128; s > 0; s >>= 1) {
     if (threadIdx.x < s) {
-      const float ov = sv[threadIdx.x + s];
-      const int oi = si[threadIdx.x + s];
-      if (ov > sv[threadIdx.x] || (ov == sv[threadIdx.x] && oi < si[threadIdx.x])) { sv[threadIdx.x] = ov; si[threadIdx.x] = oi; }
+      float v = sv[threadIdx.x]; int i = si[threadIdx.x];
+      am_better(v, i, sv[threadIdx.x + s], si[threadIdx.x + s]);
+      sv[threadIdx.x] = v; si[threadIdx.x] = i;
     }
     __syncthreads();
   }
-  if (threadIdx.x == 0) out[blockIdx.x] = si[0];
+  bv = sv[0]; bi = si[0];
+}
+__global__ void argmax1_k(const float* L, int V, float* pv, int* pi) {
+  const int r = blockIdx.y, part = blockIdx.x, per = (V + AMB - 1) / AMB, v0 = part * per, v1 = min(V, v0 + per);
+  const float* l = L + (long long)r * V;
+  float bv = -INFINITY;
+  int bi = 0x7fffffff;
+  for (int v = v0 + threadIdx.x; v < v1; v += 256) am_better(bv, bi, l[v], v);
+  am_block(bv, bi);
+  if (threadIdx.x == 0) { pv[r * AMB + part] = bv; pi[r * AMB + part] = bi; }
+}
+__global__ void argmax2_k(const float* pv, const int* pi, int* out) {
+  float bv = -INFINITY;
+  int bi = 0x7fffffff;
+  if (threadIdx.x < AMB) { bv = pv[blockIdx.x * AMB + threadIdx.x]; bi = pi[blockIdx.x * AMB + threadIdx.x]; }
+  am_block(bv, bi);
+  if (threadIdx.x == 0) out[blockIdx.x] = bi;
 }
 void argmax_rows(const float* L, int R, int V, int* out, cudaStream_t st) {
-  argmax_k<<<R, 256, 0, st>>>(L, V, out);
+  static float* pv = nullptr;
+  static int* pi = nullptr;
+  static int cap = 0;
+  if (R > cap) {   // 작업 칸(처음 한 번 — 그래프로 잡기 전에 같은 R 로 한 번 불릴 것)
+    if (pv) { cudaFree(pv); cudaFree(pi); }
+    cap = std::max(R, 64);
+    cudaMalloc(&pv, sizeof(float) * cap * AMB);
+    cudaMalloc(&pi, sizeof(int) * cap * AMB);
+  }
+  argmax1_k<<<dim3(AMB, R), 256, 0, st>>>(L, V, pv, pi);
+  argmax2_k<<<R, 256, 0, st>>>(pv, pi, out);
   KCK();
 }
+
+// ---- 디코딩 GEMV: 워프 = 출력 열 하나(SW: gate 열 n 과 up 열 I + n 둘). 레인마다 k 8 개 덩이(16 B)를 K 에 걸쳐 차례로, 끝에 워프 나비 합 ----
+__device__ __forceinline__ void fma8(float& a, uint4 w, uint4 x) {
+  const uint32_t ww[4] = {w.x, w.y, w.z, w.w}, xx[4] = {x.x, x.y, x.z, x.w};
+#pragma unroll
+  for (int i = 0; i < 4; ++i) {
+    a = fmaf(__uint_as_float(ww[i] << 16), __uint_as_float(xx[i] << 16), a);
+    a = fmaf(__uint_as_float(ww[i] & 0xffff0000u), __uint_as_float(xx[i] & 0xffff0000u), a);
+  }
+}
+template <int M, int SW>
+__global__ void __launch_bounds__(256) gemv_k(const uint16_t* __restrict__ A, int lda, const uint16_t* __restrict__ W, int N, int K, float* out, int ldo, int acc,
+                                              uint16_t* outb) {
+  const int n = blockIdx.x * 8 + (threadIdx.x >> 5), lane = threadIdx.x & 31;
+  if (n >= N) return;
+  float a0[M], a1[M];
+#pragma unroll
+  for (int m = 0; m < M; ++m) { a0[m] = 0.f; a1[m] = 0.f; }
+  const uint16_t* w0 = W + (long long)n * K;
+  const uint16_t* w1 = W + (long long)(n + N) * K;   // SW: up 열
+#pragma unroll 4
+  for (int k = lane * 8; k < K; k += 256) {
+    const uint4 wa = __ldg(reinterpret_cast<const uint4*>(w0 + k));
+    uint4 wb = make_uint4(0, 0, 0, 0);
+    if (SW) wb = __ldg(reinterpret_cast<const uint4*>(w1 + k));
+#pragma unroll
+    for (int m = 0; m < M; ++m) {
+      const uint4 x = *reinterpret_cast<const uint4*>(A + (long long)m * lda + k);
+      fma8(a0[m], wa, x);
+      if (SW) fma8(a1[m], wb, x);
+    }
+  }
+#pragma unroll
+  for (int m = 0; m < M; ++m)
+#pragma unroll
+    for (int o = 16; o > 0; o >>= 1) {
+      a0[m] += __shfl_xor_sync(0xffffffffu, a0[m], o);
+      if (SW) a1[m] += __shfl_xor_sync(0xffffffffu, a1[m], o);
+    }
+  if (lane == 0) {
+#pragma unroll
+    for (int m = 0; m < M; ++m) {
+      if (SW) outb[(long long)m * N + n] = f2bf(silu(a0[m]) * a1[m]);
+      else {
+        float* o = out + (long long)m * ldo + n;
+        *o = acc ? *o + a0[m] : a0[m];
+      }
+    }
+  }
+}
+template <int SW>
+static void gemv_go(const uint16_t* A, int lda, int M, const uint16_t* W, int N, int K, float* out, int ldo, bool acc, uint16_t* outb, cudaStream_t st) {
+  if (K % 8 || lda % 8) { std::fprintf(stderr, "gemv: K %d lda %d\n", K, lda); std::abort(); }
+  const dim3 g((N + 7) / 8);
+  switch (M) {
+#define GV(MM) case MM: gemv_k<MM, SW><<<g, 256, 0, st>>>(A, lda, W, N, K, out, ldo, acc ? 1 : 0, outb); break;
+    GV(1) GV(2) GV(3) GV(4) GV(5) GV(6) GV(7) GV(8)
+#undef GV
+    default: std::fprintf(stderr, "gemv M %d\n", M); std::abort();
+  }
+  KCK();
+}
+void gemv(const uint16_t* A, int lda, int M, const uint16_t* W, int N, int K, float* out, int ldo, bool acc, cudaStream_t st) {
+  gemv_go<0>(A, lda, M, W, N, K, out, ldo, acc, nullptr, st);
+}
+void gemv_swiglu(const uint16_t* A, int lda, int M, const uint16_t* W, int I, int K, uint16_t* out, cudaStream_t st) {
+  gemv_go<1>(A, lda, M, W, I, K, nullptr, 0, false, out, st);
+}
+__global__ void inc_k(int* p) { if (threadIdx.x == 0) *p += 1; }
+void inc(int* p, cudaStream_t st) { inc_k<<<1, 32, 0, st>>>(p); KCK(); }
 
 }  // namespace qk
 }  // namespace rvla

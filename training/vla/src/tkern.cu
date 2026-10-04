@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 
 #include "gemm.cuh"
 #include "tkern.cuh"
@@ -108,8 +109,12 @@ void mm_dw(const uint16_t* dZ, int ldz, const uint16_t* X, int ldx, int M, int N
   }
   chk8(ldz, ldx, N, K);
   GemmP p{};
-  p.A = dZ; p.lda = ldz; p.B = X; p.ldb = ldx; p.M = N; p.N = K; p.K = M; p.C = ws; p.ldc = K; p.kchunk = chunk;
-  const int sp = (M + chunk - 1) / chunk;
+  // 행(합 방향)을 나누는 수: 결과 타일이 GPU 를 채우면(≥ 280 = SM 70 × 4) 나누지 않음, 모자라면 채울 만큼만(최대 ⌈M/chunk⌉ — 작업 공간 상한)
+  const int spmax = (M + chunk - 1) / chunk, tiles = ((N + 127) / 128) * ((K + 127) / 128);
+  int sp = std::min(spmax, std::max(1, (280 + tiles - 1) / tiles));
+  const int ch = ((M + sp - 1) / sp + 31) / 32 * 32;
+  sp = (M + ch - 1) / ch;
+  p.A = dZ; p.lda = ldz; p.B = X; p.ldb = ldx; p.M = N; p.N = K; p.K = M; p.C = ws; p.ldc = K; p.kchunk = ch;
   qk::gl<true, true, EPI_SPLIT_F32>(p, sp, st);
   dwred_k<<<nb(n), 256, 0, st>>>(ws, sp, n, G, gacc);
   KCK();
@@ -350,11 +355,18 @@ __global__ void att_dkv_k(const AttP p) {
     case 32: KER<1><<<nb((long long)(NW) * 32, 128), 128, 0, st>>>(p); break;      \
     default: std::fprintf(stderr, "att hd %d\n", p.hd); std::abort();             \
   }
+bool att_old() {
+  static const bool o = [] { const char* e = getenv("RVLA_ATT_OLD"); return e && e[0] == '1'; }();
+  return o;
+}
+
 void att_fwd(const AttP& p, cudaStream_t st) {
+  if (!att_old() && fa_fwd(p, st)) return;
   ATT_DISPATCH(att_fwd_k, (long long)p.B * p.n * p.nq);
   KCK();
 }
 void att_bwd(const AttP& p, cudaStream_t st) {
+  if (!att_old() && fa_bwd(p, st)) return;
   ATT_DISPATCH(att_dq_k, (long long)p.B * p.n * p.nq);
   ATT_DISPATCH(att_dkv_k, (long long)p.B * (p.L1 + p.n2) * p.nkv);
   KCK();
