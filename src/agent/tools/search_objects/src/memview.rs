@@ -22,7 +22,7 @@ pub struct ObjInfo {
     pub movable: bool,
     pub structural: bool,
     pub n_obs: u32,
-    /// A′ 위치 불확실도 [σx, σy, σz] m(view.json `pos_sd`, 없으면 None)
+    /// objprob 위치 불확실도 [σx, σy, σz] m(view.json `pos_sd`, 없으면 None)
     pub pos_sd: Option<[f64; 3]>,
 }
 
@@ -74,7 +74,7 @@ pub trait MemSource: Send {
     fn mem(&self) -> &dyn Memory;
     /// 새로 읽음(바뀌었으면 true). 실시간은 늘 새 스냅숏
     fn refresh(&mut self) -> Result<bool, String>;
-    /// 지도(scenemap A′)에 바깥 이름 관측: `sm_observe_object_name` 반환값(0 성공, -2 라벨 없음, -3 물체 없음·A′ 아님). 오프라인은 None
+    /// 지도(scenemap 확률 모드(objprob))에 바깥 이름 관측: `sm_observe_object_name` 반환값(0 성공, -2 라벨 없음, -3 물체 없음·objprob 아님). 오프라인은 None
     fn observe_name(&mut self, _id: u32, _label: &str, _log_lr: f32) -> Option<i32> {
         None
     }

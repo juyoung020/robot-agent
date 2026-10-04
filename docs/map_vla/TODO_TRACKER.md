@@ -305,10 +305,23 @@
 - 남음: B5 점에 놓기(잡기 물리 E6 뒤 — `pred_at_point` 정의만), 앱 위에서 본 지도 화면(plan.md 5절, 설계만), 실행기 id 풀기를 실시간 기억 풀이로(`goal::resolve` 한 곳), 점 판 학습 효과는 긴 학습 뒤에만 잴 수 있음.
 
 **10-05 추가 (지도 인지·검색)**
-- 진행 중: **A′** — FastSAM-s + SigLIP 2 후처리(벽·천장 기하 제거, 이름 없는 확률 DA, vMF 벡터·베이지안 이름, 위치 칼만) + scenemap 벽 축 정렬 버그(기운 SLAM 지도에서 정책 쪽 벽 0 개). 목표: A 의 재현율 + B(YOLO26s) 수준 깔끔함. 결과 뷰어 :8084 예정.
-- 진행 중: **에이전트 물체 검색 도구** `search_objects`·`confirm_object` + 공용 물체 색인 + SigLIP 2 글 인코더 엔진.
-- 다음: A′ 통과 뒤 시뮬 sgrt·LIMO 지도 시험을 FastSAM + SigLIP 2 + A′ 로 옮기기(지금은 보관 엔진 `~/ovdet_models/archive` 사용), GPU 지도 근사판을 A′ 규칙에 맞추기, RecallVLA 자체 검색(질의 벡터 → 상위 K 칸, 검색 InfoNCE, 힌트 지우기·틀린 이름 섞기) 스펙·구현.
-- 기록: 검출기 비교 `~/datasets/sim_detcmp/README.md`(A FastSAM / B YOLO26s / C YOLOE, 영상 포함), 실제 bag 결과 MAP_STATE_PLAN 7 절.
+- 끝남: scenemap 확률 모드(`scenemap/src/objmap.cpp`·`objprob.cpp`, 확률론적 물체 수준 매핑 — [용어](../terms.md)) 1 차 + 벽 방향 수정, 조각 평면 맞춤 PCA → 랜색 교체(behavior-2026 `3b5543f`, 결과 거의 같음), 에이전트 물체 검색 도구 `search_objects`·`confirm_object`·`list_place` + 공용 물체 색인 + SigLIP 2 글 인코더(실시간 지도·좌표·시간 조건).
+- 진행 중: 확률 모드 이름 정리(`objprob`), 벽 조각이 door·window·pillar 이름으로 살아남는 문제(문·창 보호에 크기 확인 추가), FastSAM-s things 전용 재학습(`training/fastsam/`), 목표 칸 통일 → 탑뷰 이미지.
+
+**인지 다지기 단계 (RecallVLA 큰 학습 전에 통과, 10-05 결정)** — VLA 는 지도 기억을 입력으로 받으므로 인지·지도가 먼저다. 학습용 GPU 지도 근사(`training/RL/map`)는 실제 scenemap 을 흉내 내므로 scenemap 이 바뀌면 다시 맞춘다.
+
+| 부분 | 위치 | 할 일 | 통과 기준(예시) |
+|---|---|---|---|
+| 분할 | `training/fastsam/` | 벽·천장·바닥을 자르지 않는 FastSAM-s | 물체·문·창·계단·처음 보는 종류 재현율이 기존 이상 |
+| 물체 지도 | `scenemap/src/objmap.cpp`·`objprob.cpp` | 중복·잘못 합침·벽 오등록 줄이기 | BEHAVIOR radio r3: 찾음 ≥ 28/34, 중복·벽 오등록이 YOLO26s-seg 수준에 가깝게 |
+| 바뀜 판정 | 같은 곳 | DOMB(이동·제거·추가·교환), OpenLORIS office1-6 채점 | DOMB 이동·교환 > 0, 변화 F1 > 0.25 / 안 바뀐 판 가짜 사라짐 최소 |
+| SLAM | `scenemap/src/slam2d.cpp` | 고리 닫기·재위치 추정 | 실제 bag 출발 기준 떠밀림 줄이기(지금 4–22 cm) |
+| 이름·어휘 | `clip` 라벨 표 | 다시점 투표 효과 측정, 어휘 하나로 | 실제 이름 정답률(지금 약 30 %) 개선 |
+| 실행 경로 통일 | sgrt(시뮬 탐사)·LIMO 지도 시험 | 새 FastSAM + 확률 모드로(지금은 보관 엔진 `~/ovdet_models/archive`) | 같은 결과 |
+| 학습용 지도 근사 | `training/RL/map` | 새 scenemap 기준으로 다시 맞춤 | map_cmp 5.2 기준 통과 |
+
+- 다음(그 뒤): RecallVLA 자체 검색(질의 벡터 → 상위 K 칸, 검색 InfoNCE, 힌트 지우기·틀린 이름 섞기) 구현.
+- 기록: 검출기 비교 `~/datasets/sim_detcmp/README.md`(FastSAM-s-416 / YOLO26s-seg / YOLOE-11L, 영상 포함), 실제 bag 결과 MAP_STATE_PLAN 7 절.
 
 **진행 중(손대지 않음)**: BEHAVIOR 2026 커리큘럼 설계(CURRICULUM_BEHAVIOR2026.md), 학습 뷰어(TRAIN_VIEWER V0–V5), VLA 실행기 접점(POLICY 1.3·7.2), LIMO SLAM 등록, MAP_STATE_PLAN 벤치마크 어댑터, G6 FP8 인코더.
 

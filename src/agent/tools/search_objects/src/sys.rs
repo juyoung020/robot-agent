@@ -105,7 +105,7 @@ fn call_json(mut f: impl FnMut(*mut c_char, i32) -> i32) -> Result<String, Strin
 pub struct Paths {
     pub labels: Option<String>,
     pub text_dir: Option<String>,
-    /// 대체 벡터용 영상 엔진(A′ 벡터가 없는 기억). None + 환경 변수 없음 = 기본 경로가 있으면 씀
+    /// 대체 벡터용 영상 엔진(objprob 벡터가 없는 기억). None + 환경 변수 없음 = 기본 경로가 있으면 씀
     pub image_engine: Option<String>,
     pub no_text: bool,
     pub no_image: bool,

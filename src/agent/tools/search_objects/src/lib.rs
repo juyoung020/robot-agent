@@ -229,7 +229,7 @@ fn r3v(v: &[f64; 3]) -> Value {
     json!([r2(v[0]), r2(v[1]), r2(v[2])])
 }
 
-/// 자리 칸(cm 로 반올림): `pos`·`size`(map, m), `pos_sd`(A′ 있으면), `rel`(지금 로봇 기준: x 앞, y 왼쪽, z 높이, 수평 거리, 방위 °).
+/// 자리 칸(cm 로 반올림): `pos`·`size`(map, m), `pos_sd`(objprob 있으면), `rel`(지금 로봇 기준: x 앞, y 왼쪽, z 높이, 수평 거리, 방위 °).
 /// LLM 은 숫자로 추론만 하고 계획에는 id 로 말한다 — map 좌표는 VLA 에 넘기지 않는다(plan.md 3.3).
 pub fn geo(m: &mut serde_json::Map<String, Value>, o: &ObjInfo, pose: Option<[f64; 3]>) {
     m.insert("pos".into(), r3v(&o.pos));
@@ -591,14 +591,14 @@ impl ObjectSearch {
         if self.mem.mem().get(a.id).is_none() {
             return error_obs(CONFIRM, &format!("unknown object id O{}", a.id));
         }
-        // 실시간이면 지도(scenemap A′)에도 이름 관측을 넣는다: 라벨 = 색인 라벨 표 영어 이름, log 우도비 = 색인과 같은 값
+        // 실시간이면 지도(scenemap 확률 모드(objprob))에도 이름 관측을 넣는다: 라벨 = 색인 라벨 표 영어 이름, log 우도비 = 색인과 같은 값
         let (ul, ll) = sys::confirm_lrs();
         let lr = if a.source == "user" { ul } else { ll };
         let label = self.index.label_of(&a.name);
         let map = self.mem.observe_name(a.id, &label, lr.max(1.0).ln()).map(|rc| match rc {
             0 => "applied",
             -2 => "unknown_label",
-            -3 => "not_aprime",
+            -3 => "not_objprob",
             _ => "error",
         });
         let extra = map.map_or(String::new(), |m| json!({"map": m, "map_label": label}).to_string());

@@ -152,7 +152,7 @@ skillspec (Rust, 순수 함수, 의존성 0)
 
 ### 3.3 도구 (LLM 에 보이는 것은 8개 이하 — 지금 10 개, 아래 메모)
 
-원칙: **계획·실행 호출은 id 로 말한다. 좌표는 보여 주되 VLA 로는 보내지 않는다**(10-05 바꿈). 찾기 결과에 map 좌표 `pos`·크기 `size`·A′ 위치
+원칙: **계획·실행 호출은 id 로 말한다. 좌표는 보여 주되 VLA 로는 보내지 않는다**(10-05 바꿈). 찾기 결과에 map 좌표 `pos`·크기 `size`·확률 모드 위치
 불확실도 `pos_sd`·지금 로봇 기준 `rel{x 앞, y 왼쪽, z, dist_m, bearing_deg}` 가 있어 LLM 이 숫자로 추론(어느 쪽이 가까운지, 높이 차 등)한다.
 그래도 `set_plan`·VLA 호출의 물체는 id 로만 넘기고, map 좌표는 VLA 입력에 들어가지 않는다 — 실행기가 매 스텝 실시간 지도에서 id 를 풀어
 로봇 기준 값으로 바꾼다(VLA_INPUT 0절 "어떤 집에서도 같은 뜻"). 인자는 enum·필수로 좁힌다, 결과는 짧은 JSON + `hint`, 실패는 오류 관찰값(예외로 루프를 죽이지 않음).
@@ -170,7 +170,7 @@ skillspec (Rust, 순수 함수, 의존성 0)
 | `remember` | `fact` | 대화 기억에 저장(물체 기억과 별도) | |
 
 - **물체 검색(10-05)**: 검색은 도구 안에서 벡터(SigLIP 2, 공용 물체 색인)로 하고 LLM 에는 **색인된 이름·속성 글만** 준다(LLM 은 API 라 벡터를 못 받음). 같은 색인을 RecallVLA 도 자기 질의 벡터로 검색하므로, `set_plan` 의 물체 id 는 VLA 에 **힌트**다. 예: "라디오 가져와" → ① 라디오 없음 → ② 소화기로 등록된 O27 이 라디오일 확률 2 등 → LLM 이 되묻거나 O27 을 힌트로 넘김 → 확인되면 `confirm_object`. 도구가 9 개가 되어 "8 개 이하" 원칙을 넘는다 — `confirm_object` 를 `check` 결과에서 자동으로 부르는 쪽도 후보. 설계 [model_selection 물체 찾기](../../docs/model_selection.md), [MAPVLA_SPEC 결정 기록](../../docs/map_vla/MAPVLA_SPEC.md).
-- **실시간 기억(10-05)**: 같은 도구가 오프라인 `view.json` 과 실시간 scenemap 스냅숏(`so_open_live`, sgrt 는 `sgrt_scenemap`) 둘 다에서 돈다 — 3.2 `memview.rs` 의 `Memory` trait. 실시간 확인은 `sm_observe_object_name` 으로 지도 A′ 이름 사후에도 넣는다.
+- **실시간 기억(10-05)**: 같은 도구가 오프라인 `view.json` 과 실시간 scenemap 스냅숏(`so_open_live`, sgrt 는 `sgrt_scenemap`) 둘 다에서 돈다 — 3.2 `memview.rs` 의 `Memory` trait. 실시간 확인은 `sm_observe_object_name` 으로 지도 `objprob` 이름 사후에도 넣는다.
 - **도구 수 메모(10-05)**: LLM 에 보이는 것 = `search_objects`·`confirm_object`·`list_place`·`describe_object`·`set_plan`·`check`·`ask_user`·`report`·`remember` 9 + 시연용 `move_robot` 1 = **10 개**(원칙 8 개). 합치는 안(아직 안 합침 — 결정 필요):
   1. `list_place` → `search_objects` 의 `place` 인자(있으면 `query` 생략 가능, 결과는 지금 list_place 형식) — 줄 형식이 이미 같아 쉬움. −1.
   2. `describe_object` → 접기: 크기·자리·불확실도는 이미 찾기·목록 줄에 있음. 남는 것(관측 수·처음 자리에서 움직인 거리·best view 사진)은 `search_objects` 에 `detail: true`(k = 1)로. −1.
@@ -262,7 +262,7 @@ Pending ─▶ Approach(move to) ─▶ Acquire(보이나?) ─▶ Execute(VLA s
 2. ConceptGraphs 식 짧은 캡션 한 줄 + 시스템 글에 "이름은 틀릴 수 있다" — 기능·부정형 질의 보완.
 3. 갔는데 못 찾으면 후보를 사라짐으로 낮추고 "있을 법한 곳" 을 다시 묻는 흐름(`last_seen`·`state` 와 연결).
 4. SayPlan 식 접기·펼치기(방 요약 → `expand_room`) — 맥락 예산용. 단 작은 모델은 자유 탐색에서 거의 실패했으므로(GPT-3.5 0–6.6 %) 지금처럼 도구가 후보를 좁혀 주는 쪽이 9B 에 안전.
-5. DovSG 교훈: 다시 본 물체는 바로 갱신해 옛 벡터가 옛 위치로 이끌지 않게(A′ 옮겨짐 처리).
+5. DovSG 교훈: 다시 본 물체는 바로 갱신해 옛 벡터가 옛 위치로 이끌지 않게(확률 모드 옮겨짐 처리).
 
 ### 3.8 지연 예산 — LLM 을 언제 부르나
 

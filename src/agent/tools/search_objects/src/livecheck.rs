@@ -7,7 +7,7 @@
 //! 몸통 깊이 카메라 광선 추적 → 깊이 + 검출 마스크 → `sm_push_proprio`·`sm_push_image`. 확인하는 것:
 //! 1. `sm_save_dsg` 한 번 뒤 색인을 열고 찾기·list_place 의 자리가 스냅숏과 같음
 //! 2. 저장 없이 컵을 옮기고 로봇을 90° 돌림 → 다음 호출의 `pos`·`rel` 이 바로 바뀜(실시간), 색인 이름은 그대로
-//! 3. `confirm_object` → `sm_observe_object_name` 을 부름(A′ 를 안 켰으면 "map":"not_aprime"), confirmations.jsonl 한 줄
+//! 3. `confirm_object` → `sm_observe_object_name` 을 부름(확률 모드(objprob)를 안 켰으면 "map":"not_objprob"), confirmations.jsonl 한 줄
 
 use crate::live::{loaded_handle, sym, SmCtx, SmObject};
 use crate::sys::Paths;
@@ -86,7 +86,7 @@ const H: usize = 120;
 
 struct Rig {
     api: Api,
-    /// A′ 켬: 검출마다 넣을 임베딩(라벨 one-hot, 차원 4)
+    /// 확률 모드 켬: 검출마다 넣을 임베딩(라벨 one-hot, 차원 4)
     det_emb: Option<unsafe extern "C" fn(*mut c_void, *const f32, i32, i32) -> c_int>,
     c: *mut c_void,
     t: f64,
@@ -301,10 +301,10 @@ pub fn run(lib: &str, mem: &str) -> i32 {
     let names: Vec<CString> = ["cup", "table", "radio"].iter().map(|s| CString::new(*s).unwrap()).collect();
     let np: Vec<*const c_char> = names.iter().map(|s| s.as_ptr()).collect();
     unsafe { (api.labels)(c, np.as_ptr(), 3) };
-    // SO_LIVE_APRIME=1: A′ 물체 모델을 켬(장난감 글 모델: 라벨마다 차원 4 one-hot) → confirm 이 지도에 "applied" 되는지
-    let aprime = std::env::var("SO_LIVE_APRIME").is_ok_and(|v| v == "1");
+    // SO_LIVE_OBJPROB=1: 확률 물체 모델(objprob)을 켬(장난감 글 모델: 라벨마다 차원 4 one-hot) → confirm 이 지도에 "applied" 되는지
+    let objprob = std::env::var("SO_LIVE_OBJPROB").is_ok_and(|v| v == "1");
     let mut det_emb = None;
-    if aprime {
+    if objprob {
         let tm: unsafe extern "C" fn(*mut c_void, *const f32, *const i32, i32, i32, f32, f32) -> c_int = f!("sm_set_text_model");
         let om: unsafe extern "C" fn(*mut c_void, i32) -> c_int = f!("sm_set_object_model");
         let text: Vec<f32> = (0..3).flat_map(|r| (0..4).map(move |d| if d == r { 1.0 } else { 0.0 })).collect();
@@ -420,13 +420,13 @@ pub fn run(lib: &str, mem: &str) -> i32 {
     let log = std::fs::read_to_string(Path::new(mem).join("confirmations.jsonl")).unwrap_or_default();
     let line: Value = log.lines().last().and_then(|l| serde_json::from_str(l).ok()).unwrap_or_default();
     check(line["id"] == radio && line["map"] == r["map"], "confirmations.jsonl line with the map status", &mut fails);
-    if aprime {
-        check(r["map"] == "applied", "A′ on: the map took the name observation", &mut fails);
+    if objprob {
+        check(r["map"] == "applied", "objprob on: the map took the name observation", &mut fails);
         unsafe { (rig.api.save)(c, cm.as_ptr()) };
         let v: Value = serde_json::from_str(&std::fs::read_to_string(Path::new(mem).join("view.json")).unwrap_or_default()).unwrap_or_default();
         let np = v["objects"].as_array().and_then(|a| a.iter().find(|o| o["id"] == radio)).map(|o| o["name_post"].clone()).unwrap_or_default();
         println!("  radio name_post after save: {np}");
-        check(np["external"] == true && np["top"].is_array(), "saved A′ name_post has external: true (index will not count the confirmation twice)", &mut fails);
+        check(np["external"] == true && np["top"].is_array(), "saved objprob name_post has external: true (index will not count the confirmation twice)", &mut fails);
         let r = call(&mut s, SEARCH, json!({"query": "radio"}));
         check(r["matches"][0]["id"] == format!("O{radio}") && r["matches"][0]["match_type"] == "name", "radio found by name after reload", &mut fails);
     }

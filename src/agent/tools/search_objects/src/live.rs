@@ -4,7 +4,7 @@
 //! - 도구 호출마다 새 스냅숏(참조 카운트, 어느 스레드든 됨)을 잡아 물체·자세·방을 복사하고 바로 놓는다 → 자리·상태·자세는 지금 지도 그대로.
 //! - 이름 사후·벡터는 공용 색인(sgsearch)이 지도 저장 폴더(`sm_save_dsg` / sgrt `save_s` 주기 저장, `view.json` + `objects/`)에서 읽는다
 //!   → 이름·생김새는 저장 주기(sgrt 1 s)만큼 늦을 수 있다. 저장 전 새 물체는 찾기에는 아직 안 나오고 `list_place` 에는 나온다.
-//! - A′ `pos_sd` 는 스냅숏 ABI 에 없어 같은 저장 폴더의 `view.json` 에서(위치 불확실도라 1 s 늦어도 됨).
+//! - objprob `pos_sd` 는 스냅숏 ABI 에 없어 같은 저장 폴더의 `view.json` 에서(위치 불확실도라 1 s 늦어도 됨).
 //! - 함수는 링크하지 않고 `dlsym` 으로 찾는다: 이 프로세스에 scenemap 이 이미 올라와 있어야 한다(sgrt 의 libsgrt.so, 로봇의 scenemap).
 //!   파이썬 ctypes 처럼 RTLD_LOCAL 로 올린 라이브러리면 그 경로를 주면 `RTLD_NOLOAD` 로 그 핸들에서 찾는다.
 //!
@@ -249,7 +249,7 @@ impl SnapApi for SmCtx {
 
 // ---------------------------------------------------------------- Memory
 
-/// 실시간 기억: 스냅숏 원천 + (선택) 저장 폴더 view.json 의 A′ `pos_sd`
+/// 실시간 기억: 스냅숏 원천 + (선택) 저장 폴더 view.json 의 objprob `pos_sd`
 pub struct LiveMem {
     pub api: Box<dyn SnapApi>,
     data: SnapData,
