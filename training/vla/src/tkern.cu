@@ -556,53 +556,107 @@ void lin_prep_bwd(const float* T1, int ld1, const float* T0, int ld0, int boff, 
   KCK();
 }
 
-// ---- 합성곱 뒤 ----
-__global__ void convp_k(const float* X, int ld, int n, int C, int K, const float* w, const float* dT1, float* dp, long long tot) {
-  const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-  if (q >= tot) return;
-  const int r = (int)(q / C), c = (int)(q % C), b = r / n, t = r % n;
+// ---- DeltaNet 앞 준비(학습, 융합 E): 인과 합성곱 + SiLU 를 이 커널 안에서(conv_k 없음) → q·k L2 정규화(·1/√dk), β = σ(b), g = −e^A·softplus(a + dt).
+// 워프 = (행, 머리): q·k·v 채널 각 dk/dv 개를 레인이 나눠 합성곱(탭 K, 같은 식·같은 순서 = qk::conv_silu 와 비트 같음).
+// T1(합성곱 출력, 뒤가 씀): keep 이면 q·k·v 전부, 아니면 v 만(재귀가 읽음) — 첫 앞 계산은 q·k 를 안 씀.
+__device__ __forceinline__ float conv1(const float* T0, int ld0, long long rb, int t, int c, int K, const float* w) {
   float s = 0.f;
   for (int k = 0; k < K; ++k) {
     const int p = t - (K - 1) + k;
-    if (p >= 0) s = s + w[c * K + k] * X[((long long)b * n + p) * ld + c];
+    if (p >= 0) s = s + w[c * K + k] * T0[(rb + p) * ld0 + c];
   }
-  dp[q] = dT1[q] * dsilu(s);
+  return silu(s);
 }
-__global__ void convx_k(const float* dp, int ld, int n, int C, int K, const float* w, float* dX, uint16_t* dXb, long long tot) {
-  const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-  if (q >= tot) return;
-  const int r = (int)(q / C), c = (int)(q % C), b = r / n, t = r % n;
-  float s = 0.f;
-  for (int k = 0; k < K; ++k) {
-    const int o = t + (K - 1) - k;
-    if (o < n) s = s + w[c * K + k] * dp[((long long)b * n + o) * C + c];
+__global__ void lin_prep_conv_k(const float* T0, int ld0, int n, int R, int lh, int dk, int dv, int K, const float* cw, int boff, const float* alog,
+                                const float* dtb, int keep, float* T1, int ld1, float* Qn, float* Kn, float* G, float* Beta) {
+  const int w = (blockIdx.x * blockDim.x + threadIdx.x) / 32, lane = threadIdx.x & 31;
+  if (w >= R * lh) return;
+  const int r = w / lh, h = w % lh, t = r % n;
+  const long long rb = (long long)(r - t);
+  constexpr int MX = 8;   // dk ≤ 256
+  float qv[MX], kv[MX];
+  float sq = 0.f, sk = 0.f;
+  int ii = 0;
+  for (int d = lane; d < dk; d += 32, ++ii) {
+    const int cq = h * dk + d, ck = lh * dk + h * dk + d;
+    qv[ii] = conv1(T0, ld0, rb, t, cq, K, cw);
+    kv[ii] = conv1(T0, ld0, rb, t, ck, K, cw);
+    if (keep) { T1[(long long)r * ld1 + cq] = qv[ii]; T1[(long long)r * ld1 + ck] = kv[ii]; }
   }
-  if (dXb) dXb[(long long)r * ld + c] = net::f2bf(s);
-  else dX[(long long)r * ld + c] = s;
+  ii = 0;
+  for (int d = lane; d < dk; d += 32, ++ii) { sq = sq + qv[ii] * qv[ii]; sk = sk + kv[ii] * kv[ii]; }
+  sq = wsum(sq); sk = wsum(sk);
+  const float iq = 1.f / sqrtf(sq + 1e-6f), ik = 1.f / sqrtf(sk + 1e-6f);
+  const float sc = 1.f / sqrtf((float)dk);
+  ii = 0;
+  for (int d = lane; d < dk; d += 32, ++ii) {
+    Qn[(long long)r * lh * dk + h * dk + d] = qv[ii] * iq * sc;
+    Kn[(long long)r * lh * dk + h * dk + d] = kv[ii] * ik;
+  }
+  for (int d = lane; d < dv; d += 32) {
+    const int cv = 2 * lh * dk + h * dv + d;
+    T1[(long long)r * ld1 + cv] = conv1(T0, ld0, rb, t, cv, K, cw);
+  }
+  if (lane == 0) {
+    const float bb = T0[(long long)r * ld0 + boff + h], aa = T0[(long long)r * ld0 + boff + lh + h];
+    const float x = aa + dtb[h];
+    const float sp = x > 20.f ? x : log1pf(expf(x));
+    Beta[(long long)r * lh + h] = sigm(bb);
+    G[(long long)r * lh + h] = -expf(alog[h]) * sp;
+  }
 }
-void conv_bwd(const float* X, int ld, int B, int n, int C, int K, const float* w, const float* dT1, float* dp, float* dX, cudaStream_t st, uint16_t* dXb) {
-  const long long tot = (long long)B * n * C;
-  convp_k<<<nb(tot), 256, 0, st>>>(X, ld, n, C, K, w, dT1, dp, tot);
-  convx_k<<<nb(tot), 256, 0, st>>>(dp, ld, n, C, K, w, dX, dXb, tot);
+void lin_prep_conv(const float* T0, int ld0, int B, int n, int lh, int dk, int dv, int K, const float* cw, int boff, const float* alog, const float* dtb,
+                   bool keep, float* T1, int ld1, float* Qn, float* Kn, float* G, float* Beta, cudaStream_t st) {
+  if (dk > 256) { std::fprintf(stderr, "lin_prep_conv dk > 256\n"); std::abort(); }
+  const int R = B * n;
+  lin_prep_conv_k<<<nb((long long)R * lh * 32, 128), 128, 0, st>>>(T0, ld0, n, R, lh, dk, dv, K, cw, boff, alog, dtb, keep ? 1 : 0, T1, ld1, Qn, Kn, G, Beta);
   KCK();
 }
-// 조각: 블록 y = 행 256 개, 스레드 = (c, k)
-__global__ void convw_part_k(const float* X, int ld, const float* dp, int R, int n, int C, int K, float* part) {
-  const int r0 = blockIdx.y * CS, r1 = min(R, r0 + CS);
-  for (int ck = blockIdx.x * blockDim.x + threadIdx.x; ck < C * K; ck += gridDim.x * blockDim.x) {
-    const int c = ck / K, k = ck % K;
-    float s = 0.f;
-    for (int r = r0; r < r1; ++r) {
-      const int t = r % n, p = t - (K - 1) + k;
-      if (p >= 0) s = s + dp[(long long)r * C + c] * X[(long long)(r - t + p) * ld + c];
+
+// ---- 합성곱 뒤(융합 E): 스레드 = (채널, 판), 시간 차례로 미끄럼 창(X·dp 탭 K) — dp 버퍼 없음.
+// pre = Σ w·x, dp = dT1·silu'(pre), dX[t] = Σ_k w_k·dp[t+K−1−k](예전 convx 와 같은 순서), 가중치 조각 part[판][c·K + k] = Σ_t dp[t]·x[t−K+1+k] → colred(판 순서)
+constexpr int CKM = 8;
+__global__ void conv_bwd_seq_k(const float* X, int ld, int n, int C, int K, const float* w, const float* dT1, int ld1, uint16_t* dXb, float* part) {
+  const int c = blockIdx.x * blockDim.x + threadIdx.x, b = blockIdx.y;
+  if (c >= C) return;
+  float wk[CKM], xw[CKM], dpw[CKM], gw[CKM];
+  for (int k = 0; k < K; ++k) { wk[k] = w[c * K + k]; xw[k] = 0.f; dpw[k] = 0.f; gw[k] = 0.f; }
+  const long long rb = (long long)b * n;
+  // 창: xw[K−1] = x[tc], xw[j] = x[tc − (K−1−j)]; dpw 같은 꼴
+  for (int tc = 0; tc < n + K - 1; ++tc) {
+    for (int j = 0; j < K - 1; ++j) { xw[j] = xw[j + 1]; dpw[j] = dpw[j + 1]; }
+    if (tc < n) {
+      const long long r = rb + tc;
+      xw[K - 1] = X[r * ld + c];
+      float pre = 0.f;
+      for (int k = 0; k < K; ++k) {
+        const int p = tc - (K - 1) + k;
+        if (p >= 0) pre = pre + wk[k] * xw[k];
+      }
+      const float dp = dT1[r * ld1 + c] * dsilu(pre);
+      dpw[K - 1] = dp;
+      for (int k = 0; k < K; ++k) {
+        const int p = tc - (K - 1) + k;
+        if (p >= 0) gw[k] = gw[k] + dp * xw[k];
+      }
+    } else { xw[K - 1] = 0.f; dpw[K - 1] = 0.f; }
+    const int t = tc - (K - 1);   // dX[t] 를 끝냄: dp[t..t+K−1] = dpw[0..K−1]
+    if (t >= 0) {
+      float s = 0.f;
+      for (int k = 0; k < K; ++k) {
+        const int o = t + (K - 1) - k;
+        if (o < n) s = s + wk[k] * dpw[K - 1 - k];
+      }
+      dXb[(rb + t) * ld + c] = net::f2bf(s);
     }
-    part[(long long)blockIdx.y * C * K + ck] = s;
   }
+  for (int k = 0; k < K; ++k) part[(long long)b * C * K + (long long)c * K + k] = gw[k];
 }
-void convw_grad(const float* X, int ld, const float* dp, int B, int n, int C, int K, float* part, float* out, cudaStream_t st) {
-  const int R = B * n, nbk = (R + CS - 1) / CS;
-  convw_part_k<<<dim3(std::min<unsigned>(nb((long long)C * K, 128), 128), nbk), 128, 0, st>>>(X, ld, dp, R, n, C, K, part);
-  colred_k<<<nb((long long)C * K), 256, 0, st>>>(part, nbk, C * K, out, 0);
+void conv_bwd_seq(const float* X, int ld, int B, int n, int C, int K, const float* w, const float* dT1, int ld1, uint16_t* dXb, float* part, float* gw,
+                  cudaStream_t st) {
+  if (K > CKM) { std::fprintf(stderr, "conv K > 8\n"); std::abort(); }
+  conv_bwd_seq_k<<<dim3(nb(C, 128), B), 128, 0, st>>>(X, ld, n, C, K, w, dT1, ld1, dXb, part);
+  colred_k<<<nb((long long)C * K), 256, 0, st>>>(part, B, C * K, gw, 0);
   KCK();
 }
 

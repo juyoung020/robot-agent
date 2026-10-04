@@ -88,6 +88,7 @@ struct Model::WS {
   uint16_t *mdzb, *mdGU, *mdKVb, *mdIb;
   float *dexl, *epart;
   float* npart = nullptr;   // 정규화 w 기울기 조각(커널 안 합, 융합 D)
+  float* cpart = nullptr;   // 합성곱 가중치 기울기 판 조각 [B][lin_in·K](융합 E)
   long long rows_all = 0;   // φ 줄 수(Bmax·16 + Bmax·nmax)
 };
 
@@ -295,7 +296,7 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
   s.Xmid = alloc<float>((size_t)R * H); s.GU = alloc<float>((size_t)R * 2 * Q.I);
   s.A1 = alloc<uint16_t>((size_t)R * H); s.A2 = alloc<uint16_t>((size_t)R * H); s.Ag = alloc<uint16_t>((size_t)R * s.OW); s.Hh = alloc<uint16_t>((size_t)R * Q.I);
   s.dR = alloc<float>((size_t)R * H); s.dA = alloc<float>((size_t)R * H); s.dHh = alloc<float>((size_t)R * Q.I); s.dAg = alloc<float>((size_t)R * s.OW);
-  s.dO = alloc<float>((size_t)R * s.OW); s.dT0 = alloc<float>((size_t)R * s.W0); s.dT1 = alloc<float>((size_t)R * Q.lin_in()); s.dp = alloc<float>((size_t)R * Q.lin_in());
+  s.dO = alloc<float>((size_t)R * s.OW); s.dT0 = nullptr; s.dT1 = alloc<float>((size_t)R * Q.lin_in()); s.dp = nullptr;   // 융합 B·E 뒤 안 씀(bf16 dT0b 로 바로)
   s.dQK = alloc<float>((size_t)R * s.QKW); s.dK = alloc<float>((size_t)R * Q.kvw()); s.dV = alloc<float>((size_t)R * Q.kvw());
   s.Dd = alloc<float>((size_t)R * Q.nq); s.dG = alloc<float>((size_t)R * Q.lh); s.dBt = alloc<float>((size_t)R * Q.lh);
   s.dHn = alloc<float>((size_t)R * H);
@@ -303,6 +304,7 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
                                             (long long)Rv * 3 * c.vD, (long long)RA * std::max(c.De, (Q.nq + Q.nkv) * Q.hd), (long long)c.Bmax * 16 * H});
   s.wt = alloc<float>(wtn);
   s.part = alloc<float>((size_t)((std::max({R, Rv, RA}) + 255) / 256 + 1) * std::max<long long>({(long long)s.W0, (long long)Q.lin_in() * Q.conv, 3LL * c.vD, (long long)c.vMLP, (long long)c.vT * c.vD, (long long)H, 2LL * c.Ie}));
+  s.cpart = alloc<float>((size_t)c.Bmax * Q.lin_in() * Q.conv);
   s.npart = alloc<float>((size_t)std::max({tk::npart_floats(R, H), tk::npart_floats((long long)R * Q.lh, Q.dv), 2 * tk::npart_floats(Rv, c.vD),
                                            tk::npart_floats(RA, c.De), tk::npart_floats((long long)c.Bmax * c.mem_nmax, H),
                                            tk::npart_floats((long long)c.Bmax * c.mem_lat, H)}) + 64);
@@ -387,7 +389,7 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
   s.eT = alloc<float>((size_t)RA * eW0); s.eQ = alloc<float>((size_t)RA * Q.nq * Q.hd); s.eK = alloc<float>((size_t)RA * Q.kvw()); s.eV = alloc<float>((size_t)RA * Q.kvw());
   s.eO = alloc<float>((size_t)RA * Q.nq * Q.hd); s.else_ = alloc<float>((size_t)RA * Q.nq); s.eXm = alloc<float>((size_t)RA * c.De); s.eGU = alloc<float>((size_t)RA * 2 * c.Ie);
   s.edR = alloc<float>((size_t)RA * c.De); s.edA = alloc<float>((size_t)RA * c.De); s.edHh = alloc<float>((size_t)RA * c.Ie); s.edAg = alloc<float>((size_t)RA * Q.nq * Q.hd);
-  s.edO = alloc<float>((size_t)RA * Q.nq * Q.hd); s.edT0 = alloc<float>((size_t)RA * eW0); s.edQ = alloc<float>((size_t)RA * Q.nq * Q.hd);
+  s.edO = alloc<float>((size_t)RA * Q.nq * Q.hd); s.edT0 = nullptr; s.edQ = alloc<float>((size_t)RA * Q.nq * Q.hd);
   s.edK = alloc<float>((size_t)RA * Q.kvw()); s.edV = alloc<float>((size_t)RA * Q.kvw()); s.eDd = alloc<float>((size_t)RA * Q.nq);
   s.edRb = alloc<uint16_t>((size_t)RA * c.De); s.edGU = alloc<uint16_t>((size_t)RA * 2 * c.Ie); s.edT0b = alloc<uint16_t>((size_t)RA * eW0);
   vel = alloc<float>((size_t)RA * c.A);
@@ -772,10 +774,10 @@ static void q_layer_fwd(Model& m, int l, int B, int L, const float* Xin, float* 
   } else {
     const int li = c.lin_in(), la = c.lin_all();
     tk::mm(s.A1, H, R, W + Ly.win.off, la, H, s.T0, la, false, st);
-    qk::conv_silu(s.T0, la, L, B, L, 0, li, c.conv, P + Ly.convw, s.T1, st);
     float* Qn = s.QK;
     float* Kn = s.QK + (size_t)R * c.lh * c.dk;
-    qk::lin_prep(s.T1, li, s.T0, la, li + c.lh * c.dv, R, c.lh, c.dk, P + Ly.alog, P + Ly.dtb, false, Qn, Kn, s.Gb, s.Bb, st);
+    // 합성곱 + SiLU + 정규화 + β·g 한 커널(E). 합성곱 출력 q·k 는 뒤(다시 계산, ck)에서만 씀
+    tk::lin_prep_conv(s.T0, la, B, L, c.lh, c.dk, c.dv, c.conv, P + Ly.convw, li + c.lh * c.dv, P + Ly.alog, P + Ly.dtb, ck, s.T1, li, Qn, Kn, s.Gb, s.Bb, st);
     if (dn_old()) qk::deltanet(Qn, Kn, s.T1 + 2 * c.lh * c.dk, li, s.Gb, s.Bb, B, L, c.lh, c.dk, c.dv, nullptr, nullptr, false, s.O, st, ck ? s.dnws0 : nullptr);
     else tk::dnc_fwd(Qn, Kn, s.T1 + 2 * c.lh * c.dk, li, s.Gb, s.Bb, B, L, c.lh, c.dk, c.dv, nullptr, nullptr, false, s.O, s.dnws, ck, st);
     qk::gnorm(s.O, s.T0 + li, la, R, c.lh, c.dv, P + Ly.gnw, c.eps, s.Ag, st);
@@ -834,7 +836,7 @@ static void q_layer_bwd(Model& m, int l, int B, int L, cudaStream_t st) {
     const int li = c.lin_in(), la = c.lin_all(), VW = c.lh * c.dv;
     tk::mm_dw(s.dRb, H, s.Ag, VW, R, H, VW, s.ws, DWCH, GW + Ly.wout.off, nullptr, st);
     tk::mm_dx(s.dRb, H, R, W + Ly.wout.off, H, VW, s.dAg, VW, false, st);
-    tk::gnorm_bwd(s.O, s.T0 + li, la, R, c.lh, c.dv, P + Ly.gnw, c.eps, s.dAg, s.dO, s.dT0 + li, la, s.npart, GV + Ly.gnw, st, s.dT0b + li);
+    tk::gnorm_bwd(s.O, s.T0 + li, la, R, c.lh, c.dv, P + Ly.gnw, c.eps, s.dAg, s.dO, nullptr, la, s.npart, GV + Ly.gnw, st, s.dT0b + li);
     float* Qn = s.QK;
     float* Kn = s.QK + (size_t)R * c.lh * c.dk;
     float* dQn = s.dQK;
@@ -848,8 +850,7 @@ static void q_layer_bwd(Model& m, int l, int B, int L, cudaStream_t st) {
     tk::lin_prep_bwd(s.T1, li, s.T0, la, li + VW, R, c.lh, c.dk, P + Ly.alog, P + Ly.dtb, dQn, dKn, s.dG, s.dBt, s.dT1, s.dT0, alt, dtt, st, s.dT0b);
     tk::colsum(alt, R, c.lh, c.lh, s.part, GV + Ly.alog, false, st);
     tk::colsum(dtt, R, c.lh, c.lh, s.part, GV + Ly.dtb, false, st);
-    tk::conv_bwd(s.T0, la, B, L, li, c.conv, P + Ly.convw, s.dT1, s.dp, s.dT0, st, s.dT0b);
-    tk::convw_grad(s.T0, la, s.dp, B, L, li, c.conv, s.part, GV + Ly.convw, st);
+    tk::conv_bwd_seq(s.T0, la, B, L, li, c.conv, P + Ly.convw, s.dT1, li, s.dT0b, s.cpart, GV + Ly.convw, st);
     tk::mm_dw(s.dT0b, la, s.A1, H, R, la, H, s.ws, DWCH, GW + Ly.win.off, nullptr, st);
     tk::mm_dx(s.dT0b, la, R, W + Ly.win.off, la, H, s.dA, H, false, st);
   }

@@ -101,10 +101,12 @@ void full_prep_bwd(const float* T0, int ldT, int R, int n, int pos0, int nq, int
 void lin_prep_bwd(const float* T1, int ld1, const float* T0, int ld0, int boff, int R, int lh, int dk, const float* alog, const float* dtb,
                   const float* dQn, const float* dKn, const float* dG, const float* dBeta, float* dT1, float* dT0, float* alt, float* dtt,
                   cudaStream_t st, uint16_t* dT0b = nullptr);
-// 합성곱 + SiLU 의 뒤(학습: 열 시작 0, 캐시 없음): dT1 [R][C] → dX(=, dT0 의 qkv 칸, 줄 간격 ld), dpre 를 dp [R][C] 에 남김
-void conv_bwd(const float* X, int ld, int B, int n, int C, int K, const float* w, const float* dT1, float* dp, float* dX, cudaStream_t st, uint16_t* dXb = nullptr);
-// 합성곱 가중치 기울기 [C][K] = Σ_(b,t) dp[t][c]·x[t−K+1+k][c]
-void convw_grad(const float* X, int ld, const float* dp, int B, int n, int C, int K, float* part, float* out, cudaStream_t st);
+// 융합 E — 앞: 합성곱 + SiLU + q·k L2 정규화 + β·g 한 커널(T0 = in_proj 출력 [R][ld0], T1 = 합성곱 출력: keep 이면 qkv 전부, 아니면 v 만)
+void lin_prep_conv(const float* T0, int ld0, int B, int n, int lh, int dk, int dv, int K, const float* cw, int boff, const float* alog, const float* dtb,
+                   bool keep, float* T1, int ld1, float* Qn, float* Kn, float* G, float* Beta, cudaStream_t st);
+// 뒤: dp·dX(bf16)·가중치 기울기 한 커널(판마다 조각 part ≥ B·C·K) + colred
+void conv_bwd_seq(const float* X, int ld, int B, int n, int C, int K, const float* w, const float* dT1, int ld1, uint16_t* dXb, float* part, float* gw,
+                  cudaStream_t st);
 // 덩이 꼴(WY/UT 변환, 텐서 코어) 덩이 크기: dk 64 이상 = 64, 작은 구성 = 16(덩이 여럿을 시험하게)
 inline int dn_chunk(int dk) { return dk >= 64 ? 64 : 16; }
 // 덩이 꼴 앞(dnchunk.cu): Qn·Kn [R][lh·dk], V [R][ldv], G·Beta [R][lh] → O [R][lh·dv]; S0·S1 [B][lh][dk][dv](nullptr 가능).
