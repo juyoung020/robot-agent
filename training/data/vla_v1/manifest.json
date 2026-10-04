@@ -1,0 +1,102 @@
+{
+ "name": "vla",
+ "version": "v1",
+ "created": "2026-10-04",
+ "dim": 128,
+ "space": "embed P (runs/sb32_pe_300k/head.pt, PE-Core-L-14-336 1024 -> 128, frozen)",
+ "names": {
+  "count": 584,
+  "groups": 396,
+  "sim_groups": 6,
+  "behavior_synsets": 259,
+  "behavior_tasks": 100,
+  "from_label_table": 584,
+  "computed_pe_l": 0,
+  "heldout": 7,
+  "hyper_rows": 137,
+  "label_table": "objects-v1 sha 8f2d638bae436dc6",
+  "templates": [
+   "a photo of a {}.",
+   "a photo of the {}.",
+   "a cropped photo of a {}.",
+   "a {} in a room."
+  ]
+ },
+ "instr": {
+  "count": 40,
+  "tasks": [
+   "go_to_cup",
+   "pick_cup",
+   "place_cup_on_table",
+   "place_box_in_trash",
+   "open_cabinet",
+   "close_cabinet"
+  ],
+  "en_model": "PE-Core-L-14-336 text, no template",
+  "ko_model": "runs/ko_small_v2 pe_l14 head"
+ },
+ "files": {
+  "app128.f16": "55298f910ab3751f9e2c4d8eb674d8aaf28b62fce5447b6365313c12d318e282",
+  "app_views.f16": "644d816e523dbbed171f7e6f6f424cae3eb22358968655c1bdfa0adeaf1021ef",
+  "instr.jsonl": "ca57ca0fbbaccc590e216bd5b39c419e2fafa1e68927fcf4632357d92d06dbb4",
+  "instr128.f16": "4cdf0b5eb1e12022b0b1353676613e9fcc97cc7ca2609119fe520d7abd847f5f",
+  "name128.f16": "d9ef19bfd5702d69d71013170df3ce09b0039beb76bf372b781e47612afd6dd4",
+  "name_aux.i32": "5245d8dee195ec169fb4e1b20c77772f64d7bd75db453689847c85c81a595716",
+  "names.jsonl": "fff3a289a99833a0210b3e280d1787dc11f317fa909d2419d42c88d76c4ff939"
+ },
+ "sha": "a417f8052138844b",
+ "app": {
+  "rows": [
+   "cup",
+   "box",
+   "chair",
+   "table",
+   "cabinet",
+   "trash can",
+   "ghost (background crop)"
+  ],
+  "tool": "training/BC/tools/app_table (team RenderBatch cheap profile, C++ SigLIP 2 B/32-256 tower FP16, C++ MAP pool + embed head h double)",
+  "views_per_row": 64,
+  "label_top1": [
+   "footstool",
+   "wastebin",
+   "wastebin",
+   "wastebin",
+   "wastebin",
+   "wastebin",
+   "furniture sink"
+  ]
+ },
+ "conf": {
+  "vocab": "vla_v1 rows minus hypernym and held-out rows",
+  "kConfLow": -0.08,
+  "conf2_view_percentiles": {
+   "correct": [
+    -0.1907,
+    -0.1434,
+    -0.0999,
+    -0.0484,
+    0.022
+   ],
+   "wrong": [
+    -0.1908,
+    -0.1422,
+    -0.1046,
+    -0.0597,
+    0.0011
+   ],
+   "ghost": [
+    -0.1944,
+    -0.1485,
+    -0.1242,
+    -0.1004,
+    -0.0607
+   ]
+  },
+  "table_entries": {
+   "correct_kept": 3,
+   "wrong_to_hyper": 18,
+   "ghost_to_hyper": 6
+  }
+ }
+}

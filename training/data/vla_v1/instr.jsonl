@@ -1,0 +1,40 @@
+{"text": "go to the cup", "lang": "en", "task": "go_to_cup", "heldout": false, "i": 0, "group": 0}
+{"text": "move to the cup", "lang": "en", "task": "go_to_cup", "heldout": false, "i": 1, "group": 0}
+{"text": "drive over to the cup", "lang": "en", "task": "go_to_cup", "heldout": false, "i": 2, "group": 0}
+{"text": "approach the cup", "lang": "en", "task": "go_to_cup", "heldout": false, "i": 3, "group": 0}
+{"text": "find the cup and go to it", "lang": "en", "task": "go_to_cup", "heldout": false, "i": 4, "group": 0}
+{"text": "head towards the cup", "lang": "en", "task": "go_to_cup", "heldout": false, "i": 5, "group": 0}
+{"text": "컵으로 가", "lang": "ko", "task": "go_to_cup", "heldout": false, "i": 6, "group": 0}
+{"text": "컵 쪽으로 이동해", "lang": "ko", "task": "go_to_cup", "heldout": false, "i": 7, "group": 0}
+{"text": "컵 앞으로 가줘", "lang": "ko", "task": "go_to_cup", "heldout": false, "i": 8, "group": 0}
+{"text": "go over to the mug", "lang": "en", "task": "go_to_cup", "heldout": true, "i": 9, "group": 0}
+{"text": "make your way to the cup on the floor", "lang": "en", "task": "go_to_cup", "heldout": true, "i": 10, "group": 0}
+{"text": "머그잔 앞으로 가줘", "lang": "ko", "task": "go_to_cup", "heldout": true, "i": 11, "group": 0}
+{"text": "바닥에 있는 컵한테 가", "lang": "ko", "task": "go_to_cup", "heldout": true, "i": 12, "group": 0}
+{"text": "pick up the cup", "lang": "en", "task": "pick_cup", "heldout": false, "i": 13, "group": 1}
+{"text": "grab the cup", "lang": "en", "task": "pick_cup", "heldout": false, "i": 14, "group": 1}
+{"text": "lift the cup", "lang": "en", "task": "pick_cup", "heldout": false, "i": 15, "group": 1}
+{"text": "컵을 집어", "lang": "ko", "task": "pick_cup", "heldout": false, "i": 16, "group": 1}
+{"text": "컵 들어", "lang": "ko", "task": "pick_cup", "heldout": false, "i": 17, "group": 1}
+{"text": "take the mug", "lang": "en", "task": "pick_cup", "heldout": true, "i": 18, "group": 1}
+{"text": "머그잔 집어줘", "lang": "ko", "task": "pick_cup", "heldout": true, "i": 19, "group": 1}
+{"text": "put the cup on the table", "lang": "en", "task": "place_cup_on_table", "heldout": false, "i": 20, "group": 2}
+{"text": "place the cup on the table", "lang": "en", "task": "place_cup_on_table", "heldout": false, "i": 21, "group": 2}
+{"text": "컵을 탁자 위에 놓아", "lang": "ko", "task": "place_cup_on_table", "heldout": false, "i": 22, "group": 2}
+{"text": "set the mug down on the table", "lang": "en", "task": "place_cup_on_table", "heldout": true, "i": 23, "group": 2}
+{"text": "머그잔을 식탁에 내려놔", "lang": "ko", "task": "place_cup_on_table", "heldout": true, "i": 24, "group": 2}
+{"text": "put the box in the trash can", "lang": "en", "task": "place_box_in_trash", "heldout": false, "i": 25, "group": 3}
+{"text": "drop the box into the trash can", "lang": "en", "task": "place_box_in_trash", "heldout": false, "i": 26, "group": 3}
+{"text": "상자를 쓰레기통에 넣어", "lang": "ko", "task": "place_box_in_trash", "heldout": false, "i": 27, "group": 3}
+{"text": "throw the box in the garbage", "lang": "en", "task": "place_box_in_trash", "heldout": true, "i": 28, "group": 3}
+{"text": "상자 버려줘", "lang": "ko", "task": "place_box_in_trash", "heldout": true, "i": 29, "group": 3}
+{"text": "open the cabinet", "lang": "en", "task": "open_cabinet", "heldout": false, "i": 30, "group": 4}
+{"text": "open the cabinet door", "lang": "en", "task": "open_cabinet", "heldout": false, "i": 31, "group": 4}
+{"text": "장을 열어", "lang": "ko", "task": "open_cabinet", "heldout": false, "i": 32, "group": 4}
+{"text": "open the cupboard", "lang": "en", "task": "open_cabinet", "heldout": true, "i": 33, "group": 4}
+{"text": "찬장 문 열어줘", "lang": "ko", "task": "open_cabinet", "heldout": true, "i": 34, "group": 4}
+{"text": "close the cabinet", "lang": "en", "task": "close_cabinet", "heldout": false, "i": 35, "group": 5}
+{"text": "shut the cabinet door", "lang": "en", "task": "close_cabinet", "heldout": false, "i": 36, "group": 5}
+{"text": "장을 닫아", "lang": "ko", "task": "close_cabinet", "heldout": false, "i": 37, "group": 5}
+{"text": "close the cupboard", "lang": "en", "task": "close_cabinet", "heldout": true, "i": 38, "group": 5}
+{"text": "찬장 문 닫아줘", "lang": "ko", "task": "close_cabinet", "heldout": true, "i": 39, "group": 5}

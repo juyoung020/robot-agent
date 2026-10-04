@@ -213,6 +213,50 @@ labels/objects-v1/
 
 머리(128-d)를 쓰려면 런타임은 `head128.onnx`(입력 `emb` N×768 = 저장 벡터, 출력 `emb128` N×128, L2 정규화됨)와 `text128_<head>.f16` 을 쓴다.
 
+## VLA 이름·생김새·지시 표 `vla_v1` (VLA_INPUT 3·6·7절)
+
+작성 2026-10-04. 물체 칸의 **이름 뜻 벡터 128**, **생김새 벡터 128**, 지시 문장 벡터를 이 문서의 128-d 공간(얼린 `P`, `sb32_pe_300k`)에 둔다.
+VLA_INPUT 의 "얼린 SigLIP 2 글 인코더 → 128-d 투영" 은 이 공간의 약속으로 구현한다: 영어 글 = PE-Core L/14 글 탑 + `P`, 한국어 글 = 한국어 학생(`ko_small_v2` 의 pe_l14 출력) + `P`,
+영상 = SigLIP 2 B/32-256 풀링 벡터 + 머리 h. 셋 다 같은 얼린 `P` 공간이라 지시 ↔ 이름 ↔ 생김새를 바로 비교한다. 학습 중에는 아무 모델도 돌리지 않고 표만 읽는다.
+
+```
+HF_HUB_OFFLINE=1 ~/embed_venv/bin/python training/embed/vla_tables.py           # 이름·지시 (CPU 약 12 s, 내려받기 없음)
+~/embed_venv/bin/python training/embed/export_head_f32.py                       # 머리 h → ~/embed_work/runs/sb32_pe_300k/head_h.f32 (git 밖)
+~/ra_bc/build/app_table --views 32                                               # 생김새 (C++/CUDA, 1 s)
+python3 training/embed/vla_vocab_gen.py                                          # 확신도 표 → training/RL/map/include/vla_vocab.h, manifest
+~/ra_bc/build/app_table --views 12 --dump D [--negative 1|2|3] && ~/embed_venv/bin/python training/BC/tools/app_ref.py D   # 검증
+```
+
+| 파일(`training/data/vla_v1/`, 합 440 KB) | 내용 |
+|---|---|
+| `names.jsonl`, `name128.f16` [584][128] | 이름 584 줄 = 동의어 묶음 395 개(묶음마다 줄이 붙어 있음). 시뮬 종류 6 묶음(gmap::Cls 차례) 24 줄, BEHAVIOR 2026 범주 252 묶음, 동의어 189 줄, 상위어 137 줄. 584 줄 모두 `objects-v1` 표의 text128 그대로(표에 없는 이름 0 — PE-L 로 다시 계산한 표 줄 16 개는 표와 코사인 최소 0.99995) |
+| `name_aux.i32` [584][8] | 상위어 줄, 묶음 시작, 묶음 길이, 비슷한 다른 이름 3(코사인 상위, 다른 묶음 대표), 안 보인 이름(평가용) 표시, 종류(0 시뮬, 1 BEHAVIOR, 2 동의어, 3 상위어) |
+| `instr.jsonl`, `instr128.f16` [40][128] | 과제 6 개(지금 과제 `go_to_cup` 13 문장 + 집기·놓기 둘·열기·닫기 틀) × 영어·한국어, 과제마다 안 보인 바꿔 말하기 표시 |
+| `app128.f16` [7][128], `app_views.f16` [7][64][128] | 생김새: 줄 0–5 = 시뮬 종류, 줄 6 = 유령(가짜 검출 = 물체 없는 바닥·벽 조각). 줄마다 시점 64 개 평균 |
+
+- 시뮬 종류의 이름: 컵 = cup(+ teacup / 평가용 mug·tumbler), 작은 물건 = **box**(env.h 의 작은 물건은 0.08–0.25 m 상자로 그려짐 → 생김새 그대로; + carton·package / crate), 의자 = chair(+ straight chair / side chair), 탁자 = table(+ dining·kitchen table / worktable), 장 = cabinet(+ cupboard·bottom cabinet / sideboard), 쓰레기통 = trash can(+ garbage can·wastebin·dustbin, BEHAVIOR 의 ashcan / wastebasket). 상위어: tableware, container, furniture, furniture, furniture, container.
+- BEHAVIOR 2026 범주: 과제 100 개(`datasets/2026-challenge-task-instances/metadata/task.jsonl`)의 `problem0.bddl` `:objects` synset 259 개(agent 뺌) + `task_custom_lists.json` 의 허용 모델 범주 108 개를 그 synset 묶음에 넣음. 서브모듈은 읽기만. 시뮬 종류와 같은 synset(cup·box·chair·table·cabinet·ashcan) 6 개는 시뮬 묶음에 합침. 상위어 = WordNet 첫 상위어 중 너무 추상적이지 않고 표에 있는 것, 없으면 "X of Y" → X. 상위어 없는 대표 19 개(container, dust, sand, lawn …).
+- 지시 표(잰 값): 같은 과제 영어끼리 코사인 평균 0.87, 한국어끼리 0.65, 영어–한국어 0.59, 다른 과제 0.40(최대 0.957 = "open the cabinet" 대 "close the cabinet" — 글 탑이 열기·닫기를 거의 못 가름). 가장 가까운 다른 문장의 과제가 맞는 비율 0.75(40 개). `go_to_cup` 문장과 cup 이름 행 코사인 평균 0.747(chair 0.241).
+
+### 생김새 경로(C++/CUDA) — `training/BC/tools/app_table.cu`, `app_head.{h,cpp}`
+팀 `RenderBatch`(읽기만)로 종류마다 상자 하나를 bc_render 와 같은 재질·색·조명 방에 놓고 물체를 겨눈 조각(경계 구가 화면의 1/1.1, FOV 50°, 시선 −6°–52°, 싼 설정) 256² 을 그린다
+→ 우리 C++ SigLIP 2 영상 탑(`vit::Encoder`, 끝 LN 패치 토큰 bf16) → C++ MAP 풀링 머리(safetensors `attn_pool`, double) + 머리 h(double) → L2.
+
+| 검사 | 결과 |
+|---|---|
+| 같은 토큰, C++ 풀링+머리 대 PyTorch FP32(open_clip `attn_pool` + `train_head.Head`), 영상 168 장 | 풀링 768 코사인 최소 1.0000000(상대 L2 6.7e-7), 128 코사인 최소 1.0000000 |
+| 처음부터 끝까지: 같은 RGB 를 PyTorch FP32 open_clip 영상 탑 + 머리 h 대 C++ 탑(FP16) + C++ 풀링·머리 | 128 코사인 평균 1.00000, 최저 0.99996. 표 줄(평균) 7 개 모두 1.00000 |
+| 음성 대조(`--negative`): 1 어텐션 1/8 배율 빠뜨림 / 2 머리 LN 빠뜨림 / 3 MAP MLP 잔차 빠뜨림 | 128 코사인 최소 0.566 / 0.581 / 0.169 → 셋 다 실패(정상) |
+| 다른 씨앗(시점) / 팀 기본 렌더 설정과 표 줄 코사인 | 0.997–0.999 / 0.934–0.987 |
+
+**결과가 말하는 것(잰 값)**: 색만 다른 상자는 생김새로 거의 가려지지 않는다. 종류 평균끼리 코사인 0.92–0.98(유령과는 0.81–0.89), 종류 안 시점끼리 0.89–0.93. 라벨 어휘(아래)에서 1위 이름은 컵 줄 footstool, 나머지 상자 다섯 wastebin, 유령 furniture sink.
+실제 물체 메시(BEHAVIOR 자산, CURRICULUM_BEHAVIOR2026 E4)로 그리면 다시 만들어야 한다 — 같은 도구에 상자 대신 메시를 넣으면 된다.
+
+### 이름 확신도·상위어 문턱 — `training/embed/vla_vocab_gen.py` → `training/RL/map/include/vla_vocab.h`(생성, 손으로 고치지 않음)
+- conf1[app][cls] = cos(app128[app], name128[cls 이름]), conf2 = conf1 − (이름 어휘에서 cls 동의어 묶음 밖 최대 코사인). 이름 어휘 = vla_v1 에서 상위어·평가용 줄을 뺀 440 줄(시뮬 + 동의어 + BEHAVIOR 범주) — 우리 커리큘럼에서 검출기가 낼 수 있는 이름.
+- conf2 분포(시점별, 백분위 5/25/50/75/95): 맞는 이름 −0.191/−0.143/−0.100/−0.048/0.022, 틀린 이름 −0.191/−0.142/−0.105/−0.060/0.001, 유령 −0.194/−0.149/−0.124/−0.100/−0.061. 맞는 이름과 틀린 이름이 거의 같다(위 상자 렌더 때문).
+- `kConfLow` = −0.08: 표(평균 줄)에서 유령 6/6 이 상위어로, 맞는 이름은 3/6(box, table, trash can) 유지, 틀린 이름 18/30 이 상위어로. −0.10 이면 유령 5/6·맞는 3/6·틀린 15/30, −0.06 이면 맞는 1/6 만 유지. **(가정)** 상자 렌더에서는 맞는 이름을 다 지키며 틀린 이름을 거르는 문턱이 없다 — 메시 렌더로 표를 다시 만든 뒤 다시 정한다.
+
 ## 2단계 계획 (우리 픽셀 CNN 학생, 아직 안 함)
 
 - **할 조건**(둘 중 하나)

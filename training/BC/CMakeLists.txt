@@ -91,3 +91,13 @@ add_test(NAME v6_lite COMMAND bc_verify v6 --lite)
 add_test(NAME v7_lite COMMAND bc_verify v7 --lite)
 # 렌더 그래프(작업 공간 없이 잡기는 실패, 한 번 그린 뒤 잡기 == 즉시 실행), 인코더(기준값 디렉터리가 있으면 — vit_verify dump + tools/siglip_ref.py)
 add_test(NAME render_graph COMMAND vit_verify render-graph 256)
+
+# 생김새 벡터 표(VLA_INPUT 3절, training/data/vla_v1/app128.f16): 팀 RenderBatch(읽기만) 조각 렌더 → 얼린 SigLIP 2 영상 탑 → MAP 풀링 + embed 머리 h(C++ double)
+if(EXISTS ${ENGINE_DIR}/cuda/render/render_batch.cuh)
+  add_executable(app_table tools/app_table.cu tools/app_head.cpp)
+  target_include_directories(app_table PRIVATE ${ENGINE_DIR} ${INC} tools)
+  set_source_files_properties(tools/app_table.cu PROPERTIES COMPILE_OPTIONS
+    "-O2;-fmad=false;-prec-div=true;-prec-sqrt=true;-ftz=true;--expt-relaxed-constexpr;-Xcompiler=-ffp-contract=off;-Xcompiler=-fopenmp")
+  set_source_files_properties(tools/app_head.cpp PROPERTIES COMPILE_OPTIONS "-O2;-fopenmp")
+  target_link_libraries(app_table bc OpenMP::OpenMP_CXX)
+endif()
