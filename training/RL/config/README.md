@@ -11,6 +11,7 @@ Rust 실행기(`../ppo/driver`)가 읽는 JSON. 빠진 키는 실행기 기본�
 | `ppo_g4_notok.json` | G4 와 같고 지도 토큰만 끔(`use_map` 0) — 토큰 켬/끔 비교 |
 | `ppo_a2.json` | A2(가구, `../env/README.md`): A0C0 → A1C0 → A2C0(≥ 0.85, CURRICULUM A2) → A2C1 → A2C2, 충돌 추가 벌 −20, 지도 토큰 + 안 본 곳 광선(`use_map` 2), 20 분 |
 | `ppo_a2_notok.json` · `ppo_a2_nofront.json` | 같고 `use_map` 0(토큰 끔) · 1(안 본 곳 광선만 뺌) |
+| `ppo_pnp.json` | **E6 잡기 물리**: B4 집기 → B5 놓기 → B6 가져오기(C0 → 섞음) → B1–B6 섞음 + 실패 판, 행동 8, 모양 잡기 끔. 아래 "ppo_pnp" |
 | `ppo_b.json` | **E2 BEHAVIOR**(CURRICULUM_BEHAVIOR2026 3·3.1·5.4절): B0 = 상자 방 A0C0 → A1C0 → A2C0(회귀 단계) → B1 집 안 이동 C0 → C1 → C2 → B2 찾기 → B3 다가가기 → B1–B3 섞음. 아래 "ppo_b" |
 | `ppo_a2_ft40.json` · `ppo_a2_ft20.json` | A2 켬 씨앗 1 체크포인트를 `--resume` 으로 A2C2 단계만 10 분 더(충돌 추가 벌 −40 · −20 대조). `../ppo/README.md` "A2 충돌 빠른 시험" |
 
@@ -63,3 +64,14 @@ env 3 단계가 하나라도 있으면 실행기가 `beh` 1 로 학습기를 만
 | 앞 단계 섞기 | B2 = B1 20 %, B3 = B1·B2 각 10 %, 지도는 C2 단계에서 C0·C1 각 10 % | CURRICULUM_APPROACH 4절 "앞 단계 약 20 %" **(가정: 나누는 법)** |
 | `act_dims` | 2(vx, wz) | B1–B3 모두 이동·다가가기(팔은 홈 자세 — B3 성공은 몸통 자세의 잡는 점 작업 공간) |
 | `budget_minutes` | 60 | **(가정)** 학습 시간은 아직 안 잼(이 작업은 연결·검증만) |
+
+## ppo_pnp — 잡기 물리 판(E6, 커리큘럼 B4–B6) 키와 가정 (2026-10-05)
+
+env 3 그대로(장면 묶음), `beh.pnp`·`b.pnp` = [B4, B5, B6] 비율(B3 몫에서 뗌 — 단계 고르기 u < p1 → B1, < +p2 → B2, < +p4 → B4, < +p5 → B5, < +p6 → B6, 나머지 B3), `fail` = [p_slip, p_occ](실패 판). 판정·보상은 POLICY 4.8, 모형은 CURRICULUM_BEHAVIOR2026 5.5.
+
+| 키 | 값 | 근거 / 가정 |
+|---|---|---|
+| `act_dims` / 단계 `act_mask` | 8 / 255 | 집기는 팔·그리퍼 6 행동이 필요(VLA_INPUT 5절) |
+| `shaping.coef` | 0 | 다가가기 퍼텐셜(겉면 0.4–0.8 m 에 서기)은 팔 닿는 거리(0.2–0.35 m)와 맞섬 — B4–B6 의 손·들기·놓기 퍼텐셜은 환경 보상 안에 있음 |
+| 단계 | B4(C0, ≥ 0.8, 지표 6) → B5(C0, ≥ 0.8, 7) → B6C0(≥ 0.7, 8) → B6C2(C0·C1 각 10 %, ≥ 0.6, 8) → B1-6 섞음(실패 판 p_slip 0.005·p_occ 0.2) | CURRICULUM 3절 문턱(SR ≥ 80 %). B6 문턱은 **(가정)** |
+| `budget_minutes` | 60 | **(가정)** — 처음부터 PPO 로는 90 s 시험에서 B4 성공 0(`../ppo/README.md` E6 절). 대본 교사 시연은 BC 쪽(`../../BC/config/bc_pnp_lite.json`, `teacher_script` 1)에서 쓰임. BC 학생 → PPO 교사 변수로 옮기는 길은 아직 없음(남은 일) |
