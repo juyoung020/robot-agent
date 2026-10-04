@@ -300,6 +300,12 @@
 사용자 우선순위: ① 커리큘럼을 BEHAVIOR 2026 에 맞추기 ② 학습 전 환경 개선 ③ 학습 뷰어.
 "진행 중"(다른 에이전트) 항목은 따로 적었다.
 
+**10-05 추가 (지도 인지·검색)**
+- 진행 중: **A′** — FastSAM-s + SigLIP 2 후처리(벽·천장 기하 제거, 이름 없는 확률 DA, vMF 벡터·베이지안 이름, 위치 칼만) + scenemap 벽 축 정렬 버그(기운 SLAM 지도에서 정책 쪽 벽 0 개). 목표: A 의 재현율 + B(YOLO26s) 수준 깔끔함. 결과 뷰어 :8084 예정.
+- 진행 중: **에이전트 물체 검색 도구** `search_objects`·`confirm_object` + 공용 물체 색인 + SigLIP 2 글 인코더 엔진.
+- 다음: A′ 통과 뒤 시뮬 sgrt·LIMO 지도 시험을 FastSAM + SigLIP 2 + A′ 로 옮기기(지금은 보관 엔진 `~/ovdet_models/archive` 사용), GPU 지도 근사판을 A′ 규칙에 맞추기, RecallVLA 자체 검색(질의 벡터 → 상위 K 칸, 검색 InfoNCE, 힌트 지우기·틀린 이름 섞기) 스펙·구현.
+- 기록: 검출기 비교 `~/datasets/sim_detcmp/README.md`(A FastSAM / B YOLO26s / C YOLOE, 영상 포함), 실제 bag 결과 MAP_STATE_PLAN 7 절.
+
 **진행 중(손대지 않음)**: BEHAVIOR 2026 커리큘럼 설계(CURRICULUM_BEHAVIOR2026.md), 학습 뷰어(TRAIN_VIEWER V0–V5), VLA 실행기 접점(POLICY 1.3·7.2), LIMO SLAM 등록, MAP_STATE_PLAN 벤치마크 어댑터, G6 FP8 인코더.
 
 **① 커리큘럼 (BEHAVIOR 2026 과 맞추기)** — 설계 문서가 나오면 바로
