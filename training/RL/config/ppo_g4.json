@@ -1,5 +1,5 @@
 {
-  "comment": "G4 RL 교사: 목표는 지도에 확정된 뒤에만(goal_from_map), 처음 지도 커리큘럼 C0 → C1 → C2(5.5), 자르기 밖 평균 벌. 값의 근거는 config/README.md",
+  "comment": "G4 RL 교사: 목표는 지도에 확정된 뒤에만(goal_from_map), 처음 지도 커리큘럼 C0 → C1 → C2(5.5), 자르기 밖 평균 벌, 충돌 추가 벌 −20(합 −30). 값의 근거는 config/README.md",
   "n_env": 4096,
   "horizon": 64,
   "epochs": 5,
@@ -35,7 +35,8 @@
     "aim": 1.0,
     "zone": 1.0,
     "v": 4.0,
-    "w": 2.0
+    "w": 2.0,
+    "coll": -20.0
   },
   "curriculum": {
     "stages": [
