@@ -31,6 +31,13 @@ struct PpoBCurr {
     eval_instr: i32,
     p_point: f32,
     p_goto: f32,
+    // 잡기 물리(E6): B4·B5·B6 비율, 실패 판(미끄러짐·막힌 자리), 물리 끄기 비트
+    p4: f32,
+    p5: f32,
+    p6: f32,
+    p_slip: f32,
+    p_occ: f32,
+    phys: i32,
 }
 
 #[repr(C)]
@@ -139,6 +146,9 @@ struct PpoLog {
     n_b: [f32; 3],
     s_b: [f32; 3],
     k_b: [f32; 3],
+    n_p: [f32; 3],
+    s_p: [f32; 3],
+    k_p: [f32; 3],
 }
 
 #[repr(C)]
@@ -210,6 +220,8 @@ struct BSpec {
     eval_instr: i32,
     p_point: f32,
     p_goto: f32,
+    pnp: [f32; 3],
+    fail: [f32; 2],
 }
 fn parse_bspec(v: &Value, base: &BSpec) -> BSpec {
     let mut b = base.clone();
@@ -226,6 +238,12 @@ fn parse_bspec(v: &Value, base: &BSpec) -> BSpec {
     b.eval_instr = gi(v, "eval_instr", b.eval_instr as i64) as i32;
     b.p_point = gf(v, "p_point", b.p_point as f64) as f32;   // 목표 점(VLA_INPUT 2.1): 놓을 곳 = 점 섞음
     b.p_goto = gf(v, "p_goto", b.p_goto as f64) as f32;     // 점으로 가기(B1·B3 변형) 섞음
+    if let Some(m) = v.get("pnp").and_then(|x| x.as_array()) {   // 잡기 물리(E6): [B4, B5, B6] 비율(B3 몫에서)
+        for k in 0..3 { b.pnp[k] = m.get(k).and_then(|x| x.as_f64()).unwrap_or(b.pnp[k] as f64) as f32; }
+    }
+    if let Some(m) = v.get("fail").and_then(|x| x.as_array()) {  // 실패 판: [p_slip, p_occ]
+        for k in 0..2 { b.fail[k] = m.get(k).and_then(|x| x.as_f64()).unwrap_or(b.fail[k] as f64) as f32; }
+    }
     b
 }
 fn bcurr_of(h: *mut std::ffi::c_void, b: &BSpec, all: u32) -> PpoBCurr {
@@ -237,7 +255,10 @@ fn bcurr_of(h: *mut std::ffi::c_void, b: &BSpec, all: u32) -> PpoBCurr {
         assert!(m != 0, "beh: none of the scenes {:?} is in the scene set", b.scenes);
         m
     };
-    PpoBCurr { p1: b.p1, p2: b.p2, scene_mask: mask, split: b.split, yaw_jit: b.yaw_jit, strict: b.strict, nofilter: 0, eval_instr: b.eval_instr, p_point: b.p_point, p_goto: b.p_goto }
+    PpoBCurr {
+        p1: b.p1, p2: b.p2, scene_mask: mask, split: b.split, yaw_jit: b.yaw_jit, strict: b.strict, nofilter: 0, eval_instr: b.eval_instr, p_point: b.p_point, p_goto: b.p_goto,
+        p4: b.pnp[0], p5: b.pnp[1], p6: b.pnp[2], p_slip: b.fail[0], p_occ: b.fail[1], phys: 0,
+    }
 }
 
 fn env_name(e: i32) -> String {
@@ -382,7 +403,7 @@ fn writer(rx: mpsc::Receiver<Msg>, out: PathBuf, n_per_iter: f64, print_every: i
     let mut csv = fs::File::create(out.join("log.csv")).expect("log.csv");
     writeln!(
         csv,
-        "iter,env_steps,wall_s,stage,succ,coll,tout,n_eps,ep_ret,ep_len,rew_mean,kl,clipfrac,entropy,pg_loss,v_loss,grad_norm,lr,adv_std,value_mean,std0,std1,map_task,rollout_ms,update_ms,gpu_env_steps_per_s,n_c0,n_c1,n_c2,succ_c0,succ_c1,succ_c2,coll_c0,coll_c1,coll_c2,goal_known,n_b1,n_b2,n_b3,succ_b1,succ_b2,succ_b3,coll_b1,coll_b2,coll_b3"
+        "iter,env_steps,wall_s,stage,succ,coll,tout,n_eps,ep_ret,ep_len,rew_mean,kl,clipfrac,entropy,pg_loss,v_loss,grad_norm,lr,adv_std,value_mean,std0,std1,map_task,rollout_ms,update_ms,gpu_env_steps_per_s,n_c0,n_c1,n_c2,succ_c0,succ_c1,succ_c2,coll_c0,coll_c1,coll_c2,goal_known,n_b1,n_b2,n_b3,succ_b1,succ_b2,succ_b3,coll_b1,coll_b2,coll_b3,n_b4,n_b5,n_b6,succ_b4,succ_b5,succ_b6,coll_b4,coll_b5,coll_b6"
     )
     .unwrap();
     let mut notes = fs::File::create(out.join("events.txt")).expect("events.txt");
@@ -392,11 +413,12 @@ fn writer(rx: mpsc::Receiver<Msg>, out: PathBuf, n_per_iter: f64, print_every: i
                 let gpu_sps = n_per_iter / ((l.rollout_ms + l.update_ms) as f64 * 1e-3);
                 writeln!(
                     csv,
-                    "{},{},{:.3},{},{:.4},{:.4},{:.4},{},{:.3},{:.1},{:.5},{:.5},{:.4},{:.4},{:.5},{:.5},{:.4},{:.3e},{:.4},{:.4},{:.4},{:.4},{:.4},{:.3},{:.3},{:.4e},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4}",
+                    "{},{},{:.3},{},{:.4},{:.4},{:.4},{},{:.3},{:.1},{:.5},{:.5},{:.4},{:.4},{:.5},{:.5},{:.4},{:.3e},{:.4},{:.4},{:.4},{:.4},{:.4},{:.3},{:.3},{:.4e},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4}",
                     l.iter, l.env_steps, wall, l.stage, l.succ, l.coll, l.tout, l.n_eps as i64, l.ep_ret, l.ep_len, l.rew_mean, l.kl, l.clipfrac,
                     l.entropy, l.pg_loss, l.v_loss, l.grad_norm, l.lr, l.adv_std, l.value_mean, l.std0, l.std1, l.map_task, l.rollout_ms,
                     l.update_ms, gpu_sps, l.n_c[0] as i64, l.n_c[1] as i64, l.n_c[2] as i64, l.s_c[0], l.s_c[1], l.s_c[2], l.k_c[0], l.k_c[1], l.k_c[2],
-                    l.goal_known, l.n_b[0] as i64, l.n_b[1] as i64, l.n_b[2] as i64, l.s_b[0], l.s_b[1], l.s_b[2], l.k_b[0], l.k_b[1], l.k_b[2]
+                    l.goal_known, l.n_b[0] as i64, l.n_b[1] as i64, l.n_b[2] as i64, l.s_b[0], l.s_b[1], l.s_b[2], l.k_b[0], l.k_b[1], l.k_b[2],
+                    l.n_p[0] as i64, l.n_p[1] as i64, l.n_p[2] as i64, l.s_p[0], l.s_p[1], l.s_p[2], l.k_p[0], l.k_p[1], l.k_p[2]
                 )
                 .unwrap();
                 if let Some(r) = rf.as_mut() { r.log(&l, wall, gpu_sps); }
@@ -410,6 +432,12 @@ fn writer(rx: mpsc::Receiver<Msg>, out: PathBuf, n_per_iter: f64, print_every: i
                         println!(
                             "          BEHAVIOR B1/B2/B3 succ {:.3}/{:.3}/{:.3} coll {:.3}/{:.3}/{:.3} (n {}/{}/{})",
                             l.s_b[0], l.s_b[1], l.s_b[2], l.k_b[0], l.k_b[1], l.k_b[2], l.n_b[0] as i64, l.n_b[1] as i64, l.n_b[2] as i64
+                        );
+                    }
+                    if l.n_p.iter().sum::<f32>() > 0.0 {
+                        println!(
+                            "          PICK/PLACE B4/B5/B6 succ {:.3}/{:.3}/{:.3} coll {:.3}/{:.3}/{:.3} (n {}/{}/{})",
+                            l.s_p[0], l.s_p[1], l.s_p[2], l.k_p[0], l.k_p[1], l.k_p[2], l.n_p[0] as i64, l.n_p[1] as i64, l.n_p[2] as i64
                         );
                     }
                 }

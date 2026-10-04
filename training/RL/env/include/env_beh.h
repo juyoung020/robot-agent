@@ -154,104 +154,6 @@ DEV bool spawn_ok(const bsc::SceneSet& ss, const bsc::Entry& E, float x, float y
   return (nofilter & bsc::NF_SPAWN_FREE) || body_free_beh(ss, E, x, y, yaw);
 }
 
-DEV void reset_beh(Core& c, BState& b, const bsc::SceneSet& ss, const bsc::BCurr& cu) {
-  const float u = rand01(c.rng);
-  int kind = u < cu.p1 ? bsc::EK_B1 : (u < cu.p1 + cu.p2 ? bsc::EK_B2 : bsc::EK_B3);
-  int e = kind == bsc::EK_B1 ? pick_entry(ss, cu, bsc::L_ROOM, c.rng) : pick_pnp(ss, cu, c.rng);
-  if (e < 0) {   // 그 목록이 비면 다른 목록
-    kind = kind == bsc::EK_B1 ? bsc::EK_B3 : bsc::EK_B1;
-    e = kind == bsc::EK_B1 ? pick_entry(ss, cu, bsc::L_ROOM, c.rng) : pick_pnp(ss, cu, c.rng);
-  }
-  if (e < 0) { e = 0; kind = ss.ent[0].list == bsc::L_ROOM ? bsc::EK_B1 : bsc::EK_B3; }   // 설정이 아무것도 못 고름(호스트가 미리 막음) — 첫 판
-  const bsc::Entry& E = ss.ent[e];
-  // 점으로 가기(B1·B3 변형, 목표 점): p_goto > 0 일 때만 난수를 하나 더 뽑는다(0 이면 예전과 같은 난수 흐름 = 같은 판)
-  bool go = false;
-  if (cu.p_goto > 0.f && kind != bsc::EK_B2) {
-    const float ug = rand01(c.rng);
-    go = ug < cu.p_goto && (kind == bsc::EK_B1 || E.ppt_ok != 0);
-  }
-  const int nt = cu.eval_instr ? ss.ntpl - ss.ntpl_train : ss.ntpl_train;
-  const int toff = cu.eval_instr ? ss.ntpl_train : 0;
-  const bool blk3 = ss.iblocks >= 3 && ss.ntpl > 0 && nt > 0;   // 지시문 표 v2(점 묶음 있음)
-  c.tx = go && kind == bsc::EK_B3 ? E.ppt[0] : E.gx;
-  c.ty = go && kind == bsc::EK_B3 ? E.ppt[1] : E.gy;
-  if (kind == bsc::EK_B1) {   // B1: 인스턴스 로봇 시작
-    c.x = E.sx; c.y = E.sy;
-    c.yaw = cu.yaw_jit > 0.f ? wrap_pi(E.syaw + rand_range(c.rng, -cu.yaw_jit, cu.yaw_jit)) : E.syaw;
-    b.fset = -1;
-    b.instr = -1;
-    if (go && blk3) b.instr = 2 * ss.ncombo * ss.ntpl + toff + rand_below(c.rng, nt);   // "go here" 묶음
-  } else {    // 집기·놓기: 무작위 시작(거르개를 지나는 칸·무작위 yaw), 못 찾으면 표의 대신 쓸 시작
-    bool ok = false;
-    float x = 0.f, y = 0.f, yaw = 0.f;
-    const float R = bsc::WIN_HALF - KP::win_margin;
-    int tries = 0;
-    for (int t = 0; t < KP::spawn_tries && !ok; ++t) {
-      x = rand_range(c.rng, -R, R);
-      y = rand_range(c.rng, -R, R);
-      yaw = rand_range(c.rng, -kPi, kPi);
-      ok = spawn_ok(ss, E, x, y, yaw, cu.strict, cu.nofilter);
-      if (ok && go) { const float px = x - c.tx, py = y - c.ty; ok = px * px + py * py >= KP::spawn_min_d * KP::spawn_min_d; }   // 점에서도 ≥ 1 m
-      ++tries;
-    }
-    ENV_PROF_ADD(3, 1);
-    ENV_PROF_ADD(4, tries);
-    if (!ok) ENV_PROF_ADD(5, 1);
-    (void)tries;
-    if (!ok) { x = E.sx; y = E.sy; yaw = E.syaw; }
-    c.x = x; c.y = y; c.yaw = yaw;
-    b.fset = cu.strict ? 1 : 0;
-    const int t = rand_below(c.rng, nt > 0 ? nt : 1);
-    b.instr = (E.combo >= 0 && nt > 0) ? E.combo * ss.ntpl + toff + t : -1;
-    if (go) b.instr = blk3 ? 2 * ss.ncombo * ss.ntpl + toff + t : -1;
-  }
-  // 목표 꼴: 점으로 가기 = 놓을 점 + 집을 칸 없음. 집기·놓기 판의 바닥 놓을 곳은 늘 점(바닥은 누를 물체가 없음), 면은 p_point 로 점
-  b.gmode = 0;
-  for (int a = 0; a < 3; ++a) b.gp[a] = 0.f;
-  if (go) {
-    b.gmode = bsc::GM_PLACE_PT | bsc::GM_GOTO;
-    if (kind == bsc::EK_B1) { b.gp[0] = E.gx; b.gp[1] = E.gy; b.gp[2] = 0.f; }
-    else for (int a = 0; a < 3; ++a) b.gp[a] = E.ppt[a];
-  } else if (kind != bsc::EK_B1 && E.ppt_ok) {
-    const bool floor = E.dkind == bsc::DK_FLOOR;
-    bool pt = floor;
-    bool pt_txt = false;
-    if (cu.p_point > 0.f && (floor || E.dkind == bsc::DK_ONTOP)) {   // 0 이면 난수 안 뽑음(예전 흐름)
-      pt_txt = rand01(c.rng) < cu.p_point;
-      pt = pt || pt_txt;
-    }
-    if (pt) {
-      b.gmode = bsc::GM_PLACE_PT;
-      for (int a = 0; a < 3; ++a) b.gp[a] = E.ppt[a];
-      if (pt_txt && blk3 && E.combo >= 0 && b.instr >= 0) b.instr = b.instr + ss.ncombo * ss.ntpl;   // 같은 조합·같은 문장 번호의 "put the {o} here" 행
-    }
-  }
-  b.pd3 = -1.f;
-  c.rhx = bsc::WIN_HALF; c.rhy = bsc::WIN_HALF;   // 창 반 변(상자 방 값 자리 — 지도 완성도 계산만 씀)
-  c.nf = 0;
-  b.wx = E.wx; b.wy = E.wy;
-  b.px = c.x; b.py = c.y;
-  b.tz = kind == bsc::EK_B1 ? KB::b1_tz : (go ? E.ppt[2] + 0.5f * E.ext[2] : E.gz);   // 점으로 가기 B3: 물체가 점에 놓였을 때의 가운데 높이
-  for (int a = 0; a < 3; ++a) b.ex[a] = E.ext[a];
-  b.kind = kind; b.scene = E.scene; b.ent = e; b.room = E.groom;
-  c.v = 0.f; c.w = 0.f; c.wl = 0.f; c.wr = 0.f;
-  home_q(c.q);
-  for (int i = 0; i < N_Q; ++i) c.qd[i] = 0.f;
-  for (int i = 0; i < N_ACT; ++i) c.last_act[i] = 0.f;
-  const float ddx = c.tx - c.x, ddy = c.ty - c.y;
-  b.dist = sqrtf(ddx * ddx + ddy * ddy);
-  c.prev_dist = b.dist;
-  c.prev_aim = absf(wrap_pi(atan2f_d(ddy, ddx) - c.yaw));
-  c.step = 0;
-  c.ok_ticks = 0;
-  c.seen = 0;
-  const float slack = kind == bsc::EK_B1 ? KB::slack_b1 : kind == bsc::EK_B2 ? KB::slack_b2 : KB::slack_b3;
-  // 시간 예산: B1 = 참 최단 경로 / 0.3 m/s + 여유, 집기·놓기 = 직선 × 1.5 / 0.3 m/s + 여유(무작위 시작이라 경로를 미리 모름 — 가정)
-  const float plen = kind == bsc::EK_B1 ? E.path : 1.5f * b.dist;
-  c.max_steps = (int)ceilf((plen / 0.3f + slack) * 10.f);
-  c.ep += 1;
-}
-
 // 충돌: 정적 상자(세계) + 과제 물체 상자(창 좌표, 바닥 H_COLL 아래)
 DEV bool collides_beh(const Core& c, const BState& b, const bsc::SceneSet& ss) {
   float s, co;
@@ -352,6 +254,125 @@ DEV float beh_dist(const Core& c, const BState& b, const uint8_t* lev, int org, 
   return sqrtf(dx * dx + dy * dy);
 }
 
+}  // namespace env
+#include "env_pnp.h"   // 잡기 물리 판(E6): B4·B5·B6
+namespace env {
+
+DEV void reset_beh(Core& c, BState& b, PState& p, const bsc::SceneSet& ss, const bsc::BCurr& cu) {
+  const float u = rand01(c.rng);
+  int kind = u < cu.p1 ? bsc::EK_B1 : (u < cu.p1 + cu.p2 ? bsc::EK_B2 : bsc::EK_B3);
+  if (kind == bsc::EK_B3) {   // 잡기 물리 판(E6): B3 몫에서 p4·p5·p6 를 떼어 냄(모두 0 이면 비교가 예전과 같음 — 같은 판)
+    const float a4 = cu.p1 + cu.p2 + cu.p4, a5 = a4 + cu.p5, a6 = a5 + cu.p6;
+    kind = u < a4 ? bsc::EK_B4 : u < a5 ? bsc::EK_B5 : u < a6 ? bsc::EK_B6 : bsc::EK_B3;
+  }
+  int e = kind == bsc::EK_B1 ? pick_entry(ss, cu, bsc::L_ROOM, c.rng) : pick_pnp(ss, cu, c.rng);
+  if (e < 0) {   // 그 목록이 비면 다른 목록
+    kind = kind == bsc::EK_B1 ? bsc::EK_B3 : bsc::EK_B1;
+    e = kind == bsc::EK_B1 ? pick_entry(ss, cu, bsc::L_ROOM, c.rng) : pick_pnp(ss, cu, c.rng);
+  }
+  if (e < 0) { e = 0; kind = ss.ent[0].list == bsc::L_ROOM ? bsc::EK_B1 : bsc::EK_B3; }   // 설정이 아무것도 못 고름(호스트가 미리 막음) — 첫 판
+  const bsc::Entry& E = ss.ent[e];
+  // 점으로 가기(B1·B3 변형, 목표 점): p_goto > 0 일 때만 난수를 하나 더 뽑는다(0 이면 예전과 같은 난수 흐름 = 같은 판)
+  bool go = false;
+  if (cu.p_goto > 0.f && (kind == bsc::EK_B1 || kind == bsc::EK_B3)) {
+    const float ug = rand01(c.rng);
+    go = ug < cu.p_goto && (kind == bsc::EK_B1 || E.ppt_ok != 0);
+  }
+  const int nt = cu.eval_instr ? ss.ntpl - ss.ntpl_train : ss.ntpl_train;
+  const int toff = cu.eval_instr ? ss.ntpl_train : 0;
+  const bool blk3 = ss.iblocks >= 3 && ss.ntpl > 0 && nt > 0;   // 지시문 표 v2(점 묶음 있음)
+  c.tx = go && kind == bsc::EK_B3 ? E.ppt[0] : E.gx;
+  c.ty = go && kind == bsc::EK_B3 ? E.ppt[1] : E.gy;
+  if (kind == bsc::EK_B1) {   // B1: 인스턴스 로봇 시작
+    c.x = E.sx; c.y = E.sy;
+    c.yaw = cu.yaw_jit > 0.f ? wrap_pi(E.syaw + rand_range(c.rng, -cu.yaw_jit, cu.yaw_jit)) : E.syaw;
+    b.fset = -1;
+    b.instr = -1;
+    if (go && blk3) b.instr = 2 * ss.ncombo * ss.ntpl + toff + rand_below(c.rng, nt);   // "go here" 묶음
+  } else {    // 집기·놓기: 무작위 시작(거르개를 지나는 칸·무작위 yaw), 못 찾으면 표의 대신 쓸 시작
+    bool ok = false;
+    float x = 0.f, y = 0.f, yaw = 0.f;
+    const float R = bsc::WIN_HALF - KP::win_margin;
+    int tries = 0;
+    for (int t = 0; t < KP::spawn_tries && !ok && !is_pnp(kind); ++t) {   // 잡기 물리 판은 시작을 아래 reset_pnp_start 가
+      x = rand_range(c.rng, -R, R);
+      y = rand_range(c.rng, -R, R);
+      yaw = rand_range(c.rng, -kPi, kPi);
+      ok = spawn_ok(ss, E, x, y, yaw, cu.strict, cu.nofilter);
+      if (ok && go) { const float px = x - c.tx, py = y - c.ty; ok = px * px + py * py >= KP::spawn_min_d * KP::spawn_min_d; }   // 점에서도 ≥ 1 m
+      ++tries;
+    }
+    ENV_PROF_ADD(3, 1);
+    ENV_PROF_ADD(4, tries);
+    if (!ok) ENV_PROF_ADD(5, 1);
+    (void)tries;
+    if (!ok) { x = E.sx; y = E.sy; yaw = E.syaw; }
+    c.x = x; c.y = y; c.yaw = yaw;
+    b.fset = cu.strict ? 1 : 0;
+    const int t = rand_below(c.rng, nt > 0 ? nt : 1);
+    b.instr = (E.combo >= 0 && nt > 0) ? E.combo * ss.ntpl + toff + t : -1;
+    if (go) b.instr = blk3 ? 2 * ss.ncombo * ss.ntpl + toff + t : -1;
+  }
+  // 목표 꼴: 점으로 가기 = 놓을 점 + 집을 칸 없음. 집기·놓기 판의 바닥 놓을 곳은 늘 점(바닥은 누를 물체가 없음), 면은 p_point 로 점
+  b.gmode = 0;
+  for (int a = 0; a < 3; ++a) b.gp[a] = 0.f;
+  if (go) {
+    b.gmode = bsc::GM_PLACE_PT | bsc::GM_GOTO;
+    if (kind == bsc::EK_B1) { b.gp[0] = E.gx; b.gp[1] = E.gy; b.gp[2] = 0.f; }
+    else for (int a = 0; a < 3; ++a) b.gp[a] = E.ppt[a];
+  } else if (kind != bsc::EK_B1 && E.ppt_ok) {
+    const bool floor = E.dkind == bsc::DK_FLOOR;
+    bool pt = floor;
+    bool pt_txt = false;
+    if (cu.p_point > 0.f && (floor || E.dkind == bsc::DK_ONTOP)) {   // 0 이면 난수 안 뽑음(예전 흐름)
+      pt_txt = rand01(c.rng) < cu.p_point;
+      pt = pt || pt_txt;
+    }
+    if (pt) {
+      b.gmode = bsc::GM_PLACE_PT;
+      for (int a = 0; a < 3; ++a) b.gp[a] = E.ppt[a];
+      if (pt_txt && blk3 && E.combo >= 0 && b.instr >= 0) b.instr = b.instr + ss.ncombo * ss.ntpl;   // 같은 조합·같은 문장 번호의 "put the {o} here" 행
+    }
+  }
+  b.pd3 = -1.f;
+  c.rhx = bsc::WIN_HALF; c.rhy = bsc::WIN_HALF;   // 창 반 변(상자 방 값 자리 — 지도 완성도 계산만 씀)
+  c.nf = 0;
+  b.wx = E.wx; b.wy = E.wy;
+  b.px = c.x; b.py = c.y;
+  b.tz = kind == bsc::EK_B1 ? KB::b1_tz : (go ? E.ppt[2] + 0.5f * E.ext[2] : E.gz);   // 점으로 가기 B3: 물체가 점에 놓였을 때의 가운데 높이
+  for (int a = 0; a < 3; ++a) b.ex[a] = E.ext[a];
+  b.kind = kind; b.scene = E.scene; b.ent = e; b.room = E.groom;
+  c.v = 0.f; c.w = 0.f; c.wl = 0.f; c.wr = 0.f;
+  home_q(c.q);
+  for (int i = 0; i < N_Q; ++i) c.qd[i] = 0.f;
+  for (int i = 0; i < N_ACT; ++i) c.last_act[i] = 0.f;
+  float pdist = 0.f;   // B6: 물체 → 놓을 곳(시간 예산)
+  if (is_pnp(kind)) {
+    // B5 는 나르는 자세(잡는 점 joint1 축에서 0.25 m, 수평)의 가반 하중 안 물체만 — 넘으면 시작하자마자 미끄러지므로 B4 로(가정)
+    if (kind == bsc::EK_B5 && mass_of(E.mass) > payload_max(0.25f, 0.f)) { kind = bsc::EK_B4; b.kind = kind; }
+    reset_pnp_start(c, b, p, ss, cu, E, kind);
+    float t[3];
+    place_target(E, b, E.odim, t);
+    pdist = sqrtf((t[0] - E.gx) * (t[0] - E.gx) + (t[1] - E.gy) * (t[1] - E.gy));
+    if (kind == bsc::EK_B5) { c.tx = t[0]; c.ty = t[1]; b.tz = t[2]; p.fl |= OF_TOPLACE; }
+    b.px = c.x; b.py = c.y;
+  } else clear_p(p);
+  const float ddx = c.tx - c.x, ddy = c.ty - c.y;
+  b.dist = sqrtf(ddx * ddx + ddy * ddy);
+  c.prev_dist = b.dist;
+  c.prev_aim = absf(wrap_pi(atan2f_d(ddy, ddx) - c.yaw));
+  c.step = 0;
+  c.ok_ticks = 0;
+  c.seen = 0;
+  const float slack = kind == bsc::EK_B1 ? KB::slack_b1 : kind == bsc::EK_B2 ? KB::slack_b2 : KB::slack_b3;
+  // 시간 예산: B1 = 참 최단 경로 / 0.3 m/s + 여유, 집기·놓기 = 직선 × 1.5 / 0.3 m/s + 여유(무작위 시작이라 경로를 미리 모름 — 가정)
+  const float plen = kind == bsc::EK_B1 ? E.path : 1.5f * b.dist;
+  c.max_steps = (int)ceilf((plen / 0.3f + slack) * 10.f);
+  if (is_pnp(kind))   // 잡기 물리 판 시간 예산(가정): B4 30 s, B5 직선 × 1.5 / 0.3 m/s + 40 s, B6 (시작 → 물체 + 물체 → 놓을 곳) × 1.5 / 0.3 + 60 s
+    c.max_steps = kind == bsc::EK_B4 ? 300 : kind == bsc::EK_B5 ? (int)ceilf((1.5f * b.dist / 0.3f + 40.f) * 10.f) : (int)ceilf((1.5f * (b.dist + pdist) / 0.3f + 60.f) * 10.f);
+  c.ep += 1;
+}
+
 // 한 제어 스텝(BEHAVIOR 판). lev: 이 판의 지도 거리장(앞 스텝 지도, 판 번호가 맞을 때만, 아니면 nullptr), conf: 목표 확정(−1 = 지도 없음 → B2 는 보임만)
 template <class Hook>
 DEV void step_core_beh(Core& c, BState& b, const bsc::SceneSet& ss, const uint8_t* lev, int org, int conf, const float act_in[N_ACT], StepOut& o, bool arm_free,
@@ -441,16 +462,24 @@ DEV void init_env_beh(const Soa& s, int i, uint64_t seed, const bsc::SceneSet& s
   c.rng = seed * 0x9E3779B97F4A7C15ull + (uint64_t)i * 0xD1B54A32D192ED03ull + 12345ull;
   c.ep = 0;
   BState b{};
-  reset_beh(c, b, ss, cu);
+  PState p;
+  reset_beh(c, b, p, ss, cu);
   store(s, i, c);
   store_b(s, i, b);
+  store_p(s, i, p);
 }
+// SEL: 0 = 모든 판(CPU 참조판), 1 = 잡기 물리 아닌 판만(GPU 예전 판 커널 — 잡기 코드가 빠져 레지스터·넘침이 예전과 가깝게), 2 = 잡기 물리 판만(GPU 둘째 커널).
+// GPU 는 1 다음 2 를 띄운다: 1 이 이 스텝에 돌린 판은 I_B_SKIP = 1 로 두고(리셋으로 잡기 판이 되어도), 2 는 그 판을 0 으로 되돌리고 넘어감 — 판마다 스텝 하나(결과 같음)
+template <int SEL = 0>
 DEV void step_env_beh(const Soa& s, int i, const float* act, float* obs, float* rew, int* done, bool arm_free, int bug, const bsc::SceneSet& ss,
                       const bsc::BCurr* cu, const bsc::NavFb& fb) {
+  if (SEL == 2 && s.iv[I_B_SKIP * s.N + i]) { s.iv[I_B_SKIP * s.N + i] = 0; return; }
   Core c;
   load<false>(s, i, c);
   BState b;
   load_b(s, i, b);
+  if (SEL == 1 && is_pnp(b.kind)) return;
+  if (SEL == 1) s.iv[I_B_SKIP * s.N + i] = 1;
   float a[N_ACT];
   for (int k = 0; k < N_ACT; ++k) a[k] = act[k * s.N + i];
   if (bug == 1) a[1] = -a[1];   // 음성 대조
@@ -460,7 +489,18 @@ DEV void step_env_beh(const Soa& s, int i, const float* act, float* obs, float* 
   const int conf = fb.conf == nullptr ? -1 : (fresh ? fb.conf[i] : 0);
   if (bug == 2) b.room = -2;   // 음성 대조(장면): B1 목표 방을 지움
   StepOut o;
-  step_core_beh(c, b, ss, lev, org, conf, a, o, arm_free, NoHook{});
+  // 잡기 물리 판(E6)만 물체 상태를 읽고 쓴다(다른 판은 예전 길 그대로)
+  const bool pnp0 = SEL != 1 && is_pnp(b.kind);
+  PState p;
+  if (pnp0) load_p(s, i, p);
+  if (SEL != 1 && pnp0) {
+    bsc::BCurr cuv = *cu;
+    if (bug == 3) cuv.phys |= bsc::PF_NO_WIDTH | bsc::PF_NO_SLIP;   // 음성 대조(잡기): 폭·무게 검사 끔
+    if (bug == 4) cuv.phys |= bsc::PF_NO_ARMCOLL;                   // 음성 대조(팔 충돌): 막기 끔
+    step_core_pnp(c, b, p, ss, cuv, lev, org, a, o, NoHook{});
+  } else if (SEL != 2) {
+    step_core_beh(c, b, ss, lev, org, conf, a, o, arm_free, NoHook{});
+  }
   for (int k = 0; k < N_OBS; ++k) obs[k * s.N + i] = o.obs[k];
   rew[i] = o.reward;
   done[i] = o.done;
@@ -468,7 +508,7 @@ DEV void step_env_beh(const Soa& s, int i, const float* act, float* obs, float* 
 #if defined(ENV_PROF) && defined(__CUDA_ARCH__)
   const long long pc0 = clock64();
 #endif
-  if (o.done != kRunning) reset_beh(c, b, ss, *cu);
+  if (o.done != kRunning) reset_beh(c, b, p, ss, *cu);
 #if defined(ENV_PROF) && defined(__CUDA_ARCH__)
   {
     const unsigned long long dc = o.done != kRunning ? (unsigned long long)(clock64() - pc0) : 0ull;
@@ -479,6 +519,7 @@ DEV void step_env_beh(const Soa& s, int i, const float* act, float* obs, float* 
 #endif
   store(s, i, c);
   store_b(s, i, b);
+  if (pnp0 || is_pnp(b.kind)) store_p(s, i, p);
 }
 
 }  // namespace env

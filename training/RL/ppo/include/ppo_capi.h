@@ -18,6 +18,11 @@ typedef struct PpoBCurr {
   int32_t eval_instr;     /* 1 = 지시문을 평가용(heldout) 문장에서 */
   float p_point;          /* 집기·놓기 판(B2·B3)의 놓을 곳을 점으로(+ "put the {o} here" 지시문) 바꿀 확률 — 목표 점(VLA_INPUT 2.1). 0 = 예전 판 그대로 */
   float p_goto;           /* B1·B3 판을 "점으로 가기"(집을 칸 없음, 놓을 칸 = 점, "go here") 로 바꿀 확률. 0 = 예전 판 그대로 */
+  /* 잡기 물리(E6, 2026-10-05) — 모두 0 이면 예전 판 그대로 */
+  float p4, p5, p6;       /* B4 집기·B5 놓기(든 채 시작)·B6 가져오기 비율(B3 몫에서 뗌) */
+  float p_slip;           /* 실패 판: 든 동안 제어 스텝마다 미끄러질 확률 */
+  float p_occ;            /* 실패 판: 놓을 자리에 막는 물체가 있을 확률 */
+  int32_t phys;           /* 물리 끄기 비트(음성 대조, 0) */
 } PpoBCurr;
 
 typedef struct PpoConfig {
@@ -82,6 +87,8 @@ typedef struct PpoLog {
   float goal_known;      /* 롤아웃 끝에 목표(컵)가 지도에 확정된 판 비율 */
   float n_b[3];          /* 이 바퀴에 끝난 BEHAVIOR 에피소드 수: B1·B2·B3 별(상자 방 0) */
   float s_b[3], k_b[3];  /* 그 성공·충돌 비율 */
+  float n_p[3];          /* 잡기 물리(E6): 이 바퀴에 끝난 B4·B5·B6 에피소드 수 — 구조체 끝에 더함(앞 배치 그대로) */
+  float s_p[3], k_p[3];  /* 그 성공·충돌 비율 */
 } PpoLog;
 
 void* ppo_create(const PpoConfig* cfg);
@@ -119,7 +126,7 @@ typedef struct PpoCurrStage {
   int32_t env;        /* 환경 단계(A0 ...) */
   float p0, p1;       /* 처음 지도 C0·C1 비율 */
   float promote;      /* 넘어가기 문턱(창 평균 성공률) */
-  int32_t metric;     /* −1 = 전체 에피소드, 0/1/2 = 처음 지도 C0/C1/C2 에피소드, 3/4/5 = BEHAVIOR B1/B2/B3 에피소드 */
+  int32_t metric;     /* −1 = 전체 에피소드, 0/1/2 = 처음 지도 C0/C1/C2 에피소드, 3/4/5 = BEHAVIOR B1/B2/B3, 6/7/8 = B4/B5/B6 에피소드 */
   uint32_t act_mask;  /* 0 = 바꾸지 않음 */
   int32_t b_set;      /* 1 = 이 단계에 들어갈 때 BEHAVIOR 커리큘럼 값을 bcurr 로(같은 환경이면 장치가 바로) */
   PpoBCurr bcurr;

@@ -26,7 +26,9 @@ constexpr int MAXBR = 16;          // 창 안 방 수 상한(지도 토큰용)
 constexpr int MAXBD = 16;          // 창 안 문 수 상한
 
 enum BoxKind { BK_WALL = 1, BK_FURN = 2, BK_WINDOW = 4, BK_COLL = 8, BK_BAND = 16 };   // BK_COLL: z0 < H_COLL, BK_BAND: z 범위가 지도 높이 띠 [0.05, 0.50] 와 겹침
-enum EntKind { EK_NONE = 0, EK_B1 = 1, EK_B2 = 2, EK_B3 = 3 };                      // 판 단계: B1 집 안 이동, B2 찾기, B3 다가가기
+// 판 단계: B1 집 안 이동, B2 찾기, B3 다가가기, B4 집기, B5 놓기(든 채 시작), B6 가져오기(찾기 → 다가가기 → 집기 → 나르기 → 놓기, E6 2026-10-05)
+enum EntKind { EK_NONE = 0, EK_B1 = 1, EK_B2 = 2, EK_B3 = 3, EK_B4 = 4, EK_B5 = 5, EK_B6 = 6 };
+constexpr int N_EK = 7;   // 단계 번호 수(표 크기)
 enum ListKind { L_ROOM = 0, L_OBJ = 1 };                                             // B1 은 방 표, B2–B5 는 집기·놓기 표(L_OBJ = 짝 하나 = 판 하나)
 enum DstKind { DK_ONTOP = 1, DK_INSIDE = 2, DK_FLOOR = 3 };                           // 놓을 곳(RASC PlaceRec kind)
 enum NoFilter { NF_SPAWN_REACH = 1, NF_SPAWN_FREE = 2, NF_FREE_AREA = 4, NF_IN_CLOSED = 8, NF_ARTIC = 16, NF_DST_REACH = 32, NF_STANCE = 64 };   // 음성 대조용 거르개 끄기
@@ -79,6 +81,12 @@ struct Entry {            // 판 하나의 시작 조건(호스트가 미리 만
   // 면(ontop) = 호스트가 고른 윗면 점(물체 바닥 자국이 면 안·다른 물체와 안 겹침·닿는 칸에서 팔 닿는 거리 — bscene_host place_point), 용기 = 없음
   float ppt[3];
   int32_t ppt_ok;         // 1 = ppt 가 놓을 수 있는 점, 0 = 없음(용기·못 찾음)
+  // ---- 잡기 물리(E6, 2026-10-05 — 집기·놓기 표만, 뒤에 붙임: 앞 자리 그대로) ----
+  float mass;             // 집을 물체 종류 평균 질량 kg(RASC PICKS, 없으면 NaN → 환경이 KG::mass_unknown 으로)
+  float st[2];            // 잡는 자세 칸 가운데(창 좌표, 호스트가 BFS 시작으로 쓴 칸 — 물체를 바라보면 몸통 안 닿고 잡는 점 작업 공간) — B4·B5 시작
+  float src_top;          // 집을 물체의 처음 받침 윗면 z(RASC PLACES top, 바닥이면 0 근처, 모르면 물체 바닥 z)
+  float dst_st[2];        // 놓을 곳에 닿는 칸 가운데(창 좌표; 바닥이면 고른 자리 가운데) — 대본 교사·확인용
+  float oyaw, odim[3];    // 집을 물체의 회전 상자: yaw(세계), 크기(yaw 축 가로·세로, 높이) — 바닥 자국을 가장 작게 덮는 직사각형(물체 축 투영). ext 는 그 AABB
 };
 // 집기·놓기 판 고르기 표(호스트가 만듦): 인스턴스 → 집을 물체 → 짝(Entry). 각 단계에서 엄격 판을 앞에 둠
 struct PnpPick { int ent_off, n, n_in; };
@@ -118,8 +126,15 @@ struct BCurr {
   // 목표 점(2026-10-05, VLA_INPUT 2.1 목표 칸 — 0 이면 예전과 같은 난수 흐름·같은 판)
   float p_point;          // 집기·놓기 판(B2·B3)에서 놓을 곳을 받침 물체 대신 놓을 점(Entry::ppt)으로 + 지시문 "put the {o} here" 묶음. 바닥 놓을 곳은 늘 점(이 확률은 지시문만)
   float p_goto;           // B1·B3 판을 "점으로 가기" 로: 집을 칸 없음, 놓을 칸 = 점(B1 = 방 목표 점, B3 = Entry::ppt), 지시문 "go here" 묶음
+  // 잡기 물리 판(E6, 2026-10-05 — 모두 0 이면 예전과 같은 난수 흐름·같은 판). 단계 고르기: u < p1 → B1, < p1+p2 → B2, < +p4 → B4, < +p5 → B5, < +p6 → B6, 나머지 B3
+  float p4, p5, p6;       // B4 집기(잡는 자세에서 시작) · B5 놓기(든 채 잡는 자세에서 시작) · B6 가져오기(무작위 시작, 찾기 → 놓기 전체)
+  float p_slip;           // 실패 판: 들고 있는 동안(받침에서 뜸) 제어 스텝마다 이 확률로 미끄러져 떨어짐 — 다시 잡기 연습(가정 값은 설정에서)
+  float p_occ;            // 실패 판: 판 리셋 때 이 확률로 놓을 자리(점·면 점)에 다른 물체(작은 상자)가 이미 있음 — 옆 빈 자리에 놓기
+  int phys;               // 물리 비트(PhysFlag): 음성 대조·실험용 끄기
 };
-constexpr BCurr kBCurrDefault = {0.34f, 0.33f, 0xffu, 0, 0.f, 0, 0, 0, 0.f, 0.f};
+constexpr BCurr kBCurrDefault = {0.34f, 0.33f, 0xffu, 0, 0.f, 0, 0, 0, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0};
+// 물리 끄기 비트(BCurr::phys, 음성 대조·실험): 무게 미끄러짐 끔, 폭 검사 끔(손가락 사이 아무 폭이나 잡힘), 팔 충돌 막기 끔
+enum PhysFlag { PF_NO_SLIP = 1, PF_NO_WIDTH = 2, PF_NO_ARMCOLL = 4 };
 // 판의 목표 꼴(env I_B_GMODE 비트, 지도 BMapEnv::gmode)
 enum GoalMode { GM_PLACE_PT = 1,   // 놓을 칸(목표 칸 1)이 점(F_B_GPX..Z)
                 GM_GOTO = 2 };     // 점으로 가기: 집을 칸 없음, 지금 가는 목표 = 놓을 점(B1·B3 변형)
@@ -324,7 +339,7 @@ DEV float field_dist(const uint8_t* lev, int org, float x, float y) {
 }
 
 // ---- B4·B5 성공 판정(정의만 — 잡기 물리는 E6). 상자는 축 정렬 lo/hi(창 또는 세계 좌표, 같은 좌표계) ----
-// B4 집기: 든 상태(E6 규칙의 is_grasping 대응 — 인자로) + 처음 받침 윗면에서 lift 이상 떨어짐(not ontop)
+// B4 집기: 든 상태(E6 규칙의 is_grasping 대응 — 인자로) + 처음 받침 윗면에서 lift 이상 떨어짐(not ontop). 환경(env_pnp.h)은 KG::lift_h 로 부름
 DEV bool pred_grasped(bool held, const float obj_lo[3], float support_top, float lift = 0.02f) { return held && obj_lo[2] >= support_top + lift; }
 // ontop(가정, OmniGibson 의 접촉 + 위쪽 판정을 상자로): 물체 바닥이 받침 윗면 ± tol 안, 물체 가운데 xy 가 받침 윗면 사각형 안
 DEV bool pred_ontop(const float o_lo[3], const float o_hi[3], const float s_lo[3], const float s_hi[3], float tol = 0.02f) {

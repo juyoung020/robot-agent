@@ -142,6 +142,7 @@ struct Bc {
   std::unique_ptr<gmap::TokenRecorder> tok;   // 줄 2 개 고리: 스텝 t 가 읽는 줄 t%2, 지도가 쓰는 줄 (t+1)%2 (T 짝수 → 다음 롤아웃 0 줄 = 지난 끝 줄)
   float* obs_col = nullptr;   // [2][80][N] 같은 고리(G1 은 [k*N + i] 로 씀)
   float* act_env = nullptr;   // [8][N]
+  float* sact = nullptr;      // [8][N] 대본 교사 행동(E6, teacher_script)
   float* rew = nullptr;       // [N]
   int* done = nullptr;        // [N]
   int* cur_len = nullptr;     // [N] 진행 중 에피소드 스텝

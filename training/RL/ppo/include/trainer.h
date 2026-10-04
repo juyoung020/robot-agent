@@ -52,7 +52,7 @@ struct Trainer {
   std::unique_ptr<bsc::SceneBuild> scenes;
   bsc::BCurr* bcurr_d = nullptr;
   int* tr_pend = nullptr;            // 학습기 다시 시작 요청(롤아웃 끝 줄·에피소드 누적 지우기) — 장치 커리큘럼 또는 request_stage 가 1
-  int* it_stat = nullptr;            // [6][3] 이 바퀴 (끝난 수, 성공, 충돌): 0..2 = 처음 지도 C0·C1·C2, 3..5 = BEHAVIOR B1·B2·B3 — 기록 커널이 0 으로
+  int* it_stat = nullptr;            // [9][3] 이 바퀴 (끝난 수, 성공, 충돌): 0..2 = 처음 지도 C0·C1·C2, 3..8 = BEHAVIOR B1–B6 — 기록 커널이 0 으로
   unsigned long long* tab = nullptr; // [3 단계][2 컵 미리 확정][10 미리 확정 수][6] (끝난 수, 성공, 충돌, 시간초과, 스텝 합, 성공 스텝 합) 누적
 
   // 신경망 작업 버퍼(행 Mmax)

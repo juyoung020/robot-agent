@@ -15,7 +15,8 @@
 // BEHAVIOR 커리큘럼 값: C ABI 구조체 = 환경 장치 값(같은 배치를 그대로 복사)
 static_assert(sizeof(PpoBCurr) == sizeof(bsc::BCurr) && offsetof(PpoBCurr, scene_mask) == offsetof(bsc::BCurr, scene_mask) &&
                   offsetof(PpoBCurr, yaw_jit) == offsetof(bsc::BCurr, yaw_jit) && offsetof(PpoBCurr, eval_instr) == offsetof(bsc::BCurr, eval_instr) &&
-                  offsetof(PpoBCurr, p_point) == offsetof(bsc::BCurr, p_point) && offsetof(PpoBCurr, p_goto) == offsetof(bsc::BCurr, p_goto),
+                  offsetof(PpoBCurr, p_point) == offsetof(bsc::BCurr, p_point) && offsetof(PpoBCurr, p_goto) == offsetof(bsc::BCurr, p_goto) &&
+                  offsetof(PpoBCurr, p4) == offsetof(bsc::BCurr, p4) && offsetof(PpoBCurr, p_occ) == offsetof(bsc::BCurr, p_occ) && offsetof(PpoBCurr, phys) == offsetof(bsc::BCurr, phys),
               "PpoBCurr == bsc::BCurr");
 
 namespace ppo {
@@ -148,8 +149,8 @@ __global__ void value_k(const float* val, int N, float* val_row) {
 }
 
 // ---- 처음 지도(완성도)별 에피소드 통계(G4, 5.6): 환경 스텝 뒤·지도 스텝 앞. met_init 은 아직 이 스텝의 판(끝난 판)의 처음 지도 부호 ----
-// lkind: 환경이 이 스텝에 보고한 판의 BEHAVIOR 단계(env I_B_LKIND, 상자 방 0) → it_stat 3..5 줄(B1·B2·B3)
-constexpr int TAB_Q = 6, TAB_C = 10, IT_ROWS = 6;
+// lkind: 환경이 이 스텝에 보고한 판의 BEHAVIOR 단계(env I_B_LKIND, 상자 방 0) → it_stat 3..8 줄(B1·B2·B3·B4·B5·B6 — 줄 번호 = 장치 커리큘럼 metric)
+constexpr int TAB_Q = 6, TAB_C = 10, IT_ROWS = 9;
 __global__ void epstat_k(const int* done, const float* met_init, const int* lkind, int N, int* cur_len, int* it_stat, unsigned long long* tab) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= N) return;
@@ -165,7 +166,7 @@ __global__ void epstat_k(const int* done, const float* met_init, const int* lkin
     if (d == env::kSuccess) atomicAdd(&it_stat[st * 3 + 1], 1);
     if (d == env::kCollision) atomicAdd(&it_stat[st * 3 + 2], 1);
     const int bk = lkind[i];
-    if (bk >= 1 && bk <= 3) {
+    if (bk >= 1 && bk <= 6) {
       const int r = (2 + bk) * 3;
       atomicAdd(&it_stat[r], 1);
       if (d == env::kSuccess) atomicAdd(&it_stat[r + 1], 1);
@@ -322,6 +323,10 @@ __global__ void __launch_bounds__(256) log_k(TrainState* ts, const float* met_ta
     L.n_b[k] = (float)nb;
     L.s_b[k] = nb > 0 ? (float)it_stat[r + 1] / (float)nb : 0.f;
     L.k_b[k] = nb > 0 ? (float)it_stat[r + 2] / (float)nb : 0.f;
+    const int rp = (6 + k) * 3, np = it_stat[rp];   // B4·B5·B6(E6)
+    L.n_p[k] = (float)np;
+    L.s_p[k] = np > 0 ? (float)it_stat[rp + 1] / (float)np : 0.f;
+    L.k_p[k] = np > 0 ? (float)it_stat[rp + 2] / (float)np : 0.f;
   }
   for (int k = 0; k < IT_ROWS * 3; ++k) it_stat[k] = 0;
   L.stage = ec->stage;   // 이 바퀴 롤아웃의 환경 단계(장치 값 — 바퀴 사이에 장치에서 바뀔 수 있음)
@@ -607,12 +612,13 @@ void Trainer::set_map_curr(const gmap::MapCurr& c) {
   PCK(cudaEventRecord(curr_ev[k], 0));
 }
 
-// BEHAVIOR 커리큘럼 값 바꾸기: 같은 고정 호스트 링(칸 하나에 들어가게 둘로 나눠)으로 비동기 복사(다음 바퀴부터, 다시 잡기 없음)
+// BEHAVIOR 커리큘럼 값 바꾸기: 같은 고정 호스트 링(칸 하나에 들어가게 나눠)으로 비동기 복사(다음 바퀴부터, 다시 잡기 없음)
 void Trainer::set_bcurr(const bsc::BCurr& b) {
-  static_assert(sizeof(bsc::BCurr) <= 2 * sizeof(gmap::MapCurr), "BCurr fits two staging slots");
-  const size_t half = sizeof(gmap::MapCurr);
-  for (int part = 0; part < 2; ++part) {
-    const size_t off = part * half, n = part == 0 ? half : sizeof b - half;
+  const size_t half = sizeof(gmap::MapCurr);   // 칸 하나 크기씩 나눔(E6 로 BCurr 64 B → 셋)
+  constexpr int NP = (int)((sizeof(bsc::BCurr) + sizeof(gmap::MapCurr) - 1) / sizeof(gmap::MapCurr));
+  static_assert(NP <= 4, "BCurr fits four staging slots");
+  for (int part = 0; part < NP; ++part) {
+    const size_t off = part * half, n = (part + 1) * half <= sizeof b ? half : sizeof b - off;
     const int k = curr_slot++ % 8;
     if (cudaEventQuery(curr_ev[k]) == cudaErrorNotReady) PCK(cudaEventSynchronize(curr_ev[k]));
     std::memcpy(&curr_h[k], reinterpret_cast<const uint8_t*>(&b) + off, n);

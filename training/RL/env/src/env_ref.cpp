@@ -27,4 +27,11 @@ void CpuEnv::step(const std::vector<float>& act, std::vector<float>& obs, std::v
   }
 }
 
+void CpuEnv::teacher(std::vector<float>& act) {
+  act.assign((size_t)N_ACT * N, 0.f);
+  if (!ss) return;
+  Soa s{f.data(), iv.data(), rng.data(), N};
+  for (int i = 0; i < N; ++i) teacher_step(s, i, *ss, nav, act.data());
+}
+
 }  // namespace env

@@ -46,7 +46,8 @@ static bool g_aug = false;      // --aug: 학습 때 흔들기 켬(속도 잡음
 static bool g_beh = false;      // --beh: BEHAVIOR 장면 묶음을 만들어 환경·지도에 붙임(상자 방 단계면 결과 비트가 같아야 함). 단계 3 이면 늘 켬
 static int g_stage = -1;        // --stage S: v6/v7 의 환경 단계(−1 = 설정 그대로). 3 = BEHAVIOR B1–B3(장면 묶음 ~/ra_b1k)
 static bool g_gdrop = false;    // --gdrop: obs 검사에서 학생용 목표 표시 감추기 0.5 를 켬(교사 학습기는 늘 0 — CPU == GPU 길만 봄)
-static float g_ppt = 0.f, g_pgo = 0.f;   // --point p_point,p_goto: BEHAVIOR 판 목표 점 섞음(VLA_INPUT 2.1)
+static float g_ppt = 0.f, g_pgo = 0.f, g_p4 = 0.f, g_p5 = 0.f, g_p6 = 0.f;   // --pnp p4,p5,p6: 잡기 물리 판(E6) 비율
+   // --point p_point,p_goto: BEHAVIOR 판 목표 점 섞음(VLA_INPUT 2.1)
 static bool g_curr = false;     // --curr: v6/v7 에 장치 커리큘럼(문턱 0): A1 → env 3(장치에서 환경 바꾸기) → env 3 다른 B 섞음(같은 환경) → A2 → env 3
 static PpoConfig small_cfg(uint64_t seed, int graphs, bool g4 = true) {
   PpoConfig c{};
@@ -67,7 +68,7 @@ static PpoConfig small_cfg(uint64_t seed, int graphs, bool g4 = true) {
   if (std::getenv("PPO_ALLFAM")) { c.beh = 1; c.env_stages = (uint32_t)std::strtoul(std::getenv("PPO_ALLFAM"), nullptr, 0) | (1u << c.stage); }   // 측정: 환경 커널 무리 셋을 모두 띄움(장치 단계 판의 빈 커널 비용)
   if (g_beh || c.stage >= 3) {   // BEHAVIOR: 기본 섞음(B1 0.34·B2 0.33·B3), 모든 장면, 학습 인스턴스
     c.beh = 1;
-    c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0, g_ppt, g_pgo};
+    c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0, g_ppt, g_pgo, g_p4, g_p5, g_p6};
     if (c.stage >= 3) c.use_map = 2;
   }
   if (g_aug) {
@@ -390,7 +391,7 @@ static void set_test_curr(Trainer& tr) {
   st[1] = PpoCurrStage{3, 1.0f, 0.f, 0.f, -1, 0u, 1, b1};
   st[2] = PpoCurrStage{3, 0.1f, 0.1f, 0.f, -1, 0u, 1, b23};
   st[3] = PpoCurrStage{2, 0.3f, 0.4f, 0.f, -1, 0u, 0, PpoBCurr{}};
-  st[4] = PpoCurrStage{3, 0.3f, 0.4f, 2.f, -1, 0u, 1, PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0, g_ppt, g_pgo}};
+  st[4] = PpoCurrStage{3, 0.3f, 0.4f, 2.f, -1, 0u, 1, PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0, g_ppt, g_pgo, g_p4, g_p5, g_p6}};
   const uint32_t all = (1u << tr.scenes->host.nsc) - 1u;
   for (auto& q : st) if (q.b_set) q.bcurr.scene_mask = all;
   if (ppo_curr_set(&tr, st, 5, 1, 0) != 0) { std::fprintf(stderr, "curr_set failed\n"); std::exit(2); }
@@ -428,7 +429,7 @@ static int run_switch(int N, int T, bool neg) {
   for (const auto& q : cs) {
     PpoConfig c = small_cfg(53, 1);
     c.n_env = N; c.horizon = T; c.stage = q[0]; c.use_map = 2; c.beh = 1;
-    c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0, g_ppt, g_pgo};
+    c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0, g_ppt, g_pgo, g_p4, g_p5, g_p6};
     c.env_stages = (1u << q[0]) | (1u << q[1]);
     Snap r[2];
     for (int dev = 0; dev < 2; ++dev) {
@@ -509,7 +510,7 @@ static int run_v7() {
 static int run_snap(const char* out, int N, int T, int iters, int stage, int use_map) {
   PpoConfig c = small_cfg(7, 1);
   c.n_env = N; c.horizon = T; c.minibatches = 4; c.epochs = 5; c.use_map = use_map; c.adaptive_lr = 1; c.stage = stage;
-  if (stage >= 3 && !c.beh) { c.beh = 1; c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0, g_ppt, g_pgo}; }
+  if (stage >= 3 && !c.beh) { c.beh = 1; c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0, g_ppt, g_pgo, g_p4, g_p5, g_p6}; }
   const Snap s = run_iters(c, iters);
   FILE* f = std::fopen(out, "wb");
   if (!f) { std::perror(out); return 2; }
@@ -546,11 +547,19 @@ static int run_snap(const char* out, int N, int T, int iters, int stage, int use
   put(s.obs.data(), 4 * s.obs.size()); put(s.adv.data(), 4 * s.adv.size()); put(s.val.data(), 4 * s.val.size()); put(s.act.data(), 4 * s.act.size());
   put(s.tok.data(), s.tok.size()); put(s.tab.data(), 8 * s.tab.size());
   // 옛 배치 해시(빌드 사이 견주기) = 위 hl: 변수는 X0 304 배치, 기록은 E2 앞 PpoLog 칸(goal_known 까지)만 — 같은 상자 방 판이면 E2 앞 기준 해시와 같아야 한다
-  put(s.logs.data(), sizeof(PpoLog) * s.logs.size());
+  // 기록: E6 앞 배치(n_p 앞까지 + 그때의 끝 채움 0)로 넣어 예전 해시와 견줄 수 있게. E6 칸(B4–B6 표)은 따로 해시(he6)
+  uint64_t he6 = 1469598103934665603ull;
+  for (const PpoLog& q : s.logs) {
+    put(&q, offsetof(PpoLog, n_p));
+    const uint32_t z = 0;
+    if (offsetof(PpoLog, n_p) % 8) put(&z, 4);
+    for (size_t i = offsetof(PpoLog, n_p); i < offsetof(PpoLog, k_p) + sizeof(q.k_p); ++i) he6 = (he6 ^ ((const uint8_t*)&q)[i]) * 1099511628211ull;
+  }
   std::fclose(f);
   const PpoLog& L = s.logs.back();
-  std::printf("snap %s: N %d T %d iters %d A%d use_map %d%s -> FNV-1a %016llx  legacy-layout %016llx (last log: kl %.6f succ %.4f ep_ret %.4f, B1/B2/B3 eps %.0f/%.0f/%.0f; instruction-column weights/Adam != 0: %ld)\n",
-              out, N, T, iters, stage, use_map, c.beh ? " beh" : "", (unsigned long long)h, (unsigned long long)hl, L.kl, L.succ, L.ep_ret, L.n_b[0], L.n_b[1], L.n_b[2], extra_nz);
+  std::printf("snap %s: N %d T %d iters %d A%d use_map %d%s -> FNV-1a %016llx  legacy-layout %016llx  e6-log %016llx (last log: kl %.6f succ %.4f ep_ret %.4f, B1/B2/B3 eps %.0f/%.0f/%.0f, B4/B5/B6 eps %.0f/%.0f/%.0f; instruction-column weights/Adam != 0: %ld)\n",
+              out, N, T, iters, stage, use_map, c.beh ? " beh" : "", (unsigned long long)h, (unsigned long long)hl, (unsigned long long)he6, L.kl, L.succ, L.ep_ret, L.n_b[0], L.n_b[1], L.n_b[2],
+              L.n_p[0], L.n_p[1], L.n_p[2], extra_nz);
   return 0;
 }
 
@@ -998,6 +1007,7 @@ int main(int argc, char** argv) {
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--curr")) g_curr = true;
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--gdrop")) g_gdrop = true;
   for (int a = 2; a + 1 < argc; ++a) if (!std::strcmp(argv[a], "--point")) std::sscanf(argv[a + 1], "%f,%f", &g_ppt, &g_pgo);
+  for (int a = 2; a + 1 < argc; ++a) if (!std::strcmp(argv[a], "--pnp")) std::sscanf(argv[a + 1], "%f,%f,%f", &g_p4, &g_p5, &g_p6);
   if (m == "switch") return run_switch(argc > 2 && argv[2][0] != '-' ? std::atoi(argv[2]) : 1024, argc > 3 && argv[3][0] != '-' ? std::atoi(argv[3]) : 32, neg);
   if (m == "obs") return run_obs(neg);
   if (m == "slotcols") return run_slotcols();

@@ -196,7 +196,7 @@ void obb_aabb(const SBox& b, float lo[2], float hi[2]) {
   lo[0] = b.cx - ex; hi[0] = b.cx + ex; lo[1] = b.cy - ey; hi[1] = b.cy + ey;
 }
 
-struct TObj { int k; float lo[3], hi[3]; int16_t name; uint32_t flags; };
+struct TObj { int k; float lo[3], hi[3]; int16_t name; uint32_t flags; float yaw, dim[3]; };   // dim·yaw: 바닥 자국을 가장 작게 덮는 회전 상자(E6 물체 모형)
 struct PE { Entry e; bool in; std::vector<uint32_t> rb, rb_in; };   // 집기·놓기 엔트리 후보(엄격 지남, 창 닿는 칸 비트)   // 인스턴스의 과제 물체(세계 AABB, 과제 안 번호 k)
 
 bool trav_bit(const rasc::Scene& s, int layer, int r, int c) { return s.free_cell(layer, r, c); }
@@ -628,6 +628,21 @@ bool build_one(const std::string& path, const Names& nm, const BuildOpt& opt, co
         const float e = std::fabs(R[3 * a]) * o.half[0] + std::fabs(R[3 * a + 1]) * o.half[1] + std::fabs(R[3 * a + 2]) * o.half[2];
         t.lo[a] = cc - e; t.hi[a] = cc + e;
       }
+      {   // 잡기 물리(E6): 물체 상자(회전)의 바닥 자국을 가장 작게 덮는 yaw 직사각형 — 후보 = 물체 축의 수평 투영 방향. 높이 = 세계 AABB
+        t.yaw = 0.f; t.dim[0] = t.hi[0] - t.lo[0]; t.dim[1] = t.hi[1] - t.lo[1]; t.dim[2] = t.hi[2] - t.lo[2];
+        float best = t.dim[0] * t.dim[1];
+        for (int j = 0; j < 3; ++j) {
+          const float hx = R[j], hy = R[3 + j];
+          if (hx * hx + hy * hy < 0.09f) continue;
+          const float yw = std::atan2(hy, hx), cu = std::cos(yw), su = std::sin(yw);
+          float eu = 0.f, ev = 0.f;
+          for (int q = 0; q < 3; ++q) {
+            eu += 2.f * o.half[q] * std::fabs(R[q] * cu + R[3 + q] * su);
+            ev += 2.f * o.half[q] * std::fabs(-R[q] * su + R[3 + q] * cu);
+          }
+          if (eu * ev < best - 1e-9f) { best = eu * ev; t.yaw = yw; t.dim[0] = eu; t.dim[1] = ev; }
+        }
+      }
       bool hit = false;
       t.name = (int16_t)name_of_synset(nm, s.str(o.syn), &hit);
       t.flags = o.flags;
@@ -901,6 +916,13 @@ bool build_one(const std::string& path, const Names& nm, const BuildOpt& opt, co
           e.comp = S.comp[cell_of(use_st)];
           e.comp_in = S.comp_in[cell_of(use_st)];
           e.fset = inner ? 1 : 0;
+          // 잡기 물리(E6): 무게, 잡는 자세 칸·놓을 곳에 닿는 칸 가운데(창 좌표), 처음 받침 윗면
+          e.mass = pk.mass;
+          e.oyaw = T.yaw;
+          for (int a2 = 0; a2 < 3; ++a2) e.odim[a2] = T.dim[a2];
+          cxy(use_st, e.st[0], e.st[1]);
+          if (use_dc >= 0) cxy(use_dc, e.dst_st[0], e.dst_st[1]); else { e.dst_st[0] = e.st[0]; e.dst_st[1] = e.st[1]; }
+          e.src_top = pk.src_place != RASC_NONE32 ? s.places[pk.src_place].top : T.lo[2];
           if (D.kind == DK_FLOOR) {
             float x, y;
             cxy(use_dc, x, y);

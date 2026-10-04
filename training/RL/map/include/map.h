@@ -346,7 +346,8 @@ DEV uint32_t* scr_occ(Scratch& sh) { return reinterpret_cast<uint32_t*>(&sh); } 
 // furn: A2 가구 상자(환경 SoA 의 이 판 자리, 줄 간격 N). 판 리셋 때만 읽는다. nullptr(손으로 만든 EnvView) 이면 가구 없음
 struct EnvView { float x, y, yaw, v, w, tx, ty, rhx, rhy; float q[env::N_Q]; int ep; const float* fb; const int* fi; int fs;
                  int bkind, bscene, bent; float bwx, bwy; int binstr;     // BEHAVIOR 판(E2): 단계(0 = 상자 방), 장면, 시작 조건 번호, 창 가운데(세계), 지시문 행(−1 없음)
-                 int bgmode; float bgp[3]; };                              // 목표 꼴(bsc::GoalMode)·놓을 점(창 좌표) — 목표 칸(map_tok.h)
+                 int bgmode; float bgp[3];                                 // 목표 꼴(bsc::GoalMode)·놓을 점(창 좌표) — 목표 칸(map_tok.h)
+                 int bpnp; float bo[4]; };                                 // 잡기 물리 판(E6, 단계 ≥ B4): 집을 물체의 참 자세(창 좌표 가운데 xyz, yaw) — 환경이 옮김
 DEV EnvView read_env(const env::Soa& s, int i, bool beh = false) {   // beh: BEHAVIOR 판 값도 읽음(장면 묶음이 있는 지도만)
   const int N = s.N;
   EnvView e;
@@ -367,6 +368,9 @@ DEV EnvView read_env(const env::Soa& s, int i, bool beh = false) {   // beh: BEH
   e.binstr = beh ? s.iv[env::I_B_INSTR * N + i] : -1;
   e.bgmode = beh ? s.iv[env::I_B_GMODE * N + i] : 0;
   for (int a = 0; a < 3; ++a) e.bgp[a] = beh ? s.f[(env::F_B_GPX + a) * N + i] : 0.f;
+  e.bpnp = e.bkind >= bsc::EK_B4 ? 1 : 0;   // 예전 판(≤ B3)은 아래 값을 읽지 않음
+  for (int a = 0; a < 3; ++a) e.bo[a] = e.bpnp ? s.f[(env::F_O_X + a) * N + i] : 0.f;
+  e.bo[3] = e.bpnp ? s.f[env::F_O_YAW * N + i] : 0.f;
   return e;
 }
 
@@ -1039,6 +1043,17 @@ DEV int phase_begin(MapCore& m, const EnvView& e, int force_kf, const bsc::Scene
       P.lo[0] = P.lo[0] + dx; P.hi[0] = P.hi[0] + dx;
     }
     force_kf &= 0xff;
+  }
+  // 잡기 물리 판(E6): 집을 물체(prim 0, 움직이는 상자)를 환경의 참 자세로 — 들리면 손을 따라, 놓으면 앉은 자리(바깥 축 정렬 상자, Entry::odim·yaw)
+  if (e.bpnp && ss && bm && bm->on && bm->sbox[0] < 0) {
+    const bsc::Entry& E = ss->ent[e.bent];
+    float so, co;
+    sincosf_d(e.bo[3], &so, &co);
+    const float hx = 0.5f * (absf(co) * E.odim[0] + absf(so) * E.odim[1]), hy = 0.5f * (absf(so) * E.odim[0] + absf(co) * E.odim[1]);
+    Prim& P = m.prim[0];
+    P.lo[0] = e.bo[0] - hx; P.hi[0] = e.bo[0] + hx;
+    P.lo[1] = e.bo[1] - hy; P.hi[1] = e.bo[1] + hy;
+    P.lo[2] = e.bo[2] - 0.5f * E.odim[2]; P.hi[2] = e.bo[2] + 0.5f * E.odim[2];
   }
   const int wall = hands_step(m, e) ? B_WALL : 0;   // scenemap integrate: 자세 적분 뒤 updateHands
   m.px = e.x; m.py = e.y; m.pyaw = e.yaw;

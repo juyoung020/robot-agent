@@ -21,6 +21,15 @@ enum FloatField {
   F_B_DIST,                                    // 마지막 유효 거리(관측)
   F_B_GPX, F_B_GPY, F_B_GPZ,                   // 놓을 점(창 좌표, z = 놓이는 바닥 높이) — I_B_GMODE 에 GM_PLACE_PT 일 때만 뜻 있음
   F_B_PD3,                                     // 점으로 가기 B3: 지난 스텝 손끝 → 점(물체 가운데 높이) 3D 거리(모양 잡기), −1 = 아직 없음
+  // 잡기 물리(E6, env_pnp.h — B4·B5·B6 판만, 다른 판은 0 그대로). 집을 물체의 참 자세는 판 상태(움직이는 상자 = Entry::prim[0] 이 리셋 때 자리)
+  F_O_X, F_O_Y, F_O_Z,                         // 집을 물체 상자 가운데(창 좌표, z 세계)
+  F_O_RA, F_O_RN, F_O_RB,                      // 든 동안: 물체 가운데 − 잡는 점을 손 축(다가가는 a·닫는 n·나머지 b)으로 잰 값(잡을 때 고정)
+  F_O_W,                                       // 든 폭(닫는 축 방향 물체 폭, 잡을 때) — 그리퍼가 이보다 더 닫히지 않음
+  F_O_Z0,                                      // 들기 기준: 이 판에서 마지막으로 잡을 때 물체 바닥 z(B4 성공 = 이보다 KG::lift_h 위)
+  F_O_PH, F_O_PL,                              // 모양 잡기 지난 값: 잡는 점 → 물체 겉면 거리, 들린 높이(−1 = 아직 없음)
+  F_OC_X, F_OC_Y, F_OC_R, F_OC_H,              // 놓을 자리를 막는 물체(실패 판 p_occ): 가운데(창), 반 변, 높이(윗면 z). R 0 = 없음
+  F_O_YAW, F_O_RYAW,                           // 집을 물체 회전 상자 yaw(세계), 든 동안 yaw − (로봇 yaw + joint1)
+  F_T_SX, F_T_SY, F_T_SYAW, F_T_D,             // 대본 교사 기억: 고른 서는 자리(창 좌표)·yaw, 50 스텝 전 자리까지 거리(막힘 알기)
   NUM_F
 };
 enum IntField { I_STEP, I_MAXSTEPS, I_OK, I_SEEN, I_EP, I_NF, I_FC0, I_FC_END = I_FC0 + N_FURN - 1,
@@ -28,6 +37,11 @@ enum IntField { I_STEP, I_MAXSTEPS, I_OK, I_SEEN, I_EP, I_NF, I_FC0, I_FC_END = 
                 I_B_FSET, I_B_INSTR,                       // 집기·놓기 판: 쓴 거르개(0 느슨, 1 엄격, −1 아님), 지시문 행(training/data/pnp_v1, −1 없음)
                 I_B_LKIND,                                 // 이 스텝이 보고한 판(끝났으면 끝난 판)의 단계 bsc::EntKind — 학습기 단계별 에피소드 표용(상자 방 0)
                 I_B_GMODE,                                 // 목표 꼴 비트 bsc::GoalMode(0 = 물체 목표만, 예전 판)
+                I_O_ST,                                    // 잡기 물리(E6): 집을 물체 상태 ObjState(0 = 물리 없는 판)
+                I_O_FL,                                    // 잡기 물리 비트 ObjFlag(이 스텝 닿음·미끄러짐·떨어뜨림, 판 누적 집음 등)
+                I_O_NDROP,                                 // 이 판에서 떨어뜨린 수(미끄러짐 포함)
+                I_B_SKIP,                                  // GPU 두 커널 나눔(E6): 예전 판 커널이 이 스텝에 돌린 판 = 1(잡기 커널이 보고 0 으로) — 스텝 뒤 늘 0
+                I_T_EP, I_T_PH, I_T_TM, I_T_TRY, I_T_SOK,  // 대본 교사 기억(teacher.h — 환경은 안 씀): 판 번호, 단계, 단계 안 스텝, 다시 시도 수, 서는 자리 있음(1 물체 쪽, 2 놓을 곳 쪽)
                 NUM_I };
 
 struct Soa {

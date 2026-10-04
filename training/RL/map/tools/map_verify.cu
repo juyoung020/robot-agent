@@ -42,6 +42,8 @@ int main(int argc, char** argv) {
   bsc::BuildOpt bo;
   bsc::BCurr bcu = bsc::kBCurrDefault;
   int pos = 0, nav_k = 0;
+  bool teach = false;
+  long teach_mis = 0, pnp_end[2] = {0, 0}, pnp_moved = 0;
   std::string tv_dump;
   for (int a = 1; a < argc; ++a) {
     if (!std::strcmp(argv[a], "--curr") && a + 1 < argc) {
@@ -63,6 +65,9 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--scenes") && a + 1 < argc) bo.dir = argv[++a];
     else if (!std::strcmp(argv[a], "--mix") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &bcu.p1, &bcu.p2);
     else if (!std::strcmp(argv[a], "--strict")) bcu.strict = 1;
+    else if (!std::strcmp(argv[a], "--pnp") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f,%f", &bcu.p4, &bcu.p5, &bcu.p6);   // 잡기 물리 판(E6) B4·B5·B6 비율
+    else if (!std::strcmp(argv[a], "--fail") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &bcu.p_slip, &bcu.p_occ);
+    else if (!std::strcmp(argv[a], "--teacher")) teach = true;   // 홀수 판(B4–B6) = 대본 교사(지도 거리장으로 다가감), GPU 교사 == CPU 교사 비교
     else if (!std::strcmp(argv[a], "--point") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &bcu.p_point, &bcu.p_goto);   // 목표 점 섞음
     else if (!std::strcmp(argv[a], "--negative-goal")) { negative = true; neg_bug = 11; }   // 목표 칸 회전 없음(토큰)
     else if (!std::strcmp(argv[a], "--negative-tv")) { negative = true; neg_bug = 12; }     // 위에서 본 지도 거꾸로 돌림(토큰 교사 격자)
@@ -181,10 +186,29 @@ int main(int argc, char** argv) {
         act[7 * N + i] = (ph & 1) ? 1.f : -1.f;
       }
     if (t > 0) for (int i = 0; i < N; i += 2) { float a[N_ACT]; approach_action(obs_c.data(), N, i, a); act[0 * N + i] = a[0]; act[1 * N + i] = a[1]; }
+    if (teach && beh) {   // 교사(E6): 지도 거리장(앞 스텝)으로 다가가기 — GPU·CPU 각자, 행동 비트 비교
+      static float* d_tact = nullptr;
+      static std::vector<float> tg;
+      if (!d_tact) { cudaMalloc(&d_tact, sizeof(float) * N_ACT * N); tg.resize((size_t)N_ACT * N); }
+      std::vector<float> tc;
+      genv.teacher(d_tact);
+      cenv.teacher(tc);
+      cudaMemcpy(tg.data(), d_tact, sizeof(float) * tg.size(), cudaMemcpyDeviceToHost);
+      for (size_t k = 0; k < tc.size(); ++k) teach_mis += std::memcmp(&tc[k], &tg[k], 4) != 0;
+      for (int i = 1; i < N; i += 2)
+        if (cenv.iv[(size_t)I_B_KIND * N + i] >= bsc::EK_B4) for (int k = 0; k < N_ACT; ++k) act[(size_t)k * N + i] = tc[(size_t)k * N + i];
+    }
+    std::vector<int> pk_before(N);
+    for (int i = 0; i < N; ++i) pk_before[i] = cenv.iv[(size_t)I_B_KIND * N + i];
     cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
     genv.step(d_act, d_obs, d_rew, d_done);
     gmapd.step(genv.soa(), force_kf, negative ? neg_bug : 0, 0, rec.at(t));
     cenv.step(act, obs_c, rew_c, done_c);
+    for (int i = 0; i < N; ++i)
+      if (pk_before[i] >= bsc::EK_B4) {
+        if (done_c[i] > 0 && (i & 1)) { ++pnp_end[0]; pnp_end[1] += done_c[i] == kSuccess; }
+        pnp_moved += (cenv.iv[(size_t)I_O_FL * N + i] & (OF_GRASP | OF_RELEASE | OF_SLIP)) != 0;
+      }
     Soa cs{cenv.f.data(), cenv.iv.data(), cenv.rng.data(), N};
     cmap.step(cs, force_kf, cu);
     cudaDeviceSynchronize();
@@ -482,6 +506,11 @@ int main(int argc, char** argv) {
                 " every 10th step, %ld samples): mean (field − true) %.3f m, mean |diff| %.3f m\n",
                 gmap::nav_period(cu), nav_fresh / std::max(1.0, (double)nav_steps), nav_valid / std::max(1.0, (double)nav_fresh), nav_cmp, nav_err / std::max(1L, nav_cmp),
                 nav_rel / std::max(1L, nav_cmp));
+  }
+  if (beh && (bcu.p4 + bcu.p5 + bcu.p6) > 0.f) {
+    std::printf("  grasp physics (E6): env-steps with grasp/release/slip events %ld; teacher episodes (odd envs, B4-B6) ended %ld, success %ld; teacher action GPU vs CPU differing %ld\n",
+                pnp_moved, pnp_end[0], pnp_end[1], teach_mis);
+    mismatches += teach_mis;
   }
   if (negative) {
     std::printf("negative control (%s on GPU): %ld mismatching items (must be > 0)\n",

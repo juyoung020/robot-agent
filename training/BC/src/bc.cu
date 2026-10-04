@@ -550,6 +550,7 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
 
   obs_col = alloc<float>((size_t)2 * env::N_OBS * N);
   act_env = alloc<float>((size_t)N_ACT * N);
+  sact = alloc<float>((size_t)N_ACT * N);
   rew = alloc<float>(N);
   done = alloc<int>(N);
   cur_len = alloc<int>(N);
@@ -572,7 +573,8 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
   // E2 BEHAVIOR(stage 3): 장면 묶음 + 커리큘럼 장치 값(학습기 ppo 와 같은 규칙). 영상 학생은 아직 안 됨 — 렌더(bc_render)가 상자 방만 그림
   bcurr_d = alloc<bsc::BCurr>(1);
   {
-    bsc::BCurr b0{cfg.b_p1, cfg.b_p2, cfg.b_scene_mask, cfg.b_split, cfg.b_yaw_jit, cfg.b_strict, cfg.b_nofilter, cfg.b_eval_instr, cfg.b_p_point, cfg.b_p_goto};
+    bsc::BCurr b0{cfg.b_p1, cfg.b_p2, cfg.b_scene_mask, cfg.b_split, cfg.b_yaw_jit, cfg.b_strict, cfg.b_nofilter, cfg.b_eval_instr, cfg.b_p_point, cfg.b_p_goto,
+                  cfg.b_p4, cfg.b_p5, cfg.b_p6, cfg.b_p_slip, cfg.b_p_occ, 0};
     if (cfg.beh || cfg.stage >= env::kStageBeh) {
       if (cfg.vision) { std::fprintf(stderr, "bc: BEHAVIOR stage 3 with vision is not supported yet (renderer draws the box room only)\n"); std::abort(); }
       cfg.beh = 1;
@@ -583,7 +585,7 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
       if (!bsc::build_scenes(bo, *scenes, &err) || !bsc::upload(*scenes, &err)) { std::fprintf(stderr, "bc: BEHAVIOR scene build failed: %s\n", err.c_str()); std::abort(); }
       dev_bytes += scenes->dev_bytes;
       if (b0.scene_mask == 0) b0.scene_mask = (1u << scenes->host.nsc) - 1u;
-      if (b0.p1 == 0.f && b0.p2 == 0.f) { b0.p1 = bsc::kBCurrDefault.p1; b0.p2 = bsc::kBCurrDefault.p2; }   // 비율을 안 주면 env_verify 기본 섞음
+      if (b0.p1 == 0.f && b0.p2 == 0.f && b0.p4 + b0.p5 + b0.p6 == 0.f) { b0.p1 = bsc::kBCurrDefault.p1; b0.p2 = bsc::kBCurrDefault.p2; }   // 비율을 안 주면 env_verify 기본 섞음
     }
     BCK(cudaMemcpy(bcurr_d, &b0, sizeof b0, cudaMemcpyHostToDevice));
   }
@@ -1047,6 +1049,12 @@ int Bc::reseed(uint64_t env_seed) {
   return 0;
 }
 
+// 대본 교사 행동(열 배치 act[k][N]) → 교사 라벨 행([i][8]), 잡기 물리 판(B4–B6)만
+__global__ void script_label_k(const float* tact, const int* kind, int N, float* mean) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= N || kind[i] < bsc::EK_B4) return;
+  for (int k = 0; k < env::N_ACT; ++k) mean[(size_t)i * env::N_ACT + k] = tact[(size_t)k * N + i];
+}
 void Bc::rollout_body(bool student) {
   apply_body();
   for (int t = 0; t < T; ++t) rollout_step(t, student);
@@ -1066,6 +1074,10 @@ void Bc::rollout_step(int t, bool student) {
   if (d_top) map->topstate(top_roll, ST);   // 위에서 본 지도 그림 상태(이 스텝 토큰과 같은 지도 — 기록·학생 그림)
   assemble_k<<<ab, AS_L * AS_E>>>(obs_t, tok->at(t), N, cfg.teacher_use_map, 0, 0, nt.x0, nt.sin, nt.mask, vt.dev(), nullptr, data_d, t);
   forward_teacher(nt, N);
+  if (cfg.teacher_script && scenes) {   // E6: B4–B6 판은 대본 특권 교사 행동을 라벨로(같은 행 배치 [N][8])
+    env->teacher(sact);
+    script_label_k<<<(N + 127) / 128, 128>>>(sact, env->soa().iv + (size_t)env::I_B_KIND * N, N, nt.mean);
+  }
   const float* meanS = nt.mean;
   if (student) {
     assemble_k<<<ab, AS_L * AS_E>>>(obs_t, tok->at(t), N, cfg.use_map, 1, cfg.student_goal, sb.x0, sb.sin, sb.mask, vt.dev(), aug_d, data_d, t);

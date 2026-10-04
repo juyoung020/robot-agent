@@ -36,6 +36,9 @@ target_link_libraries(map_bench gmap bscene_host_m)
 add_executable(nav_tradeoff tools/nav_tradeoff.cu)
 target_link_libraries(nav_tradeoff gmap bscene_host_m)
 # 지도 토큰 기록(5.3): 스텝마다 장치 기록 버퍼 [T][N] 에 쓰고 끝에 파일로
+# 대본 교사(E6) 성공률: 환경 + 지도(거리장) + 교사 커널, 단계 × 물체 폭 반별
+add_executable(pnp_teach tools/pnp_teach.cu)
+target_link_libraries(pnp_teach gmap bscene_host_m)
 add_executable(map_tokrec tools/map_tokrec.cu)
 target_link_libraries(map_tokrec gmap)
 

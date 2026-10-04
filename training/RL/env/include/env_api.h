@@ -5,6 +5,7 @@
 
 #include "env.h"
 #include "env_soa.h"
+#include "teacher.h"
 
 namespace env {
 
@@ -42,6 +43,9 @@ class DeviceEnv {
   // 지도 → 환경 되먹임(정책이 아는 지도의 거리장·목표 확정). 기본 없음 = 직선 거리, B2 는 보임만. gmap::DeviceMap::nav_fb() 를 넣는다
   void set_nav(const bsc::NavFb& fb) { nav_ = fb; }
   const bsc::SceneSet* scenes() const { return ss_; }
+  // 대본 특권 교사(teacher.h, E6): 모든 판의 교사 행동 act[k*N+i](장치)를 씀 — 잡기 물리 판(B4–B6) 아니면 0. 지도 되먹임(set_nav)이 있으면 거리장으로 다가감.
+  // 교사 기억은 환경 상태(I_T_*)에. 비동기, 호스트 동기 없음(그래프에 넣을 수 있음)
+  void teacher(float* act) const;
 
   // ---- 장치 단계·씨앗(다시 만들기 없이) ----
   // set_dynamic(무리 비트 = stage_family 의 합): 그 뒤 step 은 단계를 장치 값에서 읽고 무리마다 커널을 띄운다(맞지 않는 무리는 바로 끝남 — 결과 같음).
@@ -86,6 +90,7 @@ struct CpuEnv {
   std::vector<uint64_t> rng;
   CpuEnv(int N_, int stage_, uint64_t seed, bool arm_free_ = false, const bsc::SceneSet* ss_host = nullptr, const bsc::BCurr& cu0 = bsc::kBCurrDefault);
   void step(const std::vector<float>& act, std::vector<float>& obs, std::vector<float>& rew, std::vector<int>& done);
+  void teacher(std::vector<float>& act);   // DeviceEnv::teacher 와 같은 것(CPU)
 };
 
 }  // namespace env

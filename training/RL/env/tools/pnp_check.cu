@@ -1,6 +1,7 @@
 // 집기·놓기 판 고르기 확인(사용자 규칙, 문서 CURRICULUM_BEHAVIOR2026 B3–B5 거르개 표): 판 N 개(기본 10,000)를 환경 리셋으로 뽑고(CPU 참조판,
 // 같은 씨앗으로 GPU 도 뽑아 상태가 비트로 같은지), 판마다 거르개를 **원본 RASC 값에서 다시** 잰다(표 만들 때 쓴 값이 아니라).
 //   pnp_check [N=10000] [--strict] [--dir RASC] [--negative NAME]
+//   --emit-e7 FILE: 뽑은 판의 집을 물체(이름이 다른 것 ≤ 16)를 E7 OmniGibson 잡기 경우 JSON 으로(src/robot/og/e0/sim_grasp.py 묶음 e7 — E7_CASES)
 //   NAME = free_area | in_closed | artic | spawn_reach | spawn_free | dst_reach | stance — 그 거르개만 끄고 뽑는다. 그러면 위반이 나와야 한다(종료 코드 0)
 // 다시 재는 것(판마다): 집을 물체 — 제외 플래그(벽·바닥·문·창·계단·카펫·로봇·입자·와일드카드)·고정·관절체·상자 있음, 가로 최소 폭 ≤ max_w,
 //   종류 평균 질량 ≤ max_mass(없으면 통과), 바닥 높이 ≤ pick_z, 바닥이 topdown_z 위면 옆 잡기: 출발 받침이 면이고 가장자리까지 ≤ edge_dist(엄격),
@@ -29,12 +30,13 @@ static const char* kShelf[] = {"bookcase", "shelf", "hall_tree", "rack"};
 int main(int argc, char** argv) {
   int N = 10000;
   bool strict = false;
-  std::string neg;
+  std::string neg, emit;
   BuildOpt opt;
   for (int a = 1; a < argc; ++a) {
     if (!std::strcmp(argv[a], "--strict")) strict = true;
     else if (!std::strcmp(argv[a], "--dir") && a + 1 < argc) opt.dir = argv[++a];
     else if (!std::strcmp(argv[a], "--negative") && a + 1 < argc) neg = argv[++a];
+    else if (!std::strcmp(argv[a], "--emit-e7") && a + 1 < argc) emit = argv[++a];
     else N = std::atoi(argv[a]);
   }
   const int nf = neg == "free_area" ? NF_FREE_AREA : neg == "in_closed" ? NF_IN_CLOSED : neg == "artic" ? NF_ARTIC : neg == "spawn_reach" ? NF_SPAWN_REACH
@@ -259,6 +261,61 @@ int main(int argc, char** argv) {
   std::printf("\n  place kind: floor %ld, inside %ld, ontop %ld; with an instruction row %ld; spawn fell back to the table %ld\n", n_floor, n_inside, n_ep - n_floor - n_inside,
               n_instr, fallback);
   for (int v = 0; v < NV; ++v) { std::printf("  %-26s %ld\n", vname[v], viol[v]); tot += viol[v]; }
+  {   // E6 잡기 물리 모형으로 본 잡을 수 있음(정보 — 거르개 위반이 아님): 회전 상자 좁은 폭 ≤ KG::max_w, 무게 ≤ 그리퍼·팔 한도,
+      // 대본 교사가 서는 자리 + 잡기 계획(역기구학·폭·충돌·무게)을 찾음(앞 n_plan 판, 판의 처음 자리에서 — 물체만 움직이는 상자로)
+    long nw = 0, nm = 0, nmn = 0, nplan = 0, nplan_ok = 0, min_w_agree = 0;
+    const int n_plan = std::min(N, 1000);
+    for (int i = 0; i < N; ++i) {
+      const Entry& e = b.ent[cpu.iv[(size_t)env::I_B_ENT * N + i]];
+      const float w = std::min(e.odim[0], e.odim[1]), m = env::mass_of(e.mass);
+      nw += w <= env::KG::max_w + 1e-6f;
+      nm += m <= env::KG::grip_mass_max;
+      nmn += m <= env::KG::arm_mass_near;
+      const rasc::Scene& R = rs[e.scene];
+      min_w_agree += std::fabs(R.picks[e.pick_rec].min_w - w) <= 0.005f;
+      if (i < n_plan) {
+        env::Soa sv{cpu.f.data(), cpu.iv.data(), cpu.rng.data(), N};
+        env::Core c;
+        env::load<false>(sv, i, c);
+        env::BState bs;
+        env::load_b(sv, i, bs);
+        env::PState ps;
+        env::clear_p(ps);
+        for (int a2 = 0; a2 < 3; ++a2) ps.o[a2] = 0.5f * (e.prim[0].lo[a2] + e.prim[0].hi[a2]);
+        env::set_yaw(ps, e.oyaw);
+        ps.st = env::OS_REST;
+        float sx, sy, syaw;
+        const float tc[3] = {0.f, 0.f, 0.f};
+        ++nplan;
+        nplan_ok += env::find_stance(c, bs, b.host, e, ps, false, tc, sx, sy, syaw);
+      }
+    }
+    std::printf("  E6 grasp model (information, not a filter violation): narrow width of the yaw box <= %.2f m: %ld / %ld (RASC min_w within 5 mm of it: %ld); "
+                "mass <= grip limit %.2f kg: %ld, <= near-arm payload %.2f kg: %ld; scripted-teacher stance + grasp plan exists (first %ld): %ld (%.3f)\n",
+                env::KG::max_w, nw, (long)N, min_w_agree, env::KG::grip_mass_max, nm, env::KG::arm_mass_near, nmn, nplan, nplan_ok, nplan ? (double)nplan_ok / nplan : 0.0);
+  }
+  if (!emit.empty()) {   // E7 경우: 좁은 변을 닫는 축(세계 x)으로, 위에서 잡기·옆 수평 잡기 둘
+    FILE* fo = std::fopen(emit.c_str(), "w");
+    std::vector<int> seen;
+    int k = 0;
+    std::fprintf(fo, "[\n");
+    for (int i = 0; i < N && (int)seen.size() < 16; ++i) {
+      const Entry& e = b.ent[cpu.iv[(size_t)env::I_B_ENT * N + i]];
+      const int nm = e.prim[0].name;
+      bool dup = false;
+      for (int v : seen) dup = dup || v == nm;
+      if (dup) continue;
+      seen.push_back(nm);
+      const float w = std::min(e.odim[0], e.odim[1]), l = std::max(e.odim[0], e.odim[1]);
+      const std::string nmn = nm >= 0 && nm < (int)b.name_en.size() ? b.name_en[nm] : std::to_string(nm);
+      for (int ps = 0; ps < 2; ++ps)
+        std::fprintf(fo, "%s {\"name\": \"%s\", \"pose\": \"%s\", \"size\": [%.4f, %.4f, %.4f], \"mass\": %.4f}\n", k++ ? "," : "", nmn.c_str(), ps ? "horiz" : "top", w, l,
+                     e.odim[2], env::mass_of(e.mass));
+    }
+    std::fprintf(fo, "]\n");
+    std::fclose(fo);
+    std::printf("  wrote %d E7 grasp cases (%zu objects) to %s\n", k, seen.size(), emit.c_str());
+  }
   if (!neg.empty()) {
     std::printf("negative control (%s disabled): %ld violations (must be > 0)\n", neg.c_str(), tot);
     return tot > 0 ? 0 : 1;

@@ -69,6 +69,11 @@ typedef struct BcConfig {
                            시험용 깃발: 얼린 SigLIP 2 가 합성 지도 그림을 잘 못 볼 수 있음(VLA_INPUT 1.1) */
   float goal_drop;      /* 학생만: 판·스텝마다 이 확률로 목표 표시(칸 T_TARGET)·목표 특권 값·경유 지점을 감춤 — 지시문으로 목표 물체를 찾게(obs.h ObsAug::p_goal_drop).
                            장치 값(bc_set_goal_drop). 실행기 기본 0.5 (가정), 0 = 끔. 교사 라벨 입력은 늘 표시 있음 */
+  /* ---- 잡기 물리(E6, 2026-10-05): B4 집기·B5 놓기·B6 가져오기 판 비율(B3 몫에서), 실패 판, 대본 교사 라벨 ---- */
+  float b_p4, b_p5, b_p6;
+  float b_p_slip, b_p_occ;
+  int32_t teacher_script;   /* 1 = B4–B6 판의 교사 라벨(그리고 교사가 움직일 때 행동)을 대본 특권 교사(env teacher.h)로 — 다른 판은 체크포인트 교사 그대로.
+                               교사 체크포인트 없이 써도 됨(B4–B6 만인 판). 장치에서·그래프 안(호스트 동기 없음) */
 } BcConfig;
 
 typedef struct BcLog {

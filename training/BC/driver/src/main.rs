@@ -91,6 +91,13 @@ struct BcConfig {
     b_p_goto: f32,
     topview: i32,
     goal_drop: f32,
+    // 잡기 물리(E6): B4·B5·B6 비율, 실패 판, 대본 교사 라벨
+    b_p4: f32,
+    b_p5: f32,
+    b_p6: f32,
+    b_p_slip: f32,
+    b_p_occ: f32,
+    teacher_script: i32,
 }
 
 #[repr(C)]
@@ -315,6 +322,12 @@ fn main() {
         b_p_goto: gf(v.get("beh").unwrap_or(&Value::Null), "p_goto", 0.0) as f32,
         topview: gi(&v, "topview", 1) as i32,   // 셋째 그림 = 위에서 본 지도(시험용 깃발, 영상 학생만)
         goal_drop: gf(&v, "goal_drop", 0.5) as f32,   // (가정) 학생 목표 표시 감추기 확률 — README "지시문·목표 표시 감추기"
+        b_p4: v.get("beh").and_then(|b| b.get("pnp")).and_then(|m| m.get(0)).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
+        b_p5: v.get("beh").and_then(|b| b.get("pnp")).and_then(|m| m.get(1)).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
+        b_p6: v.get("beh").and_then(|b| b.get("pnp")).and_then(|m| m.get(2)).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
+        b_p_slip: v.get("beh").and_then(|b| b.get("fail")).and_then(|m| m.get(0)).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
+        b_p_occ: v.get("beh").and_then(|b| b.get("fail")).and_then(|m| m.get(1)).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
+        teacher_script: gi(&v, "teacher_script", 0) as i32,   // E6: B4–B6 라벨 = 대본 특권 교사
     };
     let r0 = gi(&v, "record_rollouts", 4) as usize;
     let u0 = gi(&v, "bc_updates", 100) as usize;
@@ -329,7 +342,9 @@ fn main() {
     let lr_decay = gf(&v, "lr_dagger", c.lr as f64) as f32;
 
     let h = unsafe { bc_create(&c) };
-    assert_eq!(unsafe { bc_load_teacher(h, cstr(&teacher).as_ptr()) }, 0, "teacher {}", teacher);
+    if !(c.teacher_script != 0 && teacher.is_empty()) {   // 대본 교사만 쓰는 판(B4–B6)은 체크포인트 없이도 됨
+        assert_eq!(unsafe { bc_load_teacher(h, cstr(&teacher).as_ptr()) }, 0, "teacher {}", teacher);
+    }
     if c.text != 0 {
         // 지시 문장 글 벡터 표(기본: 설정 파일 옆 ../data/instr_a2.f32)
         let def = PathBuf::from(&args[1]).parent().map(|p| p.join("../data/instr_a2.f32")).unwrap_or_default();

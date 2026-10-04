@@ -106,12 +106,30 @@ __global__ void __launch_bounds__(128) step_kernel_beh(Soa s, const float* act, 
 #ifdef ENV_PROF
   const long long k0 = clock64();
 #endif
-  if (i < s.N) step_env_beh(s, i, act, obs, rew, done, arm_free != 0, bug, *ss, cu, fb);
+  if (i < s.N) step_env_beh<1>(s, i, act, obs, rew, done, arm_free != 0, bug, *ss, cu, fb);
 #ifdef ENV_PROF
   const unsigned long long kc = (unsigned long long)(clock64() - k0);
   const unsigned long long km = __reduce_max_sync(0xffffffffu, (unsigned)kc);
   if ((threadIdx.x & 31) == 0) atomicAdd(&g_env_prof[1], km);
 #endif
+}
+
+// 대본 교사(E6): 판마다 스레드 하나
+__global__ void __launch_bounds__(128) teacher_kernel(Soa s, const bsc::SceneSet* ss, bsc::NavFb fb, float* act) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < s.N) teacher_step(s, i, *ss, fb, act);
+}
+void DeviceEnv::teacher(float* act) const {
+  if (!ss_) return;
+  teacher_kernel<<<(N_ + 127) / 128, 128>>>(Soa{f_, iv_, rng_, N_}, ss_, nav_, act);
+}
+
+// 잡기 물리 판(B4–B6, E6) 커널: 예전 판 커널 뒤에 띄움(위 SEL 규칙)
+__global__ void __launch_bounds__(128) step_kernel_pnp(Soa s, const float* act, float* obs, float* rew, int* done, int arm_free, int bug,
+                                                       const bsc::SceneSet* ss, const bsc::BCurr* cu, bsc::NavFb fb, const EnvCtl* ctl) {
+  if (ctl && ctl->stage < kStageBeh) return;
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < s.N) step_env_beh<2>(s, i, act, obs, rew, done, arm_free != 0, bug, *ss, cu, fb);
 }
 
 // 장치 단계 바꾸기(apply): 요청이 있으면 판마다 생성자와 같은 상태로 — 상태 칸을 모두 0 으로(생성자의 memset) 채우고 그 단계 init.
@@ -204,11 +222,16 @@ void DeviceEnv::step(const float* act, float* obs, float* rew, int* done, int bu
     const unsigned g = (N_ + 127) / 128;
     if (fam_ & kFamBox) step_kernel<false><<<g, 128>>>(s, act, obs, rew, done, 0, arm_free_ ? 1 : 0, bug, ctl_);
     if (fam_ & kFamA2) step_kernel_a2<<<g, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug, ctl_);
-    if (fam_ & kFamBeh) step_kernel_beh<<<g, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug, ss_, bcurr_src_ ? bcurr_src_ : bcurr_, nav_, ctl_);
+    if (fam_ & kFamBeh) {
+      step_kernel_beh<<<g, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug, ss_, bcurr_src_ ? bcurr_src_ : bcurr_, nav_, ctl_);
+      step_kernel_pnp<<<g, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug, ss_, bcurr_src_ ? bcurr_src_ : bcurr_, nav_, ctl_);
+    }
     return;
   }
-  if (stage_ >= kStageBeh)
+  if (stage_ >= kStageBeh) {
     step_kernel_beh<<<(N_ + 127) / 128, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug, ss_, bcurr_src_ ? bcurr_src_ : bcurr_, nav_, nullptr);
+    step_kernel_pnp<<<(N_ + 127) / 128, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug, ss_, bcurr_src_ ? bcurr_src_ : bcurr_, nav_, nullptr);
+  }
   else if (stage_ >= 2) step_kernel_a2<<<(N_ + 127) / 128, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug, nullptr);
   else step_kernel<false><<<(N_ + 127) / 128, 128>>>(s, act, obs, rew, done, stage_, arm_free_ ? 1 : 0, bug, nullptr);
 }
