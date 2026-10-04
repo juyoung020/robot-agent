@@ -36,6 +36,16 @@ struct WallGrid {
 std::vector<WallSeg> wallSegments(const WallGrid& g, double min_len = kMinLen, double max_thick = kMaxThick,
                                   double overlap = 0.6, const std::vector<WallRect>* ignore = nullptr);
 
+// 지도 축과 벽 방향이 어긋난 지도(slam: 지도 좌표 = 출발 자세라 벽이 기울어짐)용. 점유 칸의 주된 직교 방향 θ(−45°..45°, rad)를
+// 찾아(투영 히스토그램이 가장 뾰족한 각), |θ| ≤ kAlignTol 이면 wallSegments 그대로(축에 맞는 지도 = 같은 결과), 아니면 격자를 −θ 돌린
+// 격자로 다시 뽑아(칸 = 원래 칸 4 개 중 하나라도 점유면 점유) 축에 맞는 벽을 찾고 선분을 θ 돌려 원래 지도 좌표로 돌려준다.
+// ignore 영역은 원래 지도 좌표에서 지운 뒤 돌린다. angle_out 이 있으면 쓴 θ 를 넣는다.
+constexpr double kAlignTol = 1.0 * 3.14159265358979323846 / 180.0;
+double wallAngle(const WallGrid& g);
+std::vector<WallSeg> wallSegmentsAligned(const WallGrid& g, double min_len = kMinLen, double max_thick = kMaxThick,
+                                         double overlap = 0.6, const std::vector<WallRect>* ignore = nullptr,
+                                         double* angle_out = nullptr);
+
 // 실시간 갱신용: 비트 격자와 작업 버퍼를 들고 있다가, 격자에서 바뀐 행만 다시 비트로 만든다.
 // update(g, y_lo, y_hi): 격자 행 y(아래→위, sm_grid 의 y) y_lo..y_hi(끝 포함)가 바뀌었다. y_lo > y_hi 면 전부(처음·격자 크기가 바뀜).
 // 돌려주는 참조는 다음 update/reset 까지 유효. 결과는 wallSegments 와 같다.

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstring>
 
+#include "scenemap/limo_omx_fk_table.hpp"
 #include "scenemap/r1pro_fk_table.hpp"
 
 namespace scenemap {
@@ -57,12 +58,12 @@ void toQuat(const M3& R, double* q) {   // xyzw
 }
 
 // 사슬을 따라가며 관절 원점마다 cb(이름, 위치) — 끝에서 카메라 prim 자세
-template <class F>
-void walk(const r1pro::ChainDef& c, const float* q, F&& cb, M3* R_out, double* t_out) {
+template <class Chain, class F>
+void walk(const Chain& c, const float* q, F&& cb, M3* R_out, double* t_out) {
   M3 R = eye();
   double t[3] = {0, 0, 0};
   for (int k = 0; k < c.n; ++k) {
-    const r1pro::JointDef& j = c.j[k];
+    const auto& j = c.j[k];
     double d[3];
     mv(R, j.xyz, d);
     for (int i = 0; i < 3; ++i) t[i] += d[i];
@@ -86,6 +87,8 @@ void walk(const r1pro::ChainDef& c, const float* q, F&& cb, M3* R_out, double* t
 
 void computeBodyFk(const float* q, BodyFk* o) {
   std::memset(o, 0, sizeof(*o));
+  o->n_arms = 2;
+  o->n_torso = 6;
   const r1pro::ChainDef* chains[3] = {&r1pro::k_head_chain, &r1pro::k_left_wrist_chain, &r1pro::k_right_wrist_chain};
   for (int c = 0; c < 3; ++c) {
     M3 R;
@@ -128,6 +131,60 @@ void computeBodyFk(const float* q, BodyFk* o) {
         for (int i = 0; i < 3; ++i) o->arm[c - 1][na][i] = o->arm[c - 1][na - 1][i];
     }
   }
+}
+
+namespace {
+void put34(const M3& R, const double* t, double* T) {
+  for (int i = 0; i < 3; ++i) {
+    for (int k = 0; k < 3; ++k) T[i * 4 + k] = R.m[i][k];
+    T[i * 4 + 3] = t[i];
+  }
+}
+}  // namespace
+
+void computeLimoFk(const float* q, LimoFk* o) {
+  std::memset(o, 0, sizeof(*o));
+  M3 R;
+  double t[3];
+  walk(limo::k_depth_cam_chain, q, [](int, const limo::JointDef&, const M3&, const double*) {}, &R, t);
+  put34(R, t, o->T_depth);
+  walk(limo::k_wrist_cam_chain, q, [](int, const limo::JointDef&, const M3&, const double*) {}, &R, t);
+  put34(R, t, o->T_wrist);
+  int n = 0;
+  walk(limo::k_eef_chain, q, [&](int, const limo::JointDef& j, const M3&, const double* tj) {
+    // 뼈대 점: omx_link0(마운트 뒤), 관절 1..5 원점
+    if ((j.q >= 0 || std::strcmp(j.name, "omx_mount_joint") == 0) && n < LimoFk::kPts - 1) {
+      for (int i = 0; i < 3; ++i) o->pts[n][i] = tj[i];
+      ++n;
+    }
+  }, &R, t);
+  put34(R, t, o->T_eef);
+  for (int i = 0; i < 3; ++i) o->pts[n][i] = t[i];
+  for (++n; n < LimoFk::kPts; ++n)
+    for (int i = 0; i < 3; ++i) o->pts[n][i] = o->pts[n - 1][i];
+}
+
+void limoBodyFk(const LimoFk& f, BodyFk* o, float eef[2][3]) {
+  std::memset(o, 0, sizeof(*o));
+  o->n_arms = 1;
+  o->n_torso = 0;
+  for (int k = 0; k < 12; ++k) o->T_head[k] = float(f.T_depth[k]);
+  // prim(−z 앞, y 위) = 광학 × diag(1, −1, −1)
+  const double* Ts[2] = {f.T_depth, f.T_wrist};
+  for (int c = 0; c < 2; ++c) {
+    M3 P;
+    for (int i = 0; i < 3; ++i) { P.m[i][0] = Ts[c][i * 4]; P.m[i][1] = -Ts[c][i * 4 + 1]; P.m[i][2] = -Ts[c][i * 4 + 2]; }
+    double qq[4];
+    toQuat(P, qq);
+    for (int i = 0; i < 3; ++i) o->cam_rel[c][i] = float(Ts[c][i * 4 + 3]);
+    for (int i = 0; i < 4; ++i) o->cam_rel[c][3 + i] = float(qq[i]);
+  }
+  for (int k = 0; k < BodyFk::kArmPts; ++k) {
+    const double* p = f.pts[k < LimoFk::kPts ? k : LimoFk::kPts - 1];
+    for (int i = 0; i < 3; ++i) o->arm[0][k][i] = o->arm[1][k][i] = float(p[i]);
+  }
+  for (int s = 0; s < 2; ++s)
+    for (int i = 0; i < 3; ++i) eef[s][i] = float(f.T_eef[i * 4 + 3]);
 }
 
 }  // namespace scenemap

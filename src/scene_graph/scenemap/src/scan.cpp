@@ -42,7 +42,7 @@ BodyState bodyFromFk(const BodyFk& fk, const float eef[2][3], float arm_r, float
   BodyState b;
   for (int s = 0; s < 2; ++s)
     for (int k = 0; k < 3; ++k) b.eef[s][k] = eef[s][k];
-  for (int s = 0; s < 2; ++s)
+  for (int s = 0; s < fk.n_arms; ++s)
     for (int k = 0; k + 1 < BodyFk::kArmPts; ++k) {
       Capsule c;
       for (int i = 0; i < 3; ++i) { c.a[i] = fk.arm[s][k][i]; c.b[i] = fk.arm[s][k + 1][i]; }
@@ -50,7 +50,7 @@ BodyState bodyFromFk(const BodyFk& fk, const float eef[2][3], float arm_r, float
       c.r = k >= BodyFk::kArmPts - 3 ? hand_r : arm_r;
       b.caps.push_back(c);
     }
-  for (int k = 1; k + 1 < 6; ++k) {
+  for (int k = 1; k + 1 < fk.n_torso; ++k) {
     Capsule c;
     for (int i = 0; i < 3; ++i) { c.a[i] = fk.torso[k][i]; c.b[i] = fk.torso[k + 1][i]; }
     c.r = torso_r;

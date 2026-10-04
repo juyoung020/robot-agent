@@ -109,3 +109,12 @@ add_test(NAME stream COMMAND test_stream)
 
 add_executable(stream_sim tools/stream_sim.cpp)
 target_link_libraries(stream_sim scenemap pthread)
+
+# LIMO + OMX-F: URDF → 순기구학 표 생성기, 순기구학이 독립 계산(tests/gen_limo_fk_ref.py)과 맞는지, C ABI 끝에서 끝까지
+add_executable(gen_limo_fk_table tools/gen_limo_fk_table.cpp)
+add_executable(test_limo_fk tests/test_limo_fk.cpp)
+target_link_libraries(test_limo_fk scenemap)
+add_test(NAME limo_fk COMMAND test_limo_fk)
+add_executable(test_limo_e2e tests/test_limo_e2e.cpp)
+target_link_libraries(test_limo_e2e scenemap)
+add_test(NAME limo_e2e COMMAND test_limo_e2e)

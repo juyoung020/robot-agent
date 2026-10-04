@@ -45,7 +45,8 @@ struct ObjParams {
   double occl = 0.10;
   int min_px = 6;                 // 시야 안 판정: 물체가 이 화소보다 작게 보이면 부재 증거로 안 씀
   double grasp_r = 0.25;
-  float grip_closed = 0.09f;      // 손가락 합이 이보다 작으면 닫힘(열림 0.1)
+  float grip_closed = 0.09f;      // 손가락 합이 이보다 작으면 닫힘(열림 0.1). LIMO: omx_gripper_joint_1 rad(0 닫힘 .. 1.745 열림)
+  int n_hands = 2;                // 잡기 규칙을 보는 손 수(R1 2, LIMO 1 — 둘째 칸은 첫째와 같은 값을 받지만 잡기에는 안 씀)
   int step = 1;                   // 깊이 화소 간격(최소)
   int max_pts = 6000;             // 검출 하나에서 훑는 화소 수 한도: 큰 상자는 간격을 넓힘(백분위·중앙값에는 충분)
   // 점 구름(모양): 위치·크기에 쓴 점(MAD 띠 안) 중 팔 끝 cloud_hand_r 안·베이스 수평 body_r 안 점은 뺌

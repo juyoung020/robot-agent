@@ -5,13 +5,14 @@
 #include "scenemap/walls.hpp"
 
 extern "C" {
-// 선분 개수를 돌려준다(cap 보다 클 수 있음). out: 선분당 ax ay bx by (map, m)
+// 선분 개수를 돌려준다(cap 보다 클 수 있음). out: 선분당 ax ay bx by (map, m). angle_out(없어도 됨): 벽 방향 θ [rad] — 축에 맞으면 0 근처
+// 벽 방향이 지도 축과 어긋나면(slam 지도 = 출발 자세 기준) 그 방향으로 돌려 찾는다(wallSegmentsAligned). 축에 맞으면 예전과 같다.
 // ignore: 벽으로 치지 않을 영역 n_ignore 개 (x0 y0 x1 y1 …, map m) — 바닥에 놓인 가구
-int sgv_wall_segments(const int8_t* cells, int w, int h, double res, double ox, double oy, const double* ignore, int n_ignore, double* out, int cap) {
+int sgv_wall_segments(const int8_t* cells, int w, int h, double res, double ox, double oy, const double* ignore, int n_ignore, double* out, int cap, double* angle_out) {
   scenemap::WallGrid g{cells, w, h, res, ox, oy};
   std::vector<scenemap::WallRect> ig(n_ignore);
   for (int i = 0; i < n_ignore; ++i) ig[i] = {ignore[4 * i], ignore[4 * i + 1], ignore[4 * i + 2], ignore[4 * i + 3]};
-  const auto segs = scenemap::wallSegments(g, scenemap::kMinLen, scenemap::kMaxThick, 0.6, &ig);
+  const auto segs = scenemap::wallSegmentsAligned(g, scenemap::kMinLen, scenemap::kMaxThick, 0.6, &ig, angle_out);
   for (int i = 0; i < cap && i < int(segs.size()); ++i) {
     out[4 * i] = segs[i].ax; out[4 * i + 1] = segs[i].ay; out[4 * i + 2] = segs[i].bx; out[4 * i + 3] = segs[i].by;
   }

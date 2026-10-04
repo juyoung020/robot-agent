@@ -218,6 +218,124 @@ std::vector<WallSeg> wallSegments(const WallGrid& g, double min_len, double max_
   return e.update(g, 0, -1, ignore, min_len, max_thick, overlap);
 }
 
+double wallAngle(const WallGrid& g) {
+  std::vector<float> px, py;
+  for (int y = 0; y < g.h; ++y)
+    for (int x = 0; x < g.w; ++x)
+      if (g.cells[size_t(y) * g.w + x] >= kOccMin) { px.push_back(float(x)); py.push_back(float(y)); }
+  if (px.size() < 20) return 0.0;
+  // 점들을 −θ 돌려 x·y 축으로 투영한 히스토그램(칸 폭)의 제곱합: 벽이 축과 나란할수록 크다. 90° 주기라 −45°..45° 만 본다.
+  const int D = int(std::ceil(std::hypot(g.w, g.h))) + 2;
+  std::vector<int> hx(2 * D + 1), hy(2 * D + 1);
+  auto score = [&](double th) {
+    std::fill(hx.begin(), hx.end(), 0); std::fill(hy.begin(), hy.end(), 0);
+    const float c = float(std::cos(th)), s = float(std::sin(th)), d = float(D) + 0.5f;   // d: 음수 없이 반올림(int 자르기)
+    for (size_t i = 0; i < px.size(); ++i) {
+      ++hx[int(c * px[i] + s * py[i] + d)];
+      ++hy[int(-s * px[i] + c * py[i] + d)];
+    }
+    double v = 0;
+    for (int i = 0; i <= 2 * D; ++i) v += double(hx[i]) * hx[i] + double(hy[i]) * hy[i];
+    return v;
+  };
+  constexpr double deg = M_PI / 180.0;
+  double best = 0.0, bv = score(0.0);
+  // 1° 간격 → 0.25° → 0.05° 로 좁힌다
+  for (int k = -45; k < 45; ++k) { const double th = k * deg, v = score(th); if (v > bv) { bv = v; best = th; } }
+  for (const double step : {0.25 * deg, 0.05 * deg}) {
+    const double c0 = best;
+    for (int k = -4; k <= 4; ++k) { const double th = c0 + k * step, v = score(th); if (v > bv) { bv = v; best = th; } }
+  }
+  if (best >= M_PI / 4) best -= M_PI / 2;
+  if (best < -M_PI / 4) best += M_PI / 2;
+  return best;
+}
+
+std::vector<WallSeg> wallSegmentsAligned(const WallGrid& g, double min_len, double max_thick, double overlap,
+                                         const std::vector<WallRect>* ignore, double* angle_out) {
+  if (g.w <= 0 || g.h <= 0) { if (angle_out) *angle_out = 0; return {}; }
+  // ignore 영역은 원래 좌표 축에 맞는 상자라 먼저 지운다(각 판정에도 가구가 안 끼게)
+  std::vector<int8_t> masked;
+  const int8_t* src = g.cells;
+  if (ignore && !ignore->empty()) {
+    masked.assign(g.cells, g.cells + size_t(g.w) * g.h);
+    for (const WallRect& r : *ignore) {
+      const int cx0 = std::max(0, int(std::floor((r.x0 - g.ox) / g.res))), cx1 = std::min(g.w - 1, int(std::floor((r.x1 - g.ox) / g.res)));
+      const int cy0 = std::max(0, int(std::floor((r.y0 - g.oy) / g.res))), cy1 = std::min(g.h - 1, int(std::floor((r.y1 - g.oy) / g.res)));
+      for (int y = cy0; y <= cy1; ++y) for (int x = cx0; x <= cx1; ++x) if (masked[size_t(y) * g.w + x] >= kOccMin) masked[size_t(y) * g.w + x] = 0;
+    }
+    src = masked.data();
+  }
+  const WallGrid gm{src, g.w, g.h, g.res, g.ox, g.oy};
+  const double th = wallAngle(gm);
+  if (angle_out) *angle_out = th;
+  if (std::abs(th) <= kAlignTol) return wallSegments(g, min_len, max_thick, overlap, ignore);   // 축에 맞는 지도: 예전과 같은 결과
+  // 돌린 좌표 u = R(−θ)·p (지도 좌표 p 를 −θ 돌림). 원래 지도의 네 모서리를 돌려 새 격자 범위를 잡는다.
+  const double c = std::cos(th), s = std::sin(th), res = g.res;
+  double u0 = 1e300, v0 = 1e300, u1 = -1e300, v1 = -1e300;
+  for (int k = 0; k < 4; ++k) {
+    const double x = g.ox + ((k & 1) ? g.w : 0) * res, y = g.oy + ((k & 2) ? g.h : 0) * res;
+    const double u = c * x + s * y, v = -s * x + c * y;
+    u0 = std::min(u0, u); u1 = std::max(u1, u); v0 = std::min(v0, v); v1 = std::max(v1, v);
+  }
+  const int W = int(std::ceil((u1 - u0) / res)) + 1, H = int(std::ceil((v1 - v0) / res)) + 1;
+  std::vector<int8_t> rot(size_t(W) * H, -1);
+  // 새 칸 중심을 원래 격자로 돌려 놓고, 둘러싼 원래 칸 4 개(쌍선형 발자국) 중 하나라도 점유면 점유, 아니면 가장 가까운 칸 값.
+  // 가장 가까운 칸만 보면 계단 모양의 대각선 벽이 돌린 격자에서 끊긴다.
+  for (int j = 0; j < H; ++j) {
+    const double v = v0 + (j + 0.5) * res;
+    for (int i = 0; i < W; ++i) {
+      const double u = u0 + (i + 0.5) * res;
+      const double fx = (c * u - s * v - g.ox) / res - 0.5, fy = (s * u + c * v - g.oy) / res - 0.5;
+      const int x0 = int(std::floor(fx)), y0 = int(std::floor(fy));
+      int8_t val = -1;
+      bool occ = false;
+      for (int q = 0; q < 4; ++q) {
+        const int x = x0 + (q & 1), y = y0 + (q >> 1);
+        if (x < 0 || y < 0 || x >= g.w || y >= g.h) continue;
+        if (src[size_t(y) * g.w + x] >= kOccMin) occ = true;
+      }
+      if (occ) val = 100;
+      else {
+        const int x = int(std::lround(fx)), y = int(std::lround(fy));
+        if (x >= 0 && y >= 0 && x < g.w && y < g.h) val = src[size_t(y) * g.w + x] >= 0 ? 0 : -1;
+      }
+      rot[size_t(j) * W + i] = val;
+    }
+  }
+  const WallGrid gr{rot.data(), W, H, res, u0, v0};
+  std::vector<WallSeg> all = wallSegments(gr, min_len, max_thick, overlap, nullptr);
+  // 돌린 격자의 벽 가장자리는 계단 모양이라, 두꺼운 벽 한 덩어리 옆에 짧은 평행 조각이 따로 남는다(groupRuns 는 행마다 run 하나만 잇는다).
+  // 더 긴 평행 선분과 수직 거리 ≤ max_thick/2 이고 그 구간 안(양끝 1 칸 여유)에 들어가면 버린다.
+  std::vector<WallSeg> segs;
+  {
+    const double tol = max_thick / 2, slack = res;
+    auto horiz = [](const WallSeg& s) { return s.ay == s.by; };
+    for (size_t i = 0; i < all.size(); ++i) {
+      const WallSeg& a = all[i];
+      const bool ha = horiz(a);
+      const double alen = ha ? std::abs(a.bx - a.ax) : std::abs(a.by - a.ay);
+      const double a0 = ha ? std::min(a.ax, a.bx) : std::min(a.ay, a.by), a1 = ha ? std::max(a.ax, a.bx) : std::max(a.ay, a.by);
+      bool shadow = false;
+      for (size_t j = 0; j < all.size() && !shadow; ++j) {
+        const WallSeg& b = all[j];
+        if (j == i || horiz(b) != ha) continue;
+        const double blen = ha ? std::abs(b.bx - b.ax) : std::abs(b.by - b.ay);
+        if (blen < alen || (blen == alen && j > i)) continue;
+        const double off = ha ? std::abs(a.ay - b.ay) : std::abs(a.ax - b.ax);
+        const double b0 = ha ? std::min(b.ax, b.bx) : std::min(b.ay, b.by), b1 = ha ? std::max(b.ax, b.bx) : std::max(b.ay, b.by);
+        shadow = off <= tol && a0 >= b0 - slack && a1 <= b1 + slack;
+      }
+      if (!shadow) segs.push_back(a);
+    }
+  }
+  for (WallSeg& w : segs) {   // p = R(θ)·u
+    const double ax = c * w.ax - s * w.ay, ay = s * w.ax + c * w.ay, bx = c * w.bx - s * w.by, by = s * w.bx + c * w.by;
+    w = {ax, ay, bx, by};
+  }
+  return segs;
+}
+
 void rayDistances(const WallGrid& g, const double pose[3], float* out, int n, double max_range) {
   const double x = pose[0], y = pose[1], yaw = pose[2];
   for (int i = 0; i < n; ++i) {

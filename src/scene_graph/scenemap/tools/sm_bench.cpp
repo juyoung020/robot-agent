@@ -1,10 +1,11 @@
 // sgrt 기록(SGRT_RECORD) 재생 — C ABI 로만 scenemap 을 굴려 자세 모드 비교(떠밀림)·단계별 µs 를 잰다.
 //
 //   sm_bench <rec.bin> [--pose slam|odom|gt] [--lag 0|1] [--policy 0|1] [--no-dets] [--snap-every N] [--save-every S]
-//            [--save DIR] [--traj out.csv] [--labels names.txt] [--frames N] [--loops K]
+//            [--save DIR] [--traj out.csv] [--labels names.txt] [--frames N] [--loops K] [--robot r1pro|limo_omx] [--sm-config JSON]
 //
 // 재생은 sgrt_step 과 같은 순서: 스텝마다 (외부 자세) → proprio, keyframe 이면 영상(stamp = 직전 스텝, --lag 1) + 검출.
 // --snap-every N: N 스텝마다 sm_take_dirty + sm_snapshot(탐색 쪽 sgrt_map 흉내). --save-every S: 시뮬 S 초마다 sm_save_dsg.
+// --robot / --sm-config: 기록한 로봇(sgrt 의 SGRT_ROBOT / SGRT_SM_CONFIG 와 같게). 없으면 sm_create(NULL) = R1.
 // --loops K: 같은 기록을 K 번(사이에 sm_reset, 시간은 합침 — 막대그래프 표본 늘리기).
 // 끝에 단계 표(n, 평균, p50, p99, 최대 µs)와 자세 진단(외부 자세가 있으면: 첫 keyframe 에서 맞춘 뒤 떠밀림)을 찍는다.
 #include <chrono>
@@ -26,10 +27,10 @@ using sgrec::load;
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::fprintf(stderr, "usage: sm_bench <rec.bin> [--pose slam|odom|gt] [--lag 0|1] [--policy 0|1] [--no-dets] [--snap-every N] "
-                         "[--save-every S] [--save DIR] [--traj out.csv] [--labels names.txt] [--frames N] [--loops K]\n");
+                         "[--save-every S] [--save DIR] [--traj out.csv] [--labels names.txt] [--frames N] [--loops K] [--robot r1pro|limo_omx] [--sm-config JSON]\n");
     return 2;
   }
-  std::string pose = "slam", save_dir, traj, labels_path;
+  std::string pose = "slam", save_dir, traj, labels_path, sm_cfg;   // sm_cfg 비면 sm_create(NULL) = R1
   double gt_shift = 0;   // 외부 자세 stamp 를 이만큼 스텝 뒤로(= 그 자세가 늦게 그려진다고 봄)
   int lag = 1, policy = 1, snap_every = 6, frames = 0, loops = 1;
   double save_every = 0;
@@ -49,6 +50,8 @@ int main(int argc, char** argv) {
     else if (a == "--labels") labels_path = nx();
     else if (a == "--frames") frames = std::atoi(nx());
     else if (a == "--loops") loops = std::atoi(nx());
+    else if (a == "--robot") sm_cfg = std::string("{\"robot\": \"") + nx() + "\"}";
+    else if (a == "--sm-config") sm_cfg = nx();
   }
   std::vector<Rec> recs;
   if (!load(argv[1], &recs, frames)) { std::fprintf(stderr, "cannot read %s\n", argv[1]); return 1; }
@@ -56,7 +59,8 @@ int main(int argc, char** argv) {
   for (const Rec& r : recs) { nP += r.tag == 'P'; nI += r.tag == 'I'; nG += r.tag == 'G'; nD += r.tag == 'I' ? r.n : 0; }
   std::printf("record: %zu steps, %zu keyframes (%zu detections), %zu external poses\n", nP, nI, nD, nG);
 
-  sm_ctx* c = sm_create(nullptr);
+  sm_ctx* c = sm_create(sm_cfg.empty() ? nullptr : sm_cfg.c_str());
+  if (!c) { std::fprintf(stderr, "sm_create rejected %s\n", sm_cfg.c_str()); return 1; }
   std::vector<std::string> names;
   if (!labels_path.empty()) {
     std::ifstream in(labels_path);

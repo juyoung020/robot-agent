@@ -74,7 +74,7 @@ void ObjectMap::event(double t, const MapObject& o, int kind) {
 
 void ObjectMap::updateHands(double t, const double eef[2][3], const float grip[2], double yaw) {
   const double cy = std::cos(yaw), sy = std::sin(yaw);
-  for (int h = 0; h < 2; ++h) {
+  for (int h = 0; h < p_.n_hands && h < 2; ++h) {
     const bool closed = grip[h] < p_.grip_closed;
     if (closed && !closed_[h]) {   // 잡기
       MapObject* best = nullptr;

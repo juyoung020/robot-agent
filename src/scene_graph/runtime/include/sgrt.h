@@ -111,6 +111,19 @@ sm_snapshot_t* sgrt_map_snapshot(sgrt*);
  * 기록: SGRT_RECORD=<파일> 이면 sgrt 가 받은 입력(proprio·외부 자세·keyframe 깊이·RGB·검출)을 그대로 이진 파일로 쓴다 —
  *   scenemap/tools/sm_bench 가 다시 재생한다(자세 모드 비교·단계 시간). */
 int    sgrt_set_pose_mode(sgrt*, int32_t mode);
+
+/* ---- 로봇 고르기(추가 ABI, 10-04) ----
+ * 기본은 R1 Pro(proprio 61, 머리 zed_link 깊이 — 옛 동작 그대로). sgrt_create 때 환경 변수로 고른다:
+ *   SGRT_ROBOT=r1pro | limo_omx            → sm_create("{\"robot\": \"<값>\"}")
+ *   SGRT_SM_CONFIG=<json>                  → sm_create(<json>) 그대로(robot·odom·grip_closed, scenemap.h sm_create). SGRT_ROBOT 보다 먼저
+ *   둘 다 없으면 sm_create(NULL). 모르는 로봇·틀린 json 이면 sgrt_create 가 NULL(err 에 까닭).
+ * LIMO + OMX-F(limo_omx): sgrt_step 의 proprio = 12 f32(scenemap.h SM_LIMO_*: odom x, y, yaw, vx, vy, wz, omx_joint1..5,
+ *   gripper), 영상 = 몸통 앞 깊이 카메라(cam 0 = depth_camera_lens_optical_frame, 렌즈 광학 프레임)와 그 내부 파라미터.
+ * sgrt_set_robot: 만든 뒤 바꾸기(sm_set_robot — 지도·물체를 비움, labels·자세 모드는 그대로). sgrt_begin 앞에서 부를 것. 0 성공.
+ * sgrt_get_robot: 0 = SM_ROBOT_R1PRO, 1 = SM_ROBOT_LIMO_OMX. sgrt_proprio_dim: 지금 로봇의 최소 n_proprio(61 / 12). */
+int    sgrt_set_robot(sgrt*, int32_t robot);
+int    sgrt_get_robot(const sgrt*);
+int    sgrt_proprio_dim(const sgrt*);
 int    sgrt_push_pose(sgrt*, double stamp, double x, double y, double yaw);
 typedef struct {
   int32_t n;

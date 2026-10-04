@@ -197,7 +197,20 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
     delete s;
     return nullptr;
   }
-  s->sm = sm_create(nullptr);
+  // 로봇 고르기: SGRT_SM_CONFIG(sm_create config_json 그대로) > SGRT_ROBOT(r1pro | limo_omx) > 없음(R1, sm_create(NULL) — 옛 동작 그대로)
+  std::string smj;
+  if (const char* sj = std::getenv("SGRT_SM_CONFIG"); sj && *sj) smj = sj;
+  else if (const char* rb = std::getenv("SGRT_ROBOT"); rb && *rb) smj = std::string("{\"robot\": \"") + rb + "\"}";
+  s->sm = sm_create(smj.empty() ? nullptr : smj.c_str());
+  if (!s->sm) {
+    put(err, err_len, ("sgrt_create: sm_create rejected config " + smj + " (SGRT_ROBOT = r1pro | limo_omx)").c_str());
+    ovd_destroy(s->det);
+    delete s;
+    return nullptr;
+  }
+  if (sm_get_robot(s->sm) != SM_ROBOT_R1PRO)
+    std::fprintf(stderr, "[sgrt] robot %d (0 r1pro, 1 limo_omx), proprio >= %d, config %s\n", sm_get_robot(s->sm),
+                 sm_proprio_dim(sm_get_robot(s->sm)), smj.c_str());
   if (const char* pm = std::getenv("SGRT_POSE")) {
     const std::string m = pm;
     sm_set_pose_mode(s->sm, m == "gt" ? SM_POSE_GT : m == "odom" ? SM_POSE_ODOM : SM_POSE_SLAM);
@@ -504,6 +517,12 @@ int sgrt_map(sgrt* s, sgrt_map_view* out) {
 sm_snapshot_t* sgrt_map_snapshot(sgrt* s) { return s ? s->map_snap : nullptr; }
 
 int sgrt_set_pose_mode(sgrt* s, int32_t mode) { return s ? sm_set_pose_mode(s->sm, mode) : -1; }
+
+int sgrt_set_robot(sgrt* s, int32_t robot) { return s ? sm_set_robot(s->sm, robot) : -1; }
+
+int sgrt_get_robot(const sgrt* s) { return s ? sm_get_robot(s->sm) : -1; }
+
+int sgrt_proprio_dim(const sgrt* s) { return s ? sm_proprio_dim(sm_get_robot(s->sm)) : -1; }
 
 int sgrt_push_pose(sgrt* s, double stamp, double x, double y, double yaw) {
   if (!s) return -1;

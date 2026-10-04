@@ -230,13 +230,65 @@ async function loadMap() {
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w * res, h * res), new THREE.MeshBasicMaterial({ map:tex, side:THREE.DoubleSide }));
     mesh.position.set(g.origin[0] + w * res / 2, g.origin[1] + h * res / 2, 0);
     gMap.add(mesh);
-    mapState = { w, h, rgba, tex, mesh, ver, key };
+    mapState = { w, h, rgba, tex, mesh, ver, key, res, ox:g.origin[0], oy:g.origin[1] };
     paintRows(px, 0, h - 1);
   } else if (y0 <= y1) {
     paintRows(px, y0, y1);
   }
   mapState.ver = ver; mapState.tex.needsUpdate = true;
+  queueAligned();
   gMap.visible = opt("c_map"); invalidate();
+}
+
+// Slam maps are in the start-pose frame, so walls can run at any angle; drawn cell by cell a tilted wall is a staircase that reads as
+// dotted, doubled lines. When the server reports the wall direction θ (|θ| > 1°, with the wall segments) the occupancy is drawn
+// resampled into a θ-rotated grid instead, with the wall extractor's rule (a cell is occupied when any of the 4 map cells around it is).
+// Display only: the map data, the segments and the robot are untouched. Axis-aligned maps (gt pose) keep the plain texture.
+let alignTheta = 0, alignState = null, alignQueued = false;
+function setWallTheta(th) {
+  if (typeof th !== "number") return;
+  const on = Math.abs(th) > Math.PI / 180;
+  if (!on && alignTheta === 0) return;
+  if (on && alignTheta !== 0 && Math.abs(th - alignTheta) < 0.25 * Math.PI / 180) return;   // ignore jitter of the estimate
+  alignTheta = on ? th : 0; queueAligned();
+}
+function queueAligned() { if (!alignQueued) { alignQueued = true; setTimeout(() => { alignQueued = false; drawAligned(); }, 100); } }
+function dropAligned() { if (alignState) { alignState.tex.dispose(); alignState.mesh.geometry.dispose(); alignState.mesh.material.dispose(); gMap.remove(alignState.mesh); alignState = null; } }
+function drawAligned() {
+  if (!mapState) { dropAligned(); return; }
+  if (alignTheta === 0) { dropAligned(); mapState.mesh.visible = true; invalidate(); return; }
+  const { w, h, rgba, res, ox, oy } = mapState, th = alignTheta, c = Math.cos(th), s = Math.sin(th);
+  let u0 = Infinity, v0 = Infinity, u1 = -Infinity, v1 = -Infinity;
+  for (const [x, y] of [[ox, oy], [ox + w * res, oy], [ox, oy + h * res], [ox + w * res, oy + h * res]]) {
+    const u = c * x + s * y, v = -s * x + c * y;
+    u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+  }
+  const W = Math.ceil((u1 - u0) / res) + 1, H = Math.ceil((v1 - v0) / res) + 1;
+  if (!alignState || alignState.W !== W || alignState.H !== H) {
+    dropAligned();
+    const out = new Uint8Array(W * H * 4), tex = new THREE.DataTexture(out, W, H, THREE.RGBAFormat);
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(W * res, H * res), new THREE.MeshBasicMaterial({ map:tex, side:THREE.DoubleSide, transparent:true }));
+    gMap.add(mesh);
+    alignState = { W, H, out, tex, mesh };
+  }
+  const { out, tex, mesh } = alignState;
+  const occ = (x, y) => x >= 0 && y >= 0 && x < w && y < h && rgba[(y * w + x) * 4] <= 90;
+  for (let j = 0; j < H; j++) {
+    const v = v0 + (j + 0.5) * res;
+    for (let i = 0; i < W; i++) {
+      const u = u0 + (i + 0.5) * res, o = (j * W + i) * 4;
+      const fx = (c * u - s * v - ox) / res - 0.5, fy = (s * u + c * v - oy) / res - 0.5, x0 = Math.floor(fx), y0 = Math.floor(fy);
+      if (occ(x0, y0) || occ(x0 + 1, y0) || occ(x0, y0 + 1) || occ(x0 + 1, y0 + 1)) { out[o] = out[o+1] = out[o+2] = 0; out[o+3] = 255; continue; }
+      const xn = Math.round(fx), yn = Math.round(fy);
+      if (xn < 0 || yn < 0 || xn >= w || yn >= h) { out[o+3] = 0; continue; }
+      const q = (yn * w + xn) * 4;
+      out[o] = rgba[q]; out[o+1] = rgba[q+1]; out[o+2] = rgba[q+2]; out[o+3] = 255;
+    }
+  }
+  const cu = u0 + W * res / 2, cv = v0 + H * res / 2;
+  mesh.position.set(c * cu - s * cv, s * cu + c * cv, 0); mesh.rotation.z = th;
+  tex.needsUpdate = true; mapState.mesh.visible = false; invalidate();
 }
 
 // ---------------- object point clouds ----------------
@@ -452,6 +504,7 @@ async function updateWalls() {
 }
 function showWalls(w) {
   if (w.segments === null) w.segments = lastWalls ? lastWalls.segments : [];   // unchanged since the last event
+  else setWallTheta(w.theta);
   lastWalls = w;
   const [x, y, yaw] = w.pose;
   const segKey = w.segments.length + "|" + (w.segments.length ? w.segments[0].join(",") + "|" + w.segments[w.segments.length - 1].join(",") : "");
@@ -899,7 +952,7 @@ function onMapEvent(d) {
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(d.w * d.res, d.h * d.res), new THREE.MeshBasicMaterial({ map:tex, side:THREE.DoubleSide }));
     mesh.position.set(d.ox + d.w * d.res / 2, d.oy + d.h * d.res / 2, 0);
     gMap.add(mesh);
-    mapState = { w:d.w, h:d.h, rgba, tex, mesh, ver:"live", key };
+    mapState = { w:d.w, h:d.h, rgba, tex, mesh, ver:"live", key, res:d.res, ox:d.ox, oy:d.oy };
     liveGrid = { origin:[d.ox, d.oy], resolution:d.res, width:d.w, height:d.h };
     if (autoFit) fitViewTo(liveGrid, !view && !firstFit);   // first map: place the camera at once; later growth: fly
     firstFit = true;
@@ -912,6 +965,7 @@ function onMapEvent(d) {
     }
   }
   mapState.tex.needsUpdate = true;
+  if (alignTheta !== 0) queueAligned();
   gMap.visible = opt("c_map"); invalidate();
 }
 let liveGrid = null, firstFit = false;
@@ -992,6 +1046,7 @@ async function startLive() {
   const es = new EventSource("/stream");
   es.addEventListener("reset", () => {   // a new run: forget the old map, trail and summary
     if (mapState) { mapState.tex.dispose(); mapState.mesh.geometry.dispose(); mapState.mesh.material.dispose(); gMap.remove(mapState.mesh); mapState = null; }
+    dropAligned(); alignTheta = 0;
     trailN = 0; trailLast = null; if (trail) trail.geometry.setDrawRange(0, 0);
     view = null; objs.clear(); selected = null; poseCur.init = false; poseTgt.has = false; robotGrp = null; liveGrid = null;
     for (const g of [gObjs, gGraph, gWalls, gRobot]) disposeGroup(g);

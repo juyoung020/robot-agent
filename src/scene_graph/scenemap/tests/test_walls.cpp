@@ -114,6 +114,50 @@ int main(int argc, char** argv) {
     auto r2 = ex.update(g3, 0, 0, nullptr);
     if (r2.size() != 2) { std::printf("FAIL extractor ignore removed: %zu\n", r2.size()); ++bad; }
   }
+  // 기울어진 방(slam 지도 = 출발 자세 기준): 축에 맞는 추출은 거의 못 찾고, wallSegmentsAligned 는 네 벽을 θ 방향 선분으로 찾는다.
+  // 축에 맞는 격자에서는 wallSegments 와 같은 결과.
+  {
+    const double th = 49.2 * M_PI / 180.0, cx = 12.5, cy = 10.0, L = 6.0, Wd = 4.0;
+    std::vector<int8_t> c4(size_t(w) * h, 0);
+    for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
+      const double px = (x + 0.5) * 0.05 - cx, py = (y + 0.5) * 0.05 - cy;
+      const double u = std::cos(th) * px + std::sin(th) * py, v = -std::sin(th) * px + std::cos(th) * py;   // 방 좌표
+      const bool in_outer = std::abs(u) <= L / 2 + 0.05 && std::abs(v) <= Wd / 2 + 0.05;
+      const bool in_inner = std::abs(u) < L / 2 - 0.05 && std::abs(v) < Wd / 2 - 0.05;
+      if (in_outer && !in_inner) c4[size_t(y) * w + x] = 100;
+    }
+    WallGrid g4{c4.data(), w, h, 0.05, 0.0, 0.0};
+    double ang = 0;
+    const auto axis = wallSegments(g4);
+    const auto al = wallSegmentsAligned(g4, kMinLen, kMaxThick, 0.6, nullptr, &ang);
+    double len = 0, axis_len = 0;
+    int off_dir = 0;
+    for (auto& s : axis) axis_len += std::hypot(s.bx - s.ax, s.by - s.ay);
+    for (auto& s : al) {
+      len += std::hypot(s.bx - s.ax, s.by - s.ay);
+      double a = std::fmod(std::atan2(s.by - s.ay, s.bx - s.ax) - th + 4 * M_PI, M_PI / 2);
+      if (std::min(a, M_PI / 2 - a) > 1.0 * M_PI / 180) ++off_dir;
+    }
+    const double angd = ang * 180 / M_PI;
+    std::printf("rotated room 49.2 deg: axis %zu seg %.1f m, aligned %zu seg %.1f m (theta %.2f deg)\n", axis.size(), axis_len, al.size(), len, angd);
+    if (std::abs(std::remainder(angd - 49.2, 90.0)) > 0.3) { std::printf("FAIL wallAngle %.2f\n", angd); ++bad; }
+    if (al.size() != 4 || std::abs(len - 2 * (L + Wd)) > 1.0 || off_dir) { std::printf("FAIL aligned room: %zu segments %.2f m, %d off-direction\n", al.size(), len, off_dir); ++bad; }
+    if (axis_len > 0.25 * len) { std::printf("FAIL axis extractor should miss tilted walls (%.1f m)\n", axis_len); ++bad; }
+    // 축에 맞는 격자: 같은 결과
+    std::vector<WallRect> ig = {{4.9, 5.9, 6.9, 6.5}};
+    std::vector<int8_t> c3(size_t(w) * h, 0);
+    for (int y = 40; y < 43; ++y) for (int x = 40; x < 240; ++x) c3[size_t(y) * w + x] = 100;
+    for (int y = 40; y < 240; ++y) for (int x = 40; x < 43; ++x) c3[size_t(y) * w + x] = 100;
+    for (int y = 120; y < 128; ++y) for (int x = 100; x < 136; ++x) c3[size_t(y) * w + x] = 100;
+    WallGrid g3{c3.data(), w, h, 0.05, 0.0, 0.0};
+    const std::vector<WallRect>* ips[2] = {nullptr, &ig};
+    for (const std::vector<WallRect>* ip : ips) {
+      const auto a = wallSegments(g3, kMinLen, kMaxThick, 0.6, ip), b = wallSegmentsAligned(g3, kMinLen, kMaxThick, 0.6, ip);
+      bool same = a.size() == b.size();
+      for (size_t i = 0; same && i < a.size(); ++i) same = a[i].ax == b[i].ax && a[i].ay == b[i].ay && a[i].bx == b[i].bx && a[i].by == b[i].by;
+      if (!same) { std::printf("FAIL aligned != plain on an axis-aligned grid (%zu vs %zu)\n", a.size(), b.size()); ++bad; }
+    }
+  }
   std::printf(bad ? "FAIL (%d)\n" : "OK\n", bad);
   return bad ? 1 : 0;
 }

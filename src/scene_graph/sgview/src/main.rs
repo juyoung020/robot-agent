@@ -101,7 +101,7 @@ fn decode_png(b: &[u8]) -> Option<(usize, usize, usize, usize, Vec<u8>)> {
 }
 
 extern "C" {
-    fn sgv_wall_segments(cells: *const i8, w: i32, h: i32, res: f64, ox: f64, oy: f64, ignore: *const f64, n_ignore: i32, out: *mut f64, cap: i32) -> i32;
+    fn sgv_wall_segments(cells: *const i8, w: i32, h: i32, res: f64, ox: f64, oy: f64, ignore: *const f64, n_ignore: i32, out: *mut f64, cap: i32, angle_out: *mut f64) -> i32;
     fn sgv_wall_state(cells: *const i8, w: i32, h: i32, res: f64, ox: f64, oy: f64, segs: *const f64, n: i32, pose: *const f64, out: *mut f32);
 }
 
@@ -116,6 +116,7 @@ struct WallMap {
     oy: f64,
     cells: Vec<i8>,
     segs: Vec<f64>, // ax ay bx by …
+    theta: f64,     // wall direction [rad] (slam maps are in the start-pose frame, so walls can be tilted); ~0 when axis-aligned
 }
 
 /// Recent map.pgm versions (newest last): a client that has version V gets only the rows that changed since V.
@@ -147,6 +148,7 @@ struct Live {
     joints: Option<String>,  // last joints event (SSE text), resent to new pages
     ig: Vec<f64>,            // furniture footprints from the summary
     segs: Vec<f64>,
+    theta: f64,              // wall direction of the grid [rad], with the segments
     seg_ver: u64,            // bumps when the segments actually change
     seg_sent: u64,           // version last broadcast
     segs_dirty: bool,
@@ -289,13 +291,14 @@ fn wall_map(st: &State) -> Option<Arc<WallMap>> {
         }
     }
     let mut buf = vec![0f64; 4 * 512];
-    let mut n = unsafe { sgv_wall_segments(cells.as_ptr(), w as i32, h as i32, res, ox, oy, ig.as_ptr(), (ig.len() / 4) as i32, buf.as_mut_ptr(), 512) } as usize;
+    let mut theta = 0f64;
+    let mut n = unsafe { sgv_wall_segments(cells.as_ptr(), w as i32, h as i32, res, ox, oy, ig.as_ptr(), (ig.len() / 4) as i32, buf.as_mut_ptr(), 512, &mut theta) } as usize;
     if n > 512 {
         buf = vec![0f64; 4 * n];
-        n = unsafe { sgv_wall_segments(cells.as_ptr(), w as i32, h as i32, res, ox, oy, ig.as_ptr(), (ig.len() / 4) as i32, buf.as_mut_ptr(), n as i32) } as usize;
+        n = unsafe { sgv_wall_segments(cells.as_ptr(), w as i32, h as i32, res, ox, oy, ig.as_ptr(), (ig.len() / 4) as i32, buf.as_mut_ptr(), n as i32, &mut theta) } as usize;
     }
     buf.truncate(4 * n);
-    let wm = Arc::new(WallMap { ver, ig_key, w: w as i32, h: h as i32, res, ox, oy, cells, segs: buf });
+    let wm = Arc::new(WallMap { ver, ig_key, w: w as i32, h: h as i32, res, ox, oy, cells, segs: buf, theta });
     *g = Some(wm.clone());
     Some(wm)
 }
@@ -359,8 +362,9 @@ fn walls_json(st: &State, q: &HashMap<String, String>) -> Option<String> {
     let segs: Vec<String> = wm.segs.chunks(4).map(|c| json_f64s(c)).collect();
     let state: Vec<String> = out.iter().map(|x| format!("{:.5}", x)).collect();
     Some(format!(
-        "{{\"segments\":[{}],\"state\":[{}],\"pose\":{},\"map_v\":\"{}\",\"n_sectors\":16,\"k_segments\":8,\"max_range\":4.0}}",
+        "{{\"segments\":[{}],\"theta\":{:.6},\"state\":[{}],\"pose\":{},\"map_v\":\"{}\",\"n_sectors\":16,\"k_segments\":8,\"max_range\":4.0}}",
         segs.join(","),
+        wm.theta,
         state.join(","),
         json_f64s(&pose),
         wm.ver
@@ -592,14 +596,16 @@ fn recompute_segments(l: &mut Live) {
         return;
     }
     let mut buf = vec![0f64; 4 * 512];
-    let mut n = unsafe { sgv_wall_segments(l.cells.as_ptr(), l.w, l.h, l.res, l.ox, l.oy, l.ig.as_ptr(), (l.ig.len() / 4) as i32, buf.as_mut_ptr(), 512) } as usize;
+    let mut theta = 0f64;
+    let mut n = unsafe { sgv_wall_segments(l.cells.as_ptr(), l.w, l.h, l.res, l.ox, l.oy, l.ig.as_ptr(), (l.ig.len() / 4) as i32, buf.as_mut_ptr(), 512, &mut theta) } as usize;
     if n > 512 {
         buf = vec![0f64; 4 * n];
-        n = unsafe { sgv_wall_segments(l.cells.as_ptr(), l.w, l.h, l.res, l.ox, l.oy, l.ig.as_ptr(), (l.ig.len() / 4) as i32, buf.as_mut_ptr(), n as i32) } as usize;
+        n = unsafe { sgv_wall_segments(l.cells.as_ptr(), l.w, l.h, l.res, l.ox, l.oy, l.ig.as_ptr(), (l.ig.len() / 4) as i32, buf.as_mut_ptr(), n as i32, &mut theta) } as usize;
     }
     buf.truncate(4 * n);
-    if buf != l.segs {
+    if buf != l.segs || theta != l.theta {
         l.segs = buf;
+        l.theta = theta;
         l.seg_ver += 1;
     }
 }
@@ -616,9 +622,9 @@ fn walls_event(l: &Live, with_segments: bool) -> Option<String> {
     }
     let segs = if with_segments {
         let v: Vec<String> = l.segs.chunks(4).map(|c| json_f64s(c)).collect();
-        format!("[{}]", v.join(","))
+        format!("[{}],\"theta\":{:.6}", v.join(","), l.theta)
     } else {
-        "null".to_string()   // unchanged: the page keeps the segments it has
+        "null".to_string()   // unchanged: the page keeps the segments (and wall direction) it has
     };
     let state: Vec<String> = out.iter().map(|x| format!("{:.5}", x)).collect();
     Some(sse("walls", &format!("{{\"segments\":{},\"state\":[{}],\"pose\":{},\"max_range\":4.0}}", segs, state.join(","), json_f64s(&pose))))
@@ -706,7 +712,7 @@ fn ingest_conn(st: Arc<State>, mut s: TcpStream) {
     {
         // a new simulator run (or a restart) starts from an empty state; the pages are told to clear theirs too
         let mut l = st.live.lock().unwrap();
-        l.w = 0; l.h = 0; l.cells.clear(); l.view = None; l.pose = None; l.joints = None; l.ig.clear(); l.segs.clear(); l.seg_ver += 1; l.segs_dirty = false;
+        l.w = 0; l.h = 0; l.cells.clear(); l.view = None; l.pose = None; l.joints = None; l.ig.clear(); l.segs.clear(); l.theta = 0.0; l.seg_ver += 1; l.segs_dirty = false;
         broadcast(&st, sse("reset", "{}"));
     }
     let mut head = [0u8; 5];
@@ -813,7 +819,7 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let st = Arc::new(State { dir, walls: Mutex::new(None), view: Mutex::new((String::new(), Arc::new(String::new()))), maps: Mutex::new(MapHist { vers: Vec::new() }), live_mode: ingest.is_some(), live: Mutex::new(Live { w: 0, h: 0, res: 0.05, ox: 0.0, oy: 0.0, cells: Vec::new(), view: None, pose: None, joints: None, ig: Vec::new(), segs: Vec::new(), seg_ver: 0, seg_sent: 0, segs_dirty: false, last_walls: Instant::now() }), clients: Mutex::new(Vec::new()) });
+    let st = Arc::new(State { dir, walls: Mutex::new(None), view: Mutex::new((String::new(), Arc::new(String::new()))), maps: Mutex::new(MapHist { vers: Vec::new() }), live_mode: ingest.is_some(), live: Mutex::new(Live { w: 0, h: 0, res: 0.05, ox: 0.0, oy: 0.0, cells: Vec::new(), view: None, pose: None, joints: None, ig: Vec::new(), segs: Vec::new(), theta: 0.0, seg_ver: 0, seg_sent: 0, segs_dirty: false, last_walls: Instant::now() }), clients: Mutex::new(Vec::new()) });
     let l = TcpListener::bind((bind.as_str(), port)).unwrap_or_else(|e| {
         eprintln!("cannot listen on {}:{}: {}", bind, port, e);
         std::process::exit(1);

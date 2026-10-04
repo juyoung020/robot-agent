@@ -32,7 +32,8 @@ using namespace scenemap;
 namespace {
 struct Prop {
   double stamp;
-  float q[kProprioDim];
+  float q[kMaxProprioDim];
+  double v[3];                  // 적분에 쓰는 베이스 속도(로봇 기준 vx, vy, wz). R1 = q[0..3](base_qvel), LIMO = 오도메트리 자세 차 / dt
 };
 struct ViewSlot {
   BestViewPtr v;
@@ -85,6 +86,11 @@ struct sm_ctx {
   std::vector<std::string> kind_names[3];   // [1] 구조물, [2] 고정(정규화한 이름)
   std::vector<uint8_t> kinds;               // labels[i] 의 종류
   std::vector<uint32_t> handled;
+  // 로봇(sm_set_robot·config "robot"): proprio 형식·순기구학·몸 크기 매개변수
+  int robot = kRobotR1Pro;
+  bool odom_pose = true;        // LIMO: 오도메트리 자세 차로 적분(false: proprio 의 twist 3..6 을 그대로)
+  bool have_odom = false;       // LIMO: 지난 proprio 의 오도메트리 자세
+  double odom_prev[3] = {0, 0, 0}, odom_prev_stamp = 0;
   std::deque<Prop> pending;     // 아직 적분하지 않은 proprio(영상 stamp 를 기다림)
   Prop last_used{};             // 가장 최근에 적분한 proprio
   bool have_used = false;
@@ -199,6 +205,48 @@ void handsOf(const float* q, float eef[2][3], float grip[2]) {
   grip[1] = q[49] + q[50];
 }
 
+// 로봇별 팔 끝(베이스 기준)·그리퍼 값. R1 = proprio 그대로, LIMO = 순기구학 omx_end_effector_link + omx_gripper_joint_1(두 칸 같은 값)
+void robotHands(int robot, const float* q, float eef[2][3], float grip[2]) {
+  if (robot != kRobotLimoOmx) { handsOf(q, eef, grip); return; }
+  LimoFk f;
+  computeLimoFk(q, &f);
+  for (int k = 0; k < 3; ++k) eef[0][k] = eef[1][k] = float(f.T_eef[k * 4 + 3]);
+  grip[0] = grip[1] = q[11];
+}
+
+// 로봇별 순기구학 몸(스캔 가리기 캡슐) + T_head + 팔 끝
+BodyState robotBody(int robot, const float* q, BodyFk* fk) {
+  if (robot == kRobotLimoOmx) {
+    LimoFk f;
+    computeLimoFk(q, &f);
+    float eef[2][3];
+    limoBodyFk(f, fk, eef);
+    return bodyFromFk(*fk, eef, 0.05f, 0.06f, 0.f);   // OMX 링크 폭 ≈ 3–4 cm
+  }
+  computeBodyFk(q, fk);
+  const float eef[2][3] = {{q[17], q[18], q[19]}, {q[42], q[43], q[44]}};
+  return bodyFromFk(*fk, eef);
+}
+
+// 로봇별 몸 크기 매개변수(R1 = 구조체 기본값 그대로). LIMO 0.32 × 0.22 × 0.25 m, 깊이 카메라 높이 0.18 m, OMX 팔 닿는 거리 ≈ 0.4 m
+void robotParams(int robot, SlamParams* sp, ObjParams* op) {
+  if (robot != kRobotLimoOmx) return;
+  ScanParams& s = sp->scan;
+  s.self_r = 0.22f;            // 몸통 반대각선 0.19 m + 여유(R1 0.55)
+  s.eef_r = 0.08f;             // 팔 끝 둘레(R1 0.35)
+  s.arm_r = 0.06f;             // 캡슐이 없을 때만 쓰는 어깨–팔 끝 선분
+  for (int k = 0; k < 2; ++k) { s.shoulder[k][0] = -0.05f; s.shoulder[k][1] = 0.f; s.shoulder[k][2] = 0.25f; }   // omx_joint2 근처
+  s.band_lo = 0.05f;           // 5 cm 넘는 턱이면 못 넘음(R1 0.10)
+  s.band_hi = 0.50f;           // 팔 접은 키 ≈ 0.35 m: 탁자 상판(≈ 0.7 m) 밑으로는 지나감(R1 1.80)
+  sp->attach.radius = 0.6f;    // 로봇에 붙어 같이 움직이는 것 판정 반경(R1 1.3)
+  op->hand_r = 0.10f;          // 손에 든 것 거르기(R1 0.40)
+  op->grasp_r = 0.12f;         // 그리퍼가 닫힐 때 이 안 물체를 듦(R1 0.25)
+  op->cloud_hand_r = 0.05;
+  op->body_r = 0.22;
+  op->grip_closed = 0.35f;     // omx_gripper_joint_1 < 0.35 rad(손끝 틈 ≈ 5 cm 아래)면 닫힘. 0 = 완전히 닫힘, 1.745 = 다 열림
+  op->n_hands = 1;
+}
+
 // 베이스 기준 점 → map (slam 자세)
 void toMap(const Pose2& P, const float b[2][3], double m[2][3]) {
   const double c = std::cos(P.th), s = std::sin(P.th);
@@ -248,7 +296,7 @@ void streamMap(sm_ctx* c) {
 void integrate(sm_ctx* c, const Prop& p) {
   if (c->have_used) {
     const double dt = p.stamp - c->last_used.stamp;
-    if (dt > 0 && dt < 1.0) c->slam.pushVelocity(p.q[0], p.q[1], p.q[2], dt);
+    if (dt > 0 && dt < 1.0) c->slam.pushVelocity(p.v[0], p.v[1], p.v[2], dt);
   }
   const auto t0 = TClock::now();
   c->last_used = p;
@@ -258,7 +306,7 @@ void integrate(sm_ctx* c, const Prop& p) {
   if (c->pose_mode == SM_POSE_GT && gtAt(c, p.stamp, &g, 1e-4)) c->slam.setPose(g);
   // 영상이 없는 스텝에도 든 물체가 손을 따라가게
   float eef[2][3], grip[2];
-  handsOf(p.q, eef, grip);
+  robotHands(c->robot, p.q, eef, grip);
   double eefm[2][3];
   const Pose2 P = c->slam.pose();
   toMap(P, eef, eefm);
@@ -279,7 +327,7 @@ Pose2 preview(const sm_ctx* c, double* stamp) {
     const double dt = p.stamp - t;
     t = p.stamp;
     if (!(dt > 0 && dt < 1.0)) continue;
-    double vx = p.q[0], vy = p.q[1], wz = p.q[2];
+    double vx = p.v[0], vy = p.v[1], wz = p.v[2];
     if (c->params.deadband && std::hypot(vx, vy) < c->params.still_v && std::fabs(wz) < c->params.still_w) continue;
     const double cs = std::cos(q.th), sn = std::sin(q.th);
     q.x += (cs * vx - sn * vy) * dt;
@@ -328,7 +376,123 @@ void snapRooms(sm_ctx* c, sm_snapshot_t* s) {
 
 extern "C" {
 
-sm_ctx* sm_create(const char* /*config_json: 아직 기본값만*/) { return new sm_ctx(SlamParams{}); }
+namespace {
+// config_json 의 작은 읽기: "key": "문자열" / "key": 숫자. 없으면 false(JSON 전체 파서는 두지 않는다 — 키가 몇 개뿐)
+bool cfgString(const std::string& j, const char* key, std::string* out) {
+  const size_t k = j.find(std::string("\"") + key + "\"");
+  if (k == std::string::npos) return false;
+  size_t p = j.find(':', k);
+  if (p == std::string::npos) return false;
+  p = j.find_first_not_of(" \t\r\n", p + 1);
+  if (p == std::string::npos || j[p] != '"') return false;
+  const size_t e = j.find('"', p + 1);
+  if (e == std::string::npos) return false;
+  *out = j.substr(p + 1, e - p - 1);
+  return true;
+}
+bool cfgNumber(const std::string& j, const char* key, double* out) {
+  const size_t k = j.find(std::string("\"") + key + "\"");
+  if (k == std::string::npos) return false;
+  const size_t p = j.find(':', k);
+  if (p == std::string::npos) return false;
+  char* end = nullptr;
+  const double v = std::strtod(j.c_str() + p + 1, &end);
+  if (end == j.c_str() + p + 1) return false;
+  *out = v;
+  return true;
+}
+}  // namespace
+
+sm_ctx* sm_create(const char* config_json) {
+  sm_ctx* c = new sm_ctx(SlamParams{});
+  if (!config_json || !*config_json) return c;   // 기본: R1 Pro(옛 동작 그대로)
+  const std::string j(config_json);
+  std::string r;
+  if (cfgString(j, "robot", &r)) {
+    const int k = r == "r1pro" || r == "r1" ? SM_ROBOT_R1PRO : r == "limo_omx" || r == "limo" ? SM_ROBOT_LIMO_OMX : -1;
+    if (k < 0 || sm_set_robot(c, k) != 0) { delete c; return nullptr; }
+  }
+  std::string od;
+  if (cfgString(j, "odom", &od)) {
+    if (od != "pose" && od != "twist") { delete c; return nullptr; }
+    c->odom_pose = od == "pose";
+  }
+  double gc;
+  if (cfgNumber(j, "grip_closed", &gc)) {
+    c->oparams.grip_closed = float(gc);
+    sm_reset(c);
+  }
+  return c;
+}
+
+int sm_set_robot(sm_ctx* c, int32_t robot) {
+  if (!c || (robot != SM_ROBOT_R1PRO && robot != SM_ROBOT_LIMO_OMX)) return -1;
+  {
+    std::lock_guard<std::mutex> g(c->mu);
+    c->robot = robot;
+    SlamParams sp{};
+    ObjParams op{};
+    op.voxel = c->oparams.voxel;          // sm_set_cloud_params 로 바꾼 값은 둔다
+    op.cloud_cap = c->oparams.cloud_cap;
+    robotParams(robot, &sp, &op);
+    c->params = sp;
+    c->oparams = op;
+  }
+  return sm_reset(c);
+}
+
+int sm_get_robot(sm_ctx* c) { return c ? c->robot : -1; }
+
+int sm_proprio_dim(int32_t robot) {
+  return robot == SM_ROBOT_R1PRO ? SM_R1PRO_PROPRIO_DIM : robot == SM_ROBOT_LIMO_OMX ? SM_LIMO_PROPRIO_DIM : -1;
+}
+
+int sm_robot_fk(int32_t robot, const float* q, int32_t n, sm_body_fk* o) {
+  if (!q || !o || sm_proprio_dim(robot) < 0 || n < sm_proprio_dim(robot)) return -1;
+  std::memset(o, 0, sizeof(*o));
+  float eef[2][3], grip[2];
+  robotHands(robot, q, eef, grip);
+  if (robot == SM_ROBOT_LIMO_OMX) {
+    LimoFk f;
+    computeLimoFk(q, &f);
+    o->n_cams = 2;
+    o->n_hands = 1;
+    o->cam_valid[0] = o->cam_valid[1] = 1;
+    std::memcpy(o->T_cam[0], f.T_depth, sizeof(f.T_depth));
+    std::memcpy(o->T_cam[1], f.T_wrist, sizeof(f.T_wrist));
+    std::memcpy(o->T_eef[0], f.T_eef, sizeof(f.T_eef));
+    o->eef_valid[0] = 1;
+  } else {
+    BodyFk fk;
+    computeBodyFk(q, &fk);
+    o->n_cams = 3;
+    o->n_hands = 2;
+    for (int c = 0; c < 3; ++c) {   // 광학 = prim × diag(1, −1, −1)
+      const float* r = fk.cam_rel[c];
+      const double x = r[3], y = r[4], z = r[5], w = r[6];
+      const double R[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)},
+                              {2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)},
+                              {2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)}};
+      for (int i = 0; i < 3; ++i) {
+        o->T_cam[c][i * 4 + 0] = R[i][0];
+        o->T_cam[c][i * 4 + 1] = -R[i][1];
+        o->T_cam[c][i * 4 + 2] = -R[i][2];
+        o->T_cam[c][i * 4 + 3] = r[i];
+      }
+      o->cam_valid[c] = 1;
+    }
+    for (int h = 0; h < 2; ++h) {   // 회전은 proprio 에서 안 읽음: 위치만(T_eef 의 R = I)
+      for (int i = 0; i < 3; ++i) o->T_eef[h][i * 4 + i] = 1;
+    }
+  }
+  for (int h = 0; h < o->n_hands; ++h) {
+    if (robot != SM_ROBOT_LIMO_OMX)   // LIMO 는 위에서 배정밀도 순기구학 자세를 그대로 넣었음
+      for (int i = 0; i < 3; ++i) o->T_eef[h][i * 4 + 3] = eef[h][i];
+    o->grip[h] = grip[h];
+    o->eef_valid[h] = robot == SM_ROBOT_LIMO_OMX ? 1 : 0;
+  }
+  return 0;
+}
 
 void sm_destroy(sm_ctx* c) { delete c; }
 
@@ -368,6 +532,7 @@ int sm_reset(sm_ctx* c) {
   c->handled.clear();
   c->pending.clear();
   c->have_used = false;
+  c->have_odom = false;
   c->st = sm_status{};
   c->views.clear();
   c->last_assoc.clear();
@@ -397,14 +562,46 @@ int sm_reset(sm_ctx* c) {
 }
 
 int sm_push_proprio(sm_ctx* c, const sm_proprio* p) {
-  if (!c || !p || !p->proprio || p->n_proprio < kProprioDim) return -1;
+  if (!c || !p || !p->proprio || p->n_proprio < proprioDim(c->robot)) return -1;
   const auto t0 = TClock::now();
   std::lock_guard<std::mutex> g(c->mu);
   Prop e;
   e.stamp = p->stamp;
-  std::memcpy(e.q, p->proprio, sizeof(e.q));
+  if (c->robot == kRobotLimoOmx) {
+    std::memset(e.q, 0, sizeof(e.q));
+    std::memcpy(e.q, p->proprio, sizeof(float) * size_t(std::min(p->n_proprio, kMaxProprioDim)));
+    const float* q = p->proprio;
+    // 적분 속도: 오도메트리 자세 차(지난 proprio 의 베이스 기준) / dt — 같은 Euler 적분으로 오도메트리 이동을 그대로 되살림.
+    // 첫 표본·간격 이상(dt ≤ 0, ≥ 1 s)·odom "twist" 이면 proprio 의 twist
+    const double dt = p->stamp - c->odom_prev_stamp;
+    if (c->odom_pose && c->have_odom && dt > 0 && dt < 1.0) {
+      const double dx = q[SM_LIMO_ODOM_X] - c->odom_prev[0], dy = q[SM_LIMO_ODOM_Y] - c->odom_prev[1];
+      const double cy = std::cos(c->odom_prev[2]), sy = std::sin(c->odom_prev[2]);
+      e.v[0] = (cy * dx + sy * dy) / dt;
+      e.v[1] = (-sy * dx + cy * dy) / dt;
+      e.v[2] = wrapAngle(double(q[SM_LIMO_ODOM_YAW]) - c->odom_prev[2]) / dt;
+    } else {
+      e.v[0] = q[SM_LIMO_VX]; e.v[1] = q[SM_LIMO_VY]; e.v[2] = q[SM_LIMO_WZ];
+    }
+    c->odom_prev[0] = q[SM_LIMO_ODOM_X]; c->odom_prev[1] = q[SM_LIMO_ODOM_Y]; c->odom_prev[2] = q[SM_LIMO_ODOM_YAW];
+    c->odom_prev_stamp = p->stamp;
+    c->have_odom = true;
+  } else {
+    std::memcpy(e.q, p->proprio, sizeof(e.q));
+    e.v[0] = e.q[0]; e.v[1] = e.q[1]; e.v[2] = e.q[2];
+  }
   c->pending.push_back(e);
-  if (c->stream.running()) c->stream.pushJoints(p->stamp, p->proprio, p->n_proprio);   // 관절·상태 벡터 그대로(뷰어가 URDF 로 해석)
+  if (c->stream.running()) {
+    if (c->robot == kRobotLimoOmx) {   // 뷰어 robot.json joint_order: omx_joint1..5, gripper_1, gripper_2(= −1), (바퀴 fl, fr, rl, rr)
+      const float* q = p->proprio;
+      float j[11] = {q[6], q[7], q[8], q[9], q[10], q[11], -q[11], 0, 0, 0, 0};
+      int n = 7;
+      if (p->n_proprio >= SM_LIMO_PROPRIO_DIM + 4) { for (int k = 0; k < 4; ++k) j[7 + k] = q[SM_LIMO_WHEEL_FL + k]; n = 11; }
+      c->stream.pushJoints(p->stamp, j, n);
+    } else {
+      c->stream.pushJoints(p->stamp, p->proprio, p->n_proprio);   // 관절·상태 벡터 그대로(뷰어가 URDF 로 해석)
+    }
+  }
   // 영상이 오지 않아도 쌓이지 않게: 최신보다 0.5 s 넘게 오래된 것은 적분해 둔다(영상 stamp 는 최신 − 1 스텝)
   while (c->pending.size() > 1 && c->pending.front().stamp < p->stamp - 0.5) {
     integrate(c, c->pending.front());
@@ -569,7 +766,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   std::lock_guard<std::mutex> g(c->mu);
   c->st.last_image_stamp = im->stamp;
   c->st.n_images++;
-  if (im->cam != 0 || !im->depth_m) return 0;   // slam2d 는 머리 깊이만
+  if (im->cam != 0 || !im->depth_m) return 0;   // slam2d 는 cam 0 깊이만(R1 머리, LIMO 몸통 앞 깊이 카메라)
   tot.on = true;
   // 영상 stamp 까지 적분(같은 stamp 의 proprio 가 이 영상의 짝)
   const auto tp = TClock::now();
@@ -584,10 +781,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   const auto tf = TClock::now();
   c->addT(kStPair, usBetween(tp, tf));
   BodyFk fk;
-  computeBodyFk(c->last_used.q, &fk);
-  const float eef[2][3] = {{c->last_used.q[17], c->last_used.q[18], c->last_used.q[19]},
-                           {c->last_used.q[42], c->last_used.q[43], c->last_used.q[44]}};
-  const BodyState body = bodyFromFk(fk, eef);
+  const BodyState body = robotBody(c->robot, c->last_used.q, &fk);
   c->addT(kStFk, usBetween(tf, TClock::now()));
   DepthView dv;
   dv.w = im->w;
@@ -622,7 +816,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   F.T_mc[7] += P.y;
   F.dets = dets;
   float eefb[2][3], grip[2];
-  handsOf(c->last_used.q, eefb, grip);
+  robotHands(c->robot, c->last_used.q, eefb, grip);
   toMap(P, eefb, F.eef);
   F.grip[0] = grip[0];
   F.grip[1] = grip[1];
