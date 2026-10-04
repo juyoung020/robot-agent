@@ -45,6 +45,13 @@ int main(int argc, char** argv) {
       DeviceEnv e(N, 1, 1);
       gmap::DeviceMap m(N, 7);
       if (std::getenv("MAP_BENCH_NOTOK")) m.set_tokens(false);   // 측정용: 토큰 커널 빼고
+      if (const char* cs = std::getenv("MAP_CURR")) {   // 커리큘럼 처음 지도(5.5) 비율 "p0,p1[,kmin,kmax,reveal_r]" — 판 리셋 때 미리 채우는 비용 재기
+        gmap::MapCurr cu = gmap::kCurrEmpty;
+        float kk[3] = {(float)cu.kmin, (float)cu.kmax, cu.reveal_r};
+        std::sscanf(cs, "%f,%f,%f,%f,%f", &cu.p0, &cu.p1, &kk[0], &kk[1], &kk[2]);
+        cu.kmin = (int)kk[0]; cu.kmax = (int)kk[1]; cu.reveal_r = kk[2];
+        cudaMemcpy(m.curr_dev(), &cu, sizeof cu, cudaMemcpyHostToDevice);
+      }
       float *act, *obs, *rew; int* done;
       cudaMalloc(&act, sizeof(float) * N_ACT * (size_t)N);
       cudaMalloc(&obs, sizeof(float) * N_OBS * (size_t)N);

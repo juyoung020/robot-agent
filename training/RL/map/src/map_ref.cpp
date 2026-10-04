@@ -19,13 +19,13 @@ CpuMap::CpuMap(int N_, uint64_t seed) : N(N_) {
   for (int i = 0; i < N; ++i) init_core(h.core[i], seed, i);
 }
 
-void CpuMap::step(const env::Soa& s, int force_kf) {
+void CpuMap::step(const env::Soa& s, int force_kf, const MapCurr& cu) {
 #pragma omp parallel for schedule(dynamic, 16)
   for (int i = 0; i < N; ++i) {
     KfShared u;
     const EnvView e = read_env(s, i);
     const MapGrid g{h.L.data() + (size_t)i * NCELL, h.seen.data() + (size_t)i * NWORD, h.occ.data() + (size_t)i * NWORD, h.segs.data() + (size_t)i * SEGW};
-    map_block(h.core[i], u, e, g, h.met.data(), N, i, 0, 1, 0, force_kf, NoSync{});
+    map_block(h.core[i], u, e, g, h.met.data(), N, i, 0, 1, 0, force_kf, cu, NoSync{});
     TokScratch ts;
     make_tokens(h.core[i], g.occ, g.segs, h.tprev.data() + (size_t)i * KSLOT, ts, 0, 1, true, NoSync{});
     h.tok[i] = ts.out;

@@ -1,6 +1,7 @@
 // V1 식 검증(지도): G1 환경(GPU·CPU 각각)을 같은 행동 열로 돌리고, 스텝마다 지도 단계를 GPU 커널과 CPU 참조판으로 돌려
 // **매 스텝 환경 상태 + 지도 전체(물체 기억·slam 자세·격자 로그 오즈·본 칸·완성도)**를 비트 단위로 비교한다.
-//   map_verify [N=2048] [steps=600] [--negative] [--force-kf] [--arm]
+//   map_verify [N=2048] [steps=600] [--negative] [--force-kf] [--arm] [--curr p0,p1[,kmin,kmax[,reveal_r]]]
+// --curr: 커리큘럼 처음 지도(5.5) 비율. 예 --curr 1,0 = 모두 C0(전체), --curr 0,1 = 모두 C1(부분), --curr 0.34,0.33 = 섞음. 기본 0,0 = 모두 C2(예전 그대로)
 // --negative: GPU 쪽만 확정 규칙을 끈다(confirm 1, 계획서 5.2 의 음성 대조). 반드시 실패해야 한다 — 실패하면 종료 코드 0.
 // --arm: 팔을 푼 G1 환경(arm_free)에 팔·그리퍼 행동을 넣어 들기·놓기 규칙을 지나게 한다.
 // 비교: 환경 상태, MapCore, 격자 로그 오즈·본 칸·점유 비트, 벽 선분, 토큰 물체 속도 상태, 지도 토큰(1,280 B), 완성도. 시작 때 FP16 변환을
@@ -27,9 +28,15 @@ __global__ void f2h_check_kernel(uint32_t hi, unsigned long long* bad) {   // �
 int main(int argc, char** argv) {
   int N = 2048, T = 600, force_kf = 0;
   bool negative = false, arm = false;
+  gmap::MapCurr cu = gmap::kCurrEmpty;
   int pos = 0;
   for (int a = 1; a < argc; ++a) {
-    if (!std::strcmp(argv[a], "--negative")) negative = true;
+    if (!std::strcmp(argv[a], "--curr") && a + 1 < argc) {
+      float v[5] = {0.f, 0.f, (float)cu.kmin, (float)cu.kmax, cu.reveal_r};
+      std::sscanf(argv[++a], "%f,%f,%f,%f,%f", &v[0], &v[1], &v[2], &v[3], &v[4]);
+      cu.p0 = v[0]; cu.p1 = v[1]; cu.kmin = (int)v[2]; cu.kmax = (int)v[3]; cu.reveal_r = v[4];
+    }
+    else if (!std::strcmp(argv[a], "--negative")) negative = true;
     else if (!std::strcmp(argv[a], "--force-kf")) force_kf = 1;
     else if (!std::strcmp(argv[a], "--arm")) arm = true;
     else if (pos == 0) { N = std::atoi(argv[a]); ++pos; }
@@ -51,6 +58,11 @@ int main(int argc, char** argv) {
   CpuEnv cenv(N, 1, seed, arm);
   gmap::DeviceMap gmapd(N, mseed);
   gmap::CpuMap cmap(N, mseed);
+  cudaMemcpy(gmapd.curr_dev(), &cu, sizeof cu, cudaMemcpyHostToDevice);   // 장치 값(커널이 판 리셋 때 읽음)
+  long st_eps[3] = {0, 0, 0}, st_conf[3] = {0, 0, 0}, st_goal[3] = {0, 0, 0};
+  double st_task_end[3] = {0, 0, 0}, st_obj_end[3] = {0, 0, 0}, st_seen_end[3] = {0, 0, 0};
+  long st_end[3] = {0, 0, 0};
+  std::vector<int> cur_stage(N, 2);
   float *d_act, *d_obs, *d_rew; int* d_done;
   cudaMalloc(&d_act, sizeof(float) * N_ACT * N);
   cudaMalloc(&d_obs, sizeof(float) * N_OBS * N);
@@ -92,7 +104,7 @@ int main(int argc, char** argv) {
     gmapd.step(genv.soa(), force_kf, negative ? 1 : 0, 0, rec.at(t));
     cenv.step(act, obs_c, rew_c, done_c);
     Soa cs{cenv.f.data(), cenv.iv.data(), cenv.rng.data(), N};
-    cmap.step(cs, force_kf);
+    cmap.step(cs, force_kf, cu);
     cudaDeviceSynchronize();
     genv.download(fg, ig, rg);
     gmapd.download(gh, rec.at(t));
@@ -150,6 +162,16 @@ int main(int argc, char** argv) {
         sum_task_end += last_met[gmap::M_TASK * N + i]; sum_obj_end += last_met[gmap::M_OBJ * N + i]; sum_seen_end += last_met[gmap::M_SEEN * N + i];
         sum_room_end += last_met[gmap::M_ROOM * N + i];
         ++n_end;
+        const int so = cur_stage[i];
+        st_task_end[so] += last_met[gmap::M_TASK * N + i]; st_obj_end[so] += last_met[gmap::M_OBJ * N + i];
+        st_seen_end[so] += last_met[gmap::M_SEEN * N + i]; ++st_end[so];
+      }
+      if (t == 0 || ep != last_ep[i]) {   // 새 판: 처음 지도 단계(M_INIT 부호와 MapCore 가 같은지도)
+        const gmap::MapCore& c0 = ch.core[i];
+        const int code = (int)ch.met[gmap::M_INIT * N + i];
+        if (code != (c0.init_conf | (c0.init_goal << 4) | (c0.init_stage << 5))) { std::printf("M_INIT code mismatch env %d\n", i); ++mismatches; }
+        cur_stage[i] = c0.init_stage;
+        ++st_eps[c0.init_stage]; st_conf[c0.init_stage] += c0.init_conf; st_goal[c0.init_stage] += c0.init_goal;
       }
       last_ep[i] = ep;
       const gmap::MapCore& c = ch.core[i];
@@ -178,7 +200,13 @@ int main(int argc, char** argv) {
     fp += cmap.h.core[i].n_fp_total; kf_tot += cmap.h.core[i].n_kf_total;
     grasps += cmap.h.core[i].n_grasp_total; wovf += cmap.h.core[i].n_wall_ovf; wruns += cmap.h.core[i].n_wall_runs;
   }
-  std::printf("map_verify: N=%d steps=%d force_kf=%d  map bytes on GPU %.1f MB\n", N, T, force_kf, gmapd.bytes() / 1e6);
+  std::printf("map_verify: N=%d steps=%d force_kf=%d  curriculum p0 %.2f p1 %.2f k %d..%d reveal %.2f m  map bytes on GPU %.1f MB\n", N, T, force_kf,
+              cu.p0, cu.p1, cu.kmin, cu.kmax, cu.reveal_r, gmapd.bytes() / 1e6);
+  for (int k = 0; k < 3; ++k)
+    if (st_eps[k])
+      std::printf("  C%d: episodes started %ld, pre-confirmed objects %.2f / %d, cup pre-confirmed %.3f;  at end (%ld): task %.3f, objects %.3f, room cells seen %.3f\n", k,
+                  st_eps[k], (double)st_conf[k] / st_eps[k], gmap::N_PRIM, (double)st_goal[k] / st_eps[k], st_end[k], st_end[k] ? st_task_end[k] / st_end[k] : 0.0,
+                  st_end[k] ? st_obj_end[k] / st_end[k] : 0.0, st_end[k] ? st_seen_end[k] / st_end[k] : 0.0);
   std::printf("  keyframes %ld of %ld env-steps (%.1f %%), false-positive dets %ld\n", n_kf, (long)N * T, 100.0 * n_kf / ((double)N * T), fp);
   std::printf("  finished episodes %ld: mean at end  task-object confirmed %.3f, scene objects confirmed %.3f, room cells seen %.3f\n",
               n_end, n_end ? sum_task_end / n_end : 0.0, n_end ? sum_obj_end / n_end : 0.0, n_end ? sum_seen_end / n_end : 0.0);

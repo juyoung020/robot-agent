@@ -94,8 +94,9 @@ constexpr int NPT = 5;                  // 물체마다 보임 광선: 시야로
 constexpr int KSLOT = 16;               // 물체 기억 칸 (가정; 계획서 8절 예는 64)
 constexpr int MAXDET = N_PRIM + N_GHOST_V;   // 한 keyframe 검출 최대(참 물체 + 유령 자리)
 constexpr int NCLS = 6;
-constexpr int N_MET = 7;
-enum Met { M_TASK, M_OBJ, M_SEEN, M_ERR_XY, M_ERR_YAW, M_KF, M_ROOM };
+constexpr int N_MET = 8;
+// M_INIT: 이 판의 처음 지도(커리큘럼 5.5) 부호 = 미리 확정한 참 물체 수 | 과제 물체 미리 확정 << 4 | 단계(0 C0, 1 C1, 2 C2) << 5 (float 로)
+enum Met { M_TASK, M_OBJ, M_SEEN, M_ERR_XY, M_ERR_YAW, M_KF, M_ROOM, M_INIT };
 // 벽(walls.hpp)·방(5.1 의 5 번 근사)
 constexpr int MAXSEG = 32;              // 판마다 벽 선분 칸, 가로·세로 따로 (가정; 넘치면 버리고 n_wall_ovf 에 셈)
 constexpr int SEGW = 2 * MAXSEG * 4;    // 판마다 선분 int16 수: [가로|세로][칸][X2a, Y2a, X2b, Y2b] (반 칸 단위, 창 원점 기준)
@@ -172,7 +173,23 @@ struct MP {
   // ---- 지도 토큰(VLA_INPUT 3절) ----
   static constexpr float arm_reach = 0.40f;                      // 팔이 닿는지: omx_joint1 원점에서 구 (가정: ROBOTIS 도달 400 mm)
   static constexpr float tok_dt = 0.1f;                          // 제어 스텝 s(물체 속도·마지막 본 뒤 시간)
+  // ---- 커리큘럼 처음 지도(계획서 5.5) ----
+  // 공개한 격자 칸의 로그 오즈: 맞음·빈칸 3 번 본 값 (가정: "예전에 몇 번 본 지도")
+  static constexpr int curr_occ = 3 * q_hit, curr_free = 3 * q_miss;
 };
+
+// 커리큘럼 처음 지도(5.5): 판 리셋 때 이 판의 단계를 장치 난수로 고른다. **장치 값**이라 바꿔도 다시 컴파일·그래프 다시 잡기가 없다(4.1).
+//   C0 전체: 참 물체 모두 확정(참 자리·크기 — 자세 오차만), 방 안 격자 전부 공개
+//   C1 부분: 참 물체 kmin..kmax 개(고르게) 확정, 그 물체 둘레 reveal_r 안 격자 공개
+//   C2 빈 지도(예전 그대로)
+struct MapCurr {
+  float p0, p1;     // C0·C1 비율(나머지 C2)
+  int kmin, kmax;   // C1 미리 확정할 참 물체 수(N_PRIM 개 중). 계획서 30–70 % → 9 개 중 3–6 개
+  float reveal_r;   // C1 격자 공개 반경 m (가정)
+  int pad;
+};
+// 기본 = 모두 C2(빈 지도): G2·G3 와 같은 지도
+constexpr MapCurr kCurrEmpty = {0.f, 0.f, 3, 6, 1.5f, 0};
 DEV bool is_static(int cls) { return cls == C_TABLE || cls == C_CABINET; }   // capi.cpp kStaticNames 의 table·cabinet
 
 // ---- 판마다 지도 상태 -------------------------------------------------------------------------------------------------
@@ -213,6 +230,8 @@ struct MapCore {
   uint32_t wrect[KSLOT];           // 지난 벽 계산의 무시 영역(창 칸 cx0 | cx1 << 8 | cy0 << 16 | cy1 << 24) — 점유 비트도 그대로면 선분이 같으므로 건너뜀
   // 방(참 방 표, 판 리셋 때): 긴 축(raxis 0 = x 를 자름)을 rcut 에서 자름, 문 = 자르는 선 위 rdoor. 드러난 방 비트 rrev
   int n_room, raxis, rrev;
+  // 커리큘럼 처음 지도(판 리셋 때, curr_slots): 단계 0/1/2, 미리 확정한 참 물체 수, 과제 물체(컵)를 미리 확정했나
+  int init_stage, init_conf, init_goal, init_pad;
   int rtype[MAXROOM], rcells[MAXROOM], rseen[MAXROOM];
   float rcut[MAXROOM - 1], rdoor[MAXROOM - 1];
   Prim prim[N_PRIM];
@@ -1425,6 +1444,7 @@ DEV void write_metrics(const MapCore& m, const EnvView& e, float* met, int N, in
   met[M_ERR_YAW * N + i] = absf(wrap_pi(m.eyaw - e.yaw));
   met[M_KF * N + i] = (float)m.kf_flag;
   met[M_ROOM * N + i] = (float)popc32((uint32_t)m.rrev) / (float)m.n_room;
+  met[M_INIT * N + i] = (float)(m.init_conf | (m.init_goal << 4) | (m.init_stage << 5));
 }
 
 // ---- 6. 벽 선분(walls.cpp wallSegments, 판 하나 = 블록 하나) ---------------------------------------------------------------
@@ -1779,6 +1799,113 @@ DEV void map_keyframe(MapCore& m, Scratch& sh, const EnvView& e, int16_t* L, uin
   if (tid == 0) phase_finish(m, sh, e, nt);
 }
 
+// ---- 7. 커리큘럼 처음 지도(계획서 5.5, 판 리셋 때만) ---------------------------------------------------------------------------
+// 난수는 m.rng 를 섞은 따로 된 값(m.rng 를 움직이지 않음) — 모두 C2 면 지도 결과가 예전과 같다.
+// (스레드 0) 단계 고르기 + 미리 확정할 참 물체를 칸에. 자리·크기는 참 상자(중심, 크기) 그대로 = 교사 지도의 "자세 오차만"
+DEV void curr_slots(MapCore& m, const MapCurr& cu) {
+  uint64_t rr = m.rng ^ 0x6A09E667F3BCC909ull;
+  const float u = rand01(rr);
+  const int st = u < cu.p0 ? 0 : (u < cu.p0 + cu.p1 ? 1 : 2);
+  m.init_stage = st;
+  m.init_conf = 0;
+  m.init_goal = 0;
+  if (st == 2) return;
+  int k = N_PRIM;
+  if (st == 1) {
+    const int lo = cu.kmin < 0 ? 0 : (cu.kmin > N_PRIM ? N_PRIM : cu.kmin);
+    const int hi = cu.kmax < lo ? lo : (cu.kmax > N_PRIM ? N_PRIM : cu.kmax);
+    k = lo + (int)(rand01(rr) * (float)(hi - lo + 1));
+    k = k > hi ? hi : k;
+  }
+  int idx[N_PRIM];
+  for (int p = 0; p < N_PRIM; ++p) idx[p] = p;
+  uint32_t pick = 0u;
+  for (int j = 0; j < k; ++j) {   // 부분 Fisher–Yates: 서로 다른 k 개
+    int r = j + (int)(rand01(rr) * (float)(N_PRIM - j));
+    r = r > N_PRIM - 1 ? N_PRIM - 1 : r;
+    const int x = idx[j]; idx[j] = idx[r]; idx[r] = x;
+    pick |= 1u << idx[j];
+  }
+  int b = 0;
+  for (int p = 0; p < N_PRIM; ++p) {   // 칸은 참 물체 번호 순(빈 칸 앞에서부터)
+    if (!((pick >> p) & 1u)) continue;
+    const Prim& P = m.prim[p];
+    Slot& S = m.slot[b++];
+    S.valid = 1; S.id = m.next_id++; S.cls = P.cls;
+    for (int a = 0; a < 3; ++a) { S.pos[a] = 0.5f * (P.lo[a] + P.hi[a]); S.ext[a] = P.hi[a] - P.lo[a]; S.first_pos[a] = S.pos[a]; }
+    S.n_obs = MP::confirm; S.last_seen = 0; S.last_kf = -1; S.score = 0.9f;
+    S.state = S_SEEN; S.confirmed = 1; S.moved = 0; S.misses = 0; S.first_miss = 0; S.held = 0; S.src = p;
+    S.seen_len = 0.f; S.seen_rot = 0.f;
+  }
+  m.init_conf = k;
+  m.init_goal = (int)(pick & 1u);
+}
+// 공개한 칸인가(C0: 방 안·벽 칸 전부, C1: 미리 확정한 물체 중심 reveal_r 안)와 점유인가(방 벽 칸 또는 장면 상자 바닥 자국과 겹침).
+// 벽 칸 = 방 경계 ±rh 를 담은 칸(광선이 벽에 맞는 칸과 같은 floor 규칙)
+DEV int curr_cell(const MapCore& m, const MapCurr& cu, int ix, int iy, bool& occ_out) {
+  const float x0 = (float)ix * RES, y0 = (float)iy * RES, x1 = x0 + RES, y1 = y0 + RES;
+  const float cx = x0 + 0.5f * RES, cy = y0 + 0.5f * RES;
+  const bool in_x = x1 > -m.rhx && x0 <= m.rhx, in_y = y1 > -m.rhy && y0 <= m.rhy;   // 방(+ 경계 칸)과 겹침
+  if (!(in_x && in_y)) return 0;
+  const bool wall = (x0 <= -m.rhx && -m.rhx < x1) || (x0 <= m.rhx && m.rhx < x1) || (y0 <= -m.rhy && -m.rhy < y1) || (y0 <= m.rhy && m.rhy < y1);
+  if (m.init_stage == 1) {
+    bool near = false;
+    const float r2 = cu.reveal_r * cu.reveal_r;
+    for (int b = 0; b < m.init_conf && !near; ++b) {
+      const float dx = cx - m.slot[b].pos[0], dy = cy - m.slot[b].pos[1];
+      near = dx * dx + dy * dy <= r2;
+    }
+    if (!near) return 0;
+  }
+  bool occ = wall;
+  for (int p = 0; p < N_PRIM && !occ; ++p) {
+    const Prim& P = m.prim[p];
+    occ = P.lo[0] < x1 && P.hi[0] >= x0 && P.lo[1] < y1 && P.hi[1] >= y0;
+  }
+  occ_out = occ;
+  return 1;
+}
+// (모든 스레드, 낱말마다 한 스레드) 공개한 칸에 로그 오즈·본 칸·점유 비트를 쓰고, 방 안 공개 칸 수를 부분합(part·part2)으로.
+// clear_grid 뒤(동기 뒤)에 부른다. 낱말끼리 독립이라 스레드 순서와 무관
+DEV void curr_grid(const MapCore& m, const MapCurr& cu, Scratch& sh, int16_t* L, uint32_t* seen, uint32_t* occ, int tid, int nt) {
+  int cnt = 0, cnt2 = 0;
+  // 방(+ 경계 칸)과 겹치는 행·열 칸 범위 — curr_cell 의 겹침 판정과 같은 식. 밖의 낱말은 clear_grid 가 이미 0 으로 둠(같은 결과, 일만 줄임)
+  int ylo = GW, yhi = -1, xlo = GW, xhi = -1;
+  for (int l = 0; l < GW; ++l) {
+    const float c0 = (float)(l + GX0) * RES, c1 = c0 + RES;
+    if (c1 > -m.rhy && c0 <= m.rhy) { ylo = l < ylo ? l : ylo; yhi = l; }
+    if (c1 > -m.rhx && c0 <= m.rhx) { xlo = l < xlo ? l : xlo; xhi = l; }
+  }
+  for (int w = tid; w < NWORD; w += nt) {
+    const int row = w / (GW / 32), cx0 = (w % (GW / 32)) * 32;
+    if (row < ylo || row > yhi || cx0 + 31 < xlo || cx0 > xhi) continue;
+    uint32_t sb = 0u, ob = 0u;
+    for (int b = 0; b < 32; ++b) {
+      const int idx = w * 32 + b;
+      const int ix = idx % GW + GX0, iy = idx / GW + GX0;
+      bool o = false;
+      if (!curr_cell(m, cu, ix, iy, o)) continue;
+      sb |= 1u << b;
+      const int Lv = o ? MP::curr_occ : MP::curr_free;
+      L[idx] = (int16_t)Lv;
+      if (Lv >= MP::q_occ) ob |= 1u << b;
+      count_new_seen(m, idx, cnt, cnt2);
+    }
+    seen[w] = sb;
+    occ[w] = ob;
+  }
+  put_part(sh, tid, cnt);
+  put_part2(sh, tid, cnt2);
+}
+// (스레드 0) 공개한 방 칸 수를 본 칸 수에 더함. 방 드러냄은 같은 스텝의 keyframe(phase_finish)이 같은 규칙으로 정함
+DEV void curr_grid_finish(MapCore& m, const Scratch& sh, int nt) {
+  const int s = sum_part(sh, nt), s2 = sum_part2(sh, nt), r1 = s2 & 0xffff, r2 = s2 >> 16;
+  m.n_seen_room += s;
+  m.rseen[0] += s - r1 - r2;
+  m.rseen[1] += r1;
+  m.rseen[2] += r2;
+}
+
 // 시작 단계 뒤의 나머지(flags = phase_begin 결과): 리셋이면 격자 비움, keyframe 이면 갱신, keyframe·들기/놓기면 벽 선분, 마지막에 완성도 쓰기.
 // GPU 는 목록(keyframe·리셋·벽)의 판만 블록으로 이 함수를 부르고(map_kf_kernel), 나머지 판은 시작 커널이 완성도만 쓴다.
 // sh 와 ws 는 같은 자리(공용체): 벽 단계는 keyframe 단계가 끝난 뒤 Scratch 를 덮어쓴다.
@@ -1786,8 +1913,19 @@ struct MapGrid { int16_t* L; uint32_t* seen; uint32_t* occ; int16_t* segs; };   
 union KfShared { Scratch sh; WallScratch ws; };
 template <class Sync>
 DEV void map_rest(MapCore& m, KfShared& u, const EnvView& e, const MapGrid& g, float* met, int N, int i,
-                  int tid, int nt, int bug, int flags, const Sync& sync) {
-  if (flags & B_RESET) { clear_grid(g.L, g.seen, g.occ, tid, nt); PROF_MARK(P_RESET); }
+                  int tid, int nt, int bug, int flags, const MapCurr& cu, const Sync& sync) {
+  if (flags & B_RESET) {
+    clear_grid(g.L, g.seen, g.occ, tid, nt);
+    if (tid == 0) curr_slots(m, cu);   // 처음 지도 단계(5.5)
+    sync();
+    if (m.init_stage < 2) {
+      curr_grid(m, cu, u.sh, g.L, g.seen, g.occ, tid, nt);
+      sync();
+      if (tid == 0) curr_grid_finish(m, u.sh, nt);
+      sync();
+    }
+    PROF_MARK(P_RESET);
+  }
   if (flags & B_KF) map_keyframe(m, u.sh, e, g.L, g.seen, g.occ, tid, nt, bug, sync);
   if (flags & (B_KF | B_WALL)) {
     const int chg = (flags & B_KF) ? u.sh.occ_chg : 0;   // ws 가 sh 를 덮기 전에 읽음
@@ -1802,9 +1940,9 @@ DEV void map_rest(MapCore& m, KfShared& u, const EnvView& e, const MapGrid& g, f
 // 한 판 한 스텝 전체(CPU 참조판: tid 0, nt 1). GPU 는 같은 phase_begin → map_rest 를 두 커널로 나눠 부른다.
 template <class Sync>
 DEV void map_block(MapCore& m, KfShared& u, const EnvView& e, const MapGrid& g, float* met, int N, int i,
-                   int tid, int nt, int bug, int force_kf, const Sync& sync) {
+                   int tid, int nt, int bug, int force_kf, const MapCurr& cu, const Sync& sync) {
   const int flags = phase_begin(m, e, force_kf);
-  map_rest(m, u, e, g, met, N, i, tid, nt, bug, flags, sync);
+  map_rest(m, u, e, g, met, N, i, tid, nt, bug, flags, cu, sync);
 }
 
 }  // namespace gmap

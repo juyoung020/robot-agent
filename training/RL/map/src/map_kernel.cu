@@ -43,7 +43,8 @@ __device__ __forceinline__ const void* env_pf_addr(const env::Soa& s, int i, int
   return s.iv + (size_t)env::I_EP * N + i;
 }
 __global__ void __launch_bounds__(NT, 10) map_kf_kernel(env::Soa s, MapCore* core, int16_t* L, uint32_t* seen, uint32_t* occ,
-                                                        int16_t* segs, float* met, const uint32_t* list, const int* count, int bug) {
+                                                        int16_t* segs, float* met, const uint32_t* list, const int* count, int bug,
+                                                        const MapCurr* curr) {
   __shared__ __align__(16) MapCore m;
   __shared__ KfShared u;
   const int j = blockIdx.x, tid = threadIdx.x, N = s.N;
@@ -70,7 +71,8 @@ __global__ void __launch_bounds__(NT, 10) map_kf_kernel(env::Soa s, MapCore* cor
   __syncthreads();
   PROF_MARK(P_LOAD);
   const MapGrid g{L + (size_t)i * NCELL, seen + (size_t)i * NWORD, occ + (size_t)i * NWORD, segs + (size_t)i * SEGW};
-  map_rest(m, u, e, g, met, N, i, tid, NT, bug, flags, BlockSync{});
+  const MapCurr cu = *curr;   // 장치 값(바퀴 사이에 바뀔 수 있음 — 다시 잡기 없이)
+  map_rest(m, u, e, g, met, N, i, tid, NT, bug, flags, cu, BlockSync{});
   __syncthreads();
   uint4* out = reinterpret_cast<uint4*>(&core[i]);
   for (int k = tid; k < (int)(sizeof(MapCore) / 16); k += NT) out[k] = dst[k];
@@ -115,6 +117,8 @@ DeviceMap::DeviceMap(int N, uint64_t seed) : N_(N) {
   CK(cudaMemset(tok_, 0, sizeof(MapTok) * (size_t)N));
   CK(cudaMalloc(&list_, sizeof(uint32_t) * (size_t)N));
   CK(cudaMalloc(&count_, sizeof(int)));
+  CK(cudaMalloc(&curr_, sizeof(MapCurr)));
+  CK(cudaMemcpy(curr_, &kCurrEmpty, sizeof(MapCurr), cudaMemcpyHostToDevice));
   CK(cudaMemset(L_, 0, sizeof(int16_t) * NCELL * (size_t)N));
   CK(cudaMemset(seen_, 0, sizeof(uint32_t) * NWORD * (size_t)N));
   CK(cudaMemset(met_, 0, sizeof(float) * N_MET * (size_t)N));
@@ -122,18 +126,18 @@ DeviceMap::DeviceMap(int N, uint64_t seed) : N_(N) {
   CK(cudaGetLastError());
 }
 DeviceMap::~DeviceMap() { cudaFree(core_); cudaFree(L_); cudaFree(seen_); cudaFree(met_); cudaFree(list_); cudaFree(count_);
-                         cudaFree(occ_); cudaFree(segs_); cudaFree(tprev_); cudaFree(tok_); }
+                         cudaFree(occ_); cudaFree(segs_); cudaFree(tprev_); cudaFree(tok_); cudaFree(curr_); }
 
 size_t DeviceMap::bytes() const {
   return (size_t)N_ * (sizeof(MapCore) + sizeof(int16_t) * NCELL + 2 * sizeof(uint32_t) * NWORD + sizeof(float) * N_MET + sizeof(int16_t) * SEGW +
                        sizeof(TPrev) * KSLOT + sizeof(MapTok) + sizeof(uint32_t));
 }
 
-void DeviceMap::step(const env::Soa& s, int force_kf, int bug, cudaStream_t st, MapTok* tok) {
+void DeviceMap::step(const env::Soa& s, int force_kf, int bug, cudaStream_t st, MapTok* tok, const MapCurr* curr) {
   // 목록 길이를 0 으로(비동기, 그래프로 잡힘) → 시작 커널(판마다 스레드) → keyframe 커널(목록의 판만 일함)
   CK(cudaMemsetAsync(count_, 0, sizeof(int), st));
   map_begin_kernel<<<(N_ + BEGIN_NT - 1) / BEGIN_NT, BEGIN_NT, 0, st>>>(s, core_, met_, list_, count_, force_kf);
-  map_kf_kernel<<<N_, NT, 0, st>>>(s, core_, L_, seen_, occ_, segs_, met_, list_, count_, bug);
+  map_kf_kernel<<<N_, NT, 0, st>>>(s, core_, L_, seen_, occ_, segs_, met_, list_, count_, bug, curr ? curr : curr_);
   if (tok_on_) map_tok_kernel<<<(N_ + TOK_EPB - 1) / TOK_EPB, TOK_NL * TOK_EPB, 0, st>>>(N_, core_, occ_, segs_, tprev_, tok ? tok : tok_);
 }
 
