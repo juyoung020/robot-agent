@@ -1,6 +1,8 @@
 # b1kconv — BEHAVIOR 2026 장면·과제 → 장치 형식 (계획서 E1)
 
-[CURRICULUM_BEHAVIOR2026.md](../../../../docs/map_vla/CURRICULUM_BEHAVIOR2026.md) 5절 E1. BEHAVIOR 2026 의 장면 7 개·과제 100 개·인스턴스 32,000 개를 **장면마다 작은 파일 하나(RASC v1)** 로 바꾸는 오프라인 Rust 도구와, 그것을 읽는 C++ 참조 리더다.
+> 범위(2026-10-04 확정): 대회는 안 한다. 목표는 리모 + OMX-F 집기·놓기(B3–B5)이고 BEHAVIOR 장면·물체는 학습 무대일 뿐이다. 그래서 이 도구의 중심은 장면 배치 + **집기·놓기 후보 표**이고, 문서 1.3·1.5절 숫자(q 상한)는 BDDL·템플릿을 제대로 읽는지 보는 확인용으로만 다시 낸다.
+
+[CURRICULUM_BEHAVIOR2026.md](../../../../docs/map_vla/CURRICULUM_BEHAVIOR2026.md) 5절 E1. BEHAVIOR 2026 의 장면 7 개·과제 100 개·인스턴스 32,000 개를 **장면마다 작은 파일 하나(RASC v2)** 로 바꾸는 오프라인 Rust 도구와, 그것을 읽는 C++ 참조 리더다.
 입력은 평문 JSON·PNG·BDDL 뿐이다(`src/behavior-2026` 서브모듈, 읽기만). **암호화 USD 는 읽지도 풀지도 않는다.** Python 은 쓰지 않는다.
 학습 환경(`training/RL/env`, `map`)은 건드리지 않는다 — 붙이는 것은 E2.
 
@@ -14,16 +16,16 @@
 ```
 cd training/RL/tools/b1kconv
 cargo build --release -j 4
-./target/release/b1kconv convert --out ~/ra_b1k          # 7 장면 → ~/ra_b1k/<장면>.rasc + .expect, task_table.md, feasibility.tsv, summary.txt (약 4 s, 최대 RSS 약 240 MB)
+./target/release/b1kconv convert --out ~/ra_b1k          # 7 장면 → ~/ra_b1k/<장면>.rasc + .expect + .pnp.tsv, task_table.md, feasibility.tsv, summary.txt (약 4 s, 최대 RSS 약 240 MB)
 ./target/release/b1kconv verify  --out ~/ra_b1k          # 파일을 다시 읽어 원본 JSON·BDDL 과 값 비교 (0 다름이어야 통과)
 ./target/release/b1kconv negative                        # 깨진 입력 3 종이 오류로 멈춰야 통과(종료 코드 0)
 ./target/release/b1kconv header --check cpp/rasc_format.h   # 헤더가 지금 배치와 같은지
 cmake -S cpp -B ~/ra_b1kbuild && cmake --build ~/ra_b1kbuild -j 4 && ~/ra_b1kbuild/rasc_test ~/ra_b1k/*.rasc   # 또는 ctest
 ```
-`--scene NAME` 으로 장면 하나만, `--b1k PATH` 로 BEHAVIOR-1K 위치, `--doc PATH` 로 비교할 문서를 바꾼다. 배치(레코드)를 고치면 `b1kconv header --out cpp/rasc_format.h` 로 헤더를 다시 만든다(해시가 바뀌어 옛 파일은 로더가 거절).
+`--outer k=v,…` / `--inner k=v,…` 로 집기·놓기 한도(`pick_z place_top inside_margin max_mass max_w min_side min_top reach`), `--scene NAME` 으로 장면 하나만, `--b1k PATH` 로 BEHAVIOR-1K 위치, `--doc PATH` 로 비교할 문서를 바꾼다. 배치(레코드)를 고치면 `b1kconv header --out cpp/rasc_format.h` 로 헤더를 다시 만든다(해시가 바뀌어 옛 파일은 로더가 거절).
 
-## RASC v1 형식
-리틀 엔디언, 장면당 파일 하나. 머리(`RascFileHeader`, 688 B) 뒤에 64 B 정렬 구역 21 개. 구역 표가 오프셋·바이트·개수·원소 크기를 갖고, 로더는 매직·버전·머리 크기·배치 해시·구역 크기를 모두 확인한다.
+## RASC v2 형식
+리틀 엔디언, 장면당 파일 하나. 머리(`RascFileHeader`, 784 B) 뒤에 64 B 정렬 구역 26 개. 구역 표가 오프셋·바이트·개수·원소 크기를 갖고, 로더는 매직·버전·머리 크기·배치 해시·구역 크기를 모두 확인한다.
 
 | 구역 | 원소 | 내용 |
 |---|---|---|
@@ -44,6 +46,11 @@ cmake -S cpp -B ~/ra_b1kbuild && cmake --build ~/ra_b1kbuild -j 4 && ~/ra_b1kbui
 | INSTS | `RascInstRec` 48 B | 인스턴스: 과제, 나눔(0 학습 300 / 1 공개 평가 20, id 301–320), 로봇 시작 자세·yaw, 자세 범위 |
 | POSES | `RascPoseRec` 36 B | 인스턴스마다 과제 물체 순서대로 자세·관절, 출처(1 인스턴스 파일, 2 장면 파일, 3 템플릿 — 알려진 결함만) |
 | IN_ROOMS | u32 | 물체 `in_rooms` 이름 전부(문자열 오프셋). OBJS 의 `room_a/b` 는 앞 둘 |
+| LIMITS | `RascLimitsRec` 32 B × 2 | [0] 바깥 한도(포함), [1] 안 한도(플래그) |
+| PICKS | `RascPickRec` 64 B | 집을 물체: 물체(장면 `ObjRec` 또는 `RASC_PNP_TASKOBJ`\|과제 물체), 인스턴스, 세계 상자 중심·바닥·윗면, 작은 가로 변, 질량, 방, 다가갈 빈 칸 수·성분, 출발 받침 |
+| PLACES | `RascPlaceRec` 48 B | 받침: 1 면(`ontop`), 2 열린 용기(`inside`), 3 방 바닥. 윗면 높이, 반치수, 방, 다가갈 칸·성분 |
+| PAIRS | `RascPairRec` 24 B | (물체, 출발 받침, 목표 받침, 술어, 물체 방, 목표 방, 거리, 닿음 비트: 0 같은 성분, 1 안 한도, 2 로봇 시작도 같은 성분) |
+| PNP_RANGES | `RascPnpRange` 24 B | 인스턴스마다 PICKS·PLACES·PAIRS 범위 + 로봇 시작 성분, 마지막 하나 = 장면 수준(정적) |
 
 - 층(level): 2026 장면은 모두 층 하나(`n_levels = 1`, 물체 `level = 0`). 2 층 집은 `_lower`·`_upper` 가 서로 다른 장면 파일이다.
 - 좌표: 칸 (r, c) 중심 = `origin + ((c + .5)·0.1, (r + .5)·0.1)`. PNG 화소 (r, c) 는 `((c − N/2)·0.01, (r − N/2)·0.01)` (OmniGibson `world_to_map` 과 같음, 행 = y).
@@ -53,16 +60,25 @@ cmake -S cpp -B ~/ra_b1kbuild && cmake --build ~/ra_b1kbuild -j 4 && ~/ra_b1kbui
 ## 크기 (잰 값, 2026-10-04)
 | 장면 | 파일 | 물체 | 상자 | 문 | 방 | 격자 | 과제 | 인스턴스 | 가장 큰 구역 |
 |---|---:|---:|---:|---:|---:|---|---:|---:|---|
-| `house_single_floor` | 6.23 MB | 595 | 556 | 24 | 21 | 863² | 34 | 10,880 | POSES 4.33 MB, ROOM_GRID 0.74 MB |
-| `house_double_floor_lower` | 4.37 MB | 260 | 241 | 7 | 6 | 594² | 32 | 10,240 | POSES 3.20 MB |
-| `house_double_floor_upper` | 1.18 MB | 134 | 124 | 6 | 5 | 133² | 10 | 3,200 | POSES 0.94 MB |
-| `restaurant_diner` | 1.39 MB | 184 | 171 | 3 | 5 | 238² | 8 | 2,560 | POSES 1.11 MB |
-| `Rs_int` | 0.68 MB | 80 | 70 | 2 | 5 | 83² | 6 | 1,920 | POSES 0.51 MB |
-| `hotel_suite_large` | 0.69 MB | 63 | 59 | 2 | 2 | 123² | 5 | 1,600 | POSES 0.56 MB |
-| `office_cubicles_right` | 0.79 MB | 297 | 267 | 15 | 12 | 419² | 5 | 1,600 | POSES 0.37 MB |
-| 합 | 15.3 MB | | | | | | 100 | 32,000 | |
+| `house_single_floor` | 10.45 MB | 595 | 556 | 24 | 21 | 863² | 34 | 10,880 | POSES 4.33, PAIRS 2.70, PICKS 0.76 MB |
+| `house_double_floor_lower` | 6.73 MB | 260 | 241 | 7 | 6 | 594² | 32 | 10,240 | POSES 3.20, PAIRS 1.07 MB |
+| `house_double_floor_upper` | 1.51 MB | 134 | 124 | 6 | 5 | 133² | 10 | 3,200 | POSES 0.94 MB |
+| `restaurant_diner` | 1.69 MB | 184 | 171 | 3 | 5 | 238² | 8 | 2,560 | POSES 1.11 MB |
+| `Rs_int` | 1.04 MB | 80 | 70 | 2 | 5 | 83² | 6 | 1,920 | POSES 0.51 MB |
+| `hotel_suite_large` | 1.85 MB | 63 | 59 | 2 | 2 | 123² | 5 | 1,600 | PAIRS 0.74, POSES 0.56 MB |
+| `office_cubicles_right` | 0.84 MB | 297 | 267 | 15 | 12 | 419² | 5 | 1,600 | POSES 0.37 MB |
+| 합 | 24.1 MB (v1 15.3) | | | | | | 100 | 32,000 | |
 
-## LIMO + OMX-F 가능성 표 (문서 1.3·1.5 다시 내기)
+## 집기·놓기 후보 표 (B3–B5)
+`src/pnp.rs`. 한도는 매개변수이고 기본은 문서 1.5절: 바깥(포함) = 느슨 `pick_z 0.60 · place_top 0.62 · max_mass 0.5 · max_w 0.10`, 안(플래그) = 엄격 `0.45 · 0.50 · 0.25 · 0.08`, 공통 `inside_margin 0.05 · min_side 0.15 · min_top 0.05 · reach 0.40`(OMX-F 사양 도달, 베이스 칸 중심에서 잼 — 추정). E0 잰 값이 오면 `--outer`/`--inner` 로 바꾼다.
+- 집을 물체: 고정 아님, 벽·바닥·천장·문·창·계단·카펫·로봇·입자 아님, 상자 있음, 세계 AABB 바닥 ≤ `pick_z`, 종류 평균 질량 ≤ `max_mass`(종류 평균이 없으면 넣고 `MASS_UNKNOWN`), 작은 가로 변 ≤ `max_w`. BDDL init 이 닫힌 관절체 안에 둔 물체는 `IN_CLOSED`.
+- 받침: 열린 용기(종류 이름에 basket·box·bin·bucket·bowl·bag·tote·vase·trash·cup·case·crate·container·carton·hamper·plate·tray·sheet·pan, 닫힌 관절체·선반 아님, 윗면 ≤ `place_top + inside_margin`), 면(윗면 `min_top`–`place_top`, 작은 변 ≥ `min_side`), 방마다 바닥(방 중심, 그 방의 빈 칸).
+- 다가가기: `floor_trav_0` 칸(10 × 10 화소 모두 빈 칸) 중 상자 바닥 사각형에서 `reach` 안인 칸 수, 그 칸들의 가장 많은 연결 성분(4 이웃, 큰 성분부터 0, 1, …). 출발 받침 = 물체를 담은 용기 → 바닥이 윗면 −0.15…+0.05 m 안인 가장 높은 면 → 바닥 높이 < 0.1 m 면 그 방 바닥.
+- 짝: 물체 × 받침(같은 성분이거나 같은 방, 출발 받침·자기 자신 제외). 인스턴스 수준은 과제 물체(인스턴스 자세)를 집을 물체로, 목표는 그 인스턴스의 과제 물체 받침 + 과제가 불러오는 방(`rooms_mask`)의 장면 받침. 장면 물체가 과제 범위에 있으면 인스턴스 쪽 항목이 장면 쪽을 대신한다.
+- 잰 값(기본 한도): **장면 파일에는 집을 물체가 없다**(가구뿐). 장면 받침 면/용기: HSF 35/1, HDL 5/0, HDU 6/0, RD 0/0, RS 4/1, HSL 9/0, OCR 6/0 (+ 방 바닥). 인스턴스 중 집을 과제 물체가 있는 것 / 로봇 시작에서 닿는 짝이 있는 것 / 안 한도까지: HSF 4,187 / 3,839 / 2,444 (10,880), HDL 2,880 / 2,223 / 1,246 (10,240), HDU 639 / 615 / 0 (3,200), RD 732 / 712 / 392 (2,560), RS 960 / 960 / 320 (1,920), HSL 960 / 956 / 319 (1,600), OCR 0 (1,600) — 합 10,358 / 9,305 / 4,721 (32,000). 과제별은 `<장면>.pnp.tsv`, 장면별은 `summary.txt`.
+- 한계: 바깥(방 아닌 칸)에는 바닥 받침이 없다. `floor_trav_0` 은 정적 가구만 막으므로 인스턴스의 과제 물체는 다가갈 칸 판정에 들지 않는다. 질량은 종류 평균, 높이는 상자(메시 아님).
+
+## LIMO + OMX-F 가능성 표 (문서 1.3·1.5 다시 내기 — 파서 확인용, q_score 는 범위 밖)
 `feas.rs` 는 문서 표를 만든 일회성 스크립트의 규칙을 그대로 옮겼다(키워드 목록·순서 버릇까지 — 통과 기준이 "같은 숫자"라서). 입력은 공개 평가 템플릿(`scene_test/public/.../*_0_0_template-partial_rooms.json`, 없으면 `_template.json`)의 `inst_to_name`·자세·척도, `metadata.json` 의 `bbox_size`, 종류 평균 질량.
 - 접지: `forall` 펼침, `exists` 1 개, `forn n` n 개, `forpairs` min(|A|, |B|), `or` 첫 가지 = **문자 550 개**.
 - 문자마다 "옮길 물체를 집을 수 있나(높이·무게·폭·닫힌 곳 안) + 목적지에 놓을 수 있나(놓을 높이·열기·선반·붙이기)", 토글은 물체 윗면 높이, `not open` 은 "처음부터 참" 으로 못 셈, 나머지 술어(입자·요리·자르기)는 못 함.
@@ -75,7 +91,7 @@ cmake -S cpp -B ~/ra_b1kbuild && cmake --build ~/ra_b1kbuild -j 4 && ~/ra_b1kbui
 - 기준 ① 문서 숫자: 위와 같이 **통과**.
 - 기준 ② `verify`: 7 장면 842,695 값(물체 이름·모델·종류·척도·자세·관절·방, 과제 물체·OmniGibson 이름, init 문자 원문, 인스턴스 로봇 자세·물체 자세·관절, 나눔 개수) **0 다름**. 실수는 f32 비트 비교.
 - 기준 ③ `negative`: 인스턴스 파일에서 과제 물체 하나 지움 → 오류로 멈춤, 목표가 없는 물체를 가리킴 → 오류, 배치 해시 1 비트 바꾼 파일 → 거절. 3/3.
-- C++ `rasc_test`: 7 파일 모두 통과. ① `.expect`(변환기가 쓴 구역 개수·FNV-1a 64) 와 C++ 가 본 바이트가 같음 ② 다시 쓰고 읽은 바이트가 같음 ③ 상자 수 = 물체 − 바닥·천장, 문 수, 종류별 합 ④ AABB: 유한, 반치수 ≥ 0, 중심 ⊂ AABB, 쿼터니언 크기 1, 상자가 중심을 품음, 물체 중심이 격자 안 ⑤ 방: 방마다 칸 > 0, 칸 수 합 일치, 방 표시 물체 중 자기 방 칸 위 ≥ 0.90·0.35 m + 반치수 안 ≥ 0.98 ⑥ 문자 인자·변수·후보·or 묶음·인스턴스 자세 범위가 모두 유효, 문서 문자 수 일치 ⑦ 손상 4 종(해시·잘림·구역 크기·매직) 거절.
+- C++ `rasc_test`: 7 파일 모두 통과(형식 v2). ① `.expect`(변환기가 쓴 구역 개수·FNV-1a 64) 와 C++ 가 본 바이트가 같음 ② 다시 쓰고 읽은 바이트가 같음 ③ 상자 수 = 물체 − 바닥·천장, 문 수, 종류별 합 ④ AABB: 유한, 반치수 ≥ 0, 중심 ⊂ AABB, 쿼터니언 크기 1, 상자가 중심을 품음, 물체 중심이 격자 안 ⑤ 방: 방마다 칸 > 0, 칸 수 합 일치, 방 표시 물체 중 자기 방 칸 위 ≥ 0.90·0.35 m + 반치수 안 ≥ 0.98 ⑥ 문자 인자·변수·후보·or 묶음·인스턴스 자세 범위가 모두 유효, 문서 문자 수 일치 ⑦ 집기·놓기 표: 범위가 구역을 빈틈없이 나눔, 집을 물체·받침이 바깥 한도 안, 안 한도 플래그 일치, 짝의 물체·출발·목표·방·닿음 비트 일관 ⑧ 손상 4 종(해시·잘림·구역 크기·매직) 거절.
 
 ## 데이터에서 찾은 것 (원본 그대로 두고 표시만)
 - **2025 과제(0–49) 학습 인스턴스는 일반 로봇 자세가 없다**: `robot_poses` 가 `R1Pro`·`Fetch`·`R1`·`Stretch`·`Tiago` 별로만 있고 id 는 0–299 다(새 과제 50–99 는 `robot`, id 1–300). 평가기는 `robot` 이 없으면 로봇 모델 이름 열쇠를 찾으므로(`eval/evaluator.py` 483–490) LIMO 로는 이 파일들을 그대로 못 쓴다. 변환기는 R1Pro 자세를 넣고 `InstRec.flags` 비트 0 을 켠다(15,000 개). 공개 평가 2,000 개는 모두 `robot`.

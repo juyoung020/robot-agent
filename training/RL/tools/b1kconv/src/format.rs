@@ -63,8 +63,8 @@ macro_rules! rec {
 }
 
 pub const MAGIC: u32 = 0x4353_4152; // "RASC" little endian
-pub const VERSION: u32 = 1;
-pub const NSEC: usize = 24;
+pub const VERSION: u32 = 2;
+pub const NSEC: usize = 28;
 pub const NONE16: u16 = 0xFFFF;
 
 rec!(Sec, "section table entry", {
@@ -259,11 +259,84 @@ rec!(PoseRec, "task object state in one instance", {
     src: u16 => "0 none (agent/system), 1 instance file, 2 scene file (object absent from the instance), 3 template (known dataset defect)",
 });
 
+rec!(LimitsRec, "pick-and-place limits used for PICKS/PLACES (2 records: [0] outer = inclusion, [1] inner = flag bit 0)", {
+    pick_z: f32 => "max bottom height (m) of a graspable object (top-down grasp from the LIMO base)",
+    place_top: f32 => "max top height (m) of an ontop support",
+    inside_margin: f32 => "an open container may be this much higher than place_top (m)",
+    max_mass: f32 => "max mass (kg; category average)",
+    max_w: f32 => "max of the smaller horizontal box side (m) = gripper opening",
+    min_side: f32 => "min smaller horizontal side (m) of an ontop support",
+    min_top: f32 => "min top height (m) of an ontop support (floor is its own kind)",
+    reach: f32 => "max xy distance (m) from a free base cell center to the object's box footprint",
+});
+
+rec!(PickRec, "graspable object candidate", {
+    obj: u32 => "ObjRec index, or RASC_PNP_TASKOBJ | TaskObjRec index (instance level)",
+    inst: u32 => "InstRec index, 0xffffffff = scene level (static)",
+    center: [f32; 3] => "world box center",
+    z0: f32 => "world AABB bottom",
+    top: f32 => "world AABB top",
+    min_w: f32 => "smaller horizontal side of the object box (m)",
+    mass: f32 => "category average mass (kg) or NaN",
+    yaw: f32 => "",
+    room: u16 => "RoomRec index at the center or 0xffff",
+    comp: u16 => "TRAV connected component of its approach cells (largest), 0xffff = none",
+    n_approach: u32 => "TRAV-free cells within reach of the footprint",
+    src_place: u32 => "PlaceRec index it rests on / in (same level or scene level), 0xffffffff = unknown",
+    flags: u32 => "RASC_PK_*",
+    reserved: [u32; 2] => "0",
+});
+
+rec!(PlaceRec, "support candidate (ontop surface, open container, or a room's floor)", {
+    obj: u32 => "ObjRec index, RASC_PNP_TASKOBJ | TaskObjRec index, or 0xffffffff for a floor",
+    inst: u32 => "InstRec index, 0xffffffff = scene level",
+    kind: u16 => "1 ontop surface, 2 inside open container, 3 floor of a room",
+    room: u16 => "RoomRec index",
+    center: [f32; 3] => "world box center (floor: room centroid, z 0)",
+    half: [f32; 2] => "object-frame half extents xy (floor: room bbox half)",
+    yaw: f32 => "",
+    top: f32 => "world AABB top (floor: 0)",
+    n_approach: u32 => "TRAV-free cells within reach (floor: free cells of the room)",
+    comp: u16 => "TRAV component (largest among approach cells), 0xffff = none",
+    flags: u16 => "bit 0: also within the inner (strict) limits",
+});
+
+rec!(PairRec, "pick-and-place candidate: object, source support, target support", {
+    pick: u32 => "PickRec index",
+    src: u32 => "PlaceRec index of the source support (= pick.src_place)",
+    dst: u32 => "PlaceRec index of the target support",
+    rel: u8 => "RASC_P_ONTOP or RASC_P_INSIDE",
+    reachable: u8 => "bit 0: pick and target approach cells share a TRAV component; bit 1: both within inner limits; bit 2: instance robot start in that component",
+    room_pick: u16 => "RoomRec index of the object",
+    room_dst: u16 => "RoomRec index of the target",
+    reserved: u16 => "0",
+    dist: f32 => "xy distance object -> target (m)",
+});
+
+rec!(PnpRange, "per-instance ranges into PICKS/PLACES/PAIRS (n_inst + 1 entries; the last = scene level)", {
+    pick_off: u32 => "",
+    place_off: u32 => "",
+    pair_off: u32 => "",
+    n_pick: u16 => "",
+    n_place: u16 => "",
+    n_pair: u32 => "",
+    robot_comp: u16 => "TRAV component of the robot start cell (0xffff none / scene level)",
+    reserved: u16 => "0",
+});
+
+pub const PNP_TASKOBJ: u32 = 0x8000_0000;
+pub const PK_FLAGS: &[(&str, u32, &str)] = &[
+    ("INNER", 1, "also within the inner (strict) limits"),
+    ("MASS_UNKNOWN", 2, "category has no average mass (mass limit not applied)"),
+    ("SCENE_OBJ", 4, "instance-level entry of a scene object in the task scope (overrides the scene-level one)"),
+    ("IN_CLOSED", 8, "BDDL init puts it inside a closed articulated container"),
+];
+
 // section ids
 pub const SEC_NAMES: [&str; NSEC] = [
     "STRINGS", "CATS", "ROOMS", "OBJS", "BOXES", "DOORS", "JOINTS", "ROOM_GRID", "TRAV", "TRAV_NO_OBJ", "TRAV_NO_DOOR",
-    "TRAV_OPEN_DOOR", "TASKS", "TASK_OBJS", "LITS", "VARS", "CANDS", "REMOVED", "INSTS", "POSES", "IN_ROOMS", "RES21",
-    "RES22", "RES23",
+    "TRAV_OPEN_DOOR", "TASKS", "TASK_OBJS", "LITS", "VARS", "CANDS", "REMOVED", "INSTS", "POSES", "IN_ROOMS", "LIMITS",
+    "PICKS", "PLACES", "PAIRS", "PNP_RANGES", "RES26", "RES27",
 ];
 pub const S_STRINGS: usize = 0;
 pub const S_CATS: usize = 1;
@@ -286,6 +359,11 @@ pub const S_REMOVED: usize = 17;
 pub const S_INSTS: usize = 18;
 pub const S_POSES: usize = 19;
 pub const S_IN_ROOMS: usize = 20;
+pub const S_LIMITS: usize = 21;
+pub const S_PICKS: usize = 22;
+pub const S_PLACES: usize = 23;
+pub const S_PAIRS: usize = 24;
+pub const S_PNP_RANGES: usize = 25;
 
 // flags (objects and task objects)
 pub const FLAGS: &[(&str, u32, &str)] = &[
@@ -387,6 +465,11 @@ fn layout_text() -> String {
     struct_text::<VarRec>(&mut s);
     struct_text::<InstRec>(&mut s);
     struct_text::<PoseRec>(&mut s);
+    struct_text::<LimitsRec>(&mut s);
+    struct_text::<PickRec>(&mut s);
+    struct_text::<PlaceRec>(&mut s);
+    struct_text::<PairRec>(&mut s);
+    struct_text::<PnpRange>(&mut s);
     s.push_str("enum {\n");
     for (i, n) in SEC_NAMES.iter().enumerate() {
         s.push_str(&format!("    RASC_SEC_{n} = {i},\n"));
@@ -405,11 +488,15 @@ fn layout_text() -> String {
         s.push_str(&format!("    RASC_L_{n} = {v}, /* {d} */\n"));
     }
     s.push_str("};\n\nenum {\n");
+    for (n, v, d) in PK_FLAGS {
+        s.push_str(&format!("    RASC_PK_{n} = {v}, /* {d} */\n"));
+    }
+    s.push_str("};\n\nenum {\n");
     for (i, (n, c)) in SKILLS.iter().enumerate() {
         s.push_str(&format!("    RASC_SK_{n} = 1 << {i}, /* doc letter {c} */\n"));
     }
     s.push_str(&format!(
-        "}};\n\n#define RASC_ARG_VAR 0x{ARG_VAR:x}u\n#define RASC_ARG_ROOM 0x{ARG_ROOM:x}u\n#define RASC_NONE16 0xffffu\n"
+        "}};\n\n#define RASC_ARG_VAR 0x{ARG_VAR:x}u\n#define RASC_ARG_ROOM 0x{ARG_ROOM:x}u\n#define RASC_NONE16 0xffffu\n#define RASC_NONE32 0xffffffffu\n#define RASC_PNP_TASKOBJ 0x{PNP_TASKOBJ:x}u\n"
     ));
     s
 }

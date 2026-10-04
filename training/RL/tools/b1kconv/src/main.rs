@@ -9,6 +9,7 @@ mod bddl;
 mod feas;
 mod format;
 mod png;
+mod pnp;
 mod scene;
 mod task;
 mod util;
@@ -30,6 +31,8 @@ struct Args {
     b1k: String,
     doc: String,
     check: Option<String>,
+    outer: String,
+    inner: String,
 }
 
 fn args() -> Args {
@@ -41,6 +44,8 @@ fn args() -> Args {
         b1k: format!("{root}/src/behavior-2026/BEHAVIOR-1K"),
         doc: format!("{root}/docs/map_vla/CURRICULUM_BEHAVIOR2026.md"),
         check: None,
+        outer: String::new(),
+        inner: String::new(),
     };
     let v: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -58,6 +63,8 @@ fn args() -> Args {
             "--b1k" => a.b1k = next(&mut i),
             "--doc" => a.doc = next(&mut i),
             "--check" => a.check = Some(next(&mut i)),
+            "--outer" => a.outer = next(&mut i),
+            "--inner" => a.inner = next(&mut i),
             s if a.cmd.is_empty() => a.cmd = s.to_string(),
             s => {
                 eprintln!("unknown argument {s}");
@@ -77,12 +84,12 @@ struct SceneTasks {
     summary: String,
 }
 
-fn convert_scene(p: &Paths, c: &mut scene::Common, name: &str, out_dir: Option<&str>, fault: task::Fault) -> Result<SceneTasks, String> {
+fn convert_scene(p: &Paths, c: &mut scene::Common, name: &str, out_dir: Option<&str>, fault: task::Fault, lim: [LimitsRec; 2]) -> Result<SceneTasks, String> {
     let t0 = std::time::Instant::now();
     let mut sc = scene::build(c, name)?;
     let metas = task::task_list(p)?;
     let rooms = task::rooms_csv(p)?;
-    let mut t = write::Tables { tasks: vec![], tobjs: vec![], lits: vec![], vars: vec![], cands: vec![], removed: vec![], insts: vec![], poses: vec![] };
+    let mut t = write::Tables { tasks: vec![], tobjs: vec![], lits: vec![], vars: vec![], cands: vec![], removed: vec![], insts: vec![], poses: vec![], pnp: None };
     let mut feas = vec![];
     let mut pose_src = [0usize; 4];
     let mut extra = 0;
@@ -118,6 +125,8 @@ fn convert_scene(p: &Paths, c: &mut scene::Common, name: &str, out_dir: Option<&
         tr.skills = feas::cols(&b.feas).skills;
         feas.push(b.feas);
     }
+    t.pnp = Some(pnp::build(&sc, &t, lim));
+    let pnp_txt = pnp_summary(&sc, &t);
     let bytes = write::assemble(&mut sc, &t);
     let mut s = String::new();
     let robot_on_free = t.insts.iter().filter(|r| match sc.cell(r.robot_pos[0] as f64, r.robot_pos[1] as f64) {
@@ -138,6 +147,7 @@ fn convert_scene(p: &Paths, c: &mut scene::Common, name: &str, out_dir: Option<&
         }
     }
     let _ = writeln!(s, "  sections:{sec_sizes}");
+    s.push_str(&pnp_txt.0);
     for w in &sc.warnings {
         let _ = writeln!(s, "  warning: {w}");
     }
@@ -171,6 +181,7 @@ fn convert_scene(p: &Paths, c: &mut scene::Common, name: &str, out_dir: Option<&
             let _ = writeln!(e, "sec {sn} {} {:016x}", sh.count, write::fnv64(b));
         }
         let _ = writeln!(e, "n_doc_lits {}", t.tasks.iter().map(|x| x.n_doc_lits as u32).sum::<u32>());
+        std::fs::write(format!("{dir}/{name}.pnp.tsv"), &pnp_txt.1).map_err(|e| e.to_string())?;
         std::fs::write(format!("{dir}/{name}.expect"), e).map_err(|e| e.to_string())?;
     }
     Ok(SceneTasks { feas, summary: s })
@@ -350,11 +361,14 @@ fn main() {
                 return Err("--out DIR required".into());
             }
             std::fs::create_dir_all(&a.out).map_err(|e| e.to_string())?;
+            let mut lim = pnp::limits_default();
+            pnp::parse_limits(&mut lim[0], &a.outer)?;
+            pnp::parse_limits(&mut lim[1], &a.inner)?;
             let mut c = scene::Common::load(&p)?;
             let mut all = vec![];
             let mut summary = String::new();
             for s in &a.scenes {
-                let st = convert_scene(&p, &mut c, s, Some(&a.out), task::Fault::None)?;
+                let st = convert_scene(&p, &mut c, s, Some(&a.out), task::Fault::None, lim)?;
                 print!("{}", st.summary);
                 summary.push_str(&st.summary);
                 all.extend(st.feas);
@@ -388,7 +402,7 @@ fn main() {
             let mut caught = 0;
             let faults = [(task::Fault::DropInstanceObject, "instance file lacks a task object"), (task::Fault::BadGoalObject, "goal object not in :objects")];
             for (f, what) in faults {
-                match convert_scene(&p, &mut c, "Rs_int", None, f) {
+                match convert_scene(&p, &mut c, "Rs_int", None, f, pnp::limits_default()) {
                     Err(e) => {
                         caught += 1;
                         println!("fault '{what}': stopped with error (expected): {}", e.lines().next().unwrap_or(""));
@@ -399,7 +413,7 @@ fn main() {
             // corrupted file must be rejected by the reader
             let dir = std::env::temp_dir().join(format!("b1kconv_neg_{}", std::process::id()));
             std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            convert_scene(&p, &mut c, "Rs_int", dir.to_str(), task::Fault::None)?;
+            convert_scene(&p, &mut c, "Rs_int", dir.to_str(), task::Fault::None, pnp::limits_default())?;
             let tmpf = dir.join("Rs_int.rasc");
             let tmp = dir.join("bad.rasc");
             let mut b = std::fs::read(&tmpf).map_err(|e| e.to_string())?;
@@ -428,4 +442,62 @@ fn main() {
             std::process::exit(1)
         }
     }
+}
+
+/// per-scene pick-and-place counts (text) + per-task table (TSV)
+fn pnp_summary(sc: &scene::Scene, t: &write::Tables) -> (String, String) {
+    let pn = t.pnp.as_ref().unwrap();
+    let sr = pn.ranges.last().unwrap();
+    let mut s = String::new();
+    let sp = &pn.picks[..sr.n_pick as usize];
+    let spl = &pn.places[..sr.n_place as usize];
+    let kinds = |v: &[PlaceRec], k: u16| v.iter().filter(|p| p.kind == k).count();
+    let spairs = &pn.pairs[..sr.n_pair as usize];
+    let _ = writeln!(
+        s,
+        "  pnp scene: picks {} (inner {}, approachable {}) | supports ontop {} inside {} floors {} | pairs {} reachable {} reachable+inner {} | TRAV components {}",
+        sp.len(), sp.iter().filter(|p| p.flags & 1 != 0).count(), sp.iter().filter(|p| p.n_approach > 0).count(),
+        kinds(spl, 1), kinds(spl, 2), kinds(spl, 3), spairs.len(), spairs.iter().filter(|p| p.reachable & 1 != 0).count(),
+        spairs.iter().filter(|p| p.reachable & 3 == 3).count(), pn.n_comp
+    );
+    let mut tsv = String::from("task_index\ttask\tinstances\twith_pick\twith_pick_inner\twith_reachable_pair\twith_robot_reachable_pair\twith_robot_reachable_inner_pair\tpicks_per_inst\tpick_categories\n");
+    let (mut ip, mut ipi, mut ir, mut irr, mut irri, mut npk, mut npl, mut npr) = (0, 0, 0, 0, 0, 0usize, 0usize, 0usize);
+    let ni = t.insts.len();
+    for tr in &t.tasks {
+        let (mut a, mut b, mut c, mut d, mut e, mut np) = (0, 0, 0, 0, 0, 0);
+        let mut cats: Vec<String> = vec![];
+        for ii in tr.inst_off..tr.inst_off + tr.n_inst {
+            let r = &pn.ranges[ii as usize];
+            let pk = &pn.picks[r.pick_off as usize..r.pick_off as usize + r.n_pick as usize];
+            let pr = &pn.pairs[r.pair_off as usize..(r.pair_off + r.n_pair) as usize];
+            np += pk.len();
+            npl += r.n_place as usize;
+            npr += pr.len();
+            a += !pk.is_empty() as usize;
+            b += pk.iter().any(|p| p.flags & 1 != 0) as usize;
+            c += pr.iter().any(|p| p.reachable & 1 != 0) as usize;
+            d += pr.iter().any(|p| p.reachable & 5 == 5) as usize;
+            e += pr.iter().any(|p| p.reachable & 7 == 7) as usize;
+            for p in pk {
+                let o = &t.tobjs[(p.obj & !PNP_TASKOBJ) as usize];
+                let cn = &sc.cat_names[o.cat as usize];
+                if !cats.contains(cn) {
+                    cats.push(cn.clone());
+                }
+            }
+        }
+        cats.sort();
+        npk += np;
+        ip += a;
+        ipi += b;
+        ir += c;
+        irr += d;
+        irri += e;
+        let _ = writeln!(tsv, "{}\t{}\t{}\t{a}\t{b}\t{c}\t{d}\t{e}\t{:.2}\t{}", tr.task_index, util::cstr(&sc.strings.bytes, tr.name), tr.n_inst, np as f64 / tr.n_inst.max(1) as f64, cats.join(","));
+    }
+    let _ = writeln!(
+        s,
+        "  pnp instances {ni}: picks {npk} supports {npl} pairs {npr} | instances with a graspable task object {ip} (inner {ipi}), with a reachable pair {ir}, robot start in its component {irr}, + inner limits {irri}"
+    );
+    (s, tsv)
 }

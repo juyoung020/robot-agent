@@ -252,7 +252,56 @@ static void test_file(const std::string& path) {
             }
         }
     }
-    CHECK(n_doc == n_doc_lits_expect, "doc literals %" PRIu64 " != %" PRIu64, n_doc, n_doc_lits_expect);
+    // ---- 6b. pick-and-place table
+    const RascLimitsRec& L = s.limits[0];
+    const RascLimitsRec& LI = s.limits[1];
+    size_t pairs_seen = 0, picks_seen = 0, places_seen = 0;
+    for (size_t ri = 0; ri < s.pnp_ranges.n; ri++) {
+        const RascPnpRange& r = s.pnp_ranges[ri];
+        bool scene = ri + 1 == s.pnp_ranges.n;
+        uint32_t inst = scene ? RASC_NONE32 : (uint32_t)ri;
+        CHECK(r.pick_off + r.n_pick <= s.picks.n && r.place_off + r.n_place <= s.places.n && r.pair_off + r.n_pair <= s.pairs.n, "pnp range %zu", ri);
+        picks_seen += r.n_pick;
+        places_seen += r.n_place;
+        pairs_seen += r.n_pair;
+        for (uint32_t k = 0; k < r.n_pick; k++) {
+            const RascPickRec& p = s.picks[r.pick_off + k];
+            CHECK(p.inst == inst, "pick inst");
+            CHECK(p.z0 <= L.pick_z && p.min_w <= L.max_w && (std::isnan(p.mass) ? (p.flags & RASC_PK_MASS_UNKNOWN) != 0 : p.mass <= L.max_mass), "pick outside outer limits");
+            bool inner = p.z0 <= LI.pick_z && p.min_w <= LI.max_w && (std::isnan(p.mass) || p.mass <= LI.max_mass);
+            CHECK(inner == ((p.flags & RASC_PK_INNER) != 0), "pick inner flag");
+            CHECK(p.src_place == RASC_NONE32 || p.src_place < s.places.n, "pick src");
+            if (p.obj & RASC_PNP_TASKOBJ) {
+                CHECK(!scene && (p.obj & ~RASC_PNP_TASKOBJ) < s.task_objs.n, "pick task obj");
+            } else {
+                CHECK(p.obj < s.objs.n, "pick obj");
+            }
+            CHECK(p.room == RASC_NONE16 || p.room < s.rooms.n, "pick room");
+        }
+        for (uint32_t k = 0; k < r.n_place; k++) {
+            const RascPlaceRec& q = s.places[r.place_off + k];
+            CHECK(q.inst == inst && q.kind >= 1 && q.kind <= 3, "place kind/inst");
+            if (q.kind == 1) CHECK(q.top <= L.place_top && q.top >= L.min_top && 2 * std::fmin(q.half[0], q.half[1]) >= L.min_side - 1e-6f, "ontop support outside limits");
+            if (q.kind == 2) CHECK(q.top <= L.place_top + L.inside_margin, "container outside limits");
+            if (q.kind == 3) CHECK(q.obj == RASC_NONE32 && q.room < s.rooms.n && q.top == 0, "floor support");
+        }
+        for (uint32_t k = 0; k < r.n_pair; k++) {
+            const RascPairRec& a = s.pairs[r.pair_off + k];
+            CHECK(a.pick >= r.pick_off && a.pick < r.pick_off + r.n_pick, "pair pick outside its range");
+            CHECK(a.dst < s.places.n && a.dst != a.src, "pair dst");
+            const RascPickRec& p = s.picks[a.pick];
+            const RascPlaceRec& d = s.places[a.dst];
+            CHECK(d.inst == inst || d.inst == RASC_NONE32, "pair dst level");
+            CHECK(a.src == p.src_place, "pair src");
+            CHECK(a.rel == (d.kind == 2 ? RASC_P_INSIDE : RASC_P_ONTOP), "pair rel");
+            CHECK(((a.reachable & 1) != 0) == (p.comp != RASC_NONE16 && p.comp == d.comp), "pair reachable bit");
+            CHECK(((a.reachable & 4) == 0) || (!scene && r.robot_comp == p.comp), "pair robot bit");
+            CHECK(a.room_pick == p.room && a.room_dst == d.room, "pair rooms");
+        }
+    }
+    CHECK(picks_seen == s.picks.n && places_seen == s.places.n && pairs_seen == s.pairs.n, "pnp ranges do not tile the sections");
+
+    CHECK(n_doc == n_doc_lits_expect,"doc literals %" PRIu64 " != %" PRIu64, n_doc, n_doc_lits_expect);
 
     std::printf("%-26s %s  %8zu B  objs %zu boxes %zu doors %zu rooms %zu (unresolved in_rooms %zu) trav-in-room %.3f obj-in-own-room %zu/%zu (near %zu)  tasks %zu lits %zu insts %zu robot-on-free %zu/%zu\n",
                 s.name().c_str(), g_fail == f0 ? "ok  " : "FAIL", s.buf.size(), s.objs.n, s.boxes.n, s.doors.n, s.rooms.n, unresolved, cover, placed_ok, placed, placed_near,

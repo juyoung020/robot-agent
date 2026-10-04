@@ -19,8 +19,8 @@
 #endif
 
 #define RASC_MAGIC 0x43534152u
-#define RASC_VERSION 1u
-#define RASC_LAYOUT_HASH 0x542bea30u
+#define RASC_VERSION 2u
+#define RASC_LAYOUT_HASH 0xb8525ff4u
 
 /* section table entry */
 typedef struct RascSec {
@@ -53,10 +53,10 @@ typedef struct RascFileHeader {
     float trav_area_m2; /* free pixels of floor_trav_0.png * res^2 (full resolution) */
     uint32_t n_rooms_png; /* distinct non-zero room ids in floor_insseg_0.png at full resolution */
     uint32_t flags; /* reserved (0) */
-    RascSec sections[24]; /* section table, indexed by RASC_SEC_* */
+    RascSec sections[28]; /* section table, indexed by RASC_SEC_* */
     uint32_t reserved[4]; /* 0 */
 } RascFileHeader;
-RASC_STATIC_ASSERT(sizeof(RascFileHeader) == 688, "RascFileHeader size");
+RASC_STATIC_ASSERT(sizeof(RascFileHeader) == 784, "RascFileHeader size");
 RASC_STATIC_ASSERT(offsetof(RascFileHeader, magic) == 0, "RascFileHeader.magic");
 RASC_STATIC_ASSERT(offsetof(RascFileHeader, version) == 4, "RascFileHeader.version");
 RASC_STATIC_ASSERT(offsetof(RascFileHeader, header_bytes) == 8, "RascFileHeader.header_bytes");
@@ -74,7 +74,7 @@ RASC_STATIC_ASSERT(offsetof(RascFileHeader, trav_area_m2) == 84, "RascFileHeader
 RASC_STATIC_ASSERT(offsetof(RascFileHeader, n_rooms_png) == 88, "RascFileHeader.n_rooms_png");
 RASC_STATIC_ASSERT(offsetof(RascFileHeader, flags) == 92, "RascFileHeader.flags");
 RASC_STATIC_ASSERT(offsetof(RascFileHeader, sections) == 96, "RascFileHeader.sections");
-RASC_STATIC_ASSERT(offsetof(RascFileHeader, reserved) == 672, "RascFileHeader.reserved");
+RASC_STATIC_ASSERT(offsetof(RascFileHeader, reserved) == 768, "RascFileHeader.reserved");
 
 /* object category (OmniGibson category name) used by this scene or its tasks */
 typedef struct RascCatRec {
@@ -383,6 +383,131 @@ RASC_STATIC_ASSERT(offsetof(RascPoseRec, joint_off) == 28, "RascPoseRec.joint_of
 RASC_STATIC_ASSERT(offsetof(RascPoseRec, n_joints) == 32, "RascPoseRec.n_joints");
 RASC_STATIC_ASSERT(offsetof(RascPoseRec, src) == 34, "RascPoseRec.src");
 
+/* pick-and-place limits used for PICKS/PLACES (2 records: [0] outer = inclusion, [1] inner = flag bit 0) */
+typedef struct RascLimitsRec {
+    float pick_z; /* max bottom height (m) of a graspable object (top-down grasp from the LIMO base) */
+    float place_top; /* max top height (m) of an ontop support */
+    float inside_margin; /* an open container may be this much higher than place_top (m) */
+    float max_mass; /* max mass (kg; category average) */
+    float max_w; /* max of the smaller horizontal box side (m) = gripper opening */
+    float min_side; /* min smaller horizontal side (m) of an ontop support */
+    float min_top; /* min top height (m) of an ontop support (floor is its own kind) */
+    float reach; /* max xy distance (m) from a free base cell center to the object's box footprint */
+} RascLimitsRec;
+RASC_STATIC_ASSERT(sizeof(RascLimitsRec) == 32, "RascLimitsRec size");
+RASC_STATIC_ASSERT(offsetof(RascLimitsRec, pick_z) == 0, "RascLimitsRec.pick_z");
+RASC_STATIC_ASSERT(offsetof(RascLimitsRec, place_top) == 4, "RascLimitsRec.place_top");
+RASC_STATIC_ASSERT(offsetof(RascLimitsRec, inside_margin) == 8, "RascLimitsRec.inside_margin");
+RASC_STATIC_ASSERT(offsetof(RascLimitsRec, max_mass) == 12, "RascLimitsRec.max_mass");
+RASC_STATIC_ASSERT(offsetof(RascLimitsRec, max_w) == 16, "RascLimitsRec.max_w");
+RASC_STATIC_ASSERT(offsetof(RascLimitsRec, min_side) == 20, "RascLimitsRec.min_side");
+RASC_STATIC_ASSERT(offsetof(RascLimitsRec, min_top) == 24, "RascLimitsRec.min_top");
+RASC_STATIC_ASSERT(offsetof(RascLimitsRec, reach) == 28, "RascLimitsRec.reach");
+
+/* graspable object candidate */
+typedef struct RascPickRec {
+    uint32_t obj; /* ObjRec index, or RASC_PNP_TASKOBJ | TaskObjRec index (instance level) */
+    uint32_t inst; /* InstRec index, 0xffffffff = scene level (static) */
+    float center[3]; /* world box center */
+    float z0; /* world AABB bottom */
+    float top; /* world AABB top */
+    float min_w; /* smaller horizontal side of the object box (m) */
+    float mass; /* category average mass (kg) or NaN */
+    float yaw;
+    uint16_t room; /* RoomRec index at the center or 0xffff */
+    uint16_t comp; /* TRAV connected component of its approach cells (largest), 0xffff = none */
+    uint32_t n_approach; /* TRAV-free cells within reach of the footprint */
+    uint32_t src_place; /* PlaceRec index it rests on / in (same level or scene level), 0xffffffff = unknown */
+    uint32_t flags; /* RASC_PK_* */
+    uint32_t reserved[2]; /* 0 */
+} RascPickRec;
+RASC_STATIC_ASSERT(sizeof(RascPickRec) == 64, "RascPickRec size");
+RASC_STATIC_ASSERT(offsetof(RascPickRec, obj) == 0, "RascPickRec.obj");
+RASC_STATIC_ASSERT(offsetof(RascPickRec, inst) == 4, "RascPickRec.inst");
+RASC_STATIC_ASSERT(offsetof(RascPickRec, center) == 8, "RascPickRec.center");
+RASC_STATIC_ASSERT(offsetof(RascPickRec, z0) == 20, "RascPickRec.z0");
+RASC_STATIC_ASSERT(offsetof(RascPickRec, top) == 24, "RascPickRec.top");
+RASC_STATIC_ASSERT(offsetof(RascPickRec, min_w) == 28, "RascPickRec.min_w");
+RASC_STATIC_ASSERT(offsetof(RascPickRec, mass) == 32, "RascPickRec.mass");
+RASC_STATIC_ASSERT(offsetof(RascPickRec, yaw) == 36, "RascPickRec.yaw");
+RASC_STATIC_ASSERT(offsetof(RascPickRec, room) == 40, "RascPickRec.room");
+RASC_STATIC_ASSERT(offsetof(RascPickRec, comp) == 42, "RascPickRec.comp");
+RASC_STATIC_ASSERT(offsetof(RascPickRec, n_approach) == 44, "RascPickRec.n_approach");
+RASC_STATIC_ASSERT(offsetof(RascPickRec, src_place) == 48, "RascPickRec.src_place");
+RASC_STATIC_ASSERT(offsetof(RascPickRec, flags) == 52, "RascPickRec.flags");
+RASC_STATIC_ASSERT(offsetof(RascPickRec, reserved) == 56, "RascPickRec.reserved");
+
+/* support candidate (ontop surface, open container, or a room's floor) */
+typedef struct RascPlaceRec {
+    uint32_t obj; /* ObjRec index, RASC_PNP_TASKOBJ | TaskObjRec index, or 0xffffffff for a floor */
+    uint32_t inst; /* InstRec index, 0xffffffff = scene level */
+    uint16_t kind; /* 1 ontop surface, 2 inside open container, 3 floor of a room */
+    uint16_t room; /* RoomRec index */
+    float center[3]; /* world box center (floor: room centroid, z 0) */
+    float half[2]; /* object-frame half extents xy (floor: room bbox half) */
+    float yaw;
+    float top; /* world AABB top (floor: 0) */
+    uint32_t n_approach; /* TRAV-free cells within reach (floor: free cells of the room) */
+    uint16_t comp; /* TRAV component (largest among approach cells), 0xffff = none */
+    uint16_t flags; /* bit 0: also within the inner (strict) limits */
+} RascPlaceRec;
+RASC_STATIC_ASSERT(sizeof(RascPlaceRec) == 48, "RascPlaceRec size");
+RASC_STATIC_ASSERT(offsetof(RascPlaceRec, obj) == 0, "RascPlaceRec.obj");
+RASC_STATIC_ASSERT(offsetof(RascPlaceRec, inst) == 4, "RascPlaceRec.inst");
+RASC_STATIC_ASSERT(offsetof(RascPlaceRec, kind) == 8, "RascPlaceRec.kind");
+RASC_STATIC_ASSERT(offsetof(RascPlaceRec, room) == 10, "RascPlaceRec.room");
+RASC_STATIC_ASSERT(offsetof(RascPlaceRec, center) == 12, "RascPlaceRec.center");
+RASC_STATIC_ASSERT(offsetof(RascPlaceRec, half) == 24, "RascPlaceRec.half");
+RASC_STATIC_ASSERT(offsetof(RascPlaceRec, yaw) == 32, "RascPlaceRec.yaw");
+RASC_STATIC_ASSERT(offsetof(RascPlaceRec, top) == 36, "RascPlaceRec.top");
+RASC_STATIC_ASSERT(offsetof(RascPlaceRec, n_approach) == 40, "RascPlaceRec.n_approach");
+RASC_STATIC_ASSERT(offsetof(RascPlaceRec, comp) == 44, "RascPlaceRec.comp");
+RASC_STATIC_ASSERT(offsetof(RascPlaceRec, flags) == 46, "RascPlaceRec.flags");
+
+/* pick-and-place candidate: object, source support, target support */
+typedef struct RascPairRec {
+    uint32_t pick; /* PickRec index */
+    uint32_t src; /* PlaceRec index of the source support (= pick.src_place) */
+    uint32_t dst; /* PlaceRec index of the target support */
+    uint8_t rel; /* RASC_P_ONTOP or RASC_P_INSIDE */
+    uint8_t reachable; /* bit 0: pick and target approach cells share a TRAV component; bit 1: both within inner limits; bit 2: instance robot start in that component */
+    uint16_t room_pick; /* RoomRec index of the object */
+    uint16_t room_dst; /* RoomRec index of the target */
+    uint16_t reserved; /* 0 */
+    float dist; /* xy distance object -> target (m) */
+} RascPairRec;
+RASC_STATIC_ASSERT(sizeof(RascPairRec) == 24, "RascPairRec size");
+RASC_STATIC_ASSERT(offsetof(RascPairRec, pick) == 0, "RascPairRec.pick");
+RASC_STATIC_ASSERT(offsetof(RascPairRec, src) == 4, "RascPairRec.src");
+RASC_STATIC_ASSERT(offsetof(RascPairRec, dst) == 8, "RascPairRec.dst");
+RASC_STATIC_ASSERT(offsetof(RascPairRec, rel) == 12, "RascPairRec.rel");
+RASC_STATIC_ASSERT(offsetof(RascPairRec, reachable) == 13, "RascPairRec.reachable");
+RASC_STATIC_ASSERT(offsetof(RascPairRec, room_pick) == 14, "RascPairRec.room_pick");
+RASC_STATIC_ASSERT(offsetof(RascPairRec, room_dst) == 16, "RascPairRec.room_dst");
+RASC_STATIC_ASSERT(offsetof(RascPairRec, reserved) == 18, "RascPairRec.reserved");
+RASC_STATIC_ASSERT(offsetof(RascPairRec, dist) == 20, "RascPairRec.dist");
+
+/* per-instance ranges into PICKS/PLACES/PAIRS (n_inst + 1 entries; the last = scene level) */
+typedef struct RascPnpRange {
+    uint32_t pick_off;
+    uint32_t place_off;
+    uint32_t pair_off;
+    uint16_t n_pick;
+    uint16_t n_place;
+    uint32_t n_pair;
+    uint16_t robot_comp; /* TRAV component of the robot start cell (0xffff none / scene level) */
+    uint16_t reserved; /* 0 */
+} RascPnpRange;
+RASC_STATIC_ASSERT(sizeof(RascPnpRange) == 24, "RascPnpRange size");
+RASC_STATIC_ASSERT(offsetof(RascPnpRange, pick_off) == 0, "RascPnpRange.pick_off");
+RASC_STATIC_ASSERT(offsetof(RascPnpRange, place_off) == 4, "RascPnpRange.place_off");
+RASC_STATIC_ASSERT(offsetof(RascPnpRange, pair_off) == 8, "RascPnpRange.pair_off");
+RASC_STATIC_ASSERT(offsetof(RascPnpRange, n_pick) == 12, "RascPnpRange.n_pick");
+RASC_STATIC_ASSERT(offsetof(RascPnpRange, n_place) == 14, "RascPnpRange.n_place");
+RASC_STATIC_ASSERT(offsetof(RascPnpRange, n_pair) == 16, "RascPnpRange.n_pair");
+RASC_STATIC_ASSERT(offsetof(RascPnpRange, robot_comp) == 20, "RascPnpRange.robot_comp");
+RASC_STATIC_ASSERT(offsetof(RascPnpRange, reserved) == 22, "RascPnpRange.reserved");
+
 enum {
     RASC_SEC_STRINGS = 0,
     RASC_SEC_CATS = 1,
@@ -405,10 +530,14 @@ enum {
     RASC_SEC_INSTS = 18,
     RASC_SEC_POSES = 19,
     RASC_SEC_IN_ROOMS = 20,
-    RASC_SEC_RES21 = 21,
-    RASC_SEC_RES22 = 22,
-    RASC_SEC_RES23 = 23,
-    RASC_NSEC = 24
+    RASC_SEC_LIMITS = 21,
+    RASC_SEC_PICKS = 22,
+    RASC_SEC_PLACES = 23,
+    RASC_SEC_PAIRS = 24,
+    RASC_SEC_PNP_RANGES = 25,
+    RASC_SEC_RES26 = 26,
+    RASC_SEC_RES27 = 27,
+    RASC_NSEC = 28
 };
 
 enum {
@@ -475,6 +604,13 @@ enum {
 };
 
 enum {
+    RASC_PK_INNER = 1, /* also within the inner (strict) limits */
+    RASC_PK_MASS_UNKNOWN = 2, /* category has no average mass (mass limit not applied) */
+    RASC_PK_SCENE_OBJ = 4, /* instance-level entry of a scene object in the task scope (overrides the scene-level one) */
+    RASC_PK_IN_CLOSED = 8, /* BDDL init puts it inside a closed articulated container */
+};
+
+enum {
     RASC_SK_MULTI_ROOM = 1 << 0, /* doc letter M */
     RASC_SK_PICK = 1 << 1, /* doc letter P */
     RASC_SK_OPEN = 1 << 2, /* doc letter O */
@@ -490,6 +626,8 @@ enum {
 #define RASC_ARG_VAR 0x8000u
 #define RASC_ARG_ROOM 0x4000u
 #define RASC_NONE16 0xffffu
+#define RASC_NONE32 0xffffffffu
+#define RASC_PNP_TASKOBJ 0x80000000u
 
 static const char* const rasc_pred_names[] = {"", "inroom", "ontop", "inside", "nextto", "under", "touching", "attached", "open", "toggled_on", "cooked", "frozen", "hot", "on_fire", "covered", "filled", "contains", "saturated", "insource", "real", "future", "overlaid", "draped", "folded", "unfolded", "broken", };
-static const char* const rasc_sec_names[] = {"STRINGS", "CATS", "ROOMS", "OBJS", "BOXES", "DOORS", "JOINTS", "ROOM_GRID", "TRAV", "TRAV_NO_OBJ", "TRAV_NO_DOOR", "TRAV_OPEN_DOOR", "TASKS", "TASK_OBJS", "LITS", "VARS", "CANDS", "REMOVED", "INSTS", "POSES", "IN_ROOMS", "RES21", "RES22", "RES23", };
+static const char* const rasc_sec_names[] = {"STRINGS", "CATS", "ROOMS", "OBJS", "BOXES", "DOORS", "JOINTS", "ROOM_GRID", "TRAV", "TRAV_NO_OBJ", "TRAV_NO_DOOR", "TRAV_OPEN_DOOR", "TASKS", "TASK_OBJS", "LITS", "VARS", "CANDS", "REMOVED", "INSTS", "POSES", "IN_ROOMS", "LIMITS", "PICKS", "PLACES", "PAIRS", "PNP_RANGES", "RES26", "RES27", };

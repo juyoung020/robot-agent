@@ -12,6 +12,7 @@ pub struct Tables {
     pub removed: Vec<u16>,
     pub insts: Vec<InstRec>,
     pub poses: Vec<PoseRec>,
+    pub pnp: Option<crate::pnp::Pnp>,
 }
 
 fn raw<T: Copy>(v: &[T]) -> &[u8] {
@@ -30,6 +31,7 @@ pub fn fnv64(b: &[u8]) -> u64 {
 
 pub fn assemble(sc: &mut Scene, t: &Tables) -> Vec<u8> {
     let g = (sc.hdr.grid_w * sc.hdr.grid_h) as u32;
+    let pn = t.pnp.as_ref().expect("pick-and-place table not built");
     let secs: Vec<(usize, &[u8], u32, u32)> = vec![
         (S_STRINGS, &sc.strings.bytes, sc.strings.bytes.len() as u32, 1),
         (S_CATS, bytes_of(&sc.cats), sc.cats.len() as u32, std::mem::size_of::<CatRec>() as u32),
@@ -52,6 +54,11 @@ pub fn assemble(sc: &mut Scene, t: &Tables) -> Vec<u8> {
         (S_INSTS, bytes_of(&t.insts), t.insts.len() as u32, std::mem::size_of::<InstRec>() as u32),
         (S_POSES, bytes_of(&t.poses), t.poses.len() as u32, std::mem::size_of::<PoseRec>() as u32),
         (S_IN_ROOMS, raw(&sc.in_rooms), sc.in_rooms.len() as u32, 4),
+        (S_LIMITS, bytes_of(&pn.limits), 2, std::mem::size_of::<LimitsRec>() as u32),
+        (S_PICKS, bytes_of(&pn.picks), pn.picks.len() as u32, std::mem::size_of::<PickRec>() as u32),
+        (S_PLACES, bytes_of(&pn.places), pn.places.len() as u32, std::mem::size_of::<PlaceRec>() as u32),
+        (S_PAIRS, bytes_of(&pn.pairs), pn.pairs.len() as u32, std::mem::size_of::<PairRec>() as u32),
+        (S_PNP_RANGES, bytes_of(&pn.ranges), pn.ranges.len() as u32, std::mem::size_of::<PnpRange>() as u32),
     ];
     let hsz = std::mem::size_of::<FileHeader>();
     let mut off = hsz.div_ceil(64) * 64;
