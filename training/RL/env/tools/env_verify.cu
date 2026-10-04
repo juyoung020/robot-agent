@@ -1,5 +1,5 @@
 // V1 검증: 같은 씨앗·같은 행동 열로 GPU 커널과 CPU 참조판을 돌려 **매 스텝 모든 상태·관측·보상·끝 판정**을 비트 단위로 비교한다.
-//   env_verify [N=2048] [steps=400] [--negative]
+//   env_verify [N=2048] [steps=400] [--negative] [--stage 0|1|2]   (기본 A1; 2 = A2 가구)
 // --negative: GPU 쪽에 일부러 버그(회전 부호)를 넣는다. 이 판은 반드시 실패해야 한다(검증이 이빨이 있는지) — 실패해야 종료 코드 0.
 #include <cstdio>
 #include <cstring>
@@ -20,21 +20,24 @@ static const char* field_name(int k) {
   if (k == F_TX) return "tx"; if (k == F_TY) return "ty"; if (k == F_RHX) return "rhx"; if (k == F_RHY) return "rhy";
   if (k >= F_ACT0 && k <= F_ACT7) { std::snprintf(b, sizeof b, "last_act%d", k - F_ACT0); return b; }
   if (k == F_PDIST) return "prev_dist"; if (k == F_PAIM) return "prev_aim";
+  if (k >= F_FB0 && k <= F_FB_END) { std::snprintf(b, sizeof b, "furn%d.%d", (k - F_FB0) / 5, (k - F_FB0) % 5); return b; }
+  if (k >= F_PD0 && k <= F_PD_END) { std::snprintf(b, sizeof b, "path_node%d", k - F_PD0); return b; }
   return "?";
 }
 
 int main(int argc, char** argv) {
-  int N = 2048, T = 400;
+  int N = 2048, T = 400, stage = 1;
   bool negative = false;
   int pos = 0;
   for (int a = 1; a < argc; ++a) {
     if (!std::strcmp(argv[a], "--negative")) negative = true;
+    else if (!std::strcmp(argv[a], "--stage") && a + 1 < argc) stage = std::atoi(argv[++a]);
     else if (pos == 0) { N = std::atoi(argv[a]); ++pos; }
     else if (pos == 1) { T = std::atoi(argv[a]); ++pos; }
   }
   const uint64_t seed = 20261004;
-  DeviceEnv gpu(N, /*stage=*/1, seed);
-  CpuEnv cpu(N, 1, seed);
+  DeviceEnv gpu(N, stage, seed);
+  CpuEnv cpu(N, stage, seed);
   float *d_act, *d_obs, *d_rew; int* d_done;
   cudaMalloc(&d_act, sizeof(float) * N_ACT * N);
   cudaMalloc(&d_obs, sizeof(float) * N_OBS * N);
@@ -78,7 +81,7 @@ int main(int argc, char** argv) {
     mismatches += m;
     if (m && !negative) break;   // 정상 판은 첫 불일치에서 멈춰 자세히 보여 준다
   }
-  std::printf("env_verify: N=%d steps=%d  episode ends seen: running %d, success %d, collision %d, timeout %d\n", N, T, ends[0], ends[1], ends[2], ends[3]);
+  std::printf("env_verify: N=%d steps=%d stage A%d  episode ends seen: running %d, success %d, collision %d, timeout %d\n", N, T, stage, ends[0], ends[1], ends[2], ends[3]);
   if (negative) {
     std::printf("negative control: %ld mismatches (must be > 0)\n", mismatches);
     return mismatches > 0 ? 0 : 1;

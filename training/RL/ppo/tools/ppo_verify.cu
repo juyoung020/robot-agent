@@ -497,7 +497,7 @@ static int run_eval(const char* path, int stage, int iters, int N, int use_map, 
     std::vector<float> fs, act;
     std::vector<uint64_t> rg;
     long hist[5] = {0, 0, 0, 0, 0}, ends[4] = {0, 0, 0, 0}, near_cup = 0, near_wall = 0, both = 0;
-    long kind[6] = {0, 0, 0, 0, 0, 0};   // 컵, 벽 앞 모서리(앞으로), 벽 앞 모서리(뒤로·제자리), 벽 뒤 모서리(뒤로), 벽 뒤 모서리(앞으로·제자리), 기타
+    long kind[6] = {0, 0, 0, 0, 0, 0};   // 컵, 벽 앞 모서리(앞으로), 벽 앞 모서리(뒤로·제자리), 벽 뒤 모서리(뒤로), 벽 뒤 모서리(앞으로·제자리), 가구(A2)
     long known_at = 0, turning = 0, cmd_back = 0, zone_close = 0;
     long sat_all[2] = {0, 0}, sat_hit[2] = {0, 0}, n_all = 0;   // 정책 평균 |μ| > 1(행동 자르기 밖) — 모든 스텝 / 충돌 스텝
     double mu_hit[2] = {0, 0};
@@ -550,7 +550,13 @@ static int run_eval(const char* path, int stage, int iters, int N, int use_map, 
           if (over > 0.f && (worst < 0 || over > wv)) { worst = q; wv = over; }
         }
         const bool fwd = hit.v > 0.02f, back = hit.v < -0.02f;
-        if (worst < 0) ++kind[0];
+        bool furn = false;   // A2: 가구 상자에 닿음(방 밖 모서리가 없을 때)
+        for (int q = 0; q < hit.nf && worst < 0; ++q) {
+          float b4[4];
+          for (int z = 0; z < 4; ++z) b4[z] = hit.fu.box(q, z);
+          furn = furn || env::body_hits_box(hit.x, hit.y, sn, cs, b4);
+        }
+        if (worst < 0) ++kind[furn ? 5 : 0];
         else if (worst & 1) ++kind[fwd ? 1 : 2];
         else ++kind[back ? 3 : 4];
         turning += std::fabs(hit.w) > 0.3f;
@@ -570,8 +576,8 @@ static int run_eval(const char* path, int stage, int iters, int N, int use_map, 
     std::printf("eval collisions by episode step: 0: %ld, 1-2: %ld, 3-9: %ld, 10-29: %ld, >=30: %ld (of %ld episodes: success %ld, collision %ld, timeout %ld)\n",
                 hist[0], hist[1], hist[2], hist[3], hist[4], ends[1] + ends[2] + ends[3], ends[1], ends[2], ends[3]);
     std::printf("eval collisions: cup closer than wall %ld, wall closer %ld; cup within 0.6 m AND wall within 0.45 m %ld\n", near_cup, near_wall, both);
-    std::printf("eval collision replay: cup %ld | front corner out: moving fwd %ld, not fwd %ld | rear corner out: reversing %ld, not reversing %ld\n",
-                kind[0], kind[1], kind[2], kind[3], kind[4]);
+    std::printf("eval collision replay: furniture %ld | cup %ld | front corner out: moving fwd %ld, not fwd %ld | rear corner out: reversing %ld, not reversing %ld\n",
+                kind[5], kind[0], kind[1], kind[2], kind[3], kind[4]);
     std::printf("  at hit: mean v %.3f m/s, mean |w| %.3f rad/s, |w| > 0.3: %ld, commanded v < 0: %ld, goal known: %ld; previous obs: min wall ray %.3f m, cup surface %.3f m (< 0.9 m: %ld)\n",
                 sum_v / nc, sum_w / nc, turning, cmd_back, known_at, sum_minray / nc, sum_surf / nc, zone_close);
     std::printf("  policy mean beyond the action clip |mu| > 1: all steps vx %.3f wz %.3f; collision steps vx %ld wz %ld of %ld (mean |mu| vx %.2f wz %.2f)\n",

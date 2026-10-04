@@ -9,6 +9,7 @@ Rust 실행기(`../ppo/driver`)가 읽는 JSON. 빠진 키는 실행기 기본�
 | `ppo_a0a1_coll.json` | 위 + 충돌 추가 벌 `shaping.coll` −20(벽 충돌 원인 확인 — 결정적 충돌 0.0298 → 0.0006) |
 | `ppo_g4.json` | **G4**: 목표는 지도에서(`goal_from_map` 1), 처음 지도 커리큘럼 A0C0 → A1C0 → A1C1 → A1C2, `bound_coef` 0.5, 충돌 추가 벌 `shaping.coll` −20(합 −30, 기본) |
 | `ppo_g4_notok.json` | G4 와 같고 지도 토큰만 끔(`use_map` 0) — 토큰 켬/끔 비교 |
+| `ppo_a2.json` | A2(가구, `../env/README.md`): A0C0 → A1C0 → A2C0(≥ 0.85, CURRICULUM A2) → A2C1 → A2C2, 충돌 추가 벌 −20 |
 
 | 키 | 값 | 근거 |
 |---|---|---|

@@ -1,9 +1,10 @@
 // V1 식 검증(지도): G1 환경(GPU·CPU 각각)을 같은 행동 열로 돌리고, 스텝마다 지도 단계를 GPU 커널과 CPU 참조판으로 돌려
 // **매 스텝 환경 상태 + 지도 전체(물체 기억·slam 자세·격자 로그 오즈·본 칸·완성도)**를 비트 단위로 비교한다.
-//   map_verify [N=2048] [steps=600] [--negative] [--force-kf] [--arm] [--curr p0,p1[,kmin,kmax[,reveal_r]]]
+//   map_verify [N=2048] [steps=600] [--negative] [--force-kf] [--arm] [--stage 0|1|2] [--curr p0,p1[,kmin,kmax[,reveal_r]]]
 // --curr: 커리큘럼 처음 지도(5.5) 비율. 예 --curr 1,0 = 모두 C0(전체), --curr 0,1 = 모두 C1(부분), --curr 0.34,0.33 = 섞음. 기본 0,0 = 모두 C2(예전 그대로)
 // --negative: GPU 쪽만 확정 규칙을 끈다(confirm 1, 계획서 5.2 의 음성 대조). 반드시 실패해야 한다 — 실패하면 종료 코드 0.
 // --arm: 팔을 푼 G1 환경(arm_free)에 팔·그리퍼 행동을 넣어 들기·놓기 규칙을 지나게 한다.
+// --stage 2: A2(가구가 몸통과 부딪힘, 지도는 환경의 가구 상자를 그대로 씀). 기본 1(A1)
 // 비교: 환경 상태, MapCore, 격자 로그 오즈·본 칸·점유 비트, 벽 선분, 토큰 물체 속도 상태, 지도 토큰(1,280 B), 완성도. 시작 때 FP16 변환을
 // __float2half_rn 과 float 2^32 개 전수로 견준다.
 #include <cstdio>
@@ -26,7 +27,7 @@ __global__ void f2h_check_kernel(uint32_t hi, unsigned long long* bad) {   // �
 }
 
 int main(int argc, char** argv) {
-  int N = 2048, T = 600, force_kf = 0;
+  int N = 2048, T = 600, force_kf = 0, stage = 1;
   bool negative = false, arm = false;
   gmap::MapCurr cu = gmap::kCurrEmpty;
   int pos = 0;
@@ -39,6 +40,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--negative")) negative = true;
     else if (!std::strcmp(argv[a], "--force-kf")) force_kf = 1;
     else if (!std::strcmp(argv[a], "--arm")) arm = true;
+    else if (!std::strcmp(argv[a], "--stage") && a + 1 < argc) stage = std::atoi(argv[++a]);
     else if (pos == 0) { N = std::atoi(argv[a]); ++pos; }
     else if (pos == 1) { T = std::atoi(argv[a]); ++pos; }
   }
@@ -54,8 +56,8 @@ int main(int argc, char** argv) {
     if (bad) return negative ? 1 : 1;
   }
   const uint64_t seed = 20261004, mseed = 99;
-  DeviceEnv genv(N, 1, seed, arm);
-  CpuEnv cenv(N, 1, seed, arm);
+  DeviceEnv genv(N, stage, seed, arm);
+  CpuEnv cenv(N, stage, seed, arm);
   gmap::DeviceMap gmapd(N, mseed);
   gmap::CpuMap cmap(N, mseed);
   cudaMemcpy(gmapd.curr_dev(), &cu, sizeof cu, cudaMemcpyHostToDevice);   // 장치 값(커널이 판 리셋 때 읽음)

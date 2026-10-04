@@ -105,6 +105,8 @@ constexpr int NACT = 24;                // 한 행 구간 최대(128 칸, 구간
 constexpr int MAXROOM = 3;
 enum RoomType { R_KITCHEN, R_BATHROOM, R_BEDROOM, R_LIVING, R_OFFICE, N_RTYPE };   // VLA_INPUT 4절 순서(+ 모름)
 enum Cls { C_CUP = 0, C_ITEM = 1, C_CHAIR = 2, C_TABLE = 3, C_CABINET = 4, C_BIN = 5 };
+static_assert(env::N_FURN == M_SCN && (int)env::FC_ITEM == (int)C_ITEM && (int)env::FC_CHAIR == (int)C_CHAIR && (int)env::FC_TABLE == (int)C_TABLE && (int)env::FC_CABINET == (int)C_CABINET &&
+              (int)env::FC_BIN == (int)C_BIN, "A2 furniture boxes = map scene boxes (same classes)");
 enum State { S_SEEN = 0, S_GONE = 1, S_MOVED = 2, S_HELD = 3 };   // scenemap.h SM_SEEN..SM_HELD
 
 DEV constexpr int qround(float x) { return x >= 0.f ? (int)(x * 256.f + 0.5f) : -(int)(-x * 256.f + 0.5f); }   // lround(x · kQ)
@@ -278,7 +280,8 @@ struct Scratch {
 static_assert(offsetof(Scratch, hitb) >= sizeof(uint32_t) * NWORD, "occupancy copy (offset 0) must fit in the dead object-phase region");
 DEV uint32_t* scr_occ(Scratch& sh) { return reinterpret_cast<uint32_t*>(&sh); }   // 점유 비트 사본(GPU, 격자 표시 뒤) = WallScratch::occ
 
-struct EnvView { float x, y, yaw, v, w, tx, ty, rhx, rhy; float q[env::N_Q]; int ep; };
+// furn: A2 가구 상자(환경 SoA 의 이 판 자리, 줄 간격 N). 판 리셋 때만 읽는다. nullptr(손으로 만든 EnvView) 이면 가구 없음
+struct EnvView { float x, y, yaw, v, w, tx, ty, rhx, rhy; float q[env::N_Q]; int ep; const float* fb; const int* fi; int fs; };
 DEV EnvView read_env(const env::Soa& s, int i) {
   const int N = s.N;
   EnvView e;
@@ -288,6 +291,9 @@ DEV EnvView read_env(const env::Soa& s, int i) {
   e.rhx = s.f[env::F_RHX * N + i]; e.rhy = s.f[env::F_RHY * N + i];
   for (int k = 0; k < env::N_Q; ++k) e.q[k] = s.f[(env::F_Q0 + k) * N + i];   // 팔 관절(순기구학 → 팔 끝, 들기)
   e.ep = s.iv[env::I_EP * N + i];
+  e.fb = s.f + (size_t)env::F_FB0 * N + i;
+  e.fi = s.iv + (size_t)env::I_NF * N + i;
+  e.fs = N;
   return e;
 }
 
@@ -424,6 +430,17 @@ DEV void make_scene(MapCore& m, const EnvView& e) {
   cup.lo[0] = e.tx - env::K::tgt_r; cup.hi[0] = e.tx + env::K::tgt_r;
   cup.lo[1] = e.ty - env::K::tgt_r; cup.hi[1] = e.ty + env::K::tgt_r;
   cup.lo[2] = 0.f; cup.hi[2] = MP::cup_h;
+  // A2: 환경이 가구를 갖고 있으면(몸통이 실제로 부딪힘) 그 상자를 그대로 — 광선·가림·검출이 동역학과 같은 장면. m.rng 는 쓰지 않음
+  if (e.fi != nullptr && e.fi[0] > 0) {
+    for (int k = 1; k <= M_SCN; ++k) {
+      Prim& b = m.prim[k];
+      b.cls = e.fi[(size_t)k * e.fs];   // I_FC0 + (k − 1) = I_NF + k
+      const float* f = e.fb + (size_t)(5 * (k - 1)) * e.fs;
+      b.lo[0] = f[0]; b.lo[1] = f[(size_t)e.fs]; b.hi[0] = f[2 * (size_t)e.fs]; b.hi[1] = f[3 * (size_t)e.fs];
+      b.lo[2] = 0.f; b.hi[2] = f[4 * (size_t)e.fs];
+    }
+    return;
+  }
   // 가구 5: 벽에 붙임. 크기 = 기본 × [0.8, 1.2] (가정)
   for (int k = 1; k <= 5; ++k) {
     Prim b{};

@@ -1,4 +1,4 @@
-// 처리량: 판 수를 늘려 가며 환경 스텝/초(= 판·제어스텝/초, 제어 스텝 하나 = 물리 서브스텝 10)를 잰다.  env_bench [steps=300]
+// 처리량: 판 수를 늘려 가며 환경 스텝/초(= 판·제어스텝/초, 제어 스텝 하나 = 물리 서브스텝 10)를 잰다.  env_bench [steps=300] [stage=1]
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -8,12 +8,12 @@
 using namespace env;
 
 int main(int argc, char** argv) {
-  const int T = argc > 1 ? std::atoi(argv[1]) : 300;
+  const int T = argc > 1 ? std::atoi(argv[1]) : 300, stage = argc > 2 ? std::atoi(argv[2]) : 1;
   cudaDeviceProp p;
   cudaGetDeviceProperties(&p, 0);
-  std::printf("GPU %s (sm_%d%d, %d SMs)\n", p.name, p.major, p.minor, p.multiProcessorCount);
+  std::printf("GPU %s (sm_%d%d, %d SMs), stage A%d\n", p.name, p.major, p.minor, p.multiProcessorCount, stage);
   for (int N : {1024, 4096, 16384, 65536, 262144, 1048576}) {
-    DeviceEnv e(N, 1, 1);
+    DeviceEnv e(N, stage, 1);
     float *act, *obs, *rew; int* done;
     cudaMalloc(&act, sizeof(float) * N_ACT * (size_t)N);
     cudaMalloc(&obs, sizeof(float) * N_OBS * (size_t)N);
