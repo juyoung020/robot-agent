@@ -108,7 +108,7 @@ static netref::Batch make_batch(Trainer& tr, netref::Hyper& hy) {
   netref::Batch b;
   b.M = M;
   b.x0 = dl(tr.x0, (size_t)M * X0_W);
-  b.sin = dl(tr.sin, (size_t)M * KSLOT * SLOT_IN);
+  b.sin = dl(tr.sin_full(M), (size_t)M * KSLOT * SLOT_IN);   // 줄인 칸 줄을 펼친 값(펼치기 = 묶음 커널과 같은 식)
   b.mask = dl(tr.mask, M);
   b.act = dl(tr.mb_act, (size_t)M * N_ACT);
   b.oldlogp = dl(tr.mb_oldlogp, M);
@@ -445,6 +445,9 @@ static int run_snap(const char* out, int N, int T, int iters, int stage, int use
   return 0;
 }
 
+#ifdef SK_PROF
+namespace net { void slot_prof_print(); }
+#endif
 static int run_bench(int N, int T, int iters, int mbs, int use_map) {
   PpoConfig c = small_cfg(7, 1);
   c.n_env = N; c.horizon = T; c.minibatches = mbs; c.epochs = 5; c.use_map = use_map; c.adaptive_lr = 1;
@@ -464,6 +467,9 @@ static int run_bench(int N, int T, int iters, int mbs, int use_map) {
   const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
   std::printf("bench: %d iters in %.3f s wall -> %.3e env-steps/s; GPU rollout %.2f ms + update %.2f ms per iter (rollout %.0f%%)\n", iters, s,
               (double)N * T * iters / s, ro / iters, up / iters, 100.0 * ro / (ro + up));
+#ifdef SK_PROF
+  net::slot_prof_print();   // 칸 MLP 묶음 커널 구간(측정 빌드 -DSK_PROF 만)
+#endif
   return 0;
 }
 
@@ -644,7 +650,7 @@ static int run_obs(bool neg) {
   const std::vector<float> rows = dl(tr.obs_rows + (size_t)T * N_OBS_G1 * N, (size_t)N_OBS_G1 * N);
   std::vector<gmap::MapTok> tok(N);
   VCK(cudaMemcpy(tok.data(), tr.tok->at(T), sizeof(gmap::MapTok) * N, cudaMemcpyDeviceToHost));
-  const std::vector<uint16_t> gx0 = dl(tr.x0, (size_t)N * X0_W), gsin = dl(tr.sin, (size_t)N * KSLOT * SLOT_IN);
+  const std::vector<uint16_t> gx0 = dl(tr.x0, (size_t)N * X0_W), gsin = dl(tr.sin_full(N), (size_t)N * KSLOT * SLOT_IN);
   const std::vector<uint32_t> gmk = dl(tr.mask, N);
   const TrainState s = dl(tr.ts, 1)[0];
   obsv::ObsAug a = dl(tr.aug_d, 1)[0];

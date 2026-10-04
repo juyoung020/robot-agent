@@ -72,13 +72,21 @@ void dw_reduce(const DwJob* jobs, int njobs, cudaStream_t st);
 void pool_fwd(const uint16_t* s2o, const uint32_t* mask, int M, uint16_t* x0, uint8_t* amax, cudaStream_t st);
 // dpool[M][POOL_W] → dZ_S2[M*16][S_H] = (평균 몫 + 최댓값 몫) ⊙ elu'(s2o)
 void pool_bwd(const float* dpool, const uint16_t* s2o, const uint32_t* mask, const uint8_t* amax, int M, uint16_t* dzs2, cudaStream_t st);
-// 칸 MLP 앞 묶음: S1 → S2 → 집합을 한 커널로(같은 결과). s1o·s2o·x0 의 집합 칸·amax 를 씀
+// 칸 MLP 앞 묶음: S1 → S2 → 집합을 한 커널로(따로 커널 gemm·pool 과 같은 결과). s1o·s2o·x0 의 집합 칸·amax 를 씀. sin = 304 칸 줄 [M·16][SLOT_IN]
 void slot_fwd(const uint16_t* sin, const uint32_t* mask, const uint16_t* W1, const uint16_t* W2, int M, uint16_t* s1o, uint16_t* s2o, uint16_t* x0,
               uint8_t* amax, cudaStream_t st);
 // 칸 MLP 뒤 묶음: pool_bwd → dW S2 · dX S2 → dW S1 을 한 커널로(같은 결과). dW 부분합 ws2·ws1 은 gemm_dw 와 같은 자리.
-// dz2_out·dz1_out 이 nullptr 이 아니면 dZ S2·dZ S1 도 전역에 씀(검증용). kchunk 는 64 의 배수
+// dz2_out·dz1_out 이 nullptr 이 아니면 dZ S2·dZ S1 도 전역에 씀(검증용). kchunk 는 32 의 배수
 void slot_bwd(const float* dpool, const uint16_t* s2o, const uint16_t* s1o, const uint16_t* sin, const uint32_t* mask, const uint8_t* amax,
               const uint16_t* W2, int M, int kchunk, float* ws2, float* ws1, uint16_t* dz2_out, uint16_t* dz1_out, cudaStream_t st);
+// 줄인 칸 줄(net.h SLOT_C) + 얼린 이름·생김새 표(장치 bf16 [행][128]) — 묶음 커널이 공유 메모리에서 304 칸 줄로 펼침(같은 값 → 같은 결과)
+struct SlotC { const uint16_t* sc; const uint16_t* name; const uint16_t* app; int n_name; };
+void slot_fwd_c(const SlotC& in, const uint32_t* mask, const uint16_t* W1, const uint16_t* W2, int M, uint16_t* s1o, uint16_t* s2o, uint16_t* x0,
+                uint8_t* amax, cudaStream_t st);
+void slot_bwd_c(const float* dpool, const uint16_t* s2o, const uint16_t* s1o, const SlotC& in, const uint32_t* mask, const uint8_t* amax,
+                const uint16_t* W2, int M, int kchunk, float* ws2, float* ws1, uint16_t* dz2_out, uint16_t* dz1_out, cudaStream_t st);
+// 줄인 칸 줄 rows 개 → 304 칸 줄(예전 따로 커널 길 NET_SLOT_OLD·검증용)
+void slot_expand(const SlotC& in, long long rows, uint16_t* sin, cudaStream_t st);
 
 // ---- PPO 손실(K5): 평균·가치 머리 출력 → dZ(bf16) + log σ 기울기·통계 부분합 ----
 struct LossIn {

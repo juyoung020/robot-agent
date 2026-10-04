@@ -49,7 +49,9 @@ struct Trainer {
   unsigned long long* tab = nullptr; // [3 단계][2 컵 미리 확정][10 미리 확정 수][6] (끝난 수, 성공, 충돌, 시간초과, 스텝 합, 성공 스텝 합) 누적
 
   // 신경망 작업 버퍼(행 Mmax)
-  uint16_t *x0 = nullptr, *sin = nullptr, *s1o = nullptr, *s2o = nullptr;
+  uint16_t *x0 = nullptr, *s1o = nullptr, *s2o = nullptr;
+  uint16_t* sc = nullptr;    // 줄인 칸 줄 [Mmax·16][SLOT_C](net.h) — 모으기가 쓰고 칸 MLP 묶음 커널이 얼린 표와 함께 304 칸으로 펼침
+  uint16_t* sin = nullptr;   // 304 칸 줄 — NET_SLOT_OLD(예전 따로 커널) 또는 검증(sin_full)일 때만 할당
   uint32_t* mask = nullptr;
   uint8_t* amax = nullptr;
   uint16_t* ho[net::N_LAYER] = {};   // 숨은 층 출력 bf16 (S1, S2 는 s1o, s2o 를 가리킴)
@@ -110,6 +112,8 @@ struct Trainer {
   void optimizer();
   void gae();
   void log_iter();
+  net::SlotC slot_c() const { return net::SlotC{sc, vt.d_name, vt.d_app, vt.n_name}; }
+  uint16_t* sin_full(int rows);   // 검증: 줄인 칸 줄 rows·16 개를 304 칸 줄로 펼쳐 sin 에(장치 포인터)
 
   template <class T_>
   T_* alloc(size_t n);

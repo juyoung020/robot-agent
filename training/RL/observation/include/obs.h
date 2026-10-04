@@ -215,8 +215,9 @@ static_assert(net::SLOT_NAME + net::VEC_D == net::SLOT_APP && net::SLOT_APP + ne
 // 판 하나의 입력을 레인 nl 개가 나눠 쓴다(lane = 0..nl-1). CPU 는 nl = 1.
 // obs: G1 관측 [k*stride + i]. x0: 이 판의 X0 줄. srows: 이 판의 칸 줄 16 × 304 (nullptr 이면 칸 줄은 쓰지 않음 — 채운 칸 비트만 돌려줌).
 // vt: 얼린 이름·생김새 표. aug/k0/k1: 흔들기(nullptr = 끔)와 열쇠. use_map = 0 이면 지도 입력을 모두 0 으로
+// compact: srows 를 칸 16 × SLOT_C(40) 줄인 줄로(표 행은 번호만, net.h) — PPO 학습기가 씀. 펼친 값은 304 칸 줄과 같다
 NDEV uint32_t assemble(const float* obs, int stride, int i, const gmap::MapTok& tok, uint16_t* x0, uint16_t* srows, int use_map, int goal_mode,
-                       int lane, int nl, const VecTab& vt, const ObsAug* aug = nullptr, uint64_t k0 = 0, uint64_t k1 = 0) {
+                       int lane, int nl, const VecTab& vt, const ObsAug* aug = nullptr, uint64_t k0 = 0, uint64_t k1 = 0, bool compact = false) {
   const bool show = goal_mode == 0 || goal_known(tok);
   const AugRow ar = aug_row(aug, k0, k1);
   const int um = ar.map_off ? 0 : use_map;
@@ -259,7 +260,27 @@ NDEV uint32_t assemble(const float* obs, int stride, int i, const gmap::MapTok& 
   if (on && aug->p_slot_drop > 0.f)
     for (int b = 0; b < ns; ++b)
       if (aug_u(aug_hash(*aug, k0, k1, 0x534c4f54ull + (uint64_t)b)) < aug->p_slot_drop) mk &= ~(1u << b);
-  if (srows)
+  if (srows && compact)   // 줄인 칸 줄(net.h SLOT_C): 펼치면(net::slot_col) 아래 304 칸 줄과 비트가 같다
+    for (int q = lane; q < net::KSLOT * net::SLOT_C / 8; q += nl) {
+      const int b = q / (net::SLOT_C / 8), c0 = (q % (net::SLOT_C / 8)) * 8;
+      const bool live = (mk >> b) & 1u;
+      uint16_t h[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+      if (live) {
+        if (c0 + 8 <= net::SLOT_VALS) {
+          for (int e = 0; e < 8; ++e) h[e] = f2bf(slot_num(tok, b, c0 + e));
+        } else {
+          static_assert(net::SLOT_VALS == 33 && net::SLOT_C == 40, "compact row: chunk 4 = num 32, bias, name, app");
+          h[0] = f2bf(slot_num(tok, b, net::SLOT_VALS - 1));
+          h[1] = f2bf(1.f);
+          const int nr = aug_name(aug, vt, tok.name_id[b], k0, k1, b);
+          h[2] = (uint16_t)(nr >= 0 ? nr + 1 : 0);
+          const int ar2 = tok.app_id[b];
+          h[3] = (uint16_t)(ar2 >= 0 && ar2 < vt.n_app ? ar2 + 1 : 0);
+        }
+      }
+      put8(srows + q * 8, h);
+    }
+  else if (srows)
     for (int q = lane; q < net::KSLOT * net::SLOT_IN / 8; q += nl) {
       const int b = q / (net::SLOT_IN / 8), c0 = (q % (net::SLOT_IN / 8)) * 8;
       uint16_t h[8];

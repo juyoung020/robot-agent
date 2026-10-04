@@ -31,7 +31,11 @@ constexpr int SLOT_NAME = SLOT_VALS;            // 33: 이름 뜻 128 시작 칸
 constexpr int SLOT_APP = SLOT_NAME + VEC_D;     // 161: 생김새 128 시작 칸
 constexpr int SLOT_BIAS = SLOT_APP + VEC_D;     // 289
 constexpr int SLOT_IN = 304;      // 33 + 128 + 128 + 1(편향) + 0 × 14 (16 의 배수). v1(원-핫 7 + 7, 48 칸)은 VLA_INPUT 구현 전 — 체크포인트 호환 없음
-constexpr bool kSlotFused = SLOT_IN <= 64;      // 칸 MLP 묶음 커널(slot_fused.cuh)은 칸 입력 ≤ 64 전용 → v2(304)는 따로 커널(gemm·pool) 길
+constexpr bool kSlotFused = true;               // 칸 MLP 묶음 커널(slot_fused.cuh)이 넓은 칸 입력(304)도 다룸(k 타일, 같은 순서 → 비트 같음)
+// 줄인 칸 줄(PPO 학습기): 얼린 128-d 표 행은 번호로만 두고 묶음 커널이 공유 메모리에서 304 칸 줄로 펼친다(slot_col 과 같은 값).
+//   [0, 33) 숫자 bf16 | 33 편향(살아 있으면 1) | 34 이름 행 + 1(0 = 없음) | 35 생김새 행 + 1(0 = 없음) | 36..39 = 0
+constexpr int SLOT_C = 40;
+constexpr int SC_BIAS = SLOT_VALS, SC_NAME = SLOT_VALS + 1, SC_APP = SLOT_VALS + 2;
 constexpr int S_H = 64;
 constexpr int POOL_W = 2 * S_H;   // 128
 constexpr int OBS_W = N_OBS_G1 + 56 + 10 + 4;   // 150: G1 관측 + 벽 + 방 + 완성도
@@ -136,6 +140,20 @@ NDEV float elu(float z) {
 #endif
 }
 NDEV float elu_grad_from_y(float y) { return y > 0.f ? 1.f : y + 1.f; }   // y = elu(z) 로 dy/dz
+
+// 줄인 칸 줄 c[SLOT_C] → 304 칸 줄의 col 번째 bf16 (이름·생김새 표 bf16 [행][128], 이름 행 수 n_name).
+// v2 obsv::assemble(304 칸 줄)과 비트가 같게 그 경계 동작을 그대로 따른다: 16 B 덩이가 표 경계(33·161)에 걸친 곳에서
+//   칸 33..39 = 0(이름 차원 0..6 이 빠짐), 칸 161..167 = 이름 표 다음 행(nr + 1)의 차원 0..6(생김새 차원 0..6 자리).
+//   (고치면 입력이 바뀌어 체크포인트·결과 비트가 달라짐 — 이 커밋 범위 밖, README)
+NDEV uint16_t slot_col(const uint16_t* c, const uint16_t* name, const uint16_t* app, int n_name, int col) {
+  if (col < SLOT_VALS) return c[col];
+  const int n = c[SC_NAME], a = c[SC_APP];
+  if (col < SLOT_VALS + 7) return 0;
+  if (col < SLOT_APP) return n ? name[(size_t)(n - 1) * VEC_D + (col - SLOT_NAME)] : (uint16_t)0;
+  if (col < SLOT_APP + 7) return (n && n < n_name) ? name[(size_t)n * VEC_D + (col - SLOT_APP)] : (uint16_t)0;
+  if (col < SLOT_BIAS) return a ? app[(size_t)(a - 1) * VEC_D + (col - SLOT_APP)] : (uint16_t)0;
+  return col == SLOT_BIAS ? c[SC_BIAS] : (uint16_t)0;
+}
 
 // 장치 난수: 열쇠 사슬 없는 해시(splitmix64 끝단) — (씨앗, 바퀴, 스텝, 판, 칸) 마다 따로
 NDEV uint64_t mix64(uint64_t z) {

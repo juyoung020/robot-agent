@@ -204,39 +204,55 @@ void pool_bwd(const float* dpool, const uint16_t* s2o, const uint32_t* mask, con
   NCK(cudaGetLastError());
 }
 
-// 칸 MLP 묶음(slot_fused.cuh) — sin 버퍼에서 읽는 판
-// 칸 입력이 64 칸보다 넓으면(v2: 숫자 33 + 이름 128 + 생김새 128 = 304) 묶음 커널을 못 쓴다 → 예전 따로 커널 길(같은 식, NET_SLOT_OLD 와 같음)
-template <bool F>
-static void slot_fwd_d(const uint16_t* sin, const uint32_t* mask, const uint16_t* W1, const uint16_t* W2, int M, uint16_t* s1o, uint16_t* s2o, uint16_t* x0,
-                       uint8_t* amax, cudaStream_t st) {
-  if constexpr (F) {
-    slot_fwd_t(SinBuf{sin}, mask, W1, W2, M, s1o, s2o, x0, amax, st);
-  } else {
-    gemm_fwd(kLayers[L_S1], sin, M * KSLOT, W1, s1o, st);
-    gemm_fwd(kLayers[L_S2], s1o, M * KSLOT, W2, s2o, st);
-    pool_fwd(s2o, mask, M, x0, amax, st);
-  }
-}
-template <bool F>
-static void slot_bwd_d(const float* dpool, const uint16_t* s2o, const uint16_t* s1o, const uint16_t* sin, const uint32_t* mask, const uint8_t* amax,
-                       const uint16_t* W2, int M, int kchunk, float* ws2, float* ws1, uint16_t* dz2_out, uint16_t* dz1_out, cudaStream_t st) {
-  if constexpr (F) {
-    slot_bwd_t(dpool, s2o, s1o, SinBuf{sin}, mask, amax, W2, M, kchunk, ws2, ws1, dz2_out, dz1_out, st);
-  } else {
-    if (!dz2_out || !dz1_out) { std::fprintf(stderr, "slot_bwd: wide slot input needs dZ S2/S1 buffers\n"); std::abort(); }
-    pool_bwd(dpool, s2o, mask, amax, M, dz2_out, st);
-    gemm_dw(kLayers[L_S2], dz2_out, s1o, M * KSLOT, ws2, kchunk, st);
-    gemm_dx_dact(kLayers[L_S2], dz2_out, M * KSLOT, W2, s1o, kLayers[L_S1].N, dz1_out, 0, st);
-    gemm_dw(kLayers[L_S1], dz1_out, sin, M * KSLOT, ws1, kchunk, st);
-  }
-}
+// 칸 MLP 묶음(slot_fused.cuh): 304 칸 줄(sin)에서 읽는 판(BC 학생) / 줄인 칸 줄 + 얼린 표에서 펼치는 판(PPO 학습기)
 void slot_fwd(const uint16_t* sin, const uint32_t* mask, const uint16_t* W1, const uint16_t* W2, int M, uint16_t* s1o, uint16_t* s2o, uint16_t* x0,
               uint8_t* amax, cudaStream_t st) {
-  slot_fwd_d<kSlotFused>(sin, mask, W1, W2, M, s1o, s2o, x0, amax, st);
+  slot_fwd_t(SinBuf{sin}, mask, W1, W2, M, s1o, s2o, x0, amax, st);
 }
 void slot_bwd(const float* dpool, const uint16_t* s2o, const uint16_t* s1o, const uint16_t* sin, const uint32_t* mask, const uint8_t* amax,
               const uint16_t* W2, int M, int kchunk, float* ws2, float* ws1, uint16_t* dz2_out, uint16_t* dz1_out, cudaStream_t st) {
-  slot_bwd_d<kSlotFused>(dpool, s2o, s1o, sin, mask, amax, W2, M, kchunk, ws2, ws1, dz2_out, dz1_out, st);
+  if (kchunk % SK_R) { std::fprintf(stderr, "slot_bwd: kchunk %d not a multiple of %d\n", kchunk, SK_R); std::abort(); }
+  slot_bwd_t(dpool, s2o, s1o, SinBuf{sin}, mask, amax, W2, M, kchunk, ws2, ws1, dz2_out, dz1_out, st);
+}
+void slot_fwd_c(const SlotC& in, const uint32_t* mask, const uint16_t* W1, const uint16_t* W2, int M, uint16_t* s1o, uint16_t* s2o, uint16_t* x0,
+                uint8_t* amax, cudaStream_t st) {
+  slot_fwd_t(SlotTab{in.sc, in.name, in.app, in.n_name}, mask, W1, W2, M, s1o, s2o, x0, amax, st);
+}
+void slot_bwd_c(const float* dpool, const uint16_t* s2o, const uint16_t* s1o, const SlotC& in, const uint32_t* mask, const uint8_t* amax,
+                const uint16_t* W2, int M, int kchunk, float* ws2, float* ws1, uint16_t* dz2_out, uint16_t* dz1_out, cudaStream_t st) {
+  if (kchunk % SK_R) { std::fprintf(stderr, "slot_bwd_c: kchunk %d not a multiple of %d\n", kchunk, SK_R); std::abort(); }
+  slot_bwd_t(dpool, s2o, s1o, SlotTab{in.sc, in.name, in.app, in.n_name}, mask, amax, W2, M, kchunk, ws2, ws1, dz2_out, dz1_out, st);
+}
+#ifdef SK_PROF
+void slot_prof_print() {
+  unsigned long long h[2][8];
+  NCK(cudaDeviceSynchronize());
+  NCK(cudaMemcpyFromSymbol(h, g_sk_prof, sizeof h));
+  for (int k = 0; k < 2; ++k) {
+    unsigned long long t = 0;
+    for (int i = 0; i < 8; ++i) t += h[k][i];
+    std::printf("slot %s clock64 sections (thread 0, all blocks):", k ? "bwd" : "fwd");
+    for (int i = 0; i < 8; ++i) if (h[k][i]) std::printf(" [%d] %.1f%%", i, 100.0 * h[k][i] / t);
+    std::printf("\n");
+  }
+}
+#endif
+// 줄인 칸 줄 → 304 칸 줄(예전 따로 커널 길·검증용). 스레드 하나 = 16 B 덩이 하나
+__global__ void slot_expand_k(SlotC in, long long rows, uint16_t* sin) {
+  const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (q >= rows * (SLOT_IN / 8)) return;
+  const long long r = q / (SLOT_IN / 8);
+  const int c0 = (int)(q % (SLOT_IN / 8)) * 8;
+  const uint16_t* c = in.sc + r * SLOT_C;
+  uint32_t w[4];
+  for (int e = 0; e < 4; ++e)
+    w[e] = (uint32_t)slot_col(c, in.name, in.app, in.n_name, c0 + 2 * e) | ((uint32_t)slot_col(c, in.name, in.app, in.n_name, c0 + 2 * e + 1) << 16);
+  *reinterpret_cast<uint4*>(sin + r * SLOT_IN + c0) = make_uint4(w[0], w[1], w[2], w[3]);
+}
+void slot_expand(const SlotC& in, long long rows, uint16_t* sin, cudaStream_t st) {
+  const long long n = rows * (SLOT_IN / 8);
+  slot_expand_k<<<(unsigned)((n + 255) / 256), 256, 0, st>>>(in, rows, sin);
+  NCK(cudaGetLastError());
 }
 
 // ---- 블록 안 고정 나무 합 ----

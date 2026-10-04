@@ -26,16 +26,21 @@ T_* Trainer::alloc(size_t n) {
   return reinterpret_cast<T_*>(p);
 }
 
+static bool slot_old() {   // NET_SLOT_OLD=1: 칸 MLP 를 예전 따로 커널(gemm·pool)로 — 비교·측정용
+  static const bool v = [] { const char* e = std::getenv("NET_SLOT_OLD"); return e && std::atoi(e) != 0; }();
+  return v;
+}
+
 // ---- 관측 모으기(롤아웃: 판 i 그대로 / 갱신: 섞은 표본) ----
 constexpr int AS_L = 16, AS_E = 8;
 // 흔들기 열쇠 = (바퀴, 스텝 << 32 | 판): 롤아웃과 갱신 모으기가 같은 (스텝, 판)에 같은 입력을 만든다
 __global__ void __launch_bounds__(AS_L * AS_E) assemble_k(const float* obs_row, const gmap::MapTok* tok_row, int N, int use_map, int goal_mode,
-                                                          uint16_t* x0, uint16_t* sin, uint32_t* mask, obsv::VecTab vt, const obsv::ObsAug* aug,
+                                                          uint16_t* x0, uint16_t* sc, uint32_t* mask, obsv::VecTab vt, const obsv::ObsAug* aug,
                                                           const TrainState* ts, int t) {
   const int e = blockIdx.x * AS_E + threadIdx.x / AS_L, lane = threadIdx.x % AS_L;
   if (e >= N) return;
-  const uint32_t mk = obsv::assemble(obs_row + (size_t)e * N_OBS_G1, 1, 0, tok_row[e], x0 + (size_t)e * X0_W, sin + (size_t)e * KSLOT * SLOT_IN, use_map, goal_mode, lane, AS_L,
-                                     vt, aug, (uint64_t)ts->iter, ((uint64_t)t << 32) | (uint64_t)e);
+  const uint32_t mk = obsv::assemble(obs_row + (size_t)e * N_OBS_G1, 1, 0, tok_row[e], x0 + (size_t)e * X0_W, sc + (size_t)e * KSLOT * SLOT_C, use_map, goal_mode, lane, AS_L,
+                                     vt, aug, (uint64_t)ts->iter, ((uint64_t)t << 32) | (uint64_t)e, true);
   if (lane == 0) mask[e] = mk;
 }
 
@@ -78,7 +83,7 @@ inline int half_bits(uint32_t S) {
 struct GatherP {
   const float* obs_buf /* 행 판 obs_rows [T+1][N][80] */; const gmap::MapTok* tok0; const float* act_buf; const float* logp_buf; const float* val_buf; const float* adv_buf;
   const float* ret_buf; int N, T, MB, base, epoch, hb, use_map, goal_mode; uint64_t seed; const TrainState* ts;
-  uint16_t* x0; uint16_t* sin; uint32_t* mask; float *act, *oldlogp, *oldv, *adv, *ret;
+  uint16_t* x0; uint16_t* sc; uint32_t* mask; float *act, *oldlogp, *oldv, *adv, *ret;
   obsv::VecTab vt; const obsv::ObsAug* aug;
 };
 __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
@@ -89,8 +94,8 @@ __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
   const uint32_t p = feistel_perm((uint32_t)(g.base + r), S, g.hb, key);
   const int t = (int)(p / (uint32_t)g.N), i = (int)(p % (uint32_t)g.N);
   const uint32_t mk = obsv::assemble(g.obs_buf + ((size_t)t * g.N + i) * N_OBS_G1, 1, 0, g.tok0[(size_t)t * g.N + i], g.x0 + (size_t)r * X0_W,
-                                     g.sin + (size_t)r * KSLOT * SLOT_IN, g.use_map, g.goal_mode, lane, AS_L, g.vt, g.aug, (uint64_t)g.ts->iter,
-                                     ((uint64_t)t << 32) | (uint64_t)i);
+                                     g.sc + (size_t)r * KSLOT * SLOT_C, g.use_map, g.goal_mode, lane, AS_L, g.vt, g.aug, (uint64_t)g.ts->iter,
+                                     ((uint64_t)t << 32) | (uint64_t)i, true);
   if (lane < N_ACT) g.act[(size_t)r * N_ACT + lane] = g.act_buf[((size_t)t * g.N + i) * N_ACT + lane];
   if (lane == 0) {
     g.mask[r] = mk;
@@ -353,7 +358,8 @@ Trainer::Trainer(const PpoConfig& c) : cfg(c) {
 
   const size_t M = Mmax, MS = (size_t)Mmax * KSLOT;
   x0 = alloc<uint16_t>(M * X0_W);
-  sin = alloc<uint16_t>(MS * SLOT_IN);
+  sc = alloc<uint16_t>(MS * SLOT_C);   // 줄인 칸 줄(표 행은 번호) — 묶음 커널이 펼침
+  if (slot_old()) sin = alloc<uint16_t>(MS * SLOT_IN);   // 예전 따로 커널 길만 304 칸 줄을 씀(검증은 sin_full 이 그때 만듦)
   mask = alloc<uint32_t>(M);
   s1o = alloc<uint16_t>(MS * kLayers[L_S1].ldo);
   s2o = alloc<uint16_t>(MS * kLayers[L_S2].ldo);
@@ -509,18 +515,15 @@ void Trainer::capture() {
   g_upd = capture_one(this, &Trainer::update_body);
 }
 
-static bool slot_old() {   // NET_SLOT_OLD=1: 칸 MLP 를 예전 따로 커널(gemm·pool)로 — 비교·측정용
-  static const bool v = [] { const char* e = std::getenv("NET_SLOT_OLD"); return e && std::atoi(e) != 0; }();
-  return v;
-}
 
 // ---- 몸통 ----
 void Trainer::forward(int M) {
   const uint16_t* W = Pb;
   auto Wl = [&](int l) { return W + lay.off[l]; };
-  if (!slot_old()) {   // 칸 MLP 앞 묶음(한 커널, 같은 결과). 칸 입력은 토큰에서(sin 버퍼를 쓰지·읽지 않음)
-    slot_fwd(sin, mask, Wl(L_S1), Wl(L_S2), M, s1o, s2o, x0, amax, 0);
+  if (!slot_old()) {   // 칸 MLP 앞 묶음(한 커널, 같은 결과). 칸 입력은 줄인 칸 줄 + 얼린 표에서 커널 안에서 펼침
+    slot_fwd_c(slot_c(), mask, Wl(L_S1), Wl(L_S2), M, s1o, s2o, x0, amax, 0);
   } else {
+    slot_expand(slot_c(), (long long)M * KSLOT, sin, 0);
     gemm_fwd(kLayers[L_S1], sin, M * KSLOT, Wl(L_S1), s1o, 0);
     gemm_fwd(kLayers[L_S2], s1o, M * KSLOT, Wl(L_S2), s2o, 0);
     pool_fwd(s2o, mask, M, x0, amax, 0);
@@ -546,8 +549,8 @@ void Trainer::backward(int M) {
   gemm_dw2(kLayers[a1], dz[a1], dz[c1], x0, x0, M, ws[a1], ws[c1], ch, 0);
   gemm_dx_pool(kLayers[a1], dz[a1], M, Wl(a1), dpool, false, 0);
   gemm_dx_pool(kLayers[c1], dz[c1], M, Wl(c1), dpool, true, 0);
-  if (!slot_old() && ch % 32 == 0 && kSlotFused) {   // 칸 MLP 뒤 묶음(한 커널, 같은 결과)
-    slot_bwd(dpool, s2o, s1o, sin, mask, amax, Wl(L_S2), M, ch, ws[L_S2], ws[L_S1], keep_slot_bufs ? dz[L_S2] : nullptr, keep_slot_bufs ? dz[L_S1] : nullptr, 0);
+  if (!slot_old()) {   // 칸 MLP 뒤 묶음(한 커널, 같은 결과)
+    slot_bwd_c(dpool, s2o, s1o, slot_c(), mask, amax, Wl(L_S2), M, ch, ws[L_S2], ws[L_S1], keep_slot_bufs ? dz[L_S2] : nullptr, keep_slot_bufs ? dz[L_S1] : nullptr, 0);
   } else {
     pool_bwd(dpool, s2o, mask, amax, M, dz[L_S2], 0);
     gemm_dw(kLayers[L_S2], dz[L_S2], s1o, M * KSLOT, ws[L_S2], ch, 0);
@@ -562,9 +565,16 @@ void Trainer::backward(int M) {
   dw_reduce(jobs, N_LAYER, 0);
 }
 
+// 검증용: 지금 줄인 칸 줄(행 rows 개)을 304 칸 줄로 펼친 버퍼(처음 부를 때 할당 — 그래프 잡기 밖에서만)
+uint16_t* Trainer::sin_full(int rows) {
+  if (!sin) sin = alloc<uint16_t>((size_t)Mmax * KSLOT * SLOT_IN);
+  slot_expand(slot_c(), (long long)rows * KSLOT, sin, 0);
+  return sin;
+}
+
 void Trainer::gather(int epoch, int mb) {
   GatherP g{obs_rows, tok->at(0), act_buf, logp_buf, val_buf, adv_buf, ret_buf, N, T, MB, mb * MB, epoch, half_bits((uint32_t)(N * T)), cfg.use_map,
-            cfg.goal_from_map, cfg.seed, ts, x0, sin, mask, mb_act, mb_oldlogp, mb_oldv, mb_adv, mb_ret, vt.dev(), aug_d};
+            cfg.goal_from_map, cfg.seed, ts, x0, sc, mask, mb_act, mb_oldlogp, mb_oldv, mb_adv, mb_ret, vt.dev(), aug_d};
   gather_k<<<(MB + AS_E - 1) / AS_E, AS_L * AS_E>>>(g);
   PCK(cudaGetLastError());
 }
@@ -603,7 +613,7 @@ void Trainer::rollout_body() {
 // 롤아웃 한 스텝(t < T): 관측 모으기 → 정책 앞 → 표본 → 환경 → 지도. t == T: 마지막 가치(부트스트랩)만
 void Trainer::rollout_step(int t) {
   const int ab = (N + AS_E - 1) / AS_E, sb = (N + 127) / 128;
-  assemble_k<<<ab, AS_L * AS_E>>>(obs_rows + (size_t)t * N_OBS_G1 * N, tok->at(t), N, cfg.use_map, cfg.goal_from_map, x0, sin, mask, vt.dev(), aug_d, ts, t);
+  assemble_k<<<ab, AS_L * AS_E>>>(obs_rows + (size_t)t * N_OBS_G1 * N, tok->at(t), N, cfg.use_map, cfg.goal_from_map, x0, sc, mask, vt.dev(), aug_d, ts, t);
   forward(N);
   if (t == T) { value_k<<<sb, 128>>>(val, N, val_buf + (size_t)T * N); return; }
   sample_k<<<sb, 128>>>(mean, val, P + lay.logstd, ts, cfg.seed, t, N, act_env, act_buf, logp_buf, val_buf);
