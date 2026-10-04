@@ -11,6 +11,7 @@ namespace rvla {
 namespace qk {
 template <bool AT, bool BT, int EPI>
 void gl(const net::GemmP& p, int gz, cudaStream_t st);
+void gate(const float* O, const float* T0, int ldT, int R, int nq, int hd, uint16_t* A, cudaStream_t st);
 }
 namespace tk {
 
@@ -427,6 +428,10 @@ void att_fwd(const AttP& p, cudaStream_t st) {
   if (!att_old() && fa_fwd(p, st)) return;
   ATT_DISPATCH(att_fwd_k, (long long)p.B * p.n * p.nq);
   KCK();
+  if (p.Ag) {   // 예전 커널: 게이트를 따로(O 는 [행][nq·hd] 이어야 함)
+    if (p.ldo != p.nq * p.hd) { std::fprintf(stderr, "att_fwd gate: ldo\n"); std::abort(); }
+    qk::gate(p.O, p.gT, p.ldg, p.B * p.n, p.nq, p.hd, p.Ag, st);
+  }
 }
 void att_bwd(const AttP& p, cudaStream_t st) {
   if (!att_old() && fa_bwd(p, st)) return;

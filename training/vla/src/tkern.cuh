@@ -83,6 +83,9 @@ struct AttP {
   float scale = 1.f;
   float* O = nullptr; int ldo = 0;
   float* lse = nullptr;            // [B·n][nq]
+  // 출력 게이트(융합 F, 앞): Ag[행][h·hd + d] = bf16(O · σ(gT[행·ldg + h·2·hd + hd + d])) — qk::gate 와 같은 식. O 는 그대로도 씀(뒤가 읽음)
+  const float* gT = nullptr; int ldg = 0;
+  uint16_t* Ag = nullptr;
   // 뒤
   const float* dO = nullptr; int lddo = 0;
   float* Dd = nullptr;             // [B·n][nq]

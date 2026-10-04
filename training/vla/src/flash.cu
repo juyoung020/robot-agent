@@ -118,7 +118,14 @@ __global__ void __launch_bounds__(FNT) fa_fwd_k(const AttP p) {
     o.mac<KT, false, true>(mm::sad(sP + k0), LP, mm::sad(sKV), LD);
   }
   o.each([&](int r, int d, float& v) {
-    if (t0 + r < p.n) p.O[((long long)b * p.n + t0 + r) * p.ldo + h * HD + d] = v;
+    if (t0 + r < p.n) {
+      const long long row = (long long)b * p.n + t0 + r;
+      p.O[row * p.ldo + h * HD + d] = v;
+      if (p.Ag) {   // 출력 게이트(F): gate2_k 와 같은 식
+        const float gx = p.gT[row * p.ldg + h * 2 * HD + HD + d];
+        p.Ag[row * ((long long)p.nq * HD) + h * HD + d] = f2bf(v * (1.f / (1.f + expf(-gx))));
+      }
+    }
   });
 }
 

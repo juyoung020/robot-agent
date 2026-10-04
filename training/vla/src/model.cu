@@ -760,8 +760,8 @@ static void q_layer_fwd(Model& m, int l, int B, int L, const float* Xin, float* 
     tk::AttP a;
     a.Q = s.QK; a.ldq = c.nq * c.hd; a.K1 = s.Kf[f]; a.V1 = s.Vf[f]; a.ldk1 = c.kvw(); a.L1 = L; a.n1c = L; a.causal = 1;
     a.B = B; a.n = L; a.nq = c.nq; a.nkv = c.nkv; a.hd = c.hd; a.scale = 1.f / std::sqrt((float)c.hd); a.O = s.O; a.ldo = c.nq * c.hd; a.lse = s.lse;
+    a.gT = s.T0; a.ldg = Ly.wqkv.N; a.Ag = s.Ag;   // 출력 게이트를 어텐션 끝단에서(F)
     tk::att_fwd(a, st);
-    qk::gate(s.O, s.T0, Ly.wqkv.N, R, c.nq, c.hd, s.Ag, st);
     mm_res(s.Ag, c.nq * c.hd, R, W + Ly.wo.off, H, c.nq * c.hd, Xin, s.Xmid, H, nullptr, st);
   } else {
     const int li = c.lin_in(), la = c.lin_all();
@@ -918,8 +918,8 @@ static void e_block_fwd(Model& m, int f, const VBatch& bt, const float* Xin, flo
   a.Q = s.eQ; a.ldq = QW; a.K1 = s.Kf[f]; a.V1 = s.Vf[f]; a.ldk1 = Q.kvw(); a.L1 = bt.L; a.len1 = bt.plen;
   a.K2 = s.eK; a.V2 = s.eV; a.ldk2 = Q.kvw(); a.n2 = c.Hc;
   a.B = B; a.n = c.Hc; a.nq = Q.nq; a.nkv = Q.nkv; a.hd = Q.hd; a.scale = 1.f / std::sqrt((float)Q.hd); a.O = s.eO; a.ldo = QW; a.lse = s.else_;
+  a.gT = s.eT; a.ldg = ldT; a.Ag = s.eAg;   // F
   tk::att_fwd(a, st);
-  qk::gate(s.eO, s.eT, ldT, RA, Q.nq, Q.hd, s.eAg, st);
   mm_res(s.eAg, QW, RA, W + e.o.off, De, QW, Xin, s.eXm, De, nullptr, st);
   qk::rmsnorm(s.eXm, RA, De, P + e.ln2, true, Q.eps, s.eA2, nullptr, nullptr, st);
   mm_swiglu(s.eA2, De, RA, W + e.gu.off, c.Ie, De, ck ? s.eGU : nullptr, s.eHh, st);
