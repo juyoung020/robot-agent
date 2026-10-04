@@ -59,6 +59,9 @@ struct VCfg {
   float lam_rec = 0.5f;    // 1 단계 물체 고르기 InfoNCE(물체 N + 기억에 없음 열쇠)
   float rec_null_w = 1.f;  // 정답이 "기억에 없음" 인 표본의 무게(쏠리면 낮춤 — DETR ∅ 0.1)
   float lam_ex = 0.2f;     // 기억에 있음 확률 머리 BCE(gRefCOCO 꼴 따로 머리)
+  // 다시 계산 줄이기: 몸통 위쪽 save_mlp 층은 앞 계산의 MLP 중간값(GU F32·A2·Hh bf16, 표본 행마다 2I·4 + H·2 + I·2 B)을 남겨
+  // 뒤에서 섞개만 다시 계산(ln2·gate·up GEMM 건너뜀). 결과 비트 같음, 메모리 ↔ 속도
+  int save_mlp = 0;
   int kpad() const { return 48; }   // 행동 입력 줄: x_τ A + 시간 32 + 1 → 48
 };
 VCfg tiny_vcfg();

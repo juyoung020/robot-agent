@@ -304,7 +304,8 @@ struct V5Res { int pass = 0, tot = 0; double worst_ratio = 0; };
 // 그래서 묶음 V5_NB 개(씨앗 11, 12, …)의 오차·바닥을 각각 제곱 평균 제곱근으로 모은 뒤 같은 2 배 규칙을 쓴다(검사 수는 그대로). 유한 차분은 첫 묶음에서.
 static int g_v5seed = 11, g_v5nb = 4;
 static bool g_mem = false;   // --mem: 기억 요약 인코더 경로(tiny_vcfg_mem)
-static VCfg tiny_cfg_sel() { return g_mem ? tiny_vcfg_mem() : tiny_vcfg(); }
+static int g_save = 0;       // --save N: 몸통 위 N 층 MLP 중간값 남김(다시 계산 줄이기)
+static VCfg tiny_cfg_sel() { VCfg c = g_mem ? tiny_vcfg_mem() : tiny_vcfg(); c.save_mlp = g_save; return c; }
 // 정밀 칸 고르기의 따로 짠 CPU 판(GPU mem_sel_k 와 같은 규칙, 같은 로짓 입력): 고른 줄 번호와 만든 줄 바이트를 비교한다.
 // neg = true 면 검색 상위를 빼고 가까운 순을 거꾸로(음성 대조 — 달라야 함)
 static void cpu_select(const HB& h, const VCfg& c, const std::vector<float>& rlog, int b, bool neg, std::vector<int>& sel, std::vector<uint16_t>& rows) {
@@ -936,6 +937,7 @@ static int run_bench(int B, int Lmin, bool novis, bool fp32opt, int steps, bool 
   VCfg c;
   c.Bmax = B; c.Lmax = std::max(Lmin, 64) + (g_mem ? 64 : 0); c.Mtmax = B * 16;
   c.mem = g_mem;
+  c.save_mlp = g_save;
   c.vis_train = !novis;
   Model m;
   std::string err;
@@ -1000,6 +1002,7 @@ int main(int argc, char** argv) {
   for (int i = 2; i + 1 < argc; ++i) {
     if (std::string(argv[i]) == "--seed") g_v5seed = std::atoi(argv[i + 1]);
     if (std::string(argv[i]) == "--nb") g_v5nb = std::atoi(argv[i + 1]);
+    if (std::string(argv[i]) == "--save") g_save = std::atoi(argv[i + 1]);
   }
   g_mem = has("--mem");
   if (cmd == "v5") {

@@ -102,6 +102,8 @@ struct Model::WS {
   float* cep = nullptr;     // LM 머리 CE 워프 조각 통계(융합 G)
   float* npart = nullptr;   // 정규화 w 기울기 조각(커널 안 합, 융합 D)
   float* cpart = nullptr;   // 합성곱 가중치 기울기 판 조각 [B][lin_in·K](융합 E)
+  std::vector<float*> GUs;          // 층마다 남긴 MLP 중간값(save_mlp, 없으면 nullptr)
+  std::vector<uint16_t*> A2s, Hhs;
   long long rows_all = 0;   // φ 줄 수(Bmax·16 + Bmax·nmax)
 };
 
@@ -317,6 +319,10 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
                                             (long long)Rv * 3 * c.vD, (long long)RA * std::max(c.De, (Q.nq + Q.nkv) * Q.hd), (long long)c.Bmax * 16 * H});
   s.wt = alloc<float>(wtn);
   s.part = alloc<float>((size_t)((std::max({R, Rv, RA}) + 255) / 256 + 1) * std::max<long long>({(long long)s.W0, (long long)Q.lin_in() * Q.conv, 3LL * c.vD, (long long)c.vMLP, (long long)c.vT * c.vD, (long long)H, 2LL * c.Ie}));
+  s.GUs.assign(Q.layers, nullptr); s.A2s.assign(Q.layers, nullptr); s.Hhs.assign(Q.layers, nullptr);
+  for (int l = std::max(0, Q.layers - c.save_mlp); l < Q.layers; ++l) {
+    s.GUs[l] = alloc<float>((size_t)R * 2 * Q.I); s.A2s[l] = alloc<uint16_t>((size_t)R * H); s.Hhs[l] = alloc<uint16_t>((size_t)R * Q.I);
+  }
   s.cpart = alloc<float>((size_t)(c.Bmax * tk::conv_nseg(c.Lmax) + (c.Bmax * tk::conv_nseg(c.Lmax) + 255) / 256 + 1) * Q.lin_in() * Q.conv);
   s.npart = alloc<float>((size_t)std::max({tk::npart_floats(R, H), tk::npart_floats((long long)R * Q.lh, Q.dv), 2 * tk::npart_floats(Rv, c.vD),
                                            tk::npart_floats(RA, c.De), tk::npart_floats((long long)c.Bmax * c.mem_nmax, H),
@@ -775,9 +781,13 @@ static void q_layer_fwd(Model& m, int l, int B, int L, const float* Xin, float* 
     qk::gnorm(s.O, s.T0 + li, la, R, c.lh, c.dv, P + Ly.gnw, c.eps, s.Ag, st);
     mm_res(s.Ag, c.lh * c.dv, R, W + Ly.wout.off, H, c.lh * c.dv, Xin, s.Xmid, H, nullptr, st);
   }
-  qk::rmsnorm(s.Xmid, R, H, P + Ly.ln2, true, c.eps, s.A2, nullptr, nullptr, st);
-  mm_swiglu(s.A2, H, R, W + Ly.wgu.off, c.I, H, ck ? s.GU : nullptr, s.Hh, st);
-  if (!ck) mm_res(s.Hh, c.I, R, W + Ly.wdn.off, H, c.I, s.Xmid, Xout, H, nullptr, st);   // 다시 계산(뒤)에서는 층 출력을 안 씀 → down GEMM 건너뜀
+  const bool saved = s.GUs[l] != nullptr;
+  if (ck && saved) return;   // MLP 중간값은 앞 계산이 남김 — 섞개만 다시
+  uint16_t* A2 = saved ? s.A2s[l] : s.A2;
+  uint16_t* Hh = saved ? s.Hhs[l] : s.Hh;
+  qk::rmsnorm(s.Xmid, R, H, P + Ly.ln2, true, c.eps, A2, nullptr, nullptr, st);
+  mm_swiglu(A2, H, R, W + Ly.wgu.off, c.I, H, saved ? s.GUs[l] : (ck ? s.GU : nullptr), Hh, st);
+  if (!ck) mm_res(Hh, c.I, R, W + Ly.wdn.off, H, c.I, s.Xmid, Xout, H, nullptr, st);   // 다시 계산(뒤)에서는 층 출력을 안 씀 → down GEMM 건너뜀
 }
 // 뒤: s.dR = 층 출력 기울기 → 층 입력 기울기(제자리). 앞 중간값은 q_layer_fwd 를 다시 불러 만든다
 static void q_layer_bwd(Model& m, int l, int B, int L, cudaStream_t st) {
@@ -791,10 +801,14 @@ static void q_layer_bwd(Model& m, int l, int B, int L, cudaStream_t st) {
   float* GV = m.qp.GV;
   // 다시 계산(Xout 은 버림 — dA 를 임시로)
   q_layer_fwd(m, l, B, L, s.Xs[l], s.dA, st, true);   // 검문점도 씀
-  // MLP(dRb = 위 층 ln1 / 끝 RMSN 의 뒤가 함께 씀 — 융합 B)
-  tk::mm_dw(s.dRb, H, s.Hh, c.I, R, H, c.I, s.ws, DWCH, GW + Ly.wdn.off, nullptr, st);
-  mm_dswiglu(s.dRb, H, R, W + Ly.wdn.off, H, c.I, s.GU, s.dGU, m.bug == 1 ? 1 : 0, st);
-  tk::mm_dw(s.dGU, 2 * c.I, s.A2, H, R, 2 * c.I, H, s.ws, DWCH, GW + Ly.wgu.off, nullptr, st);
+  // MLP(dRb = 위 층 ln1 / 끝 RMSN 의 뒤가 함께 씀 — 융합 B). save_mlp 층은 앞 계산이 남긴 중간값
+  const bool saved = s.GUs[l] != nullptr;
+  const float* GU = saved ? s.GUs[l] : s.GU;
+  const uint16_t* A2 = saved ? s.A2s[l] : s.A2;
+  const uint16_t* Hh = saved ? s.Hhs[l] : s.Hh;
+  tk::mm_dw(s.dRb, H, Hh, c.I, R, H, c.I, s.ws, DWCH, GW + Ly.wdn.off, nullptr, st);
+  mm_dswiglu(s.dRb, H, R, W + Ly.wdn.off, H, c.I, GU, s.dGU, m.bug == 1 ? 1 : 0, st);
+  tk::mm_dw(s.dGU, 2 * c.I, A2, H, R, 2 * c.I, H, s.ws, DWCH, GW + Ly.wgu.off, nullptr, st);
   tk::mm_dx(s.dGU, 2 * c.I, R, W + Ly.wgu.off, 2 * c.I, H, s.dA, H, false, st);
   tk::rms_bwd(s.dA, H, s.Xmid, H, R, 1, H, P + Ly.ln2, true, c.eps, s.dR, H, true, s.npart, GV + Ly.ln2, 0, st, s.dRb);
   // 섞개
