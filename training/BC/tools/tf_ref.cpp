@@ -353,7 +353,7 @@ void run(Mode md, const TfCfg& c, const TfLayout& lay, const V& P, const In& in,
     for (int tk = 0; tk < L; ++tk) {
       int g = 0;
       while (g + 1 < N_GRP && tk >= grp_tok0(g + 1)) ++g;
-      const int t = tk - grp_tok0(g), ty = kGrp[g].n_type == 2 ? (t >= kGrp[g].n_tok / 2) : 0;
+      const int t = tk - grp_tok0(g), ty = grp_type_of(g, t);
       for (int cc = 0; cc < d; ++cc) {
         const double e = E[((long long)B * grp_tok0(g) + (long long)b * kGrp[g].n_tok + t) * d + cc];
         const double te = P[lay.g_type[g] + (long long)ty * d + cc];
@@ -504,7 +504,7 @@ void run(Mode md, const TfCfg& c, const TfLayout& lay, const V& P, const In& in,
   // 종류 임베딩
   for (int g = 0; g < N_GRP; ++g)
     for (int ty = 0; ty < kGrp[g].n_type; ++ty) {
-      const int n = kGrp[g].n_tok, t0 = kGrp[g].n_type == 2 ? ty * n / 2 : 0, t1 = kGrp[g].n_type == 2 ? (ty + 1) * n / 2 : n;
+      const int n = kGrp[g].n_tok, nt = kGrp[g].n_type, t0 = ty * n / nt, t1 = (ty + 1) * n / nt;
       const int cb = (t1 - t0) >= 256 ? 1 : 256 / (t1 - t0);
       for (int cc = 0; cc < d; ++cc) {
         double s = 0;

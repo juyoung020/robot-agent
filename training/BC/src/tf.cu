@@ -134,7 +134,7 @@ __global__ void tv_k(const uint32_t* obj_mask, const uint32_t* grp_off, int B, u
   if (g == G_OBJ) v = v && ((obj_mask[b] >> (t - grp_tok0(G_OBJ))) & 1u);
   tv[q] = v ? 1 : 0;
 }
-NDEV int type_of(int g, int t) { return grp_ntype(g) == 2 ? (t >= grp_ntok(g) / 2 ? 1 : 0) : 0; }
+NDEV int type_of(int g, int t) { return grp_type_of(g, t); }
 // 토큰 놓기: X[b·L + tok0 + t][c] = E(묶음 순서)[b·n + t][c] + 종류[c]
 struct GT { long long o[N_GRP]; };
 __global__ void place_k(const float* E, const float* P, GT lay, int B, int d, float* X) {
@@ -841,7 +841,7 @@ void Tf::backward(const TfIn& in, int B, cudaStream_t st) {
   // 묶음 임베딩
   for (int g = 0; g < N_GRP; ++g) {
     for (int ty = 0; ty < kGrp[g].n_type; ++ty) {
-      const int n = kGrp[g].n_tok, t0 = kGrp[g].n_type == 2 ? ty * n / 2 : 0, t1 = kGrp[g].n_type == 2 ? (ty + 1) * n / 2 : n;
+      const int n = kGrp[g].n_tok, nt = kGrp[g].n_type, t0 = ty * n / nt, t1 = (ty + 1) * n / nt;
       const int cb = (t1 - t0) >= 256 ? 1 : 256 / (t1 - t0), nb = (B + cb - 1) / cb;
       temb_part_k<<<nb, 256, 0, st>>>(dR, B, d, grp_tok0(g), t0, t1, cb, cpart);
       colred_k<<<nb_(d), 256, 0, st>>>(cpart, nb, d, G + lay.g_type[g] + (long long)ty * d, nullptr);

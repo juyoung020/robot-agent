@@ -55,6 +55,8 @@ class DeviceMap {
   // 학습기 장치 커리큘럼은 ctl() 에 직접 pend 를 쓴다
   void request_reset(uint64_t seed);
   void apply();
+  // 위에서 본 지도(topview.h): 판마다 학생 그림 상태(TopState — 목표 색·점·물체 상자 + 그 스텝 점유·본 칸 비트)를 out[N] 에(비동기, 그래프에 잡힘, 호스트 동기 없음)
+  void topstate(TopState* out, cudaStream_t st = 0) const;
   MapCtl* ctl() { return ctl_; }
   size_t bytes() const;
 
@@ -107,6 +109,13 @@ class TokenRecorder {
 // 구간별 시간(-DMAP_PROF 빌드에서만 뜻이 있음): 블록 스레드 0 의 clock64 합(P_NSEC 칸) + 블록 수(keyframe 아님, keyframe)
 void prof_reset();
 void prof_read(unsigned long long out[P_NSEC + 3]);
+
+// 위에서 본 지도 RGB(topview.h): 상태 ts[rows[k]](rows nullptr 이면 k) → rgb[k][256][256][3] u8, hide[k] 1 = 학생 목표 감추기(물체 목표 색만), nullptr = 0.
+// 장치 포인터, 비동기. bug 1(음성 대조) = 화소 행·열 뒤바꿈
+void tv_render(const TopState* ts, const int* rows, int n, const uint8_t* hide, uint8_t* rgb, cudaStream_t st = 0, int bug = 0);
+// CPU 참조판(같은 소스)
+void tv_topstate_cpu(const MapHost& h, const bsc::SceneSet* ss, int i, TopState& out);
+void tv_render_cpu(const TopState& t, bool hide, uint8_t* rgb);
 
 // 토큰 낱말 FP16 → float(호스트, 읽기·기록 도구용)
 float h2f(uint16_t h);

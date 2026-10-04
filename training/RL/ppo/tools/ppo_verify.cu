@@ -949,6 +949,17 @@ static int run_obs(bool neg) {
         for (int q = gmap::GV_EEF + 3; q < gmap::N_GV; ++q) gbad += x[q] != 0;
       }
     std::printf("goal entry columns (independent): %ld words wrong; entries pick %ld place %ld (points %ld)\n", gbad, npick, nplace, npt);
+    long tbad = 0;   // 위에서 본 지도 교사 격자 X0 [464, 976) = 토큰 tv / 4 (use_map 0·지도 끄기 판은 0 — 끔 판은 0 이거나 값이 맞아야)
+    double tsum = 0;
+    for (int e = 0; e < N; ++e)
+      for (int k = 0; k < N_TV; ++k) {
+        const int ch = k / 256, b = k % 256;
+        const uint16_t want = f2bf((float)tok[e].tv[ch][b / 16][b % 16] * 0.25f), got = gx0[(size_t)e * X0_W + X0_TV + k];
+        tbad += got != want && got != 0;
+        tsum += bf2f(got);
+      }
+    std::printf("top-view teacher grid columns (independent): %ld words wrong; mean value %.4f\n", tbad, tsum / ((double)N * N_TV));
+    if (!neg) bad += tbad;
     if (!neg) bad += gbad;
   }
   if (a.p_goal_drop > 0.f) {   // 목표 감춤(독립 확인): 감춘 판은 칸 줄 T_TARGET 0 이고, 물체 목표 판이면 X0 목표 값(G1)·손끝→목표·경유 지점도 0.

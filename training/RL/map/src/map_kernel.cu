@@ -307,6 +307,39 @@ void DeviceMap::step(const env::Soa& s, int force_kf, int bug, cudaStream_t st, 
   }
 }
 
+// 위에서 본 지도: 판 하나 = 블록 하나(128 스레드가 비트를 옮김, 스레드 0 이 입력)
+__global__ void __launch_bounds__(128) tv_state_kernel(int N, const MapCore* core, const uint32_t* occ, const uint32_t* seen, const bsc::SceneSet* ss, BMapEnv* bm, TopState* out) {
+  const int i = blockIdx.x;
+  if (i >= N) return;
+  const BCtx bx = bctx(ss, bm ? bm + i : nullptr);
+  tv_topstate(core[i], &bx, occ + (size_t)i * NWORD, seen + (size_t)i * NWORD, out[i], threadIdx.x, blockDim.x);
+}
+void DeviceMap::topstate(TopState* out, cudaStream_t st) const {
+  tv_state_kernel<<<N_, 128, 0, st>>>(N_, core_, occ_, seen_, ss_, bm_, out);
+}
+// RGB: 블록 = (그림, 행 16 줄), 스레드 256 = 열. 입력(TvIn 352 B)은 공유 메모리로, 비트는 전역(캐시)에서
+constexpr int TV_ROWS = 16;
+__global__ void __launch_bounds__(TV_PX) tv_render_kernel(const TopState* ts, const int* rows, const uint8_t* hide, uint8_t* rgb, int bug) {
+  const int k = blockIdx.x, v0 = blockIdx.y * TV_ROWS, u = threadIdx.x;
+  const TopState& t = ts[rows ? rows[k] : k];
+  __shared__ TvIn in;
+  if (u < (int)(sizeof(TvIn) / 4)) reinterpret_cast<uint32_t*>(&in)[u] = reinterpret_cast<const uint32_t*>(&t.in)[u];
+  __syncthreads();
+  const bool hd = hide && hide[k];
+  const TvWinCell cell{t.occ, t.seen};
+  for (int v = v0; v < v0 + TV_ROWS; ++v) {
+    uint8_t c[3];
+    tv_color(bug == 1 ? tv_class(in, cell, v, u, true, hd) : tv_class(in, cell, u, v, true, hd), c);
+    uint8_t* p = rgb + (((size_t)k * TV_PX + v) * TV_PX + u) * 3;
+    p[0] = c[0]; p[1] = c[1]; p[2] = c[2];
+  }
+}
+static_assert(sizeof(TvIn) % 4 == 0 && sizeof(TvIn) / 4 <= TV_PX, "TvIn copy by one row of threads");
+void tv_render(const TopState* ts, const int* rows, int n, const uint8_t* hide, uint8_t* rgb, cudaStream_t st, int bug) {
+  if (n <= 0) return;
+  tv_render_kernel<<<dim3(n, TV_PX / TV_ROWS), TV_PX, 0, st>>>(ts, rows, hide, rgb, bug);
+}
+
 void prof_reset() {
 #ifdef MAP_PROF
   const unsigned long long z[P_NSEC + 3] = {};

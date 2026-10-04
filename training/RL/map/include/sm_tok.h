@@ -14,6 +14,7 @@
 //   comp[4] : 0(과제 완성도는 시뮬 정답이 있어야 함)
 //   front[8]: 0(안 본 곳 광선 — scenemap C ABI 에 '본 칸' 격자가 없음; sm_grid −1 로 만들 수 있으나 아직 안 함)
 //   flags   : 비트 0 = 호출자가 준 keyframe 표시, 비트 1 = 점으로 가기(SmTokIn::goto_point)
+//   tv      : 교사 격자(topview.h) — SmTokIn::grid(sm_snap_map) 에서, 점유 % ≥ 50 = 점유(가정). 학생 RGB 는 sm_topview_rgb
 //   goal    : 목표 칸 2(map_tok.h GoalVal) — 호출자가 준 목표(집을 것·놓을 곳: 물체 id 또는 map 점). 물체는 스냅숏에서 id 로 찾음(사라짐 GONE 이나
 //             스냅숏에 없으면 호출자가 준 마지막 자리 + GV_LOST). 실행기(src/agent/tools/move_robot goal.rs)와 같은 규칙
 #pragma once
@@ -58,7 +59,55 @@ struct SmTokIn {
   struct Goal { int kind = 0; uint32_t id = 0; float pt[3] = {0, 0, 0}; bool have_last = false; float last[3] = {0, 0, 0}; };
   Goal goal[N_GENT];
   bool goto_point = false;              // 지금 가는 목표 = 놓을 점(flags 비트 1)
+  // 위에서 본 지도(topview.h)의 칸: scenemap 점유 격자(sm_grid 와 같은 뜻 — cells[y·w + x], −1 모름, 0..100 점유 %, 칸 왼쪽 아래 = origin + (x, y)·res).
+  // cells NULL 이면 모두 모름(회색)
+  struct Grid { const int8_t* cells = nullptr; int w = 0, h = 0; double res = 0.05, ox = 0, oy = 0; } grid;
 };
+// scenemap 격자 칸 읽기(topview.h Cell): 모름 → 0, 점유 % ≥ kOccPct → 2, 나머지 → 1
+constexpr int kSmOccPct = 50;   // (가정) scenemap 점유 확률 문턱
+struct SmGridCell {
+  const SmTokIn::Grid* g;
+  int operator()(float x, float y) const {
+    if (!g->cells || g->w <= 0 || g->h <= 0) return 0;
+    const int cx = (int)std::floor((x - g->ox) / g->res), cy = (int)std::floor((y - g->oy) / g->res);
+    if (cx < 0 || cy < 0 || cx >= g->w || cy >= g->h) return 0;
+    const int8_t v = g->cells[(size_t)cy * g->w + cx];
+    return v < 0 ? 0 : (v >= kSmOccPct ? 2 : 1);
+  }
+};
+// 위에서 본 지도 입력(GPU tv_input 과 같은 규칙): 사라지지 않은 물체 상자, 목표 물체(집을 것 초록·놓을 곳 파랑, 사라졌으면 마지막 자리), 놓을 점.
+// teacher = 교사 격자용(목표 색·점 없음), hide_obj = 물체 목표 색만 장애물로
+inline void sm_tv_input(const SmTokIn& in, bool teacher, bool hide_obj, TvIn& t) {
+  t.px = in.x; t.py = in.y; t.c = std::cos(in.yaw); t.s = std::sin(in.yaw);
+  int n = 0;
+  auto add = [&](const float pos[3], const float ext[3], int kind) {
+    if (n >= TV_MAXBOX) return;
+    TvBox& B = t.box[n++];
+    for (int a = 0; a < 2; ++a) { B.lo[a] = pos[a] - 0.5f * ext[a]; B.hi[a] = pos[a] + 0.5f * ext[a]; }
+    B.kind = kind;
+  };
+  for (const SmTokObj& S : in.objs) {
+    int kind = TV_OBST;
+    for (int k = 0; k < N_GENT; ++k)
+      if (!teacher && !hide_obj && in.goal[k].kind == 1 && in.goal[k].id == S.id) kind = k == GE_PICK ? (int)TV_PICK : (int)TV_PLACE;
+    const bool goal = kind != TV_OBST || (in.goal[0].kind == 1 && in.goal[0].id == S.id) || (in.goal[1].kind == 1 && in.goal[1].id == S.id);
+    if (S.state == 1 && !goal) continue;   // 사라짐(목표면 마지막 자리로 그림)
+    add(S.pos, S.ext, kind);
+  }
+  for (int k = n; k < TV_MAXBOX; ++k) { t.box[k] = TvBox{{0.f, 0.f}, {0.f, 0.f}, 0}; }
+  t.nbox = n;
+  t.has_pt = (!teacher && in.goal[GE_PLACE].kind == 2) ? 1 : 0;
+  t.gx = t.has_pt ? in.goal[GE_PLACE].pt[0] : 0.f;
+  t.gy = t.has_pt ? in.goal[GE_PLACE].pt[1] : 0.f;
+}
+// 학생 그림 256 × 256 RGB8(실제 로봇 — GPU tv_render 와 같은 화소 규칙)
+inline void sm_topview_rgb(const SmTokIn& in, bool hide_obj, uint8_t* rgb) {
+  TvIn t;
+  sm_tv_input(in, false, hide_obj, t);
+  const SmGridCell cell{&in.grid};
+  for (int v = 0; v < TV_PX; ++v)
+    for (int u = 0; u < TV_PX; ++u) tv_color(tv_class(t, cell, u, v, true), rgb + ((size_t)v * TV_PX + u) * 3);
+}
 
 // 물체 속도용 지난 자리(호출자가 스텝마다 넘김): id → (map 자리, 시각)
 struct SmTokPrev {
@@ -158,6 +207,12 @@ inline void make_sm_tokens(const SmTokIn& in, MapTok* o, SmTokPrev* prev = nullp
   for (int q = 0; q < N_ROOMTOK; ++q) o->room[q] = f2h_soft(rr[q]);
   o->n_slot = int16_t(nslot);
   o->flags = int16_t((in.keyframe ? 1 : 0) | (in.goto_point ? 2 : 0));
+  {  // 교사 격자(topview.h, GPU make_tokens 6) 와 같은 표본)
+    TvIn t;
+    sm_tv_input(in, true, false, t);
+    const SmGridCell cell{&in.grid};
+    for (int k = 0; k < TV_B * TV_B; ++k) tv_block(t, cell, k % TV_B, k / TV_B, o->tv[0][k / TV_B][k % TV_B], o->tv[1][k / TV_B][k % TV_B]);
+  }
   for (int k = 0; k < N_GENT; ++k) {
     const SmTokIn::Goal& G = in.goal[k];
     if (G.kind == 2) { goal_fill(o->goal[k], 2, true, false, G.pt, px, py, c, s, in.eef_b); continue; }
@@ -221,6 +276,9 @@ inline void sm_tok_from_snapshot(const sm_snapshot_t* snap, const std::vector<st
     o.same_room = rid != 0 && sm_snap_object_room(snap, ob[i].id) == rid;
     in->objs.push_back(o);
   }
+  sm_grid g{};   // 위에서 본 지도 칸(스냅숏 수명 동안)
+  if (sm_snap_map(snap, &g) == 0 && g.cells) { in->grid.cells = g.cells; in->grid.w = g.width; in->grid.h = g.height; in->grid.res = g.resolution; in->grid.ox = g.origin[0]; in->grid.oy = g.origin[1]; }
+  else in->grid = SmTokIn::Grid{};
 }
 #endif
 

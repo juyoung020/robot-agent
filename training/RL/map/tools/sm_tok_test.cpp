@@ -245,6 +245,38 @@ int main() {
     CHECK(h2f(G.goal[0][GV_PRESENT]) == 1.f && h2f(G.goal[0][GV_KNOWN]) == 0.f && G.goal[0][GV_POS] == 0 && (G.flags & 2), "unknown object / goto flag");
     n_cases += 1;
   }
+  // 6. 위에서 본 지도(topview.h): 로봇 가운데·앞이 위, 점유 칸 빨강·모름 회색·빈칸 흰색, 목표 색, 감추기, 교사 격자 = 같은 표본
+  {
+    std::vector<int8_t> cells(200 * 200, -1);
+    for (int y = 0; y < 200; ++y) for (int x = 0; x < 200; ++x) if (x >= 50 && x < 150 && y >= 50 && y < 150) cells[(size_t)y * 200 + x] = 0;   // 5 m 네모 빈칸(0.05 m 칸)
+    for (int y = 100; y < 104; ++y) for (int x = 60; x < 140; ++x) cells[(size_t)y * 200 + x] = 100;   // 벽: map y 5.0–5.2, x 3–7
+    SmTokIn in;
+    in.grid.cells = cells.data(); in.grid.w = 200; in.grid.h = 200; in.grid.res = 0.05; in.grid.ox = 0; in.grid.oy = 0;
+    in.x = 5.f; in.y = 4.f; in.yaw = 1.5707963f;   // map +y 를 봄 → 벽은 앞 1.0–1.2 m
+    SmTokObj cup; cup.id = 7; cup.pos[0] = 4.f; cup.pos[1] = 4.f; cup.ext[0] = cup.ext[1] = 0.2f; cup.ext[2] = 0.1f; in.objs.push_back(cup);   // 로봇 왼쪽 1 m
+    in.goal[GE_PICK].kind = 1; in.goal[GE_PICK].id = 7;
+    in.goal[GE_PLACE].kind = 2; in.goal[GE_PLACE].pt[0] = 5.f; in.goal[GE_PLACE].pt[1] = 3.f;   // 로봇 뒤 1 m
+    std::vector<uint8_t> rgb((size_t)TV_PX * TV_PX * 3), hid(rgb.size());
+    sm_topview_rgb(in, false, rgb.data());
+    sm_topview_rgb(in, true, hid.data());
+    auto px = [&](const std::vector<uint8_t>& im, float fx, float ly) {   // 로봇 좌표 → 화소 분류(색 → 번호)
+      const int v = (int)std::floor(TV_HALF - fx / TV_RES), u = (int)std::floor(TV_HALF - ly / TV_RES);
+      for (int k = 0; k < TV_NCLASS; ++k) { uint8_t c[3]; tv_color(k, c); if (!std::memcmp(c, &im[((size_t)v * TV_PX + u) * 3], 3)) return k; }
+      return -1;
+    };
+    CHECK(px(rgb, 0.05f, 0.f) == TV_HEAD && px(rgb, -0.10f, 0.f) == TV_ROBOT, "robot marker at centre, head up");
+    CHECK(px(rgb, 1.10f, 0.f) == TV_OBST && px(rgb, 0.6f, 0.f) == TV_FREE && px(rgb, 4.0f, 4.0f) == TV_UNEXP, "wall ahead red, free white, outside grey");
+    CHECK(px(rgb, 0.f, 1.0f) == TV_PICK && px(hid, 0.f, 1.0f) == TV_OBST, "pick goal green on the left, hidden -> red");
+    CHECK(px(rgb, -1.0f, 0.f) == TV_PLACE && px(hid, -1.0f, 0.f) == TV_PLACE, "place point blue behind, never hidden");
+    MapTok T;
+    make_sm_tokens(in, &T);
+    TvIn t;
+    sm_tv_input(in, true, false, t);
+    int tot = 0;
+    for (int by = 0; by < TV_B; ++by) for (int bx = 0; bx < TV_B; ++bx) { CHECK(T.tv[0][by][bx] + T.tv[1][by][bx] <= TV_BS * TV_BS, "grid range"); tot += T.tv[0][by][bx]; }
+    CHECK(tot > 0 && T.tv[0][7][8] + T.tv[0][7][7] + T.tv[0][6][7] + T.tv[0][6][8] > 0, "teacher grid sees the wall ahead (blocks above the centre)");
+    n_cases += 1;
+  }
   std::printf("sm_tok_test: %d cases, %d failures\n", n_cases, g_fail);
   return g_fail ? 1 : 0;
 }

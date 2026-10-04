@@ -636,13 +636,13 @@ static void vgemm8(const uint8_t* A8, const uint8_t* W8, int M, int N, int K, co
 
 // K11 패치 자르기: 스레드 하나 = (영상 행, k 8 개). v = (u8/255 − 0.5)/0.5 (torchvision ToTensor + Normalize(0.5, 0.5) 와 같은 식)
 template <bool HF>
-__global__ void patchify_k(const uint8_t* cam0, const uint8_t* cam1, int n, int row0, uint16_t* P) {
+__global__ void patchify_k(const uint8_t* cam0, const uint8_t* cam1, int n, int row0, uint16_t* P, int ncam, int nc, int cbase) {
   const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-  const long long total = (long long)n * 2 * NTOK * (KP / 8);
+  const long long total = (long long)n * nc * NTOK * (KP / 8);
   if (q >= total) return;
   const int kc = (int)(q % (KP / 8));
   const long long rr = q / (KP / 8);
-  const int p = (int)(rr % NTOK), ci = (int)((rr / NTOK) % 2), e = (int)(rr / (2 * NTOK));
+  const int p = (int)(rr % NTOK), ci = (int)((rr / NTOK) % nc), e = (int)(rr / (nc * NTOK));
   const int k0 = kc * 8, ch = k0 / (PATCH * PATCH), ky = (k0 % (PATCH * PATCH)) / PATCH, kx0 = k0 % PATCH;
   const int y = (p / GRID) * PATCH + ky, x = (p % GRID) * PATCH + kx0;
   const uint8_t* src = (ci ? cam1 : cam0) + ((size_t)e * IMG * IMG + (size_t)y * IMG + x) * 3 + ch;
@@ -657,7 +657,7 @@ __global__ void patchify_k(const uint8_t* cam0, const uint8_t* cam1, int n, int 
   w.y = (uint32_t)o[2] | ((uint32_t)o[3] << 16);
   w.z = (uint32_t)o[4] | ((uint32_t)o[5] << 16);
   w.w = (uint32_t)o[6] | ((uint32_t)o[7] << 16);
-  const long long img = (long long)(row0 + e) * 2 + ci;
+  const long long img = (long long)(row0 + e) * ncam + cbase + ci;
   *reinterpret_cast<uint4*>(P + ((size_t)img * NTOK + p) * KP + k0) = w;
 }
 
@@ -805,10 +805,11 @@ void Encoder::free_all() {
   bytes = 0;
 }
 
-void Encoder::patchify(const uint8_t* cam0, const uint8_t* cam1, int n, int row0, cudaStream_t st) {
-  const long long total = (long long)n * 2 * NTOK * (KP / 8);
-  if (half) patchify_k<true><<<(unsigned)((total + 255) / 256), 256, 0, st>>>(cam0, cam1, n, row0, patches);
-  else patchify_k<false><<<(unsigned)((total + 255) / 256), 256, 0, st>>>(cam0, cam1, n, row0, patches);
+void Encoder::patchify(const uint8_t* cam0, const uint8_t* cam1, int n, int row0, cudaStream_t st, int ncam, int cbase) {
+  const int nc = cam1 ? 2 : 1;
+  const long long total = (long long)n * nc * NTOK * (KP / 8);
+  if (half) patchify_k<true><<<(unsigned)((total + 255) / 256), 256, 0, st>>>(cam0, cam1, n, row0, patches, ncam, nc, cbase);
+  else patchify_k<false><<<(unsigned)((total + 255) / 256), 256, 0, st>>>(cam0, cam1, n, row0, patches, ncam, nc, cbase);
   VTK(cudaGetLastError());
 }
 

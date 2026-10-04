@@ -42,6 +42,7 @@ int main(int argc, char** argv) {
   bsc::BuildOpt bo;
   bsc::BCurr bcu = bsc::kBCurrDefault;
   int pos = 0, nav_k = 0;
+  std::string tv_dump;
   for (int a = 1; a < argc; ++a) {
     if (!std::strcmp(argv[a], "--curr") && a + 1 < argc) {
       float v[5] = {0.f, 0.f, (float)cu.kmin, (float)cu.kmax, cu.reveal_r};
@@ -64,6 +65,9 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--strict")) bcu.strict = 1;
     else if (!std::strcmp(argv[a], "--point") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &bcu.p_point, &bcu.p_goto);   // 목표 점 섞음
     else if (!std::strcmp(argv[a], "--negative-goal")) { negative = true; neg_bug = 11; }   // 목표 칸 회전 없음(토큰)
+    else if (!std::strcmp(argv[a], "--negative-tv")) { negative = true; neg_bug = 12; }     // 위에서 본 지도 거꾸로 돌림(토큰 교사 격자)
+    else if (!std::strcmp(argv[a], "--negative-tvimg")) { negative = true; neg_bug = 13; }  // 위에서 본 지도 RGB 행·열 뒤바꿈(GPU 그리기)
+    else if (!std::strcmp(argv[a], "--tv-dump") && a + 1 < argc) tv_dump = argv[++a];       // 마지막 스텝 그림 몇 장을 PPM 으로
     else if (!std::strcmp(argv[a], "--only") && a + 1 < argc) {
       std::string v = argv[++a];
       size_t p = 0;
@@ -139,6 +143,8 @@ int main(int argc, char** argv) {
   double sum_task_end = 0, sum_obj_end = 0, sum_seen_end = 0, max_err = 0, max_err_yaw = 0;
   long n_end = 0, n_confirmed = 0, n_gone = 0, n_moved = 0, n_cand = 0, n_relink = 0, n_merge = 0, n_appeared = 0, n_moving = 0;
   double tok_front = 0;
+  double tv_obst = 0, tv_unexp = 0, tv_centre_unexp = 0;
+  long tv_bad = 0;
   long goal_present[2] = {0, 0}, goal_known[2] = {0, 0}, goal_lost[2] = {0, 0}, goal_pt[2] = {0, 0}, goal_ptchk = 0, goal_ptbad = 0, goal_objchk = 0, goal_objbad = 0;
   long tok_front_open = 0;
   long tok_live = 0, tok_reach = 0, tok_hyper = 0, way_valid = 0, way_tgt = 0, way_far = 0;   // v2 칸·경유 지점 통계
@@ -148,6 +154,18 @@ int main(int argc, char** argv) {
   std::vector<float> last_met((size_t)gmap::N_MET * N, 0.f);
   std::vector<int> last_ep(N, 0);
 
+  constexpr int NIMG = 32;
+  gmap::TopState* d_ts = nullptr;
+  int* d_rows = nullptr;
+  uint8_t *d_hide = nullptr, *d_rgb = nullptr;
+  cudaMalloc(&d_ts, sizeof(gmap::TopState) * N);
+  cudaMalloc(&d_rows, sizeof(int) * NIMG);
+  cudaMalloc(&d_hide, NIMG);
+  cudaMalloc(&d_rgb, (size_t)NIMG * gmap::TV_PX * gmap::TV_PX * 3);
+  std::vector<gmap::TopState> ts_g(N);
+  std::vector<uint8_t> rgb_g((size_t)NIMG * gmap::TV_PX * gmap::TV_PX * 3), rgb_c((size_t)gmap::TV_PX * gmap::TV_PX * 3);
+  long tv_pix = 0, tv_cls[gmap::TV_NCLASS] = {};
+  uint64_t tv_hash = 1469598103934665603ull;
   for (int t = 0; t < T; ++t) {
     for (size_t i = 0; i < act.size(); ++i) act[i] = dm::rand_range(arng, -1.f, 1.f);
     for (int i = 0; i < N; ++i) { act[0 * N + i] = dm::rand_range(arng, -0.2f, 1.f); act[1 * N + i] = dm::rand_range(arng, -0.6f, 0.6f); }
@@ -223,6 +241,41 @@ int main(int argc, char** argv) {
       std::snprintf(buf, sizeof buf, "map token byte %d env %d", k, i);
       note(buf, i);
       break;
+    }
+    // 위에서 본 지도(topview.h): 50 스텝마다·마지막 스텝, 그림 상태 전체(GPU 커널 대 CPU) + 판 NIMG 개의 RGB 를 GPU == CPU 바이트로(감추기 번갈아)
+    if (t % 50 == 49 || t == T - 1) {
+      gmapd.topstate(d_ts);
+      std::vector<int> rows(NIMG);
+      std::vector<uint8_t> hide(NIMG);
+      for (int k = 0; k < NIMG; ++k) { rows[k] = (int)(((long)k * 7919 + t) % N); hide[k] = (uint8_t)((k + t) & 1); }
+      cudaMemcpy(d_rows, rows.data(), sizeof(int) * NIMG, cudaMemcpyHostToDevice);
+      cudaMemcpy(d_hide, hide.data(), NIMG, cudaMemcpyHostToDevice);
+      gmap::tv_render(d_ts, d_rows, NIMG, d_hide, d_rgb, 0, (negative && neg_bug == 13) ? 1 : 0);
+      cudaDeviceSynchronize();
+      cudaMemcpy(ts_g.data(), d_ts, sizeof(gmap::TopState) * N, cudaMemcpyDeviceToHost);
+      cudaMemcpy(rgb_g.data(), d_rgb, rgb_g.size(), cudaMemcpyDeviceToHost);
+      for (int i = 0; i < N; ++i) {
+        gmap::TopState tc;
+        gmap::tv_topstate_cpu(ch, beh ? &sb.host : nullptr, i, tc);
+        if (std::memcmp(&tc, &ts_g[i], sizeof tc)) { note("top-view state", i); break; }
+      }
+      for (int k = 0; k < NIMG; ++k) {
+        gmap::TopState tc;
+        gmap::tv_topstate_cpu(ch, beh ? &sb.host : nullptr, rows[k], tc);
+        gmap::tv_render_cpu(tc, hide[k] != 0, rgb_c.data());
+        const uint8_t* g = rgb_g.data() + (size_t)k * gmap::TV_PX * gmap::TV_PX * 3;
+        if (std::memcmp(g, rgb_c.data(), rgb_c.size())) { note("top-view RGB", rows[k]); break; }
+        for (size_t q = 0; q < rgb_c.size(); q += 3) {
+          ++tv_pix;
+          for (int c2 = 0; c2 < gmap::TV_NCLASS; ++c2) { uint8_t col[3]; gmap::tv_color(c2, col); if (!std::memcmp(col, &rgb_c[q], 3)) { ++tv_cls[c2]; break; } }
+        }
+        for (size_t q = 0; q < rgb_c.size(); ++q) tv_hash = (tv_hash ^ rgb_c[q]) * 1099511628211ull;
+        if (!tv_dump.empty() && t == T - 1 && k < 8) {   // PPM(P6) 몇 장
+          char fn[512];
+          std::snprintf(fn, sizeof fn, "%s/topview_t%d_env%d%s.ppm", tv_dump.c_str(), t, rows[k], hide[k] ? "_hide" : "");
+          if (FILE* f = std::fopen(fn, "wb")) { std::fprintf(f, "P6\n%d %d\n255\n", gmap::TV_PX, gmap::TV_PX); std::fwrite(rgb_c.data(), 1, rgb_c.size(), f); std::fclose(f); }
+        }
+      }
     }
     mismatches += m;
     if (m && !negative) break;
@@ -327,6 +380,12 @@ int main(int argc, char** argv) {
           goal_objbad += !hit;
         }
       }
+      for (int by = 0; by < gmap::TV_B; ++by)   // 교사 격자 통계(위에서 본 지도): 장애물·안 본 칸 비율, 로봇 둘레 4 덩이(1.6 m 네모)의 안 본 칸
+        for (int bx = 0; bx < gmap::TV_B; ++bx) {
+          tv_obst += tk.tv[0][by][bx]; tv_unexp += tk.tv[1][by][bx];
+          if (by >= 7 && by <= 8 && bx >= 7 && bx <= 8) tv_centre_unexp += tk.tv[1][by][bx];
+          tv_bad += tk.tv[0][by][bx] + tk.tv[1][by][bx] > gmap::TV_BS * gmap::TV_BS;
+        }
       tok_slots += tk.n_slot;
       for (int b = 0; b < tk.n_slot; ++b) tok_target += gmap::h2f(tk.slot[b][gmap::T_TARGET]) > 0.5f;
       for (int j = 0; j < 8; ++j) tok_walls += gmap::h2f(tk.wall[16 + 5 * j + 4]) > 0.5f;
@@ -393,6 +452,13 @@ int main(int argc, char** argv) {
               " independent check: point entries %ld bad %ld, object entries vs first target slot %ld bad %ld\n",
               goal_present[0] / ES, goal_known[0] / ES, goal_lost[0] / ES, goal_present[1] / ES, goal_known[1] / ES, goal_lost[1] / ES, goal_pt[1] / ES,
               goal_ptchk, goal_ptbad, goal_objchk, goal_objbad);
+  std::printf("  top-view RGB (256 x 256, %ld pixels checked GPU == CPU): unexplored %.3f free %.3f obstacle %.3f pick %.4f place %.4f robot %.4f head %.4f; FNV-1a %016llx\n",
+              tv_pix, tv_cls[0] / std::max(1.0, (double)tv_pix), tv_cls[1] / std::max(1.0, (double)tv_pix), tv_cls[2] / std::max(1.0, (double)tv_pix),
+              tv_cls[3] / std::max(1.0, (double)tv_pix), tv_cls[4] / std::max(1.0, (double)tv_pix), tv_cls[5] / std::max(1.0, (double)tv_pix),
+              tv_cls[6] / std::max(1.0, (double)tv_pix), (unsigned long long)tv_hash);
+  std::printf("  top-view teacher grid (16 x 16 blocks, %d samples each): obstacle %.3f, unexplored %.3f of samples; unexplored in the 4 blocks around the robot %.3f; blocks with obstacle + unexplored > samples: %ld\n",
+              gmap::TV_BS * gmap::TV_BS, tv_obst / (ES * 256.0 * gmap::TV_BS * gmap::TV_BS), tv_unexp / (ES * 256.0 * gmap::TV_BS * gmap::TV_BS), tv_centre_unexp / (ES * 4.0 * gmap::TV_BS * gmap::TV_BS), tv_bad);
+  if (!negative && tv_bad) { std::printf("FAIL: top-view grid counts out of range\n"); ++mismatches; }
   if (!negative && (goal_ptbad || goal_objbad)) { std::printf("FAIL: goal entries disagree with the independent check\n"); ++mismatches; }
   {  // 마지막 CPU 지도 전체의 FNV-1a 해시: 최적화 전후 의미가 같은지(같은 씨앗·같은 스텝) 비교용
     uint64_t hsh = 1469598103934665603ull;
@@ -421,7 +487,7 @@ int main(int argc, char** argv) {
     std::printf("negative control (%s on GPU): %ld mismatching items (must be > 0)\n",
                 neg_bug == 1 ? "confirm rule off" : neg_bug == 2 ? "waypoint descent tie order flipped" : neg_bug == 3 ? "live slots use map position" : neg_bug == 4 ? "BEHAVIOR room token shifted 1.5 m" : neg_bug == 5 ? "BEHAVIOR distance field always 4-neighbour" :
                 neg_bug == 6 ? "name table off" : neg_bug == 7 ? "moving tracking off" : neg_bug == 8 ? "absence detect-range/new-view gates off" :
-                neg_bug == 9 ? "relink off" : neg_bug == 10 ? "different-name IoU merge off" : "goal entries without rotation", mismatches);
+                neg_bug == 9 ? "relink off" : neg_bug == 10 ? "different-name IoU merge off" : neg_bug == 11 ? "goal entries without rotation" : neg_bug == 12 ? "top-view teacher grid rotated backwards" : "top-view RGB rows/columns swapped", mismatches);
     if (first_step >= 0) std::printf("  first mismatch: step %ld, %s\n", first_step, first_what);
     return mismatches > 0 ? 0 : 1;
   }

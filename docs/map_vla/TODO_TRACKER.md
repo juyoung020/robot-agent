@@ -300,6 +300,10 @@
 사용자 우선순위: ① 커리큘럼을 BEHAVIOR 2026 에 맞추기 ② 학습 전 환경 개선 ③ 학습 뷰어.
 "진행 중"(다른 에이전트) 항목은 따로 적었다.
 
+**10-05 추가 (위에서 본 지도 = 셋째 RGB 그림)**
+- 완료: 하나의 정의 `topview.h`(VLA_INPUT 1.1) — GPU 지도 근사가 스텝마다 그림(교사 격자 MapTok v4 `tv`, 학생 RGB `tv_render`, GPU == CPU 비트 동일 + 음성 대조 둘), 실제 scenemap 변환기(`sm_tok.h sm_topview_rgb`), PPO 교사 X0 976(POLICY 4.7), BC 영상 학생 셋째 그림(시험용 깃발 `topview`), RecallVLA 그림 셋(B 24 29.4 표본/s, 11.1 GB).
+- 남음: 얼린 SigLIP 2 가 합성 지도 그림을 쓰는지 BC 로 잼(깃발 켬/끔 비교 학습 — 긴 학습 필요), 앱 화면(설계만), 실제 LIMO scenemap 기록으로 그림 눈 확인, 점유 % 문턱 50 맞춤.
+
 **10-05 추가 (목표 칸 — 물체 id 와 지도 점 하나로, 앱 지도 두드리기)**
 - 완료: 목표 칸 2 × 16(VLA_INPUT 2.1) — GPU 지도 토큰 v3·관측 X0 464·BC/RecallVLA 목표 토큰 48·실제 scenemap `sm_tok.h`·실행기 `move_robot` `goal{pick,place:{id|point}}`·`mr_vla_goal_entries`(5b1f40d), 점 판 B1/B3 점으로 가기·B2/B3 놓을 곳 = 점(POLICY 4.6, CURRICULUM 3.2), 지시문 pnp_v1 v2(1,428 행). 검증·해시 `training/RL/ppo/README.md` "목표 칸".
 - 남음: B5 점에 놓기(잡기 물리 E6 뒤 — `pred_at_point` 정의만), 앱 위에서 본 지도 화면(plan.md 5절, 설계만), 실행기 id 풀기를 실시간 기억 풀이로(`goal::resolve` 한 곳), 점 판 학습 효과는 긴 학습 뒤에만 잴 수 있음.

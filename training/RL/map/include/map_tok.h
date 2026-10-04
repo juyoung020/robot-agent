@@ -9,6 +9,7 @@
 #endif
 #include "omx_workspace_grasp.h"   // 팔이 닿는지: URDF 로 미리 계산한 OMX 잡는 점 작업 공간(tools/omx_ws --grasp, env 헤더)
 #include "vla_vocab.h"       // 이름 표 행·상위어·이름 확신도(training/data/vla_v1 에서 생성)
+#include "topview.h"         // 위에서 본 지도 그림 — 하나의 정의(교사 격자 MapTok::tv, 학생 RGB)
 
 namespace gmap {
 
@@ -73,8 +74,9 @@ struct alignas(16) MapTok {
   uint16_t bkind;                        // 이 판의 BEHAVIOR 단계(1 B1, 2 B2, 3 B3), 0 = 상자 방 — 교사 스킬 표시(POLICY 3.2)
   uint16_t pad2[2];                      // 0
   uint16_t goal[N_GENT][N_GV];           // FP16 목표 칸 2(GoalEnt × GoalVal). flags 비트 1 = 지금 가는 목표가 점(점으로 가기)
+  uint8_t tv[TV_NCH][TV_B][TV_B];        // 교사 격자(topview.h): 위에서 본 지도 그림 16 × 16 덩이 [장애물 / 안 본 칸][행 = 그림 위→아래][열 = 왼→오], 표본 수 0..16
 };
-static_assert(sizeof(MapTok) == 1360, "map token v3 = 1360 B per env-step (v2 1296 B + goal entries 2 x 16 FP16)");
+static_assert(sizeof(MapTok) == 1872, "map token v4 = 1872 B per env-step (v3 1360 B + top-view teacher grid 2 x 16 x 16 u8)");
 static_assert(sizeof(MapTok) % 16 == 0, "16 B copies");
 struct TPrev { float p[3]; int tag; };   // 칸마다 지난 스텝 지도 자리, tag = 물체 번호 << 16 | 스텝 & 0xffff (물체 속도용, 확정 칸만 씀)
 
@@ -222,6 +224,7 @@ struct TokScratch {   // 판 하나의 작업 공간(GPU 공유 메모리). 광�
   float wy[N_WAY];        // 경유 지점 결과(레인 0 이 씀, 끝에 out 으로)
   float tk2[KSLOT];       // 둘째 목표(BEHAVIOR 놓을 곳) 후보 열쇠, 아님 −1
   float tg[KSLOT], tg2[KSLOT];   // 같은 짝인데 사라진(S_GONE) 칸 — 목표 칸의 "마지막으로 알던 자리"(GV_LOST), 아님 −1
+  TvIn tv;                // 위에서 본 지도 입력(레인 0 이 만들고 모든 레인이 덩이를 나눠 셈)
   union {
     WayScratch w;                            // 1) 경유 지점 BFS(창 옮기기 전)
     struct {
@@ -380,6 +383,75 @@ DEV void waypoint(const uint32_t* occ, float gx, float gy, float px, float py, f
   sync();
 }
 
+// 목표 물체 칸 고르기(make_tokens 1)·1b) 와 같은 규칙, 한 스레드판 — 위에서 본 지도 그림이 씀): g0 = prim 0 짝(사라지지 않은 것 중 가장 가까움, 없으면 사라진 것),
+// g1 = prim 1 짝(BEHAVIOR goal 비트 1). lost0/lost1 = 사라진 칸을 고름. 없으면 −1
+DEV void tv_goal_slots(const MapCore& m, const BCtx* bxp, int& g0, int& g1) {
+  const bool beh = bxp != nullptr && bxp->on;
+  const Prim& P = m.prim[0];
+  const float tcx = 0.5f * (P.lo[0] + P.hi[0]), tcy = 0.5f * (P.lo[1] + P.hi[1]);
+  float pext[3];
+  for (int a = 0; a < 3; ++a) pext[a] = P.hi[a] - P.lo[a];
+  const float thr = maxf(MP::da_min, MP::da_k * max3(pext));
+  int t0 = -1, l0 = -1, t1 = -1, l1 = -1;
+  float k0 = 0.f, kl0 = 0.f, k1 = 0.f, kl1 = 0.f;
+  for (int b = 0; b < KSLOT; ++b) {
+    if (!((m.conf_mask >> b) & 1)) continue;
+    const Slot& S = m.slot[b];
+    const float tx = S.pos[0] - tcx, ty = S.pos[1] - tcy, d2 = tx * tx + ty * ty;
+    if ((!beh || (bxp->bm->goal & 1)) && S.cls == (beh ? P.cls : (int)C_CUP) && d2 < thr * thr) {
+      if (S.state != S_GONE) { if (t0 < 0 || d2 < k0) { t0 = b; k0 = d2; } }
+      else if (l0 < 0 || d2 < kl0) { l0 = b; kl0 = d2; }
+    }
+  }
+  if (beh && (bxp->bm->goal & 2)) {
+    const Prim& P1 = m.prim[1];
+    float e1[3];
+    for (int a = 0; a < 3; ++a) e1[a] = P1.hi[a] - P1.lo[a];
+    const float th1 = maxf(MP::da_min, MP::da_k * max3(e1));
+    for (int b = 0; b < KSLOT; ++b) {
+      if (!((m.conf_mask >> b) & 1)) continue;
+      const Slot& S = m.slot[b];
+      const float ux = S.pos[0] - 0.5f * (P1.lo[0] + P1.hi[0]), uy = S.pos[1] - 0.5f * (P1.lo[1] + P1.hi[1]), u2 = ux * ux + uy * uy;
+      if (!(S.cls == P1.cls && u2 < th1 * th1)) continue;
+      if (S.state != S_GONE) { if (b != t0 && (t1 < 0 || u2 < k1)) { t1 = b; k1 = u2; } }
+      else if (b != l0 && (l1 < 0 || u2 < kl1)) { l1 = b; kl1 = u2; }
+    }
+  }
+  g0 = t0 >= 0 ? t0 : l0;
+  g1 = t1 >= 0 ? t1 : l1;
+}
+// 위에서 본 지도 입력(topview.h TvIn): 믿는 자세, 확정 물체 상자(사라진 것 빼고 — 사라진 목표는 마지막 자리로 넣음), 목표 색, 놓을 점.
+// teacher = true: 교사 격자용(목표 색·점 없음 — 목표는 목표 칸 값으로). hide_obj = 학생 목표 감추기(물체 목표 색만 장애물로, 점은 그대로)
+DEV void tv_input(const MapCore& m, const BCtx* bxp, bool teacher, bool hide_obj, TvIn& in) {
+  const bool beh = bxp != nullptr && bxp->on;
+  float s, c;
+  sincosf_d(m.eyaw, &s, &c);
+  in.px = m.ex; in.py = m.ey; in.c = c; in.s = s;
+  int g0 = -1, g1 = -1;
+  if (!teacher) tv_goal_slots(m, bxp, g0, g1);
+  const int k0 = (beh && bxp->bm->kind == bsc::EK_B1) ? (int)TV_PLACE : (int)TV_PICK;   // prim 0 = B1 이면 가는 곳(놓을 곳 칸)
+  int n = 0;
+  for (int b = 0; b < KSLOT && n < TV_MAXBOX; ++b) {
+    if (!((m.conf_mask >> b) & 1)) continue;
+    const Slot& S = m.slot[b];
+    const bool goal = b == g0 || b == g1;
+    if (S.state == S_GONE && !goal) continue;
+    TvBox& B = in.box[n++];
+    for (int a = 0; a < 2; ++a) { B.lo[a] = S.pos[a] - 0.5f * S.ext[a]; B.hi[a] = S.pos[a] + 0.5f * S.ext[a]; }
+    B.kind = (!goal || hide_obj) ? (int)TV_OBST : (b == g0 ? k0 : (int)TV_PLACE);
+  }
+  in.nbox = n;
+  for (int k = n; k < TV_MAXBOX; ++k) { in.box[k].lo[0] = in.box[k].lo[1] = in.box[k].hi[0] = in.box[k].hi[1] = 0.f; in.box[k].kind = 0; }   // 빈 자리 0(바이트 비교)
+  in.has_pt = 0; in.gx = 0.f; in.gy = 0.f;
+  if (!teacher && beh && (bxp->bm->gmode & bsc::GM_PLACE_PT)) { in.has_pt = 1; in.gx = bxp->bm->gp[0]; in.gy = bxp->bm->gp[1]; }
+}
+
+// 학생 그림 상태 한 판(레인 nl 개가 비트를 나눠 옮김, 레인 0 이 입력)
+DEV void tv_topstate(const MapCore& m, const BCtx* bxp, const uint32_t* occ, const uint32_t* seen, TopState& t, int lane, int nl) {
+  for (int k = lane; k < NWORD; k += nl) { t.occ[k] = occ[k]; t.seen[k] = seen[k]; }
+  if (lane == 0) tv_input(m, bxp, false, false, t.in);
+}
+
 // 목표 칸 하나(GoalVal 16 값 FP16): kind 0 = 없음, 1 = 물체, 2 = 점. 위치 P(지도 좌표)는 known 일 때만. (px, py, c, s) = 믿는 자세, eef_b = base_link 손끝
 DEV void goal_fill(uint16_t* g, int kind, bool known, bool lost, const float P[3], float px, float py, float c, float s, const float eef_b[3]) {
   float v[N_GV];
@@ -407,7 +479,7 @@ DEV void goal_fill(uint16_t* g, int kind, bool known, bool lost, const float P[3
 // occ: 판의 점유 비트 전체. 로봇 둘레 행을 ts.so 로 옮긴 뒤 광선을 쏘고, out 은 그다음 동기부터 쓴다(so 와 같은 자리)
 // NLC: nl 의 최솟값(컴파일 때). 레인마다 맡는 칸·광선 수가 (16 + NLC − 1) / NLC 이하라 지난 자리·광선 거리를 레지스터 배열에 둔다(GPU NLC = 16 → 하나씩)
 // tbug(음성 대조, 검증용): 2 = 경유 지점 내리막의 같은 거리 이웃을 뒤 차례로, 3 = 지금 보는 중 칸도 지도 자리(관측 자리 무시), 4 = BEHAVIOR 방 자리 1.5 m 밀림,
-//   11 = 목표 칸을 회전 없이(지도 차)
+//   11 = 목표 칸을 회전 없이(지도 차), 12 = 위에서 본 지도(교사 격자)를 거꾸로 돌림
 template <int NLC, class Sync>
 // bxp: BEHAVIOR 판 맥락(map.h BCtx — 방·문은 장면 방 격자, 이름·확신도는 장면 묶음의 이름 표 표, 목표 칸 = prim 0 의 이름). nullptr = 상자 방
 DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* seen, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
@@ -684,6 +756,17 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
       if (B.goal & 2) obj_entry(GE_PLACE, tgt2, gone2);
       if (B.gmode & bsc::GM_PLACE_PT) goal_fill(o.goal[GE_PLACE], 2, true, false, B.gp, px, py, gc, gs, m.eef_b);
     }
+    tv_input(m, bxp, true, false, ts.tv);   // 교사 격자 입력(점·목표 색 없음)
+    if (tbug == 12) ts.tv.s = -ts.tv.s;     // 음성 대조: 그림을 거꾸로 돌림
+  }
+  sync();
+  // 6) 교사 격자(topview.h): 덩이 256 개를 레인이 나눔
+  const TvWinCell cell{occ, seen};
+  for (int k = lane; k < TV_B * TV_B; k += nl) {
+    uint8_t no, nu;
+    tv_block(ts.tv, cell, k % TV_B, k / TV_B, no, nu);
+    o.tv[0][k / TV_B][k % TV_B] = no;
+    o.tv[1][k / TV_B][k % TV_B] = nu;
   }
 }
 

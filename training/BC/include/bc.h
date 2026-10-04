@@ -45,7 +45,8 @@ struct NetBufs {
 
 // ---- 학생 신경망 모양 ----
 enum SLayer { SL_S1, SL_S2, SL_P1, SL_A1, SL_A2, SL_A3, SL_A4, SL_E1, SL_E2, SL_E3, SL_N };
-constexpr int IMG_TOK = 2 * vit::NTOK;   // 표본 하나의 영상 토큰 128
+constexpr int IMG_NCAM = 3;              // 그림 셋: 머리 카메라·손목 카메라·위에서 본 지도(map topview.h — 시험용 깃발 cfg.topview, 끄면 빈 그림)
+constexpr int IMG_TOK = IMG_NCAM * vit::NTOK;   // 표본 하나의 영상 토큰 192 (그림 셋 앞 128)
 constexpr int IMG_D = 16;                // P1 출력(토큰마다)
 constexpr int IMG_W = IMG_TOK * IMG_D;   // 2,048
 constexpr int TXT_W = vlav::DIM;         // 128 (얼린 128-d 지시 벡터)
@@ -168,6 +169,7 @@ struct Bc {
   uint32_t* d_meta = nullptr;       // [cap]
   uint32_t* d_epi = nullptr;        // [cap] 에피소드 번호(청크 라벨·지시 번호)
   RenderState* d_rs = nullptr;      // [cap] (store_render)
+  gmap::TopState* d_top = nullptr;  // [cap] 위에서 본 지도 그림 상태(영상 학생 + cfg.topview)
 
   // 신경망: 교사(앞만, bf16 사본) · 학생(FP32 원본·기울기·Adam·bf16 사본)
   uint16_t* PbT = nullptr;
@@ -223,8 +225,13 @@ struct Bc {
   void update_step();
   // 부분(검증용)
   void forward_teacher(NetBufs& b, int M);
-  void vis_encode(const RenderState* rs, int M);   // 렌더 → 패치 → 인코더 → sb.tok
-  void student_trunk(int M, const RenderState* rs); // 칸 MLP·집합 → (영상·글) → A1–A3 (arch 1: 묶음 줄 → 영상 → tf prefix)
+  void vis_encode(const RenderState* rs, int M, const gmap::TopState* top = nullptr, const uint8_t* hide = nullptr);   // 렌더 → 패치 → 인코더 → sb.tok(셋째 그림 = 위에서 본 지도)
+  void student_trunk(int M, const RenderState* rs, const gmap::TopState* top = nullptr, const uint8_t* hide = nullptr); // 칸 MLP·집합 → (영상·글) → A1–A3 (arch 1: 묶음 줄 → 영상 → tf prefix)
+  gmap::TopState* top_roll = nullptr;   // [N] 롤아웃 그림 상태(지도에서 스텝마다)
+  gmap::TopState* top_mb = nullptr;     // [MB] 모은 그림 상태
+  uint8_t* hide_roll = nullptr;         // [N] 학생 목표 감추기(롤아웃 열쇠) — 그림의 물체 목표 색
+  uint8_t* hide_mb = nullptr;           // [MB] (모으기 열쇠)
+  uint8_t* tvrgb = nullptr;             // [렌더 묶음][256][256][3] 위에서 본 지도 RGB
   void tf_rows(const float* obs, int stride, const gmap::MapTok* tok, const uint32_t* epi, int M, uint64_t k0sel, int role);   // arch 1 묶음 줄
   void student_act(int M);                           // 머리 추론 → sb.act (MSE 평균 / flow 오일러)
   void gather();

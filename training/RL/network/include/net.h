@@ -5,8 +5,9 @@
 //           칸 입력 = 숫자 33(정규화, obs.h) + 이름 뜻 128 + 생김새 128(얼린 128-d 표 — training/data/vla_v1, VLA_INPUT 3절) + 1 + 0 × 14
 //   집합    빈 칸을 가린 평균 64 + 최댓값 64 = 128
 //   몸통 입력 X0(464) = [집합 128 | G1 관측 80 | 벽 56 | 방 10 | 완성도 4 | 1(편향) | 안 본 곳 광선 8 | 다음 경유 지점 4 | 스킬 B1·B2·B3 3 | 0 × 10
-//                        | 지시문 128(training/data/pnp_v1 instr128 행 — BEHAVIOR 집기·놓기 판, 없으면 0) | 목표 칸 2 × 16(집을 것·놓을 곳, map_tok.h GoalVal — 2026-10-05)]
-//   정책    A1 464 → 256, A2 → 256, A3 → 128 (ELU), A4 → 8 (평균, 선형). 표준편차는 상태와 무관한 변수 log σ 8 개
+//                        | 지시문 128(training/data/pnp_v1 instr128 행 — BEHAVIOR 집기·놓기 판, 없으면 0) | 목표 칸 2 × 16(집을 것·놓을 곳, map_tok.h GoalVal — 2026-10-05)
+//                        | 위에서 본 지도 교사 격자 2 × 16 × 16(topview.h — 영상 탑이 없는 교사가 학생의 셋째 그림 대신 받는 같은 그림의 줄인 판)]
+//   정책    A1 976 → 256, A2 → 256, A3 → 128 (ELU), A4 → 8 (평균, 선형). 표준편차는 상태와 무관한 변수 log σ 8 개
 //   가치    C1..C3 같은 모양, C4 → 1 (모양은 8 칸, 0 번만 씀)
 // 편향은 따로 두지 않는다: 각 층 입력의 "1 칸"에 대응하는 가중치 열이 편향이다(입력 버퍼의 그 칸은 늘 1).
 // 정밀도(7.1 "RL 교사 MLP: BF16"): 활성값·가중치 사본·dZ 는 BF16, 누산·원본 가중치·Adam·손실은 FP32.
@@ -51,8 +52,10 @@ constexpr int N_SKILL = 3;
 constexpr int X0_INSTR = 304;    // 304..431: 지시문 128-d(얼린 표 행, 학생 BC 의 글 토큰과 같은 벡터). 교사도 받음 — POLICY 4.2 (가) "학생과 같은 값(영상만 없음)"
 constexpr int X0_GOAL = X0_INSTR + VEC_D;   // 432..463: 목표 칸 2 × 16(집을 것 0, 놓을 곳 1 — gmap::GoalVal 차례, 정규화는 obs.h goal_val). 교사·학생 같음
 constexpr int N_GOAL_E = 2, N_GOAL_V = 16;
-constexpr int X0_W = X0_GOAL + N_GOAL_E * N_GOAL_V;   // 464 (목표 칸 앞 432, E2 지시문 앞 304)
-static_assert(X0_SKILL + N_SKILL <= X0_INSTR && X0_INSTR % 16 == 0 && X0_GOAL % 16 == 0 && X0_W % 16 == 0, "skill one-hot, instruction and goal entries fit in X0");
+constexpr int X0_TV = X0_GOAL + N_GOAL_E * N_GOAL_V;   // 464..975: 위에서 본 지도 교사 격자 2 × 16 × 16(gmap::MapTok::tv / 16 — 장애물·안 본 칸 비율, topview.h). 지도 값(use_map 0 이면 0)
+constexpr int N_TV = 2 * 16 * 16;
+constexpr int X0_W = X0_TV + N_TV;   // 976 (교사 격자 앞 464, 목표 칸 앞 432, E2 지시문 앞 304)
+static_assert(X0_SKILL + N_SKILL <= X0_INSTR && X0_INSTR % 16 == 0 && X0_GOAL % 16 == 0 && X0_TV % 16 == 0 && X0_W % 16 == 0, "skill one-hot, instruction, goal entries, top-view grid fit in X0");
 
 enum LayerId { L_S1, L_S2, L_A1, L_A2, L_A3, L_A4, L_C1, L_C2, L_C3, L_C4, N_LAYER };
 enum Act { ACT_LIN = 0, ACT_ELU = 1 };

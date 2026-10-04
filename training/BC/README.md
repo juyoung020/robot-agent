@@ -465,3 +465,8 @@ A2 토큰 켬 씨앗 1(`~/ra_ppoout/g5/t4/on_s1/ckpt_final.bin`, `../RL/ppo/READ
 ## 목표 칸(2026-10-05)
 X0 464(목표 칸 2 × 16, VLA_INPUT 2.1), 토큰마다 학생의 GOAL 묶음 16 → 48(`tf.h goal_src_col`: 직전 명령 8 + 손끝 → 목표 3 + 경유 지점 4 + 목표 칸마다 앞 14 = 43 + 1), 지시 표 상한 `MAX_TXT` 64 + 2,048(pnp_v1 v2 1,428 행), 설정 `beh.p_point`·`beh.p_goto`. 학생 목표 감추기는 물체 목표 칸만(점 칸은 안 감춤).
 - 검증: `bc_verify v5 --lite` 24/24, `--lite --txt --gdrop --stage 3` 24/24, `--act8` 35/35, `--arch1 --act8 --gdrop` 4/4, `--negative --lite` 모든 버그 실패, V6 `--lite --aug --gdrop`·`--arch1 --aug --raug --act8 --gdrop` 0, V7 lite 0 / 4,841,414·arch1 0 / 4,676,327, reseed 0. `tf_verify all` 84/84 — 손실(낱값 하나) 검사의 바닥을 max(EMUL, FP32 합 한도 √항 수·2⁻²⁴)로 바꿈: GOAL K 48 로 입력이 바뀌자 GPU 1.28e-6 대 EMUL 2.1e-7(우연히 작은 표본 하나)로 실패했음, 벡터 값(velocity 비율 1.01 등)은 그대로 EMUL 바닥.
+
+## 셋째 그림 = 위에서 본 지도(2026-10-05, 시험용 깃발 `topview`, 기본 1)
+영상 학생의 그림 2 → **3**(`IMG_NCAM`, 토큰마다 학생 L 150 → 214, IMG 묶음 192 토큰·종류 임베딩 3, arch 0 IMG_W 3,072). 셋째 그림 = map `topview.h` 의 지금 믿는 지도 그림(VLA_INPUT 1.1) — 롤아웃 스텝마다 `DeviceMap::topstate` → 기록 `d_top`(표본마다 4,448 B 더) → 모을 때·롤아웃 때 `tv_render` → 같은 얼린 SigLIP 2(`Encoder::patchify` 셋째 자리). 학생 목표 감추기와 같은 열쇠로 그림의 물체 목표 색도 감춤. 깃발 0 이면 기록 안 하고 빈 그림(상수). **주의(시험용)**: 얼린 탑이 합성 지도 그림을 잘 못 볼 수 있다 — 효과는 켬/끔 비교 학습으로 재야 함(아직 안 함).
+- 검증: `bc_verify v5 --act8` 35/35·`--arch1 --act8 --gdrop` 4/4 — 기록 = 본 것(셋째 그림 포함 38,535,168 낱말 0 다름, 셋째 그림 안 본 칸 0.875·빈칸 0.110·장애물 0.014), V6 `--arch1 --aug --raug --act8 --gdrop` 0, V7 arch1 0 / 5,132,959, `--lite` 24/24·`--negative --lite`·V6·V7·reseed 통과, `tf_verify all` 84/84. `BC_NO_TOPVIEW=1` 이면 빈 그림.
+- 잰 값(`bc_verify bench 1024 16 256 5 --arch1 --act8`, 다른 GPU 일 있음, 그림 둘 판과 번갈아): 갱신 109.7–123.6 → 162.3–163.6 ms/스텝(인코더 81 → 123–154 ms), 교사 롤아웃 + 기록 8.1 → 10.6 ms/스텝(그림 상태 만들기·기록).

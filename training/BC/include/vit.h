@@ -77,8 +77,8 @@ struct Encoder {
   void init(const HostWeights& hw, int max_images, bool fp16 = true);
   void free_all();
   ~Encoder() { free_all(); }
-  // K11: 카메라 2 대 u8 [E][256][256][3] 의 판 [0, n) → 영상 (row0 + e) × 2 + c 의 패치 행
-  void patchify(const uint8_t* cam0, const uint8_t* cam1, int n, int row0, cudaStream_t st);
+  // K11: 카메라 u8 [E][256][256][3] 의 판 [0, n) → 영상 (row0 + e) × ncam + cbase + c 의 패치 행(cam1 nullptr 이면 cam0 하나만 — 셋째 그림 등)
+  void patchify(const uint8_t* cam0, const uint8_t* cam1, int n, int row0, cudaStream_t st, int ncam = 2, int cbase = 0);
   // 패치(앞에서 patchify 로 채움) n_img 장 → 토큰 out [n_img × 64][TOK_LD] bf16. layers < 12 면 그 층까지(검증용), 끝 LN 은 늘
   void run(int n_img, uint16_t* out, cudaStream_t st, int layers = LAYERS);
   // 단계 시간 측정용: 블록 하나(같은 버퍼 그대로)

@@ -6,6 +6,7 @@
 //                    [274,278) 완성도 4 | 278 = 1 | [279,287) 안 본 곳 광선 8 | [287,291) 다음 경유 지점 4 (둘 다 use_map 2 만) |
 //                    [291,294) 스킬 B1·B2·B3 원-핫(지도 토큰 bkind, 상자 방 0) | 0 | [304,432) 지시문 128(지도 토큰 instr1 → pnp_v1 표 행, 없으면 0)
 //                    [432,464) 목표 칸 2 × 16(지도 토큰 goal — 집을 것·놓을 곳, VLA_INPUT 2.1, goal_val 정규화)
+//                    [464,976) 위에서 본 지도 교사 격자 2 × 16 × 16(지도 토큰 tv / 16 — 장애물·안 본 칸 비율, topview.h; 지도 값 — use_map 0·지도 끄기면 0)
 //  스킬·지시문·목표 칸은 지도 값이 아니라 과제 값이라 use_map·지도 끄기 흔들기와 무관하게 늘 넣는다(교사·학생 같음 — POLICY 4.2 (가), README "지시문")
 //  use_map: 0 = 지도 입력 모두 0, 1 = 지도 토큰(안 본 곳 광선·경유 지점 칸은 0), 2 = + 안 본 곳 광선 + 경유 지점
 //  칸 줄 16 × 304(bf16): 숫자 33(정규화 v2) | 이름 뜻 128 | 생김새 128 | 289 = 1 | 0.  빈 칸은 모두 0
@@ -231,6 +232,7 @@ NDEV float goal_val(const gmap::MapTok& tok, int k, bool gdrop) {
   return feat_norm(f, raw);
 }
 static_assert(net::N_GOAL_E == gmap::N_GENT && net::N_GOAL_V == gmap::N_GV, "goal entries in X0 = map token goal entries");
+static_assert(net::N_TV == gmap::TV_NCH * gmap::TV_B * gmap::TV_B, "top-view teacher grid in X0 = map token tv");
 
 // 칸 숫자 하나(칸 b, 숫자 c < 33) → 정규화 값
 NDEV float slot_num(const gmap::MapTok& tok, int b, int c, bool gdrop = false) {
@@ -301,7 +303,12 @@ NDEV uint32_t assemble(const float* obs, int stride, int i, const gmap::MapTok& 
     uint16_t h[8];
     const int col0 = net::X0_OBS + q * 8;
     for (int e = 0; e < 8; ++e) h[e] = x0v(q * 8 + e);
-    if (col0 >= net::X0_GOAL) {   // 목표 칸 2 × 16
+    if (col0 >= net::X0_TV) {   // 교사 격자: 표본 수 / 4(bf16 에 정확)
+      for (int e = 0; e < 8; ++e) {
+        const int k = col0 - net::X0_TV + e, ch = k / (gmap::TV_B * gmap::TV_B), b = k % (gmap::TV_B * gmap::TV_B);
+        h[e] = um ? f2bf((float)tok.tv[ch][b / gmap::TV_B][b % gmap::TV_B] * (1.f / (float)(gmap::TV_BS * gmap::TV_BS))) : (uint16_t)0;
+      }
+    } else if (col0 >= net::X0_GOAL) {   // 목표 칸 2 × 16
       for (int e = 0; e < 8; ++e) h[e] = f2bf(goal_val(tok, col0 - net::X0_GOAL + e, gdrop));
     } else if (col0 >= net::X0_INSTR) {   // 지시문 128: 표 행 bf16 그대로
       for (int e = 0; e < 8; ++e) h[e] = isrc ? isrc[col0 - net::X0_INSTR + e] : (uint16_t)0;

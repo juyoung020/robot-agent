@@ -25,7 +25,7 @@ inline int src_code(int kind, int idx) { return (kind << 28) | idx; }
 struct VCfg {
   QCfg q;
   // 영상 탑(SigLIP 2 B/32-256)
-  int vD = 768, vHeads = 12, vMLP = 3072, vL = 12, vT = 64, vK = 3072, cams = 2;
+  int vD = 768, vHeads = 12, vMLP = 3072, vL = 12, vT = 64, vK = 3072, cams = 3;   // 그림 셋: 리모 앞 카메라·OMX 손목 카메라·위에서 본 지도(map topview.h, 2026-10-05) — 같은 SigLIP 2 탑
   float vEps = 1e-6f;
   bool vis_train = true;
   int obj_hid = 1024;
