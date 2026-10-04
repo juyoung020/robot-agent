@@ -45,13 +45,16 @@ int main(int argc, char** argv) {
   float p0 = 0.2f, p1 = 0.6f;
   uint64_t seed = 7;
   bool images = true;
+  std::string tag;
+  int keep_fail = 0;
   for (int a = 1; a < argc; ++a) {
     const std::string s = argv[a];
     auto nx = [&]() { return a + 1 < argc ? std::string(argv[++a]) : std::string(); };
     if (s == "--student") student = nx(); else if (s == "--out") out = nx(); else if (s == "--config") cfgp = nx(); else if (s == "--teacher") teacher = nx();
     else if (s == "--split") split = nx(); else if (s == "--episodes") episodes = std::stoi(nx()); else if (s == "--n-env") N = std::stoi(nx());
     else if (s == "--track") track = std::stoi(nx()); else if (s == "--map") { p0 = std::stof(nx()); p1 = std::stof(nx()); } else if (s == "--seed") seed = std::stoull(nx());
-    else if (s == "--no-images") images = false; else if (s == "--max-steps") max_steps = std::stoi(nx()); else if (s == "--text-table") text_table = nx();
+    else if (s == "--no-images") images = false; else if (s == "--max-steps") max_steps = std::stoi(nx());
+    else if (s == "--tag") tag = nx(); else if (s == "--keep-fail") keep_fail = std::stoi(nx()); else if (s == "--text-table") text_table = nx();
   }
   if (student.empty() || out.empty()) { std::fprintf(stderr, "usage: record_bc --student STUDENT.bin --out RUN_DIR [--config config.json] ...\n"); return 2; }
   if (cfgp.empty()) { const size_t sl = student.rfind('/'); cfgp = (sl == std::string::npos ? std::string(".") : student.substr(0, sl)) + "/config.json"; }
@@ -83,6 +86,9 @@ int main(int argc, char** argv) {
   const std::string src = rec::Obj().str("kind", "bc_student").str("student", student).str("teacher", teacher).str("config", cfgp).num("vision", c.vision).num("head", c.head)
                               .num("text", c.text).num("use_map", c.use_map).raw("map_p", "[" + rec::jnum(p0) + "," + rec::jnum(p1) + "]").num("seed", (double)seed).done();
   rec::G1Rec R(N, track, o, "student", src);
+  R.tag = tag;
+  { size_t p = tag.find_first_of("0123456789"); if (p != std::string::npos) R.ckpt_iter = std::atof(tag.c_str() + p); }
+  if (keep_fail > 0) R.max_success = std::max(1, episodes - keep_fail);   // 성공 K−F 개 + 실패 F 개(있으면) — 실패가 없으면 성공으로 채움
   R.home_prefix = "A" + std::to_string(c.stage) + "_room";
   const bool cams = images && c.vision && B.rnd;
   std::printf("record_bc: %s (vision %d head %d text %d) teacher %s  A%d  N %d track %d -> %s%s\n", student.c_str(), c.vision, c.head, c.text, teacher.c_str(), c.stage, N,
@@ -93,7 +99,7 @@ int main(int argc, char** argv) {
   gmap::MapHost mh;
   std::vector<uint8_t> rgb[2];
   const int T = B.T, K = std::min(track, N), RES = bcr::RES;
-  for (int k = 0; k < max_steps && R.finished < episodes; ++k) {
+  for (int k = 0; k < max_steps && !R.done_enough(episodes, keep_fail); ++k) {
     const int t = k % T;
     RCK(cudaDeviceSynchronize());
     B.env->download(fs, iv, rg);

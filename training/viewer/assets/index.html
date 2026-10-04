@@ -22,11 +22,11 @@
     <span id="conn" class="pill" title="live connection (SSE); falls back to 3 s polling">—</span>
   </div>
   <div id="pickers">
-    <div class="pick"><span class="lab">teacher</span><div id="pick_teacher" class="chips"></div></div>
-    <div class="pick"><span class="lab">student</span><div id="pick_student" class="chips"></div></div>
+    <div class="pick"><span class="lab" title="실험마다 교사(RL, 특권) → 학생/VLA(BC·DAgger, 결과물). 학생이 주인공, 교사는 핵심 건강만">pipelines</span><div id="pick_pipelines" class="chips pipes"></div></div>
+    <div class="pick"><span class="lab" title="학생이 아직 없는 교사 실행">teachers</span><div id="pick_teachers" class="chips"></div></div>
     <div class="pick"><span class="lab">BEHAVIOR</span><div id="pick_behavior" class="chips"></div></div>
-    <div class="pick"><span class="lab">labs</span><div id="pick_labs" class="chips"></div></div>
-    <div class="pick" id="syn_row"><span class="lab" title="fake_run 이 만든 가짜 시험 자료 — 실제 학습 결과 아님"><label><input type="checkbox" id="show_syn"> test data</label></span><div id="pick_synthetic" class="chips"></div></div>
+    <div class="pick"><span class="lab" title="옛 실행: 신경망·관측 v2(2026-10-04) 이전 코드, csv 로 옮긴 것"><label><input type="checkbox" id="show_arch"> archive</label></span><div id="pick_archive" class="chips"></div></div>
+    <div class="pick" id="syn_row"><span class="lab" title="가짜·시험 자료(fake_run 의 synthetic, 옛 labs 실행) — 실제 학습 결과 아님"><label><input type="checkbox" id="show_syn"> test data (synthetic)</label></span><div id="pick_synthetic" class="chips"></div></div>
   </div>
 </header>
 
@@ -78,6 +78,10 @@
         <label title="결과">Outcome <select id="rp_outcome"><option value="">all</option></select></label>
         <label title="집(장면)">Home <select id="rp_home"><option value="">all</option></select></label>
         <label title="커서 이터 근처"><input type="checkbox" id="rp_near"> near cursor step</label>
+      </div>
+      <div class="bar wrap" id="rp_ckbar" hidden>
+        <label title="체크포인트(학습 진행) — 학습 중 자동으로 남은 재생 판">Checkpoint <select id="rp_ckpt"><option value="">all</option></select></label>
+        <input id="rp_ckslide" type="range" min="0" max="0" value="0" title="학습 진행: 체크포인트를 차례로" style="width:120px">
       </div>
       <div id="rp_note" class="muted small"></div>
       <div id="rp_list" class="list"></div>

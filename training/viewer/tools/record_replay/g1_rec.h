@@ -46,10 +46,14 @@ struct G1Rec {
   std::vector<int> tracked;
   std::map<int, Ep> act;
   Out out;
-  std::string driver, source_json, skill = "approach", home_prefix = "G1";
+  std::string driver, source_json, skill = "approach", home_prefix = "G1", tag;   // tag: 체크포인트 이름(it000200 / final) — 파일 이름·판 줄에
+  double ckpt_iter = NAN;
+  int max_success = 1 << 30;   // 성공 판은 이만큼만 쓰고(그 뒤 성공은 버림) 실패를 더 기다린다
   long next_ep = 0;
   int finished = 0, img_every = 5;
-  int n_success = 0, n_coll = 0, n_tout = 0;
+  int n_success = 0, n_coll = 0, n_tout = 0, dropped_success = 0;
+  // 끝: 판 K 개를 썼거나, 성공 몫(K−F)이 찼는데 실패가 안 나와 성공 판을 4K 개 버렸으면(실패가 드묾 — 있는 만큼만)
+  bool done_enough(int episodes, int keep_fail) const { (void)keep_fail; return finished >= episodes || (n_success >= max_success && dropped_success >= 4 * episodes); }
 
   G1Rec(int N_, int n_track, const Out& o, std::string driver_, std::string source) : N(N_), out(o), driver(std::move(driver_)), source_json(std::move(source)) {
     for (int i = 0; i < n_track && i < N; ++i) tracked.push_back(i);
@@ -213,6 +217,7 @@ struct G1Rec {
   }
 
   void finish(int i, Ep& e, const env::Core& cc, int d, const env::StepOut& so, const gmap::MapCore& m) {
+    if (d == env::kSuccess && n_success >= max_success) { trp_free(e.w); e.w = nullptr; ++dropped_success; return; }
     // 장면·처음 지도 단계는 판 끝의 지도 상태에서(판의 첫 프레임에는 지도가 아직 리셋되기 전일 수 있다 — 각 판 첫 판)
     e.init_stage = m.init_stage;
     e.init_conf = m.init_conf;
@@ -221,7 +226,8 @@ struct G1Rec {
     (d == env::kSuccess ? n_success : d == env::kCollision ? n_coll : n_tout)++;
     const char* stg[3] = {"C0", "C1", "C2"};
     char file[96];
-    std::snprintf(file, sizeof file, "ep_%06ld_%s_%s.trp", e.ep, skill.c_str(), oc);
+    if (tag.empty()) std::snprintf(file, sizeof file, "ep_%06ld_%s_%s.trp", e.ep, skill.c_str(), oc);
+    else std::snprintf(file, sizeof file, "ep_%06ld_%s_%s_%s.trp", e.ep, tag.c_str(), skill.c_str(), oc);
     // 성공 판정 거리(컵 겉면 0.4–0.8 m)를 뺀 경로 길이를 최단 L* 로(가정)
     const double lopt = std::max(0.0, e.d0 - 0.6);
     const float surf = std::hypot(cc.tx - cc.x, cc.ty - cc.y) - env::K::tgt_r;
@@ -230,7 +236,7 @@ struct G1Rec {
         .str("stage", e.init_stage >= 0 && e.init_stage < 3 ? stg[e.init_stage] : "?").str("map_mode", "slam").num("completion0", e.init_conf / (double)gmap::N_PRIM)
         .str("driver", driver).b("success", d == env::kSuccess).str("outcome", oc).b("collided", d == env::kCollision).b("timeout", d == env::kTimeout)
         .num("t", e.frames * 0.1).num("steps", e.frames).num("ret", e.ret).raw("r", "{\"total\":" + jnum(e.ret) + "}").num("contacts", d == env::kCollision ? 1 : 0)
-        .num("path_len", e.path).num("path_len_opt", lopt).num("final_dist", surf).num("final_aim_deg", aim).str("replay", file).done();
+        .num("path_len", e.path).num("path_len_opt", lopt).num("final_dist", surf).num("final_aim_deg", aim).str("replay", file).str("ckpt", tag).num("ckpt_iter", ckpt_iter).done();
     (void)so;
     trp_set_head(e.w, "meta", line.c_str());
     const std::string path = out.rep + "/" + file;

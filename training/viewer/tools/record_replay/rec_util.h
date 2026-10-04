@@ -1,6 +1,7 @@
 // 기록 도구 공통(학습기와 무관한 호스트 코드): 작은 JSON 조립, 기준 JPEG 부호기(카메라 영상 칸), 실행 폴더 경로·판 번호.
 // .trp 바이트는 trpc(Rust trainfmt 의 C ABI)가 쓴다 — 형식 정의는 trainfmt 한 곳.
 #pragma once
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -57,14 +58,18 @@ struct Out {
     mkdirs(rep);
   }
   // 재개해도 판 번호를 이어 센다(파일 이름이 겹치지 않게 — 교훈 14): 지금 있는 줄 수
+  // 지금 있는 판 줄의 가장 큰 "ep" + 1 (버린 판이 있어도, 체크포인트마다 여러 번 돌아도 겹치지 않게)
   long next_ep() const {
     FILE* f = std::fopen(eps.c_str(), "rb");
     if (!f) return 0;
-    long n = 0;
-    int c;
-    while ((c = std::fgetc(f)) != EOF) n += c == '\n';
+    long best = -1;
+    char line[8192];
+    while (std::fgets(line, sizeof line, f)) {
+      const char* p = std::strstr(line, "\"ep\":");
+      if (p) best = std::max(best, std::strtol(p + 5, nullptr, 10));
+    }
     std::fclose(f);
-    return n;
+    return best + 1;
   }
   void append_episode(const std::string& line) const {
     FILE* f = std::fopen(eps.c_str(), "ab");

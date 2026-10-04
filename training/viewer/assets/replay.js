@@ -67,6 +67,8 @@ export class Replay {
     this.sg = new SgPanel({ api, host: $("rp_sg") });
     $("rp_mode").onchange = e => { this.mode = e.target.value; const f = this.file; if (f) this.open(f); };
     $("rp_ul").onchange = e => this.sg.setUnderlay(e.target.checked);
+    $("rp_ckpt").onchange = () => { const i = this.ckList.indexOf($("rp_ckpt").value); if (i >= 0) $("rp_ckslide").value = i; this.renderList(); };
+    $("rp_ckslide").oninput = e => { $("rp_ckpt").value = this.ckList[+e.target.value] || ""; this.renderList(); };
     for (const id of ["rp_stream", "rp_skill", "rp_outcome", "rp_home", "rp_near"]) $(id).addEventListener("change", () => id === "rp_stream" ? this.refreshList() : this.renderList());
     $("rp_play").onclick = () => this.sgOn ? this.sg.toggle() : this.toggle();
     $("rp_prev").onclick = () => this.sgOn ? this.sg.seek((this.sg.state ? this.sg.state.t : 0) - 0.5) : this.step(-1);
@@ -176,18 +178,27 @@ export class Replay {
       const cur = this.$(sel).value, vals = [...new Set(this.rows.map(r => r.meta && r.meta[key]).filter(Boolean))].sort();
       this.$(sel).innerHTML = '<option value="">all</option>' + vals.map(v => `<option${v === cur ? " selected" : ""}>${esc(v)}</option>`).join("");
     }
+    // 체크포인트(학습 중 자동 기록): 이터 순으로
+    const ck = new Map(); for (const r of this.rows) { const m = r.meta || {}; if (m.ckpt) ck.set(m.ckpt, m.ckpt_iter ?? 0); }
+    this.ckList = [...ck.entries()].sort((a, b) => a[1] - b[1]).map(e => e[0]);
+    this.$("rp_ckbar").hidden = !this.ckList.length;
+    const curCk = this.$("rp_ckpt").value;
+    this.$("rp_ckpt").innerHTML = '<option value="">all checkpoints</option>' + this.ckList.map(c => `<option${c === curCk ? " selected" : ""}>${esc(c)}</option>`).join("");
+    this.$("rp_ckslide").max = Math.max(0, this.ckList.length - 1);
     this.renderList();
   }
   renderList() {
     const f = { skill: this.$("rp_skill").value, outcome: this.$("rp_outcome").value, home: this.$("rp_home").value };
     const ci = this.$("rp_near").checked ? this.getCursorIter() : null;
-    let rows = this.rows.filter(r => { const m = r.meta || {}; return (!f.skill || m.skill === f.skill) && (!f.outcome || m.outcome === f.outcome) && (!f.home || m.home === f.home); });
+    const fck = this.$("rp_ckpt").value;
+    let rows = this.rows.filter(r => { const m = r.meta || {}; return (!f.skill || m.skill === f.skill) && (!f.outcome || m.outcome === f.outcome) && (!f.home || m.home === f.home) && (!fck || m.ckpt === fck); });
+    rows.sort((a, b) => ((b.meta || {}).ckpt_iter ?? -1) - ((a.meta || {}).ckpt_iter ?? -1));
     if (ci != null) { const tol = Math.max(50, Math.abs(ci) * 0.05); rows = rows.filter(r => r.meta && Math.abs(r.meta.iter - ci) <= tol); }
     else if (this.$("rp_near").checked) this.$("rp_note").textContent = "cursor is at latest — near-step filter off";
     this.$("rp_list").innerHTML = rows.map(r => {
       const m = r.meta || {};
       return `<div class="item${this.file === r.file ? " on" : ""}" data-f="${esc(r.file)}"><div class="r1"><span><b>${esc(m.skill || "?")}</b> <span class="oc ${esc(m.outcome || "")}">${esc(m.outcome || (m.success ? "success" : "?"))}${this.meta && this.meta.synthetic ? " (synthetic)" : ""}</span>${r.pin ? " 📌" : ""}</span><span class="mono muted">ep ${m.ep ?? "?"}</span></div>
-        <div class="muted small">${esc(m.home || "")} · ${esc(m.stage || "")} · map ${fmt(m.completion0 ?? m.map_completeness, 1)} · ${fmt(m.t)} s · return ${fmt(m.ret)}${m.iter != null ? " · iter " + fmt(m.iter) : ""}${m.driver ? " · " + esc(m.driver) : ""}</div></div>`;
+        <div class="muted small">${esc(m.home || "")} · ${esc(m.stage || "")} · map ${fmt(m.completion0 ?? m.map_completeness, 1)} · ${fmt(m.t)} s · return ${fmt(m.ret)}${m.iter != null ? " · iter " + fmt(m.iter) : ""}${m.driver ? " · " + esc(m.driver) : ""}${m.ckpt ? ` · <b>${esc(m.ckpt)}</b>` : ""}</div></div>`;
     }).join("") || '<div class="muted small">no episode matches the filters</div>';
     this.$("rp_list").querySelectorAll(".item").forEach(el => el.onclick = () => this.open(el.dataset.f));
   }

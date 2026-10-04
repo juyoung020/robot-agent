@@ -18,6 +18,7 @@ pub struct RunFolder {
     steps_per_rollout: f64,
     skill: String,
     adam_t: f64,
+    hook: Option<trainfmt::replay_hook::ReplayHook>,
 }
 
 fn round_of(phase: &str) -> f64 {
@@ -76,7 +77,7 @@ pub fn open(out: &Path, cfg_path: &str, v: &Value, c: &BcConfig, teacher: &str, 
         }
     };
     w.every_s = v.get("progress_every_s").and_then(|x| x.as_f64()).unwrap_or(1.0);
-    Some(RunFolder { w, phase: String::new(), env_steps: 0.0, steps_per_rollout: c.n_env as f64 * c.horizon as f64, skill, adam_t: 0.0 })
+    Some(RunFolder { w, phase: String::new(), env_steps: 0.0, steps_per_rollout: c.n_env as f64 * c.horizon as f64, skill, adam_t: 0.0, hook: trainfmt::replay_hook::ReplayHook::from_config(v, "bc", out) })
 }
 
 impl RunFolder {
@@ -121,6 +122,11 @@ impl RunFolder {
 
     /// 평가 하나 끝: 표 → eval/<actor>/* 한 줄 + evals/<이름>.json (4.5)
     pub fn eval(&mut self, name: &str, actor: i32, tab: &Value, ckpt: Option<&Path>, wall: f64) {
+        if let (Some(h), Some(p)) = (self.hook.as_mut(), ckpt) {
+            if p.exists() {
+                h.on_ckpt(p, &format!("it{:07}_{}", self.adam_t as i64, name));   // 학생 체크포인트마다 재생 판(뒷 프로세스)
+            }
+        }
         self.w.flush_row(wall);
         let who = if actor == 0 { "teacher" } else { "student" };
         let ns = if actor == 0 { "eval_teacher" } else { "eval" };   // 학생(이 실행의 정책) = eval/*, 교사 기준 = eval_teacher/*
@@ -162,6 +168,10 @@ impl RunFolder {
     }
 
     pub fn finish(&mut self, wall: f64) {
+        if let Some(h) = self.hook.as_mut() {
+            h.finish(None, "", std::time::Duration::from_secs(120));   // 마지막 학생 체크포인트는 eval 에서 이미 띄움 — 끝날 때까지 잠깐 기다림
+            self.w.set_meta("replays", json!({"launched": h.launched, "skipped_busy": h.skipped, "split": "eval"}));
+        }
         self.w.finish(wall, json!({}));
     }
 }

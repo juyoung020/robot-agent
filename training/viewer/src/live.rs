@@ -36,6 +36,8 @@ pub fn serve(mut s: TcpStream, app: Arc<App>, req: &Req) {
     }
     let mut last_send = Instant::now();
     let mut n_runs = app.runs().len();
+    let mut last_status = Instant::now() - Duration::from_secs(60);
+    let mut status_sig = String::new();
     loop {
         let mut out = String::new();
         for i in 0..n {
@@ -69,6 +71,16 @@ pub fn serve(mut s: TcpStream, app: Arc<App>, req: &Req) {
                 }
                 rep[i] = k;
             }
+        }
+        // 모든 실행의 학습 상태(초록 불·재생 기록 중) — 2 초마다, 바뀌었을 때만(나이는 서명에서 뺌, 20 초마다는 그래도 보냄)
+        if last_status.elapsed() > Duration::from_secs(2) {
+            let st: Vec<serde_json::Value> = app.runs().iter().map(runs::status).collect();
+            let sig: String = st.iter().map(|v| format!("{}{}{}{}", v["id"], v["state"], v["recording"], v["iter"])).collect();
+            if sig != status_sig || last_status.elapsed() > Duration::from_secs(20) {
+                out.push_str(&ev("status", &serde_json::Value::Array(st).to_string()));
+                status_sig = sig;
+            }
+            last_status = Instant::now();
         }
         let nr = app.runs().len();
         if nr != n_runs {

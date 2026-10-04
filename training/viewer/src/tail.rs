@@ -99,6 +99,36 @@ pub fn last_line(p: &Path) -> Option<Value> {
     serde_json::from_slice(&buf[s..end]).ok()
 }
 
+/// 파일 끝 256 KB 에서 키마다 가장 최근 값(옛 키는 표준 이름으로). 목록 카드용 — 저장소를 올리지 않음
+pub fn recent_values(p: &Path, keys: &[&str]) -> std::collections::HashMap<String, f64> {
+    let mut out = std::collections::HashMap::new();
+    let Ok(mut f) = fs::File::open(p) else { return out };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let _ = f.seek(SeekFrom::Start(len.saturating_sub(256 * 1024)));
+    let mut buf = Vec::new();
+    let _ = f.read_to_end(&mut buf);
+    let text = String::from_utf8_lossy(&buf);
+    for line in text.lines().rev() {
+        let Ok(Value::Object(o)) = serde_json::from_str::<Value>(line) else { continue };
+        for (k, v) in o {
+            let (nk, sc) = trainfmt::keys::canon(&k);
+            if out.contains_key(&nk) {
+                continue;
+            }
+            let want = keys.iter().any(|w| if let Some(pre) = w.strip_suffix('*') { nk.starts_with(pre) } else { nk == *w });
+            if want {
+                if let Some(x) = v.as_f64() {
+                    out.insert(nk, x * sc);
+                }
+            }
+        }
+        if keys.iter().all(|w| w.ends_with('*') || out.contains_key(*w)) {
+            break;
+        }
+    }
+    out
+}
+
 /// 첫 줄 하나
 pub fn first_line(p: &Path) -> Option<Value> {
     let mut f = fs::File::open(p).ok()?;

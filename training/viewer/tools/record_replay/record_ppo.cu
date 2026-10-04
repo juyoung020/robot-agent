@@ -37,6 +37,8 @@ int main(int argc, char** argv) {
   float p0 = 0.2f, p1 = 0.6f;
   uint64_t seed = 7;
   bool stochastic = false;
+  std::string tag;
+  int keep_fail = 0;
   for (int a = 1; a < argc; ++a) {
     const std::string s = argv[a];
     auto nx = [&]() { return a + 1 < argc ? std::string(argv[++a]) : std::string(); };
@@ -45,6 +47,7 @@ int main(int argc, char** argv) {
     else if (s == "--stage") stage = std::stoi(nx()); else if (s == "--use-map") use_map = std::stoi(nx()); else if (s == "--goal-from-map") goal = std::stoi(nx());
     else if (s == "--map") { p0 = std::stof(nx()); p1 = std::stof(nx()); } else if (s == "--seed") seed = std::stoull(nx());
     else if (s == "--stochastic") stochastic = true; else if (s == "--max-steps") max_steps = std::stoi(nx());
+    else if (s == "--tag") tag = nx(); else if (s == "--keep-fail") keep_fail = std::stoi(nx());
   }
   if (ckpt.empty() || out.empty()) { std::fprintf(stderr, "usage: record_ppo --ckpt CKPT --out RUN_DIR [--config config.json] [--split eval] [--episodes 8] ...\n"); return 2; }
   if (cfgp.empty()) { const size_t sl = ckpt.rfind('/'); cfgp = (sl == std::string::npos ? std::string(".") : ckpt.substr(0, sl)) + "/config.json"; }
@@ -77,6 +80,9 @@ int main(int argc, char** argv) {
   const std::string src = rec::Obj().str("kind", "ppo_teacher").str("ckpt", ckpt).str("config", cfgp).num("stage", stage).num("use_map", use_map)
                               .num("goal_from_map", goal).raw("map_p", "[" + rec::jnum(p0) + "," + rec::jnum(p1) + "]").b("deterministic", !stochastic).num("seed", (double)seed).done();
   rec::G1Rec R(N, track, o, "teacher", src);
+  R.tag = tag;
+  { size_t p = tag.find_first_of("0123456789"); if (p != std::string::npos) R.ckpt_iter = std::atof(tag.c_str() + p); }
+  if (keep_fail > 0) R.max_success = std::max(1, episodes - keep_fail);   // 성공 K−F 개 + 실패 F 개(있으면) — 실패가 없으면 성공으로 채움
   R.home_prefix = "A" + std::to_string(stage) + "_room";
   std::printf("record_ppo: %s  A%d use_map %d goal_from_map %d  first map C0 %.2f C1 %.2f  N %d track %d -> %s (%s)\n", ckpt.c_str(), stage, use_map, goal, p0, p1, N,
               track, o.rep.c_str(), stochastic ? "stochastic" : "deterministic");
@@ -85,7 +91,7 @@ int main(int argc, char** argv) {
   std::vector<uint64_t> rg;
   gmap::MapHost mh;
   const int T = tr.T;
-  for (int k = 0; k < max_steps && R.finished < episodes; ++k) {
+  for (int k = 0; k < max_steps && !R.done_enough(episodes, keep_fail); ++k) {
     const int t = k % T;
     if (t == 0) {   // 지난 끝 줄(관측·지도 토큰) → 0 줄 (rollout_body 와 같음)
       RCK(cudaMemcpy(tr.obs_buf, tr.obs_buf + (size_t)T * net::N_OBS_G1 * N, sizeof(float) * net::N_OBS_G1 * N, cudaMemcpyDeviceToDevice));

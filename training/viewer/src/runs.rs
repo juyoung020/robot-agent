@@ -110,6 +110,40 @@ pub fn pid_alive(meta: &Value) -> Option<bool> {
     }
 }
 
+/// 학습 상태 등(초록 불): training = 프로세스 살아 있음(pid·시작 시각 맞음) + STALL_S 안에 기록, stalled = 살아 있는데 기록 없음,
+/// finished = run.json 에 ended(정상 끝), crashed = 프로세스가 없는데 ended 없음. pid 를 안 적은 옛 실행은 finished(ended 있음)·unknown.
+pub const STALL_S: f64 = 60.0;
+pub fn status(r: &RunRef) -> Value {
+    let m = read_meta(&r.dir).unwrap_or(json!({}));
+    let prog = r.dir.join("progress.jsonl");
+    let t_last = [mtime(&prog), mtime(&r.dir.join("episodes.jsonl")), mtime(&r.dir.join("run.json"))].into_iter().flatten().fold(f64::NAN, f64::max);
+    let age = now() - t_last;
+    let ended = m.get("ended").is_some();
+    let state = if m.get("pid").is_some() {
+        let alive = !ended && pid_alive(&m).unwrap_or(false);
+        if alive {
+            if age.is_finite() && age <= STALL_S { "training" } else { "stalled" }
+        } else if ended {
+            "finished"
+        } else {
+            "crashed"
+        }
+    } else if ended || m.get("kind").and_then(|x| x.as_str()) == Some("behavior") {
+        "finished"
+    } else {
+        "unknown"
+    };
+    // 재생 기록 뒷 프로세스(trainfmt replay_hook 의 s_eval/recording.json, pid 가 살아 있을 때만)
+    let rec = fs::read_to_string(r.dir.join("s_eval/recording.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).filter(|v| {
+        let pid = v["pid"].as_u64().unwrap_or(0) as u32;
+        pid > 0 && trainfmt::pid_start(pid).map(|s| v["pid_start"].as_u64().map(|p| p == s).unwrap_or(true)).unwrap_or(false)
+    });
+    let last = tail::last_line(&prog);
+    let it = last.as_ref().and_then(|l| l.get("time/iterations").or(l.get("time/iter"))).cloned().unwrap_or(Value::Null);
+    json!({"id": r.id, "state": state, "age": if age.is_finite() { json!(age) } else { Value::Null }, "last_write": if t_last.is_finite() { json!(t_last) } else { Value::Null },
+           "iter": it, "recording": rec.map(|v| v["tag"].clone())})
+}
+
 /// 폴더 크기(MB) — 1 분에 한 번만 다시 잰다
 pub fn disk_mb(dir: &Path) -> f64 {
     fn walk(d: &Path, depth: usize) -> u64 {
@@ -137,6 +171,63 @@ pub fn count_trp(d: &Path) -> usize {
 pub struct DiskCache(pub std::collections::HashMap<PathBuf, (Instant, f64)>);
 
 /// /api/runs 의 한 줄
+/// 옛 판(2026-10-04 신경망·관측 v2 이전 코드)인가 — 보관함으로. git 커밋이 v2 커밋의 자손이 아니거나(모르는 커밋 = 옛 것), csv 로 옮긴 실행
+pub struct Archive {
+    pub v2: Option<String>,
+    pub repo: PathBuf,
+    pub cache: std::collections::HashMap<String, bool>,
+}
+impl Archive {
+    pub fn new(repo: PathBuf, v2: Option<String>) -> Archive {
+        let v2 = v2.or_else(|| {
+            let o = std::process::Command::new("git").arg("-C").arg(&repo).args(["log", "--format=%H", "-1", "--grep=관측·신경망 v2"]).output().ok()?;
+            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if s.is_empty() { None } else { Some(s) }
+        });
+        Archive { v2, repo, cache: Default::default() }
+    }
+    pub fn is_old(&mut self, m: &Value) -> bool {
+        if m.get("imported_from").map(|x| !x.is_null()).unwrap_or(false) {
+            return true;
+        }
+        if m.get("kind").and_then(|x| x.as_str()) == Some("behavior") || m.get("synthetic").and_then(|x| x.as_bool()) == Some(true) {
+            return false;
+        }
+        let Some(c) = m.get("git").and_then(|g| g.get("commit")).and_then(|x| x.as_str()) else { return false };
+        let Some(v2) = self.v2.clone() else { return false };
+        if let Some(&b) = self.cache.get(c) {
+            return b;
+        }
+        let ok = std::process::Command::new("git").arg("-C").arg(&self.repo).args(["merge-base", "--is-ancestor", &v2, c]).status().map(|s| s.success()).unwrap_or(false);
+        self.cache.insert(c.to_string(), !ok);
+        !ok
+    }
+}
+
+/// 학생 run.json 의 teacher(체크포인트 경로) → 그 체크포인트가 든 실행(또는 csv 로 옮긴 실행의 원본 폴더)
+pub fn teacher_run(m: &Value, runs: &[RunRef], metas: &std::collections::HashMap<String, Value>) -> Option<(String, String)> {
+    let t = m.get("teacher")?.as_str()?;
+    let home = std::env::var("HOME").unwrap_or_default();
+    let p = PathBuf::from(t.replace('~', &home));
+    let p = fs::canonicalize(&p).unwrap_or(p);
+    let dir = p.parent()?.to_path_buf();
+    let file = p.file_name()?.to_string_lossy().to_string();
+    for r in runs {
+        let d = fs::canonicalize(&r.dir).unwrap_or(r.dir.clone());
+        if d == dir {
+            return Some((r.id.clone(), file));
+        }
+    }
+    for r in runs {
+        if let Some(src) = metas.get(&r.id).and_then(|x| x.get("imported_from")).and_then(|x| x.as_str()) {
+            if fs::canonicalize(src).map(|s| s == dir).unwrap_or(false) {
+                return Some((r.id.clone(), file));
+            }
+        }
+    }
+    None
+}
+
 pub fn summary(r: &RunRef, roots: &[Root], lines: &mut tail::LineCount, disk: &mut DiskCache, rewound: Option<usize>) -> Value {
     let meta = read_meta(&r.dir);
     let m = meta.clone().unwrap_or(json!({}));
@@ -202,6 +293,10 @@ pub fn summary(r: &RunRef, roots: &[Root], lines: &mut tail::LineCount, disk: &m
         "stage": m.get("stage"),
         "first_ts": first_ts,
         "rewound": rewound,
+        "status": status(r),
+        "health": tail::recent_values(&prog, &["rollout/success_rate", "rollout/success_rate/*", "rollout/collision_rate", "rollout/ep_len_mean", "eval/success_rate", "eval/collision_rate", "eval_teacher/success_rate", "time/total_timesteps", "train/loss"]),
+        "teacher": m.get("teacher"),
+        "eval_replays": count_trp(&r.dir.join("s_eval").join("replays")),
         "disk_mb": (dm * 10.0).round() / 10.0,
     })
 }

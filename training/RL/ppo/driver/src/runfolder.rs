@@ -15,6 +15,12 @@ pub struct RunFolder {
     mem_mb: f64,
     act_dims: i32,
     last: (f64, f64), // 마지막으로 줄을 쓴 (벽시계, 환경 스텝) — 구간 처리량
+    // 체크포인트마다 재생 판 자동 기록(record_ppo 를 낮은 우선순위 뒷 프로세스로 — trainfmt::replay_hook)
+    hook: Option<trainfmt::replay_hook::ReplayHook>,
+    stage_map: Vec<(i32, f32, f32)>,
+    env_stage: i32,
+    last_iter: i64,
+    final_ckpt: Option<std::path::PathBuf>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -77,11 +83,18 @@ pub fn open(out: &Path, cfg_path: &str, v: &Value, c: &PpoConfig, stages: &[Stag
         mem_mb: dev_bytes as f64 / 1e6,
         act_dims: c.act_dims,
         last: (0.0, 0.0),
+        hook: trainfmt::replay_hook::ReplayHook::from_config(v, "ppo", out),
+        stage_map: stages.iter().map(|s| (s.env, s.p0, s.p1)).collect(),
+        env_stage: stages.first().map(|s| s.env).unwrap_or(0),
+        last_iter: 0,
+        final_ckpt: None,
     })
 }
 
 impl RunFolder {
     pub fn log(&mut self, l: &PpoLog, wall: f64, gpu_sps: f64) {
+        self.env_stage = l.stage;
+        self.last_iter = l.iter;
         let a = &mut self.w.agg;
         let n = l.n_eps as f64;
         a.last("time/iterations", l.iter as f64);
@@ -147,9 +160,26 @@ impl RunFolder {
 
     pub fn ckpt(&mut self, path: &Path) {
         self.w.set_meta("last_ckpt", json!(path.display().to_string()));
+        let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let (p0, p1) = self.stage_map.get(self.stage).map(|s| (s.1, s.2)).unwrap_or((0.2, 0.6));
+        let extra = vec!["--stage".into(), self.env_stage.to_string(), "--map".into(), p0.to_string(), p1.to_string()];
+        if let Some(h) = self.hook.as_mut() {
+            h.set_extra(extra);
+            if name.contains("final") {
+                self.final_ckpt = Some(path.to_path_buf());   // 끝에(finish) 기록
+            } else {
+                let it: String = name.chars().filter(|c| c.is_ascii_digit()).collect();
+                h.on_ckpt(path, &format!("it{}", it));
+            }
+        }
     }
 
     pub fn finish(&mut self, wall: f64) {
+        if let Some(h) = self.hook.as_mut() {
+            let fc = self.final_ckpt.clone();
+            h.finish(fc.as_deref(), &format!("final_it{:06}", self.last_iter), std::time::Duration::from_secs(120));
+            self.w.set_meta("replays", json!({"launched": h.launched, "skipped_busy": h.skipped, "split": "eval"}));
+        }
         self.w.finish(wall, json!({}));
     }
 }

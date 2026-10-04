@@ -30,6 +30,7 @@ pub struct App {
     lines: Mutex<tail::LineCount>,
     disk: Mutex<runs::DiskCache>,
     pub sg: Arc<Mutex<sg::SgState>>,
+    archive: Mutex<runs::Archive>,
 }
 
 impl App {
@@ -78,7 +79,18 @@ impl App {
         let rs = self.runs();
         let mut lines = self.lines.lock().unwrap();
         let mut disk = self.disk.lock().unwrap();
-        let rows: Vec<Value> = rs.iter().map(|r| runs::summary(r, &self.roots, &mut lines, &mut disk, self.rewound_of(&r.id))).collect();
+        let mut rows: Vec<Value> = rs.iter().map(|r| runs::summary(r, &self.roots, &mut lines, &mut disk, self.rewound_of(&r.id))).collect();
+        // 보관함(옛 v2 이전 실행)·학생의 교사 실행
+        let metas: HashMap<String, Value> = rs.iter().filter_map(|r| Some((r.id.clone(), runs::read_meta(&r.dir)?))).collect();
+        let mut ar = self.archive.lock().unwrap();
+        for (row, r) in rows.iter_mut().zip(rs.iter()) {
+            let m = metas.get(&r.id).cloned().unwrap_or(json!({}));
+            row["archive"] = json!(ar.is_old(&m));
+            if let Some((tid, file)) = runs::teacher_run(&m, &rs, &metas) {
+                row["teacher_run"] = json!(tid);
+                row["teacher_ckpt"] = json!(file);
+            }
+        }
         json!({
             "runs": rows,
             "latest": runs::latest(&self.roots, &rs),
@@ -285,6 +297,7 @@ fn handle(mut s: TcpStream, app: Arc<App>) {
 fn main() {
     let mut roots: Vec<PathBuf> = vec![];
     let (mut port, mut bind) = (7810u16, "127.0.0.1".to_string());
+    let mut archive_before: Option<String> = None;   // 이 커밋의 자손이 아닌 실행 = 보관함(기본: "관측·신경망 v2" 커밋)
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -295,6 +308,7 @@ fn main() {
             }
             "--port" => port = it.next().and_then(|v| v.parse().ok()).unwrap_or(port),
             "--bind" => bind = it.next().unwrap_or(bind),
+            "--archive-before" => archive_before = it.next(),
             "-h" | "--help" => {
                 eprintln!("usage: trainview --root DIR [--root DIR …] [--port 7810] [--bind 127.0.0.1]");
                 return;
@@ -337,6 +351,7 @@ fn main() {
         lines: Mutex::new(tail::LineCount::default()),
         disk: Mutex::new(runs::DiskCache(HashMap::new())),
         sg: Arc::new(Mutex::new(sg::SgState::default())),
+        archive: Mutex::new(runs::Archive::new(PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")), archive_before)),
     });
     let l = TcpListener::bind((bind.as_str(), port)).unwrap_or_else(|e| {
         eprintln!("cannot listen on {}:{}: {}", bind, port, e);

@@ -14,6 +14,7 @@
 //! 이 크레이트는 학습 고리와 무관하다: 학습기의 로그 스레드(이미 비동기인 경로)에서만 부른다.
 
 pub mod keys;
+pub mod replay_hook;
 pub mod trp;
 
 use serde_json::{json, Map, Value};

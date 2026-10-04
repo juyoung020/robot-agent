@@ -28,10 +28,18 @@ SV=$ROOT/src/scene_graph/sgview/target/release/sgview
 [ -x "$SV" ] || (cd "$ROOT/src/scene_graph/sgview" && cargo build --release)
 
 export SGRT_LIB=$BUILD/libsgrt.so SGRT_POSE=$POSE SGRT_STREAM=127.0.0.1:9001 SGRT_MAP_EVERY=${SGRT_MAP_EVERY:-1}
+# 학습 뷰어 재생 판(선택, TRAINVIEW_OG=1): sgrt 기록(rec.bin, 약 2 GB/판)을 켜고, 판이 끝나면 og2sg 로 sgview 판을 만든다
+#   → ~/trainview_work/behavior_og/<판 이름>/ (trainview --root ~/trainview_work/behavior_og). og2sg 빌드: training/viewer/README.md
+if [ "${TRAINVIEW_OG:-0}" = 1 ]; then
+  mkdir -p "$HOME/datasets/limo_rec"
+  export SGRT_RECORD=${SGRT_RECORD:-$HOME/datasets/limo_rec/${TASK}_${POL}_${TAG}_$(date +%Y%m%d_%H%M%S).bin}
+  echo "[live] 재생 기록 $SGRT_RECORD (판 끝에 og2sg)"
+fi
 export ROBOT_AGENT=$ROOT
 cd "$BH"
 before=$(ls -d outputs/explore_*_"$TASK"_"$POL"_"$TAG" 2>/dev/null | sort | tail -1 || true)   # 같은 태그의 예전 판을 집지 않게
 setsid nohup src/sim/explore/run_explore.sh "$POL" "$TASK" "$TAG" > "/tmp/run_explore_$TAG.log" 2>&1 &
+SIMPID=$!
 echo "[live] 판 시작(자세 $POSE) — 로그 /tmp/run_explore_$TAG.log"
 RUN=""
 for i in $(seq 1 120); do
@@ -44,3 +52,11 @@ for pid in $(ps -eo pid,args | awk -v p="--port $VPORT" '/release\/sgview/ && in
 sleep 1
 setsid nohup "$ROOT/tools/run_sgview.sh" "$MEM" --live --port "$VPORT" > "/tmp/run_sgview_$VPORT.log" 2>&1 &
 echo "[live] 뷰어 http://localhost:$VPORT  (메모리 $MEM)"
+if [ "${TRAINVIEW_OG:-0}" = 1 ]; then
+  OG=${OG2SG:-$HOME/ra_og2sg/og2sg}
+  case "$TASK" in turning_on_radio) SC=house_double_floor_lower ;; bringing_water) SC=house_single_floor ;; *) SC=$(grep -l "$TASK" "$HOME"/ra_b1k/*.rasc 2>/dev/null | head -1 | xargs -r basename | sed 's/\.rasc$//') ;; esac
+  RN=$(basename "$RUN")
+  # 시뮬이 끝나면(같은 PID) og2sg — 낮은 우선순위, 학습·시뮬과 겹치지 않음
+  setsid nohup bash -c "while kill -0 $SIMPID 2>/dev/null; do sleep 5; done; [ -x '$OG' ] || { echo 'og2sg 없음: $OG'; exit 1; }; mkdir -p '$HOME/trainview_work/behavior_og/$RN'; nice -n 19 '$OG' --rec '$SGRT_RECORD' --run '$BH/$RUN' --run-out '$HOME/trainview_work/behavior_og/$RN' ${SC:+--rasc '$HOME/ra_b1k/$SC.rasc'}" > "/tmp/og2sg_$TAG.log" 2>&1 &
+  echo "[live] 판이 끝나면 og2sg → ~/trainview_work/behavior_og/$RN (로그 /tmp/og2sg_$TAG.log)"
+fi

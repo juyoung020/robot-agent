@@ -18,9 +18,25 @@ const S = {
   xmode: "env_steps", ema: 0.6, cursorPos: 1000, es: null, poll: null, retry: null,
   eps: 0, rep: 0, plots: [], built: "", epsRows: null, cmpSel: new Set(), cmpData: {}, cmpKeys: {},
 };
-const KIND_ROW = { teacher: "teacher", bc: "student", dagger: "student", rlft: "student", eval: "student", lab: "labs", behavior: "behavior" };
-let showSyn = false; try { showSyn = localStorage.getItem("tv_show_syn") === "1"; } catch (e) {}
+const KIND_ROW = { teacher: "teacher", bc: "student", dagger: "student", rlft: "student", eval: "student", behavior: "behavior" };
+let showSyn = false, showArch = false; try { showSyn = localStorage.getItem("tv_show_syn") === "1"; showArch = localStorage.getItem("tv_show_arch") === "1"; } catch (e) {}
 const STOPS = [10, 20, 50, 100, 200, 500, 0];
+// 학습 상태 불(서버 runs::status): 목록·파이프라인·머리줄, SSE "status" 로 바뀜
+S.status = {};
+const ST_KO = { training: "학습 중", stalled: "멈춤?(프로세스는 살아 있는데 기록 없음)", finished: "끝남(정상)", crashed: "죽음(끝 표시 없이 프로세스 없음)", unknown: "모름(pid 없는 옛 실행)" };
+function stTitle(st) {
+  if (!st) return "";
+  const lw = st.last_write ? new Date(st.last_write * 1000).toLocaleTimeString() : "—", age = st.age != null ? (st.age < 120 ? st.age.toFixed(0) + " s" : (st.age / 60).toFixed(0) + " min") + " ago" : "";
+  return `${st.state} — ${ST_KO[st.state] || ""}\nlast write ${lw} (${age})\niteration ${st.iter ?? "—"}${st.recording ? "\nrecording replay: " + st.recording : ""}`;
+}
+function stDot(id) { const st = S.status[id] || {}; return `<span class="stl ${st.state || "unknown"}" data-st="${esc(id)}" title="${esc(stTitle(st))}"></span>`; }
+function recBadge(id) { const st = S.status[id] || {}; return `<span class="recb" data-rec="${esc(id)}" title="recording replay (record_replay, background)"${st.recording ? "" : " hidden"}>REC</span>`; }
+function applyStatus(list) {
+  for (const st of list) S.status[st.id] = st;
+  document.querySelectorAll("[data-st]").forEach(el => { const st = S.status[el.dataset.st]; if (!st) return; el.className = "stl " + st.state; el.title = stTitle(st); });
+  document.querySelectorAll("[data-stl]").forEach(el => { const st = S.status[el.dataset.stl]; if (st) { el.textContent = st.state; el.parentElement.title = stTitle(st); } });
+  document.querySelectorAll("[data-rec]").forEach(el => { const st = S.status[el.dataset.rec]; el.hidden = !(st && st.recording); if (st && st.recording) el.title = "recording replay: " + st.recording; });
+}
 const replay = new Replay({ api, getCursorIter: () => cursorIter() });
 
 // ---------------------------------------------------------------- 실행 목록
@@ -29,36 +45,58 @@ async function loadRuns() {
   let j;
   try { j = await api("/api/runs"); } catch (e) { setText("conn", "서버 없음"); return; }
   S.runs = j.runs; S.byId = Object.fromEntries(j.runs.map(r => [r.id, r])); S.latest = j.latest;
-  // 가짜 시험 자료(synthetic)는 기본으로 숨김 — "test data" 를 켜야 보인다(실제 결과로 오해하지 않게)
-  $("show_syn").checked = showSyn;
-  for (const row of ["teacher", "student", "behavior", "labs", "synthetic"]) {
-    const rs = j.runs.filter(r => (r.synthetic ? "synthetic" : r.kind === "behavior" ? "behavior" : r.lab ? "labs" : KIND_ROW[r.kind] || "teacher") === row);
-    if (row === "synthetic" && !showSyn) { setHTML("pick_" + row, rs.length ? `<span class="muted small">${rs.length} hidden</span>` : ""); continue; }
-    const h = rs.map(r => `<span class="chip${r.id === S.sel ? " on" : ""}" data-id="${esc(r.id)}" title="${esc(r.id)}\n${esc(r.dir)}${r.synthetic ? "\n(synthetic — fake_run)" : ""}${r.imported_from ? "\n(imported from " + esc(r.imported_from) + ")" : ""}">${r.live ? '<span class="dot"></span>' : ""}${esc(shortName(r))}<span class="k">${esc(r.kind)}${r.synthetic ? " · syn" : ""}${r.imported_from ? " · csv" : ""}</span></span>`).join("") || '<span class="muted small">none</span>';
-    setHTML("pick_" + row, h);
-  }
+  for (const r of j.runs) if (r.status) S.status[r.id] = r.status;
+  // 줄: pipelines(학생 ← 교사), teachers(학생 없는 교사), BEHAVIOR, labs, archive(옛 v2 이전, 끔), test data(가짜, 끔)
+  $("show_syn").checked = showSyn; $("show_arch").checked = showArch;
+  const pc = v => v == null ? "—" : (v * 100).toFixed(0) + "%";
+  const sr = r => { const h = r.health || {}; return h["rollout/success_rate"] ?? Object.entries(h).find(([k]) => k.startsWith("rollout/success_rate/"))?.[1]; };
+  const teacherHealth = r => r ? `SR ${pc(sr(r))} · coll ${pc((r.health || {})["rollout/collision_rate"])} · len ${(r.health || {})["rollout/ep_len_mean"] != null ? r.health["rollout/ep_len_mean"].toFixed(0) : "—"}` : "";
+  const chip = (r, extra = "") => `<span class="chip${r.id === S.sel ? " on" : ""}" data-id="${esc(r.id)}" title="${esc(r.id)}\n${esc(r.dir)}${r.imported_from ? "\n(imported from " + esc(r.imported_from) + ")" : ""}">${stDot(r.id)}${esc(shortName(r))}<span class="k">${esc(r.kind === "lab" ? "test" : r.kind)}${r.synthetic ? " · syn" : ""}${r.imported_from ? " · csv" : ""}</span>${recBadge(r.id)}${extra}</span>`;
+  const isStudent = r => ["bc", "dagger", "rlft", "eval"].includes(r.kind);
+  // 시험 자료 = synthetic 또는 옛 "lab" 실행(labs/ 밑, kind lab) — 한 무리, 기본으로 숨김
+  for (const r of j.runs) r.test = !!(r.synthetic || r.kind === "lab" || (r.lab && r.kind !== "behavior"));
+  const live = j.runs.filter(r => !r.test && !r.archive);
+  const students = live.filter(isStudent), used = new Set(students.map(r => r.teacher_run).filter(Boolean));
+  setHTML("pick_pipelines", students.map(r => {
+    const t = S.byId[r.teacher_run], h = r.health || {};
+    const ev = h["eval/success_rate"], tsr = h["eval_teacher/success_rate"];
+    return `<span class="pipe${r.id === S.sel || r.teacher_run === S.sel ? " on" : ""}"><span class="stu chip-like" data-id="${esc(r.id)}" title="student / VLA — ${esc(r.id)}">${stDot(r.id)}${esc(shortName(r))} <span class="m">${esc(r.kind)} · eval SR ${pc(ev)}${tsr != null ? " (teacher " + pc(tsr) + ")" : ""}</span>${recBadge(r.id)}</span><span class="arrow">←</span>` +
+      (t ? `<span class="tea" data-id="${esc(t.id)}" title="teacher (RL, privileged) — ${esc(t.id)}\ncheckpoint ${esc(r.teacher_ckpt || "")}">${stDot(t.id)}teacher ${esc(shortName(t))} · ${esc(r.teacher_ckpt || "")} · ${teacherHealth(t)}${recBadge(t.id)}</span>` : `<span class="tea" title="${esc(r.teacher || "")}">teacher ${esc(String(r.teacher || "?").split("/").slice(-3).join("/"))} (not under roots)</span>`) + `</span>`;
+  }).join(" ") || '<span class="muted small">no student run yet — teachers below</span>');
+  setHTML("pick_teachers", live.filter(r => r.kind === "teacher" && !used.has(r.id)).map(r => chip(r, `<span class="h">${teacherHealth(r)}</span>`)).join("") || '<span class="muted small">none</span>');
+  setHTML("pick_behavior", live.filter(r => r.kind === "behavior").map(r => chip(r)).join("") || '<span class="muted small">none</span>');
+  const arch = j.runs.filter(r => r.archive && !r.test);
+  setHTML("pick_archive", showArch ? arch.map(r => chip(r, isStudent(r) ? "" : `<span class="h">${teacherHealth(r)}</span>`)).join("") : `<span class="muted small">${arch.length} hidden (pre-v2 / csv imports)</span>`);
+  const syn = j.runs.filter(r => r.test);
+  setHTML("pick_synthetic", showSyn ? syn.map(r => chip(r)).join("") : (syn.length ? `<span class="muted small">${syn.length} hidden</span>` : ""));
   if (!S.sel) {
     const want = new URLSearchParams(location.hash.slice(1)).get("run");
-    const ok = id => id && S.byId[id] && (showSyn || !S.byId[id].synthetic);
-    selectRun(ok(want) ? want : j.latest || (j.runs.find(r => !r.synthetic) || {}).id);
+    const ok = id => id && S.byId[id] && (showSyn || !S.byId[id].test);
+    // 기본: 가장 최근 학생(결과물), 없으면 최근 본실행
+    const stu = live.filter(isStudent).sort((a, b) => (a.age ?? 1e12) - (b.age ?? 1e12))[0];
+    selectRun(ok(want) ? want : (stu && stu.id) || j.latest || (live[0] || {}).id);
   } else updateStatus();
   buildCompareList();
 }
+$("show_arch").onchange = e => { showArch = e.target.checked; try { localStorage.setItem("tv_show_arch", showArch ? "1" : "0"); } catch (x) {} loadRuns(); };
 $("show_syn").onchange = e => { showSyn = e.target.checked; try { localStorage.setItem("tv_show_syn", showSyn ? "1" : "0"); } catch (x) {} loadRuns(); };
 document.addEventListener("click", e => {
-  const c = e.target.closest(".chip"); if (c && c.dataset.id) selectRun(c.dataset.id);
+  const c = e.target.closest(".chip, .stu, .tea"); if (c && c.dataset.id) selectRun(c.dataset.id);
 });
 
 function updateStatus() {
   const r = S.byId[S.sel]; if (!r) return;
   setText("runname", r.id);
   let b = "";
-  if (r.live) b += '<span class="badge live">training</span>';
+  const st = S.status[r.id] || {};
+  b += `<span class="badge stb" title="${esc(stTitle(st))}">${stDot(r.id)}<span data-stl="${esc(r.id)}">${esc(st.state || "unknown")}</span></span>${recBadge(r.id)}`;
   b += `<span class="badge">${esc(r.kind)}</span>`;
   if (r.synthetic) b += '<span class="badge syn" title="fake_run 이 만든 가짜 실행(synthetic data)">synthetic</span>';
   if (r.imported_from) b += `<span class="badge syn" title="${esc(r.imported_from)}">imported csv</span>`;
+  if (r.archive) b += `<span class="badge" title="신경망·관측 v2 이전 코드 또는 csv 로 옮긴 옛 실행">archive</span>`;
+  if (r.teacher) b += `<span class="badge" title="${esc(r.teacher)}">trained from teacher ${r.teacher_run ? `<a href="#run=${encodeURIComponent(r.teacher_run)}" data-id="${esc(r.teacher_run)}" class="tea">${esc(shortName(S.byId[r.teacher_run] || { id: r.teacher_run }))}</a> · ` : ""}${esc(r.teacher_ckpt || String(r.teacher).split("/").pop())}</span>`;
   setHTML("badges", b);
-  $("syn_banner").hidden = !r.synthetic;
+  $("syn_banner").hidden = !r.test;
   const d = S.d;
   const last = d && d.total ? lastAt("time/iterations", d.total - 1) : null;
   const age = r.age != null ? (r.age < 120 ? r.age.toFixed(0) + " s ago" : r.age < 7200 ? (r.age / 60).toFixed(0) + " min ago" : (r.age / 3600).toFixed(1) + " h ago") : "—";
@@ -70,6 +108,7 @@ async function selectRun(id) {
   S.sel = id; S.d = null; S.meta = null; S.built = ""; S.epsRows = null;
   const h = new URLSearchParams(location.hash.slice(1)); h.set("run", id); history.replaceState(null, "", "#" + h.toString());
   document.querySelectorAll(".chip").forEach(c => c.classList.toggle("on", c.dataset.id === id));
+  S.built = ""; loadRuns();
   stopLive();
   setHTML("groups", ""); setHTML("cards", ""); setHTML("checks", ""); setHTML("table", ""); setHTML("evals", "");
   const [meta] = await Promise.all([api("/api/meta", { run: id })]);
@@ -130,6 +169,7 @@ function startLive() {
   es.addEventListener("episodes", e => { const m = JSON.parse(e.data); if (m.run === S.sel && m.total !== S.eps) { S.eps = m.total; debounce("eps", () => { loadTable(); loadSample(); }, 1500); } });
   es.addEventListener("replay", e => { const m = JSON.parse(e.data); if (m.run === S.sel) { S.rep = m.n; replay.refreshList(); } });
   es.addEventListener("runs", () => loadRuns());
+  es.addEventListener("status", e => applyStatus(JSON.parse(e.data)));
   es.onerror = () => {
     es.close(); if (S.es === es) S.es = null;
     setText("conn", "polling 3 s"); $("conn").classList.remove("ok");
