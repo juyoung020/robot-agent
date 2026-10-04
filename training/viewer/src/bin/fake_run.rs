@@ -269,6 +269,7 @@ fn episode(rng: &mut Rng, skill: &str, home: &str, stage: &str, comp0: f64, p: f
     let mut age = vec![0.0f64; OBJECTS.len()];
     let mut belief: Vec<(f64, f64, f64)> = obj_pos.iter().map(|p| (p.0 + 0.3 * rng.n(), p.1 + 0.3 * rng.n(), p.2)).collect();
     let mut drift = (0.0, 0.0, 0.0);
+    let (mut min_ee, mut last_base) = (f64::INFINITY, f64::INFINITY);
     for k in 0..n {
         let ph = k as f64 / n as f64;
         // 목표로 가는 조종(성공 판은 닿음, 실패 판은 헤맴)
@@ -298,6 +299,8 @@ fn episode(rng: &mut Rng, skill: &str, home: &str, stage: &str, comp0: f64, p: f
         }
         let reach = 0.12 + 0.22 * (1.0 + q[1].sin()) / 2.0;
         let (ex, ey, ez) = (x + (0.1 + reach) * (yaw + q[0]).cos(), y + (0.1 + reach) * (yaw + q[0]).sin(), 0.25 + 0.25 * (-q[2]).sin().max(-0.5));
+        min_ee = min_ee.min(((ex - gx).powi(2) + (ey - gy).powi(2) + (ez - gz).powi(2)).sqrt());
+        last_base = dist;
         // 보상
         let row_r = &per_step[k];
         let rs: f64 = row_r.iter().sum();
@@ -379,6 +382,16 @@ fn episode(rng: &mut Rng, skill: &str, home: &str, stage: &str, comp0: f64, p: f
         row.extend_from_slice(&[ret_cum as f32, value as f32, (ph.powi(4)) as f32, ev as f32, 0.0, gx as f32, gy as f32, gz as f32, known_frac as f32]);
         w.frame(&row, &sl);
     }
+    // 시험 자료가 스스로 모순되지 않게: 성공이라 해 놓고 손끝이 컵에 닿지 않았으면(집기·놓기 0.15 m) 또는 로봇이 다가가지 않았으면(다가가기 1 m)
+    // 결과를 "n/a" 로(실제로 이룬 일이 아님)
+    if success && ((skill != "approach" && min_ee > 0.15) || (skill == "approach" && last_base > 1.0)) {
+        line["success"] = Value::Null;
+        line["outcome"] = json!("n/a");
+        let f2 = format!("ep_{:06}_{}_na.trp", ep_no, skill);
+        line["replay"] = json!(f2);
+        w.head["meta"] = line.clone();
+    }
+    w.head["meta"] = line.clone();
     EpOut { line, trp: Some(w) }
 }
 

@@ -180,7 +180,7 @@ export class Replay {
     else if (this.$("rp_near").checked) this.$("rp_note").textContent = "cursor is at latest — near-step filter off";
     this.$("rp_list").innerHTML = rows.map(r => {
       const m = r.meta || {};
-      return `<div class="item${this.file === r.file ? " on" : ""}" data-f="${esc(r.file)}"><div class="r1"><span><b>${esc(m.skill || "?")}</b> <span class="oc ${esc(m.outcome || "")}">${esc(m.outcome || (m.success ? "success" : "?"))}</span>${r.pin ? " 📌" : ""}</span><span class="mono muted">ep ${m.ep ?? "?"}</span></div>
+      return `<div class="item${this.file === r.file ? " on" : ""}" data-f="${esc(r.file)}"><div class="r1"><span><b>${esc(m.skill || "?")}</b> <span class="oc ${esc(m.outcome || "")}">${esc(m.outcome || (m.success ? "success" : "?"))}${this.meta && this.meta.synthetic ? " (synthetic)" : ""}</span>${r.pin ? " 📌" : ""}</span><span class="mono muted">ep ${m.ep ?? "?"}</span></div>
         <div class="muted small">${esc(m.home || "")} · ${esc(m.stage || "")} · map ${fmt(m.completion0 ?? m.map_completeness, 1)} · ${fmt(m.t)} s · return ${fmt(m.ret)}${m.iter != null ? " · iter " + fmt(m.iter) : ""}${m.driver ? " · " + esc(m.driver) : ""}</div></div>`;
     }).join("") || '<div class="muted small">no episode matches the filters</div>';
     this.$("rp_list").querySelectorAll(".item").forEach(el => el.onclick = () => this.open(el.dataset.f));
@@ -413,7 +413,7 @@ export class Replay {
     const rs = this.rcols.map(c => `${c.slice(2)} ${fmt(v(c))}`).filter((_, i) => true);
     const stepR = this.rcols.reduce((s, c) => s + (v(c) || 0), 0);
     const tslot = this.slotObjs.findIndex((o, s) => tr.sv(f, s, "is_tgt") > 0.5 && tr.sv(f, s, "src") > 0);
-    this.$("rp_hud").textContent =
+    this.$("rp_hud").textContent = (H.synthetic ? "⚠ 가짜 시험 자료(synthetic) — 실제 학습 결과 아님\n" : "") +
       `${m.skill || "?"} · ${m.home || ""} · ${m.outcome || ""}${H.synthetic ? "  (synthetic)" : ""}${H.source ? "  [" + H.source.kind + "]" : ""}\n` +
       (this.sceneInfo ? this.sceneInfo + "\n" : "") +
       `t ${fmt(v("t"))} s   frame ${f + 1}/${tr.nf}\n` +

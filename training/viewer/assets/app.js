@@ -18,7 +18,8 @@ const S = {
   xmode: "env_steps", ema: 0.6, cursorPos: 1000, es: null, poll: null, retry: null,
   eps: 0, rep: 0, plots: [], built: "", epsRows: null, cmpSel: new Set(), cmpData: {}, cmpKeys: {},
 };
-const KIND_ROW = { teacher: "teacher", bc: "student", dagger: "student", rlft: "student", eval: "student", lab: "labs" };
+const KIND_ROW = { teacher: "teacher", bc: "student", dagger: "student", rlft: "student", eval: "student", lab: "labs", behavior: "behavior" };
+let showSyn = false; try { showSyn = localStorage.getItem("tv_show_syn") === "1"; } catch (e) {}
 const STOPS = [10, 20, 50, 100, 200, 500, 0];
 const replay = new Replay({ api, getCursorIter: () => cursorIter() });
 
@@ -28,17 +29,22 @@ async function loadRuns() {
   let j;
   try { j = await api("/api/runs"); } catch (e) { setText("conn", "서버 없음"); return; }
   S.runs = j.runs; S.byId = Object.fromEntries(j.runs.map(r => [r.id, r])); S.latest = j.latest;
-  for (const row of ["teacher", "student", "labs"]) {
-    const rs = j.runs.filter(r => (r.lab ? "labs" : KIND_ROW[r.kind] || "teacher") === row);
+  // 가짜 시험 자료(synthetic)는 기본으로 숨김 — "test data" 를 켜야 보인다(실제 결과로 오해하지 않게)
+  $("show_syn").checked = showSyn;
+  for (const row of ["teacher", "student", "behavior", "labs", "synthetic"]) {
+    const rs = j.runs.filter(r => (r.synthetic ? "synthetic" : r.kind === "behavior" ? "behavior" : r.lab ? "labs" : KIND_ROW[r.kind] || "teacher") === row);
+    if (row === "synthetic" && !showSyn) { setHTML("pick_" + row, rs.length ? `<span class="muted small">${rs.length} hidden</span>` : ""); continue; }
     const h = rs.map(r => `<span class="chip${r.id === S.sel ? " on" : ""}" data-id="${esc(r.id)}" title="${esc(r.id)}\n${esc(r.dir)}${r.synthetic ? "\n(synthetic — fake_run)" : ""}${r.imported_from ? "\n(imported from " + esc(r.imported_from) + ")" : ""}">${r.live ? '<span class="dot"></span>' : ""}${esc(shortName(r))}<span class="k">${esc(r.kind)}${r.synthetic ? " · syn" : ""}${r.imported_from ? " · csv" : ""}</span></span>`).join("") || '<span class="muted small">none</span>';
     setHTML("pick_" + row, h);
   }
   if (!S.sel) {
     const want = new URLSearchParams(location.hash.slice(1)).get("run");
-    selectRun(want && S.byId[want] ? want : j.latest || (j.runs[0] && j.runs[0].id));
+    const ok = id => id && S.byId[id] && (showSyn || !S.byId[id].synthetic);
+    selectRun(ok(want) ? want : j.latest || (j.runs.find(r => !r.synthetic) || {}).id);
   } else updateStatus();
   buildCompareList();
 }
+$("show_syn").onchange = e => { showSyn = e.target.checked; try { localStorage.setItem("tv_show_syn", showSyn ? "1" : "0"); } catch (x) {} loadRuns(); };
 document.addEventListener("click", e => {
   const c = e.target.closest(".chip"); if (c && c.dataset.id) selectRun(c.dataset.id);
 });
@@ -52,6 +58,7 @@ function updateStatus() {
   if (r.synthetic) b += '<span class="badge syn" title="fake_run 이 만든 가짜 실행(synthetic data)">synthetic</span>';
   if (r.imported_from) b += `<span class="badge syn" title="${esc(r.imported_from)}">imported csv</span>`;
   setHTML("badges", b);
+  $("syn_banner").hidden = !r.synthetic;
   const d = S.d;
   const last = d && d.total ? lastAt("time/iterations", d.total - 1) : null;
   const age = r.age != null ? (r.age < 120 ? r.age.toFixed(0) + " s ago" : r.age < 7200 ? (r.age / 60).toFixed(0) + " min ago" : (r.age / 3600).toFixed(1) + " h ago") : "—";

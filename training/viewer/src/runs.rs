@@ -208,6 +208,10 @@ pub fn summary(r: &RunRef, roots: &[Root], lines: &mut tail::LineCount, disk: &m
 
 /// 기본으로 여는 실행: 뿌리마다 latest.txt — 가장 최근에 바뀐 것. lab 은 후보가 아니다(8절 20번). 없으면 가장 최근에 기록한 본학습.
 pub fn latest(roots: &[Root], runs: &[RunRef]) -> Option<String> {
+    // 가짜 시험 자료(run.json "synthetic": true)는 기본 후보가 아니다 — 기본 화면은 진짜 실행만
+    let syn = |r: &RunRef| read_meta(&r.dir).and_then(|m| m.get("synthetic").and_then(|x| x.as_bool())).unwrap_or(false);
+    let runs: Vec<RunRef> = runs.iter().filter(|r| !syn(r)).cloned().collect();
+    let runs = &runs[..];
     let mut best: Option<(f64, String)> = None;
     for (ri, r) in roots.iter().enumerate() {
         let p = r.path.join("latest.txt");

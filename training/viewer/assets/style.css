@@ -143,3 +143,6 @@ pre.small { white-space: pre-wrap; max-height: 300px; overflow: auto; margin: 0;
   .charts, #cmp_charts { grid-template-columns: 1fr; }
   .list { max-height: 240px; }
 }
+
+.synbanner { background: var(--critical); color: #fff; font-weight: 700; padding: 8px 14px; border-radius: 6px; margin: 0 0 10px; font-size: 14px; }
+.hud .synline { color: var(--critical); }

@@ -24,12 +24,15 @@
   <div id="pickers">
     <div class="pick"><span class="lab">teacher</span><div id="pick_teacher" class="chips"></div></div>
     <div class="pick"><span class="lab">student</span><div id="pick_student" class="chips"></div></div>
+    <div class="pick"><span class="lab">BEHAVIOR</span><div id="pick_behavior" class="chips"></div></div>
     <div class="pick"><span class="lab">labs</span><div id="pick_labs" class="chips"></div></div>
+    <div class="pick" id="syn_row"><span class="lab" title="fake_run 이 만든 가짜 시험 자료 — 실제 학습 결과 아님"><label><input type="checkbox" id="show_syn"> test data</label></span><div id="pick_synthetic" class="chips"></div></div>
   </div>
 </header>
 
 <main>
 <!-- ============================== 학습 ============================== -->
+<div id="syn_banner" class="synbanner" hidden>가짜 시험 자료(synthetic) — 실제 학습 결과 아님 · synthetic test fixture, not a real training result</div>
 <section id="tab_train" class="tab on">
   <div id="metaline" class="muted"></div>
   <div id="cards" class="cards"></div>
