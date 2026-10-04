@@ -11,6 +11,17 @@ namespace env {
 // stage: 0/1/2 = 상자 방 A0/A1/A2(= 커리큘럼 B0, 예전 그대로), kStageBeh(3) = BEHAVIOR 집 장면(B1–B3, env_beh.h) — 장치 SceneSet 이 있어야 함
 constexpr int kStageBeh = 3;
 
+// 장치 단계 값(set_dynamic 판): 커널이 stage 를 읽고(맞지 않는 커널 무리는 바로 끝남), pend >= 0 이면 apply() 가 모든 판을 그 단계·씨앗으로 새로 시작한다.
+// 다시 만들기(cudaMalloc·동기·init)와 그래프 다시 잡기가 없다 — 학습기 장치 커리큘럼·BC 씨앗 바꾸기가 쓴다(README 성능 메모)
+struct EnvCtl {
+  int stage;                // 지금 단계
+  int pend;                 // 바꿀 단계(−1 없음)
+  unsigned long long seed;  // 바꿀 때 쓸 씨앗(생성자 seed 와 같은 뜻)
+};
+// 커널 무리 비트(단계 → 무리): 0·1 상자 방(가구 없는 커널), 2 A2(가구·경로 워프 커널), 3 BEHAVIOR
+constexpr uint32_t kFamBox = 1u, kFamA2 = 2u, kFamBeh = 4u;
+inline uint32_t stage_family(int stage) { return stage >= kStageBeh ? kFamBeh : stage >= 2 ? kFamA2 : kFamBox; }
+
 class DeviceEnv {
  public:
   // ss_dev: BEHAVIOR 판의 장치 장면 묶음(bscene_host.h SceneUpload::dev). cu0: 처음 커리큘럼 값(안쪽 장치 버퍼에 복사)
@@ -32,6 +43,19 @@ class DeviceEnv {
   void set_nav(const bsc::NavFb& fb) { nav_ = fb; }
   const bsc::SceneSet* scenes() const { return ss_; }
 
+  // ---- 장치 단계·씨앗(다시 만들기 없이) ----
+  // set_dynamic(무리 비트 = stage_family 의 합): 그 뒤 step 은 단계를 장치 값에서 읽고 무리마다 커널을 띄운다(맞지 않는 무리는 바로 끝남 — 결과 같음).
+  // 처음 단계의 무리는 늘 넣는다. BEHAVIOR 무리는 장면 묶음이 있어야 한다
+  void set_dynamic(uint32_t families);
+  bool dynamic() const { return dyn_; }
+  uint32_t families() const { return fam_; }
+  // 단계·씨앗 바꾸기 요청(비동기 복사 하나, 동기 없음): 다음 apply() 에서 모든 판을 처음부터(생성자와 같은 상태 — 0 으로 채우고 init).
+  // 무리가 set_dynamic 에 없으면 −1. stage 는 호스트 거울(stage())도 바꿈
+  int request_stage(int stage, uint64_t seed);
+  // 요청이 있으면 적용(커널 둘, 요청이 없으면 바로 끝남 — 그래프에 넣어 둬도 됨). 학습기 장치 커리큘럼은 ctl() 에 직접 pend 를 쓴다
+  void apply();
+  EnvCtl* ctl() { return ctl_; }
+
  private:
   int N_, stage_;
   bool arm_free_;
@@ -42,6 +66,12 @@ class DeviceEnv {
   float* f_ = nullptr;
   int* iv_ = nullptr;
   uint64_t* rng_ = nullptr;
+  EnvCtl* ctl_ = nullptr;       // 장치
+  EnvCtl* ctl_h_ = nullptr;     // 고정 호스트 칸 8 개(요청 복사용)
+  void* ctl_ev_[8] = {};        // cudaEvent_t
+  int ctl_slot_ = 0;
+  bool dyn_ = false;
+  uint32_t fam_ = 0;
 };
 
 // CPU 참조판: 같은 step_env 를 순서대로 돌린다(비교의 정답)

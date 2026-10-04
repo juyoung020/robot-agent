@@ -59,6 +59,8 @@ typedef struct PpoConfig {
   PpoBCurr bcurr;         /* 처음 BEHAVIOR 커리큘럼 값(B1/B2 비율·장면 비트·split·엄격·지시문 heldout) — 장치 값, 바꾸기는 ppo_set_bcurr·장치 커리큘럼 */
   char b_scenes[256];     /* 만들 장면 이름(쉼표, 빈 = RASC 폴더 전부) */
   char b_rasc_dir[256];   /* RASC 폴더(빈 = ~/ra_b1k) */
+  uint32_t env_stages;    /* 쓰는 환경 단계 비트(1 << 단계, 커리큘럼 env 의 합). 0 = stage 하나. 장치 단계 바꾸기가 띄울 환경 커널 무리를 정함 */
+  int32_t pad_es;
 } PpoConfig;
 
 typedef struct PpoLog {
@@ -88,7 +90,8 @@ int ppo_iterate(void* h);
 int ppo_poll(void* h, PpoLog* out);
 /* 띄운 뒤 아직 안 꺼낸 바퀴 수 */
 int ppo_inflight(void* h);
-/* 커리큘럼 단계 바꾸기: 환경·지도를 새로 만들고 rollout 그래프를 다시 잡는다(드물게, 여기서는 동기) */
+/* 환경 단계 바꾸기(장치 값 — 다시 만들기·동기·그래프 다시 잡기 없음): 다음에 띄우는 바퀴의 롤아웃 앞에서 모든 판을 그 단계·씨앗으로
+ * 새로 시작(환경·지도·롤아웃 끝 줄, 새로 만든 것과 비트가 같음 — ppo_verify switch). 단계가 env_stages 에 없으면 −2 */
 int ppo_set_stage(void* h, int stage);
 /* 체크포인트: 변수·Adam 상태·학습 상태를 고정 호스트 버퍼로 비동기 복사 → poll 이 1 이면 data 가 유효 */
 int ppo_ckpt_begin(void* h);
@@ -108,7 +111,8 @@ int64_t ppo_device_bytes(void* h);
 /* 장치 커리큘럼(호스트 왕복 없는 넘어가기 판단). 단계 표·창을 장치에 두고, 갱신 그래프 끝 커널이 바퀴마다
  * 그 단계 지표의 (성공 수, 에피소드 수)를 창(최근 window 바퀴, 에피소드 > 0 인 바퀴만)에 넣어 평균 ≥ promote 이면 넘어간다.
  *  - 다음 단계가 같은 환경: 장치가 바로 처음 지도 비율·행동 비트를 바꾼다 → 다음 바퀴부터(호스트가 띄운 바퀴 수와 무관, 결정적).
- *  - 다음 단계가 다른 환경: 장치는 req 에 단계 번호를 적고 창을 멈춘다. 호스트가 기록에서 보고 환경을 다시 만든 뒤 ppo_curr_ack. */
+ *  - 다음 단계가 다른 환경: 장치가 환경·지도·학습기 다시 시작 요청을 적는다 → 다음 바퀴 롤아웃 그래프 앞 커널이 적용(호스트 일 없음, evt 3).
+ *    (예전 판: req 에 적고 호스트가 다시 만든 뒤 ppo_curr_ack — ack 는 뒤로 맞게 남김) */
 typedef struct PpoCurrStage {
   int32_t env;        /* 환경 단계(A0 ...) */
   float p0, p1;       /* 처음 지도 C0·C1 비율 */
@@ -121,7 +125,7 @@ typedef struct PpoCurrStage {
 typedef struct PpoCurrLog {   /* 기록 한 칸(PpoLog 와 같은 바퀴) */
   int32_t si;         /* 이 바퀴 끝의 장치 단계 번호(−1 = 장치 커리큘럼 끔) */
   int32_t req;        /* 환경을 바꿔야 하는 다음 단계 번호(−1 = 없음) */
-  int32_t evt;        /* 이 바퀴에 넘어가기: 0 없음, 1 환경 바꾸기 요청, 2 장치에서 바로 넘어감 */
+  int32_t evt;        /* 이 바퀴에 넘어가기: 0 없음, 1 환경 바꾸기 요청(호스트, 예전 판 — 지금은 안 씀), 2 장치에서 바로 넘어감(같은 환경), 3 장치에서 환경까지 바꿈(다음 바퀴 롤아웃 앞) */
   int32_t n_win;      /* 창에 든 바퀴 수 */
   float avg;          /* 창 평균 성공률(창이 다 찼을 때, 아니면 0) — 넘어가기 판단 값 */
   float pad[3];

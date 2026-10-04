@@ -8,6 +8,9 @@
 #include "bscene_host.h"
 
 using namespace env;
+#ifdef ENV_PROF
+namespace env { void env_prof_read(unsigned long long out[8]); void env_prof_reset(); }
+#endif
 
 int main(int argc, char** argv) {
   const int T = argc > 1 ? std::atoi(argv[1]) : 300, stage = argc > 2 ? std::atoi(argv[2]) : 1, maxN = argc > 3 ? std::atoi(argv[3]) : 1048576;
@@ -33,6 +36,9 @@ int main(int argc, char** argv) {
     for (auto& x : a) x = dm::rand_range(s, -1.f, 1.f);
     cudaMemcpy(act, a.data(), sizeof(float) * a.size(), cudaMemcpyHostToDevice);
     for (int i = 0; i < 20; ++i) e.step(act, obs, rew, done);
+#ifdef ENV_PROF
+    env_prof_reset();
+#endif
     cudaEvent_t t0, t1;
     cudaEventCreate(&t0); cudaEventCreate(&t1);
     cudaEventRecord(t0);
@@ -43,6 +49,14 @@ int main(int argc, char** argv) {
     cudaEventElapsedTime(&ms, t0, t1);
     const double sps = (double)N * T / (ms * 1e-3);
     std::printf("N=%8d: %7.3f ms/step  %10.3e env-steps/s  (%.2f us per 1000 envs)\n", N, ms / T, sps, ms / T * 1e3 / (N / 1000.0));
+#ifdef ENV_PROF
+    unsigned long long pr[8];
+    env_prof_read(pr);
+    std::printf("   reset: %.4f resets/env-step, warp time waiting on resets %.1f %% of step-kernel warp time; pick-place resets %llu, spawn tries %.2f avg, "
+                "%.4f fell back to table start; mean reset %.0f cycles\n",
+                (double)pr[2] / ((double)N * T), 100.0 * (double)pr[0] / (double)(pr[1] ? pr[1] : 1), pr[3], pr[3] ? (double)pr[4] / pr[3] : 0.0,
+                pr[3] ? (double)pr[5] / pr[3] : 0.0, pr[2] ? (double)pr[6] / pr[2] : 0.0);
+#endif
     cudaFree(act); cudaFree(obs); cudaFree(rew); cudaFree(done);
   }
   return 0;

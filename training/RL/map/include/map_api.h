@@ -24,6 +24,12 @@ struct MapHost {   // 내려받은 한 벌(검증용)
   std::vector<int> navorg, navtag, navconf;   // [N] 조각 원점, 거리장을 만든 판 번호(−1 없음), 목표 확정
 };
 
+// 장치 다시 시작 요청(다시 만들기 없이 — 환경 EnvCtl 과 짝): pend 1 이면 apply() 가 모든 판을 생성자와 같은 상태로(배열 0·init_core(seed))
+struct MapCtl {
+  int pend, pad;
+  unsigned long long seed;
+};
+
 class DeviceMap {
  public:
   // ss_dev: BEHAVIOR 장면 묶음(장치, env bscene_host upload). 있으면 판마다 BMapEnv 를 두고 BEHAVIOR 판(env stage 3)을 장면으로 돈다
@@ -44,6 +50,11 @@ class DeviceMap {
   // 환경 되먹임(BEHAVIOR): env DeviceEnv::set_nav 에 넣는다. 장면 묶음이 없으면 모두 nullptr
   bsc::NavFb nav_fb() const { return bsc::NavFb{lev_, navorg_, navtag_, navconf_}; }
   void download(MapHost& h, const MapTok* tok = nullptr) const;   // tok: 토큰을 읽을 장치 자리(기본 안쪽 버퍼)
+  // 다시 시작 요청(비동기 복사 하나, 동기 없음) → 다음 apply() 에서. apply 는 요청이 없으면 바로 끝난다(그래프에 늘 넣어 둠).
+  // 학습기 장치 커리큘럼은 ctl() 에 직접 pend 를 쓴다
+  void request_reset(uint64_t seed);
+  void apply();
+  MapCtl* ctl() { return ctl_; }
   size_t bytes() const;
 
  private:
@@ -67,6 +78,10 @@ class DeviceMap {
   uint32_t* list_ = nullptr;   // 이번 스텝 keyframe·리셋·벽 판 번호(+ 시작 결과 3 비트), 장치 안에서 채움
   int* count_ = nullptr;       // 목록 길이
   MapCurr* curr_ = nullptr;    // 커리큘럼 처음 지도(장치 값, 기본 kCurrEmpty)
+  MapCtl* ctl_ = nullptr;      // 장치 다시 시작 요청
+  MapCtl* ctl_h_ = nullptr;    // 고정 호스트 칸 8 개
+  void* ctl_ev_[8] = {};
+  int ctl_slot_ = 0;
 };
 
 // 토큰 기록(5.3): T 스텝 × N 판 장치 버퍼. 스텝 t 에 map.step(s, 0, 0, st, rec.at(t)) — 호스트 동기 없이 롤아웃 버퍼 자리에 바로 쓴다

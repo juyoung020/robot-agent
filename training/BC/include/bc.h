@@ -196,7 +196,10 @@ struct Bc {
 
   explicit Bc(const BcConfig& c);
   ~Bc();
-  void make_env(uint64_t env_seed);
+  void make_env(uint64_t env_seed);   // 환경·지도를 새로 만듦(처음 한 번, 그리고 검증 bc_verify reseed 의 예전 판 흉내)
+  int reseed(uint64_t env_seed);      // 장치 씨앗 바꾸기 요청(다시 만들기·동기·그래프 다시 잡기 없음) — 다음 롤아웃 앞에서 적용
+  void apply_body();                  // 롤아웃 그래프 맨 앞: 요청이 있으면 환경·지도·고리 버퍼를 새로 만든 것과 같게(없으면 바로 끝남)
+  int* bc_pend = nullptr;             // 장치: 고리 버퍼 지우기 요청
   void capture();
   void set_dev(void* dst, const void* src, size_t n);   // 고정 호스트 링 + 비동기 복사
 

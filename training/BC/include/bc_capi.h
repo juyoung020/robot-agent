@@ -78,7 +78,7 @@ void* bc_create(const BcConfig* cfg);
 void bc_destroy(void* h);
 /* 교사 체크포인트(ppo_run 의 ckpt_*.bin) 읽기 — 동기, 시작 때만. 0 = 됨 */
 int bc_load_teacher(void* h, const char* path);
-/* 환경·지도를 이 씨앗으로 새로 만들고(에피소드 처음부터) 롤아웃 그래프를 다시 잡는다 — 동기(단계 경계) */
+/* 환경·지도 씨앗 바꾸기(장치 값 — 동기·다시 만들기·그래프 다시 잡기 없음): 다음에 띄우는 롤아웃 앞에서 모든 판을 새 씨앗으로(새로 만든 것과 비트 같음, bc_verify reseed) */
 int bc_reset_env(void* h, uint64_t env_seed);
 /* 누가 움직이나(0 교사, 1 학생)·기록하나 — 고정 호스트 링 → 장치 값 비동기 복사(동기·다시 잡기 없음), 다음에 띄우는 롤아웃부터 */
 int bc_set_mode(void* h, int32_t actor, int32_t record);

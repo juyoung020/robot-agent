@@ -277,7 +277,7 @@ __global__ void __launch_bounds__(256) gae_reduce_k(const float* part, int nb, i
 
 // ---- 기록(바퀴 끝): 매핑된 호스트 링에 직접 쓰고 누적을 0 으로, 바퀴 번호 +1 ----
 __global__ void __launch_bounds__(256) log_k(TrainState* ts, const float* met_task, const gmap::MapTok* tok_end, int* it_stat, const float* logstd, int N, int T,
-                                             int ring, int stage, PpoLog* out) {
+                                             int ring, const env::EnvCtl* ec, PpoLog* out) {
   __shared__ float sh[2 * 256];
   float q[2] = {0.f, 0.f};
   for (int i = threadIdx.x; i < N; i += 256) { q[0] = q[0] + met_task[i]; q[1] = q[1] + (obsv::goal_known(tok_end[i]) ? 1.f : 0.f); }
@@ -323,23 +323,41 @@ __global__ void __launch_bounds__(256) log_k(TrainState* ts, const float* met_ta
     L.k_b[k] = nb > 0 ? (float)it_stat[r + 2] / (float)nb : 0.f;
   }
   for (int k = 0; k < IT_ROWS * 3; ++k) it_stat[k] = 0;
-  L.stage = stage;
+  L.stage = ec->stage;   // 이 바퀴 롤아웃의 환경 단계(장치 값 — 바퀴 사이에 장치에서 바뀔 수 있음)
   out[it % ring] = L;
   ts->s_pg = ts->s_vl = ts->s_kl = ts->s_clip = ts->s_ent = ts->s_gnorm = 0.f;
   ts->n_mb = 0;
   ts->iter = it + 1;
 }
 
+// ---- 장치 단계 바꾸기(학습기 몫): 롤아웃 끝 줄(다음 바퀴 0 줄로 복사됨)·진행 중 에피소드 누적·첫 스텝 표시를 새로 만든 것과 같게 ----
+// make_env(예전 다시 만들기)는 버퍼 전체를 0 으로 했다 — 롤아웃이 1..T 줄을 덮어쓰고 0 줄은 T 줄의 사본이라 T 줄만 지우면 같다
+__global__ void tr_apply_k(const int* pend, int N, int T, float* obs_buf, float* obs_rows, gmap::MapTok* tok_T, float* ep_ret, int* ep_len, int* cur_len, int* first) {
+  if (*pend == 0) return;
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= N) return;
+  for (int c = 0; c < N_OBS_G1; ++c) {
+    obs_buf[(size_t)T * N_OBS_G1 * N + (size_t)c * N + i] = 0.f;
+    obs_rows[(size_t)T * N_OBS_G1 * N + (size_t)i * N_OBS_G1 + c] = 0.f;
+  }
+  uint4* tw = reinterpret_cast<uint4*>(tok_T + i);
+  for (int k = 0; k < (int)(sizeof(gmap::MapTok) / 16); ++k) tw[k] = make_uint4(0u, 0u, 0u, 0u);
+  ep_ret[i] = 0.f; ep_len[i] = 0; cur_len[i] = 0; first[i] = 1;
+}
+__global__ void tr_commit_k(int* pend) { *pend = 0; }
+
 // ---- 장치 커리큘럼(호스트 왕복 없음): 앞쪽 칸(si, req, wn, wpos)은 호스트 ack 가 16 B 비동기 복사로 덮어씀 ----
 constexpr int CURR_MAXS = 16, CURR_MAXW = 64;
 struct CurrCtl {
   int si, req, wn, wpos;   // 지금 단계, 환경 바꾸기 요청(−1 없음), 창에 든 수, 다음 쓸 칸
   int on, n, window, pad;
+  unsigned long long seed;   // 학습기 씨앗(환경·지도 씨앗 = Trainer::env_seed·map_seed 와 같은 식)
   float ns[CURR_MAXW], ne[CURR_MAXW];
   PpoCurrStage st[CURR_MAXS];
 };
 // 바퀴 끝(gae 가 이 바퀴 에피소드 수를 ts 에 둔 뒤, log_k 가 it_stat·ts 를 지우기 전): 창에 넣고 넘어가기 판단 → 같은 칸 번호의 기록
-__global__ void curr_k(CurrCtl* c, TrainState* ts, const int* it_stat, gmap::MapCurr* mc, bsc::BCurr* bc, int ring, PpoCurrLog* out) {
+__global__ void curr_k(CurrCtl* c, TrainState* ts, const int* it_stat, gmap::MapCurr* mc, bsc::BCurr* bc, env::EnvCtl* ec, gmap::MapCtl* mpc, int* tpend,
+                       int ring, PpoCurrLog* out) {
   PpoCurrLog L{-1, -1, 0, 0, 0.f, {0.f, 0.f, 0.f}};
   const long long it = ts->iter;
   if (c->on) {
@@ -366,16 +384,23 @@ __global__ void curr_k(CurrCtl* c, TrainState* ts, const int* it_stat, gmap::Map
         const PpoCurrStage nx = c->st[c->si + 1];
         c->wn = 0;
         c->wpos = 0;
-        if (nx.env != st.env) {
+        if (nx.env != st.env && !ec) {   // (예전 판) 호스트가 다시 만듦
           c->req = c->si + 1;
           L.evt = 1;
-        } else {   // 같은 환경: 다음 바퀴의 롤아웃부터 새 처음 지도 비율·행동 비트(스트림 순서 그대로)
+        } else {   // 같은 환경(또는 장치 단계 바꾸기): 다음 바퀴의 롤아웃부터 새 처음 지도 비율·행동 비트(스트림 순서 그대로)
+          if (nx.env != st.env) {   // 환경까지: 다음 롤아웃 그래프 앞 커널이 모든 판을 새 단계·씨앗으로(새로 만든 것과 같은 상태)
+            ec->pend = nx.env;
+            ec->seed = c->seed * 1000003ull + 17ull + (unsigned long long)nx.env;
+            mpc->pend = 1;
+            mpc->seed = c->seed * 7919ull + 3ull + (unsigned long long)nx.env;
+            *tpend = 1;
+          }
           c->si = c->si + 1;
           mc->p0 = nx.p0;
           mc->p1 = nx.p1;
           if (nx.act_mask) ts->act_mask = nx.act_mask;
           if (nx.b_set && bc) *bc = *reinterpret_cast<const bsc::BCurr*>(&nx.bcurr);   // BEHAVIOR 비율·장면·엄격(판 리셋 때 환경이 읽음)
-          L.evt = 2;
+          L.evt = nx.env != st.env ? 3 : 2;
         }
       }
     }
@@ -431,6 +456,7 @@ Trainer::Trainer(const PpoConfig& c) : cfg(c) {
   }
   // E2 BEHAVIOR: 장면 묶음(호스트에서 약 9 s, 장치 약 61 MB)과 커리큘럼 장치 값. 상자 방만이면 만들지 않는다
   bcurr_d = alloc<bsc::BCurr>(1);
+  tr_pend = alloc<int>(1);
   {
     bsc::BCurr b0 = *reinterpret_cast<const bsc::BCurr*>(&cfg.bcurr);
     if (cfg.beh || cfg.stage >= env::kStageBeh) {
@@ -619,6 +645,7 @@ void Trainer::make_env(int stage) {
   if (ss) env->set_bcurr_source(bcurr_d);
   map = std::make_unique<gmap::DeviceMap>(N, cfg.seed * 7919ull + 3ull + (uint64_t)stage, ss);
   if (ss) env->set_nav(map->nav_fb());
+  env->set_dynamic(env_families());   // 단계는 장치 값 — 바꾸기는 request_stage(다시 만들기·다시 잡기 없음)
   tok = std::make_unique<gmap::TokenRecorder>(N, T + 1);
   PCK(cudaMemset(obs_buf, 0, sizeof(float) * (size_t)(T + 1) * N_OBS_G1 * N));
   PCK(cudaMemset(obs_rows, 0, sizeof(float) * (size_t)(T + 1) * N_OBS_G1 * N));
@@ -733,16 +760,46 @@ void Trainer::gae() {
 }
 
 void Trainer::log_iter() {
-  log_k<<<1, 256>>>(ts, map->metrics() + (size_t)gmap::M_TASK * N, tok->at(T), it_stat, P + lay.logstd, N, T, cfg.log_ring, cfg.stage, ring_d);
+  log_k<<<1, 256>>>(ts, map->metrics() + (size_t)gmap::M_TASK * N, tok->at(T), it_stat, P + lay.logstd, N, T, cfg.log_ring, env->ctl(), ring_d);
   PCK(cudaGetLastError());
 }
 
 void Trainer::curr_iter() {
-  curr_k<<<1, 1>>>(cctl, ts, it_stat, curr_d, bcurr_d, cfg.log_ring, cring_d);
+  curr_k<<<1, 1>>>(cctl, ts, it_stat, curr_d, bcurr_d, env->ctl(), map->ctl(), tr_pend, cfg.log_ring, cring_d);
   PCK(cudaGetLastError());
 }
 
+// 장치 단계 바꾸기 적용(롤아웃 그래프 맨 앞): 환경 → 지도 → 학습기 끝 줄. 요청이 없으면 커널 다섯이 바로 끝난다
+void Trainer::apply_body() {
+  env->apply();
+  map->apply();
+  tr_apply_k<<<(N + 127) / 128, 128>>>(tr_pend, N, T, obs_buf, obs_rows, tok->at(T), ep_ret, ep_len, cur_len, first);
+  tr_commit_k<<<1, 1>>>(tr_pend);
+  PCK(cudaGetLastError());
+}
+
+uint32_t Trainer::env_families() const {
+  uint32_t m = cfg.env_stages ? cfg.env_stages : (1u << cfg.stage), f = 0;
+  for (int st = 0; st < 32; ++st)
+    if ((m >> st) & 1u) f |= env::stage_family(st);
+  return f;
+}
+
+int Trainer::request_stage(int stage) {
+  if (env->request_stage(stage, env_seed(stage)) != 0) return -2;
+  map->request_reset(map_seed(stage));
+  const int k = curr_slot++ % 8;
+  if (cudaEventQuery(curr_ev[k]) == cudaErrorNotReady) PCK(cudaEventSynchronize(curr_ev[k]));
+  const int one = 1;
+  std::memcpy(&curr_h[k], &one, sizeof one);
+  PCK(cudaMemcpyAsync(tr_pend, &curr_h[k], sizeof one, cudaMemcpyHostToDevice, 0));
+  PCK(cudaEventRecord(curr_ev[k], 0));
+  cfg.stage = stage;
+  return 0;
+}
+
 void Trainer::rollout_body() {
+  apply_body();
   // 지난 바퀴 끝 줄(관측·지도 토큰)을 0 줄로
   PCK(cudaMemcpyAsync(obs_buf, obs_buf + (size_t)T * N_OBS_G1 * N, sizeof(float) * N_OBS_G1 * N, cudaMemcpyDeviceToDevice, 0));
   PCK(cudaMemcpyAsync(obs_rows, obs_rows + (size_t)T * N_OBS_G1 * N, sizeof(float) * N_OBS_G1 * N, cudaMemcpyDeviceToDevice, 0));
@@ -832,13 +889,7 @@ int ppo_iterate(void* h) { return static_cast<Trainer*>(h)->iterate(); }
 int ppo_poll(void* h, PpoLog* out) { return static_cast<Trainer*>(h)->poll(out); }
 int ppo_inflight(void* h) { auto* t = static_cast<Trainer*>(h); return (int)(t->issued - t->polled); }
 int ppo_set_stage(void* h, int stage) {
-  auto* t = static_cast<Trainer*>(h);
-  if (t->issued != t->polled) return -1;
-  PCK(cudaDeviceSynchronize());
-  t->make_env(stage);
-  PCK(cudaDeviceSynchronize());
-  if (t->cfg.use_graphs) t->capture();
-  return 0;
+  return static_cast<Trainer*>(h)->request_stage(stage);
 }
 int ppo_ckpt_begin(void* h) {
   auto* t = static_cast<Trainer*>(h);
@@ -941,7 +992,7 @@ int ppo_curr_set(void* h, const PpoCurrStage* st, int32_t n, int32_t window, int
   auto* t = static_cast<Trainer*>(h);
   if (n < 1 || n > ppo::CURR_MAXS || window < 1 || window > ppo::CURR_MAXW || start < 0 || start >= n || t->issued != t->polled) return -1;
   ppo::CurrCtl c{};
-  c.si = start; c.req = -1; c.on = 1; c.n = n; c.window = window;
+  c.si = start; c.req = -1; c.on = 1; c.n = n; c.window = window; c.seed = t->cfg.seed;
   for (int k = 0; k < n; ++k) c.st[k] = st[k];
   PCK(cudaMemcpyAsync(t->cctl, &c, sizeof c, cudaMemcpyHostToDevice, 0));
   PCK(cudaStreamSynchronize(cudaStreamPerThread));   // 시작 때 한 번(c 는 스택)

@@ -45,6 +45,7 @@ static bool g_act8 = false;     // --act8: 행동 8 모두 학습(act_mask 0xff 
 static bool g_aug = false;      // --aug: 학습 때 흔들기 켬(속도 잡음·직전 명령·이름 흔들기·칸 지우기·지도 끄기, obs.h ObsAug)
 static bool g_beh = false;      // --beh: BEHAVIOR 장면 묶음을 만들어 환경·지도에 붙임(상자 방 단계면 결과 비트가 같아야 함). 단계 3 이면 늘 켬
 static int g_stage = -1;        // --stage S: v6/v7 의 환경 단계(−1 = 설정 그대로). 3 = BEHAVIOR B1–B3(장면 묶음 ~/ra_b1k)
+static bool g_curr = false;     // --curr: v6/v7 에 장치 커리큘럼(문턱 0): A1 → env 3(장치에서 환경 바꾸기) → env 3 다른 B 섞음(같은 환경) → A2 → env 3
 static PpoConfig small_cfg(uint64_t seed, int graphs, bool g4 = true) {
   PpoConfig c{};
   c.n_env = 512; c.horizon = 16; c.epochs = 2; c.minibatches = 4; c.stage = 1; c.use_map = 1; c.adaptive_lr = 0; c.use_graphs = graphs;
@@ -60,6 +61,8 @@ static PpoConfig small_cfg(uint64_t seed, int graphs, bool g4 = true) {
   else if (g_a2) { c.stage = 2; c.use_map = 2; }
   if (g_act8) c.act_mask = 0xffu;
   if (g_stage >= 0) c.stage = g_stage;
+  if (g_curr) { c.stage = 1; c.beh = 1; c.use_map = 2; c.env_stages = (1u << 1) | (1u << 2) | (1u << 3); }
+  if (std::getenv("PPO_ALLFAM")) { c.beh = 1; c.env_stages = (uint32_t)std::strtoul(std::getenv("PPO_ALLFAM"), nullptr, 0) | (1u << c.stage); }   // 측정: 환경 커널 무리 셋을 모두 띄움(장치 단계 판의 빈 커널 비용)
   if (g_beh || c.stage >= 3) {   // BEHAVIOR: 기본 섞음(B1 0.34·B2 0.33·B3), 모든 장면, 학습 인스턴스
     c.beh = 1;
     c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0};
@@ -375,8 +378,24 @@ struct Snap {
   std::vector<unsigned long long> tab;
   std::vector<PpoLog> logs;
 };
+static void snap_fill(Trainer& tr, Snap& s);
+static long diff_snap(const Snap& a, const Snap& b, bool verbose);
+// --curr 의 단계 표(문턱 0, 창 1 → 바퀴마다 넘어감): 환경 바꾸기 셋(장치), 같은 환경 B 섞음 바꾸기 하나
+static void set_test_curr(Trainer& tr) {
+  PpoCurrStage st[5] = {};
+  const PpoBCurr b1{1.f, 0.f, 0u, 0, 0.f, 0, 0, 0}, b23{0.f, 0.5f, 0u, 0, 0.f, 0, 0, 0};
+  st[0] = PpoCurrStage{1, 0.3f, 0.4f, 0.f, -1, 0u, 0, PpoBCurr{}};
+  st[1] = PpoCurrStage{3, 1.0f, 0.f, 0.f, -1, 0u, 1, b1};
+  st[2] = PpoCurrStage{3, 0.1f, 0.1f, 0.f, -1, 0u, 1, b23};
+  st[3] = PpoCurrStage{2, 0.3f, 0.4f, 0.f, -1, 0u, 0, PpoBCurr{}};
+  st[4] = PpoCurrStage{3, 0.3f, 0.4f, 2.f, -1, 0u, 1, PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0}};
+  const uint32_t all = (1u << tr.scenes->host.nsc) - 1u;
+  for (auto& q : st) if (q.b_set) q.bcurr.scene_mask = all;
+  if (ppo_curr_set(&tr, st, 5, 1, 0) != 0) { std::fprintf(stderr, "curr_set failed\n"); std::exit(2); }
+}
 static Snap run_iters(PpoConfig c, int iters) {
   Trainer tr(c);
+  if (g_curr) set_test_curr(tr);
   Snap s;
   for (int k = 0; k < iters; ++k) {
     tr.iterate();
@@ -384,6 +403,10 @@ static Snap run_iters(PpoConfig c, int iters) {
     PpoLog L;
     while (tr.poll(&L)) { L.rollout_ms = L.update_ms = 0; s.logs.push_back(L); }
   }
+  snap_fill(tr, s);
+  return s;
+}
+static void snap_fill(Trainer& tr, Snap& s) {
   const long long n = tr.lay.total;
   s.P = dl(tr.P, n); s.m = dl(tr.Am, n); s.v = dl(tr.Av, n);
   s.obs = dl(tr.obs_buf, (size_t)(tr.T + 1) * N_OBS_G1 * tr.N);
@@ -392,7 +415,53 @@ static Snap run_iters(PpoConfig c, int iters) {
   s.act = dl(tr.act_buf, (size_t)tr.T * tr.N * N_ACT);
   s.tok = dl(reinterpret_cast<const uint8_t*>(tr.tok->at(0)), sizeof(gmap::MapTok) * (size_t)(tr.T + 1) * tr.N);
   s.tab = dl(tr.tab, (size_t)3 * 2 * 10 * 6);
-  return s;
+}
+
+// 장치 단계 바꾸기 == 다시 만들기(예전 ppo_set_stage): 같은 설정으로 2 바퀴 → (가) request_stage(장치 값, 다음 롤아웃 앞에서 적용)
+// (나) 동기 + make_env(환경·지도 새로 만들기) + 그래프 다시 잡기 → 둘 다 4 바퀴 더. 변수·Adam·버퍼·토큰·기록이 비트로 같아야 한다
+static int run_switch(int N, int T, bool neg) {
+  std::printf("== switch: device set_stage == recreate (env + map + rollout tail), N %d T %d\n", N, T);
+  const int cs[][2] = {{1, 3}, {3, 2}, {2, 1}, {3, 3}, {0, 3}, {3, 0}};
+  int fails = 0;
+  for (const auto& q : cs) {
+    PpoConfig c = small_cfg(53, 1);
+    c.n_env = N; c.horizon = T; c.stage = q[0]; c.use_map = 2; c.beh = 1;
+    c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0};
+    c.env_stages = (1u << q[0]) | (1u << q[1]);
+    Snap r[2];
+    for (int dev = 0; dev < 2; ++dev) {
+      Trainer tr(c);
+      PpoLog L;
+      for (int k = 0; k < 2; ++k) { tr.iterate(); VCK(cudaDeviceSynchronize()); while (tr.poll(&L)) {} }
+      if (dev && neg) {   // 음성 대조: 환경만 다시 시작(지도·롤아웃 끝 줄은 그대로) — 반드시 달라야 함
+        if (tr.env->request_stage(q[1], tr.env_seed(q[1])) != 0) return 1;
+      } else if (dev) {
+        if (tr.request_stage(q[1]) != 0) { std::printf("  request_stage failed\n"); return 1; }
+      } else {
+        VCK(cudaDeviceSynchronize());
+        tr.make_env(q[1]);
+        VCK(cudaDeviceSynchronize());
+        tr.capture();
+      }
+      for (int k = 0; k < 4; ++k) {
+        tr.iterate();
+        VCK(cudaDeviceSynchronize());
+        while (tr.poll(&L)) { L.rollout_ms = L.update_ms = 0; r[dev].logs.push_back(L); }
+      }
+      snap_fill(tr, r[dev]);
+    }
+    const long d = diff_snap(r[0], r[1], false);
+    const PpoLog& L = r[1].logs.back();
+    std::printf("  env %d -> %d: %s (%ld differing words; last log stage %d, eps %.0f, B1/B2/B3 %.0f/%.0f/%.0f)\n", q[0], q[1], d ? "FAIL" : "same", d, L.stage, L.n_eps,
+                L.n_b[0], L.n_b[1], L.n_b[2]);
+    if (d) { if (!neg) diff_snap(r[0], r[1], true); ++fails; }
+  }
+  if (neg) {
+    std::printf("switch negative control (map/tail not restarted): %d / 6 cases differ (must be 6)\n", fails);
+    return fails == 6 ? 0 : 1;
+  }
+  std::printf("switch: %s\n", fails ? "FAIL" : "PASS");
+  return fails ? 1 : 0;
 }
 static long diff_snap(const Snap& a, const Snap& b, bool verbose) {
   auto cnt = [](const void* x, const void* y, size_t nb) { long d = 0; const uint8_t *p = (const uint8_t*)x, *q = (const uint8_t*)y; for (size_t i = 0; i < nb; i += 4) d += std::memcmp(p + i, q + i, 4) != 0; return d; };
@@ -420,6 +489,7 @@ static int run_v6() {
   for (const PpoLog& q : g.logs) { n0 += q.n_c[0]; n1 += q.n_c[1]; n2 += q.n_c[2]; ne += q.n_eps; }
   unsigned long long tn = 0;
   for (size_t k = 0; k < g.tab.size(); k += 6) tn += g.tab[k];
+  if (g_curr) { std::printf("  env stage per iteration:"); for (const PpoLog& q : g.logs) std::printf(" %d", q.stage); std::printf("\n"); }
   std::printf("V6: %s (%ld differing words); last log: succ %.3f kl %.5f goal known %.3f; episodes %.0f, by first map C0/C1/C2 %.0f/%.0f/%.0f, table %llu\n",
               d ? "FAIL" : "PASS", d, L.succ, L.kl, L.goal_known, ne, n0, n1, n2, tn);
   return d ? 1 : 0;
@@ -836,6 +906,8 @@ int main(int argc, char** argv) {
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--aug")) g_aug = true;
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--beh")) g_beh = true;
   for (int a = 2; a + 1 < argc; ++a) if (!std::strcmp(argv[a], "--stage")) g_stage = std::atoi(argv[a + 1]);
+  for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--curr")) g_curr = true;
+  if (m == "switch") return run_switch(argc > 2 && argv[2][0] != '-' ? std::atoi(argv[2]) : 1024, argc > 3 && argv[3][0] != '-' ? std::atoi(argv[3]) : 32, neg);
   if (m == "obs") return run_obs(neg);
   if (m == "slotcols") return run_slotcols();
   if (m == "bench") return run_bench(argc > 2 ? std::atoi(argv[2]) : 4096, argc > 3 ? std::atoi(argv[3]) : 64, argc > 4 ? std::atoi(argv[4]) : 20,

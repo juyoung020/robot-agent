@@ -190,6 +190,35 @@ __global__ void __launch_bounds__(32 * NAV_WPB) map_nav_kernel(env::Soa s, const
   if (lane == 0) { tag[i] = ep; org[i] = nav_org(pc0, pr0); }
 }
 
+// 다시 시작(apply): 판 하나 = 블록 하나. 요청이 있으면 생성자와 같은 상태(배열 0, 거리장 0xff·판 번호 −1, init_core). 없으면 바로 끝남
+struct MapBufs { MapCore* core; int16_t* L; uint32_t* seen; float* met; uint32_t* occ; int16_t* segs; TPrev* tprev; MapTok* tok; BMapEnv* bm; uint8_t* lev; int* navorg; int* navtag; int* navconf; };
+__global__ void __launch_bounds__(256) map_apply_k(MapBufs b, int N, const MapCtl* ctl) {
+  if (ctl->pend == 0) return;
+  const int i = blockIdx.x, t = threadIdx.x;
+  if (i >= N) return;
+  auto z32 = [&](void* p, size_t bytes) {   // 4 B 낱말로 0(모든 배열이 4 B 정렬·크기)
+    uint32_t* w = reinterpret_cast<uint32_t*>(p);
+    for (size_t k = t; k < bytes / 4; k += 256) w[k] = 0u;
+  };
+  z32(b.L + (size_t)i * NCELL, sizeof(int16_t) * NCELL);
+  z32(b.seen + (size_t)i * NWORD, sizeof(uint32_t) * NWORD);
+  z32(b.occ + (size_t)i * NWORD, sizeof(uint32_t) * NWORD);
+  z32(b.segs + (size_t)i * SEGW, sizeof(int16_t) * SEGW);
+  z32(b.tprev + (size_t)i * KSLOT, sizeof(TPrev) * KSLOT);
+  z32(b.tok + i, sizeof(MapTok));
+  for (int k = t; k < N_MET; k += 256) b.met[(size_t)k * N + i] = 0.f;
+  if (b.bm) {
+    z32(b.bm + i, sizeof(BMapEnv));
+    uint32_t* lv = reinterpret_cast<uint32_t*>(b.lev + (size_t)i * NAV_P * NAV_P);
+    for (int k = t; k < NAV_P * NAV_P / 4; k += 256) lv[k] = 0xffffffffu;
+    if (t == 0) { b.navorg[i] = 0; b.navtag[i] = -1; b.navconf[i] = 0; }
+  }
+  if (t == 0) init_core(b.core[i], ctl->seed, i);
+}
+static_assert(sizeof(int16_t) * NCELL % 4 == 0 && sizeof(int16_t) * SEGW % 4 == 0 && sizeof(TPrev) % 4 == 0 && sizeof(MapTok) % 4 == 0 && sizeof(BMapEnv) % 4 == 0 &&
+                  NAV_P * NAV_P % 4 == 0, "map_apply_k clears 4-byte words");
+__global__ void map_commit_k(MapCtl* ctl) { ctl->pend = 0; }
+
 #define CK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) { std::fprintf(stderr, "CUDA error %s at %s:%d\n", cudaGetErrorString(e_), __FILE__, __LINE__); std::abort(); } } while (0)
 
 DeviceMap::DeviceMap(int N, uint64_t seed, const bsc::SceneSet* ss_dev) : N_(N), ss_(ss_dev) {
@@ -220,6 +249,8 @@ DeviceMap::DeviceMap(int N, uint64_t seed, const bsc::SceneSet* ss_dev) : N_(N),
   CK(cudaMalloc(&list_, sizeof(uint32_t) * (size_t)N));
   CK(cudaMalloc(&count_, sizeof(int)));
   CK(cudaMalloc(&curr_, sizeof(MapCurr)));
+  CK(cudaMalloc(&ctl_, sizeof(MapCtl)));
+  CK(cudaMemset(ctl_, 0, sizeof(MapCtl)));
   CK(cudaMemcpy(curr_, &kCurrEmpty, sizeof(MapCurr), cudaMemcpyHostToDevice));
   CK(cudaMemset(L_, 0, sizeof(int16_t) * NCELL * (size_t)N));
   CK(cudaMemset(seen_, 0, sizeof(uint32_t) * NWORD * (size_t)N));
@@ -227,7 +258,26 @@ DeviceMap::DeviceMap(int N, uint64_t seed, const bsc::SceneSet* ss_dev) : N_(N),
   map_init_kernel<<<(N + NT - 1) / NT, NT>>>(core_, N, seed);
   CK(cudaGetLastError());
 }
-DeviceMap::~DeviceMap() { cudaFree(core_); cudaFree(L_); cudaFree(seen_); cudaFree(met_); cudaFree(list_); cudaFree(count_);
+void DeviceMap::request_reset(uint64_t seed) {
+  if (!ctl_h_) {
+    CK(cudaHostAlloc(&ctl_h_, sizeof(MapCtl) * 8, cudaHostAllocDefault));
+    for (auto& e : ctl_ev_) { cudaEvent_t ev; CK(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming)); e = ev; }
+  }
+  const int k = ctl_slot_++ % 8;
+  cudaEvent_t ev = static_cast<cudaEvent_t>(ctl_ev_[k]);
+  if (cudaEventQuery(ev) == cudaErrorNotReady) CK(cudaEventSynchronize(ev));
+  ctl_h_[k] = MapCtl{1, 0, (unsigned long long)seed};
+  CK(cudaMemcpyAsync(ctl_, &ctl_h_[k], sizeof(MapCtl), cudaMemcpyHostToDevice, 0));
+  CK(cudaEventRecord(ev, 0));
+}
+void DeviceMap::apply() {
+  const MapBufs b{core_, L_, seen_, met_, occ_, segs_, tprev_, tok_, bm_, lev_, navorg_, navtag_, navconf_};
+  map_apply_k<<<N_, 256>>>(b, N_, ctl_);
+  map_commit_k<<<1, 1>>>(ctl_);
+}
+
+DeviceMap::~DeviceMap() { cudaFree(ctl_); if (ctl_h_) { for (void* e : ctl_ev_) if (e) cudaEventDestroy(static_cast<cudaEvent_t>(e)); cudaFreeHost(ctl_h_); }
+                         cudaFree(core_); cudaFree(L_); cudaFree(seen_); cudaFree(met_); cudaFree(list_); cudaFree(count_);
                          cudaFree(occ_); cudaFree(segs_); cudaFree(tprev_); cudaFree(tok_); cudaFree(curr_); if (bm_) { cudaFree(bm_); cudaFree(lev_); cudaFree(navorg_); cudaFree(navtag_); cudaFree(navconf_); } }
 
 size_t DeviceMap::bytes() const {

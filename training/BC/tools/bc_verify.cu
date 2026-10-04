@@ -601,7 +601,8 @@ struct Snap {
   std::vector<unsigned long long> tab;
   std::vector<BcLog> logs;
 };
-static Snap run_seq(BcConfig c) {
+// reseed: 0 = 씨앗 바꾸기 없음(예전 순서), 1 = 기록·갱신 뒤 장치 씨앗 바꾸기(bc_reset_env), 2 = 같은 자리에서 예전 판(동기 + make_env + 그래프 다시 잡기)
+static Snap run_seq(BcConfig c, int reseed = 0) {
   Bc b(c);
   load_aux(&b);
   Snap s;
@@ -609,6 +610,12 @@ static Snap run_seq(BcConfig c) {
   bc_set_mode(&b, 0, 1);
   for (int k = 0; k < 2; ++k) { b.launch(0); drain(); }
   for (int k = 0; k < 3; ++k) { b.launch(1); drain(); }
+  if (reseed) {
+    VCK(cudaDeviceSynchronize());
+    drain();
+    if (reseed == 1) { if (bc_reset_env(&b, c.env_seed + 77) != 0) std::exit(2); }
+    else { b.make_env(c.env_seed + 77); VCK(cudaDeviceSynchronize()); if (c.use_graphs) b.capture(); }
+  }
   bc_set_mode(&b, 1, 1);
   b.launch(0);
   for (int k = 0; k < 2; ++k) { b.launch(1); drain(); }
@@ -652,6 +659,14 @@ static int run_v6() {
   for (size_t k = 0; k < g.tab.size(); k += 6) ne += g.tab[k];
   std::printf("v6: %ld words differ, %llu episodes in table, %zu logs  %s\n", d, ne, g.logs.size(), d == 0 ? "PASS" : "FAIL");
   return d != 0;
+}
+// 장치 씨앗 바꾸기 == 다시 만들기(예전 bc_reset_env): 교사 기록 2 → 갱신 3 → 씨앗 바꾸기 → DAgger 롤아웃·갱신·평가 롤아웃 — 모든 자료·변수·기록이 비트로 같아야
+static int run_reseed() {
+  const Snap a = run_seq(small_cfg(5, 1), 1), b = run_seq(small_cfg(5, 1), 2), z = run_seq(small_cfg(5, 1), 0);
+  std::printf("reseed (%s): device reseed vs recreate:\n", g_lite ? "lite" : g_arch1 ? "token student (arch 1)" : "image student");
+  const long d = diff_snap(a, b, true), dz = diff_snap(a, z, false);
+  std::printf("reseed: %ld words differ (must be 0); vs no reseed %ld (must be > 0)  %s\n", d, dz, d == 0 && dz > 0 ? "PASS" : "FAIL");
+  return !(d == 0 && dz > 0);
 }
 static int run_v7() {
   const Snap a = run_seq(small_cfg(7, 1)), b = run_seq(small_cfg(7, 1)), c = run_seq(small_cfg(8, 1));
@@ -824,6 +839,7 @@ int main(int argc, char** argv) {
     return all ? 0 : 1;
   }
   if (m == "v6") return run_v6();
+  if (m == "reseed") return run_reseed();
   if (m == "rquality") return run_rquality(argc > 2 ? (float)std::atof(argv[2]) : 0.8f, argc > 3 ? (float)std::atof(argv[3]) : 0.8f, argc > 4 ? (float)std::atof(argv[4]) : 0.8f);
   if (m == "v7") return run_v7();
   if (m == "bench")

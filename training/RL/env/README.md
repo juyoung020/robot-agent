@@ -84,6 +84,7 @@ cmake --build ~/ra_envbuild -j4
 ~/ra_envbuild/pnp_check [10000] [--strict] [--negative free_area|in_closed|artic|spawn_reach|spawn_free|dst_reach|stance]
 ~/ra_envbuild/env_verify 2048 600 --stage 3 --follow [--strict] [--split 1] [--mix p1,p2] [--negative | --negative-scene]
 ~/ra_envbuild/env_bench 300 3 32768
+~/ra_envbuild/env_bench_prof 300 3 32768        # 측정 빌드(-DENV_PROF): BEHAVIOR 리셋이 워프를 붙잡는 몫·spawn_ok 시도 수
 ```
 
 | 파일 | 내용 |
@@ -102,5 +103,24 @@ API(뷰어·학습기용, 뒤로 맞음 — 예전 호출은 그대로):
 
 ## 성능 메모(호스트 의존 점검, 2026-10-04 — `../ppo/README.md`·`../../BC/README.md` 같은 절)
 - step·판 리셋은 모두 장치 안이다(호스트 일 없음). PPO·BC 정상 구간의 바퀴·그래프당 호스트 동기 0(nsys).
-- 남은 호스트 의존 = **단계·씨앗 바꾸기마다 `DeviceEnv` 를 새로 만듦**(cudaMalloc·동기 cudaMemcpy·init 커널) → 학습기가 띄운 바퀴를 비우고 동기 + 그래프 다시 잡기. 잰 GPU 빈틈: PPO 환경 단계 바꾸기 번마다 약 7 ms, BC `bc_reset_env`(평가·기록 씨앗) 번마다 약 16 ms. 환경 단계·씨앗도 `BCurr` 처럼 장치 값(`set_stage`/`reseed`: 같은 버퍼에 init 커널만)이면 다시 만들기·다시 잡기가 없어진다(제안, 안 고침).
-- BEHAVIOR 리셋(`pick_pnp` 장면 ≤ 32 훑기 + `spawn_ok` 최대 64 번)은 step 커널 안에서 판마다 돈다 → 리셋하는 판이 든 워프는 그 판을 기다린다. 잰 0.336 ms/스텝(N 4,096)에서 리셋 몫은 따로 재지 않았다 — 판 수·리셋 비율이 커지면 clock64 구간으로 볼 것.
+- ~~남은 호스트 의존 = 단계·씨앗 바꾸기마다 `DeviceEnv` 를 새로 만듦(PPO 약 7 ms·BC 약 16 ms 빈틈 + 그래프 다시 잡기)~~ → **고침(2026-10-04): 장치 단계·씨앗** 아래 절.
+- BEHAVIOR 리셋 비용(잰 값, 아래 절): 스텝 커널 워프 시간의 0.4–0.6 % — 고치지 않음.
+
+### 장치 단계·씨앗(`set_dynamic` / `request_stage` / `apply`, 2026-10-04) — 잰 값
+- `EnvCtl{stage, pend, seed}`(장치). `set_dynamic(무리 비트)` 뒤 `step` 은 무리(상자 방 A0/A1 · A2 · BEHAVIOR)마다 커널을 띄우고 커널이 장치 단계를 읽어 자기 무리가 아니면 바로 끝난다(블록 전체 같은 값 — A2 워프 커널도 워프 동기 전에 끝남). `request_stage(단계, 씨앗)` = 고정 호스트 칸 + 비동기 복사 하나(동기 없음), `apply()` = 요청이 있으면 판마다 상태 칸을 모두 0 으로 채우고 그 단계 init(생성자와 같은 일), 없으면 바로 끝나는 커널 둘 — 그래프에 늘 넣어 둔다. 지도도 같은 짝 `DeviceMap::request_reset(씨앗)`/`apply()`(판 = 블록, 배열 0·거리장 0xff·`init_core`). 예전 호출(`set_dynamic` 안 함)은 예전 커널 그대로.
+- 학습기: 롤아웃 그래프 맨 앞 = 환경·지도·학습기 끝 줄 `apply`. 장치 커리큘럼(`curr_k`)이 환경이 바뀌는 넘어가기에서 요청을 직접 적는다(호스트 일 없음). BC `bc_reset_env` = 같은 요청.
+- **새로 만든 것과 비트 같음**: `ppo_verify switch`(N 1,024, 두 바퀴 뒤 바꾸고 네 바퀴 더 — 변수·Adam·관측·이득·가치·행동·지도 토큰·기록·에피소드 표) env 1→3·3→2·2→1·3→3·0→3·3→0 모두 0 낱말 다름, 음성 대조(환경만 다시 시작, 지도·끝 줄 그대로) 6/6 다름. `bc_verify reseed`(기록 2 → 갱신 3 → 씨앗 바꾸기 → DAgger·평가) `--lite`·`--arch1 --act8` 0 낱말 다름(씨앗 안 바꾼 판과는 1,990,248·3,265,968 다름). `ppo_verify v6 --curr`(문턱 0 장치 커리큘럼: 바퀴마다 env 1 3 3 2 3 …) 그래프 = 즉시 실행 0 낱말, `v7 --curr` 같은 씨앗 0 / 다른 씨앗 2,398,736.
+- 빈틈(nsys, `--cuda-graph-trace`): PPO `ppo_run`(N 4,096, `ppo_b.json` 문턱 0 사본, 15.5 s·71 바퀴, 환경 바꾸기 A0 → A1 → A2 → B 셋 + B 안 바꾸기 다섯) GPU 바쁨 99.74 %, **1 ms 넘는 빈틈 0**, 첫·끝 그래프 사이 API = `cudaGraphLaunch`·`cudaEventRecord`·`cudaEventQuery`·`cudaMemcpyAsync`(체크포인트)·`cudaStreamWaitEvent` 뿐(동기·할당·잡기 0). BC `bc_run`(영상 학생 N 256 T 16, 기록 → BC → 평가 → DAgger → 평가, 씨앗 바꾸기 셋): 예전 판(`BC_RESEED_OLD=1`) 6.2·6.6·7.1 ms 빈틈 + `cudaMalloc`/`cudaFree` 54·잡기 9 → 장치 판 빈틈 0(남은 1.5–1.7 ms 둘은 평가 표 읽기 `bc_table` 동기 — 예전 판에도 있음), 평가 결과 같음.
+- 무리 여럿을 띄우는 값: 빈 커널은 무시할 만함(`PPO_ALLFAM` bench: A2 환경 커널만 대 셋 모두 rollout 49.4 대 49.5 ms). 대신 장면 묶음(`beh`)을 붙이면 상자 방 단계에서도 지도가 BEHAVIOR 판 커널(`BEH = true`)을 써서 N 4,096 A2 rollout 46.0–46.6 → 49.4 ms(+3 ms/바퀴, 갱신 그대로) — 결과 비트는 같다.
+
+### BEHAVIOR 리셋 비용(`env_bench_prof`, 측정 빌드 `-DENV_PROF` — clock64, 2026-10-04)
+`env_bench_prof 300 3 32768`(같은 무작위 행동 고정, 다른 GPU 일이 같이 돌던 때 — 사이클 절대값은 부풀었을 수 있고 비율만 봄):
+
+| N | 리셋/env-step | 리셋을 기다린 워프 시간(스텝 커널 워프 시간 중) | 집기·놓기 리셋의 `spawn_ok` 시도 평균 | 64 번 다 써서 표의 시작 | 리셋 하나 평균 |
+|---|---|---|---|---|---|
+| 1,024 | 0.0084 | 0.5 % | 4.37 | 0.35 % | 72k 사이클 |
+| 4,096 | 0.0085 | 0.6 % | 4.62 | 0.52 % | 74k |
+| 16,384 | 0.0086 | 0.4 % | 4.41 | 0.30 % | 60k |
+| 32,768 | 0.0088 | 0.6 % | 4.44 | 0.34 % | 109k |
+
+- 리셋 하나는 비싸지만(스텝 하나의 수십 배) 드물고, 시도는 평균 4.4 번(64 번은 0.3–0.5 % 판만) → 워프가 리셋을 기다리는 몫이 1 % 아래라 **고치지 않음**. PPO 초반처럼 판이 짧으면(평균 길이 30 스텝 = 리셋 0.03/스텝) 비례해 약 2 % (추정). 고칠 길(필요해지면): 시도 t 의 난수 상태 = 시작 + 3t·γ(splitmix64 덧셈 상태)라 워프 32 레인이 시도를 나눠 첫 성공을 고르면 CPU 참조판과 비트가 같다.

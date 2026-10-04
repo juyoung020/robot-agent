@@ -509,6 +509,7 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
   it_out = alloc<int>(3);
   tab = alloc<unsigned long long>((size_t)3 * 2 * TAB_C * TAB_Q);
   dis = alloc<float>((size_t)T * N);
+  bc_pend = alloc<int>(1);
   curr_d = alloc<gmap::MapCurr>(1);
   mode_d = alloc<Mode>(1);
   data_d = alloc<Data>(1);
@@ -690,6 +691,7 @@ void Bc::make_env(uint64_t env_seed) {
   cfg.env_seed = env_seed;
   tok.reset(); map.reset(); env.reset();
   env = std::make_unique<env::DeviceEnv>(N, cfg.stage, env_seed * 1000003ull + 17ull + (uint64_t)cfg.stage);
+  env->set_dynamic(env::stage_family(cfg.stage));   // 씨앗 바꾸기는 장치 값(reseed)
   map = std::make_unique<gmap::DeviceMap>(N, env_seed * 7919ull + 3ull + (uint64_t)cfg.stage);
   tok = std::make_unique<gmap::TokenRecorder>(N, 2);
   BCK(cudaMemset(obs_col, 0, sizeof(float) * 2 * env::N_OBS * N));
@@ -928,7 +930,39 @@ void Bc::update_body() {
   BCK(cudaGetLastError());
 }
 
+// 씨앗 바꾸기 적용: make_env 가 0 으로 하던 고리 버퍼(관측 2 줄·토큰 2 줄·진행 중 길이·롤아웃 표)를 지움
+__global__ void bc_apply_k(const int* pend, int N, float* obs_col, gmap::MapTok* tok0, gmap::MapTok* tok1, int* cur_len, int* it_stat, int* it_out) {
+  if (*pend == 0) return;
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= N) return;
+  for (int c = 0; c < 2 * env::N_OBS; ++c) obs_col[(size_t)c * N + i] = 0.f;
+  uint4* a = reinterpret_cast<uint4*>(tok0 + i);
+  uint4* b = reinterpret_cast<uint4*>(tok1 + i);
+  for (int k = 0; k < (int)(sizeof(gmap::MapTok) / 16); ++k) { a[k] = make_uint4(0u, 0u, 0u, 0u); b[k] = make_uint4(0u, 0u, 0u, 0u); }
+  cur_len[i] = 0;
+  if (i == 0) { for (int k = 0; k < 9; ++k) it_stat[k] = 0; for (int k = 0; k < 3; ++k) it_out[k] = 0; }
+}
+__global__ void bc_commit_k(int* pend) { *pend = 0; }
+
+void Bc::apply_body() {
+  env->apply();
+  map->apply();
+  bc_apply_k<<<(N + 127) / 128, 128>>>(bc_pend, N, obs_col, tok->at(0), tok->at(1), cur_len, it_stat, it_out);
+  bc_commit_k<<<1, 1>>>(bc_pend);
+  BCK(cudaGetLastError());
+}
+
+int Bc::reseed(uint64_t env_seed) {
+  cfg.env_seed = env_seed;
+  if (env->request_stage(cfg.stage, env_seed * 1000003ull + 17ull + (uint64_t)cfg.stage) != 0) return -2;
+  map->request_reset(env_seed * 7919ull + 3ull + (uint64_t)cfg.stage);
+  const int one = 1;
+  set_dev(bc_pend, &one, sizeof one);
+  return 0;
+}
+
 void Bc::rollout_body(bool student) {
+  apply_body();
   for (int t = 0; t < T; ++t) rollout_step(t, student);
   rollout_end_k<<<1, 256>>>(dis, (long long)T * N, N, T, mode_d, data_d, cap, it_stat, it_out, ts, cfg.log_ring, ring_d);
   BCK(cudaGetLastError());
@@ -1056,12 +1090,16 @@ int bc_load_text_table(void* h, const char* path) {
 }
 int bc_reset_env(void* h, uint64_t env_seed) {
   auto* b = static_cast<Bc*>(h);
-  if (b->issued != b->polled) return -1;
-  BCK(cudaDeviceSynchronize());
-  b->make_env(env_seed);
-  BCK(cudaDeviceSynchronize());
-  if (b->cfg.use_graphs) b->capture();
-  return 0;
+  static const bool old = [] { const char* e = std::getenv("BC_RESEED_OLD"); return e && std::atoi(e) != 0; }();
+  if (old) {   // 측정용 예전 판(동기 + 다시 만들기 + 그래프 다시 잡기) — README 빈틈 전후 비교
+    if (b->issued != b->polled) return -1;
+    BCK(cudaDeviceSynchronize());
+    b->make_env(env_seed);
+    BCK(cudaDeviceSynchronize());
+    if (b->cfg.use_graphs) b->capture();
+    return 0;
+  }
+  return b->reseed(env_seed);
 }
 int bc_set_mode(void* h, int32_t actor, int32_t record) {
   auto* b = static_cast<Bc*>(h);

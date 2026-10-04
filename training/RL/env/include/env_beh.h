@@ -13,6 +13,17 @@
 
 namespace env {
 
+// 리셋 비용 재기(측정 빌드 -DENV_PROF 만, env_bench): [0] 워프마다 (리셋 판의 리셋 사이클 최댓값) 합 = 워프가 리셋을 기다린 사이클,
+// [1] 워프마다 커널 사이클 합, [2] 리셋 수, [3] 집기·놓기 리셋 수, [4] spawn_ok 시도 합, [5] 64 번 다 써서 표의 시작을 쓴 수, [6] 리셋 사이클 합(판마다)
+#if defined(ENV_PROF) && defined(__CUDACC__)
+__device__ unsigned long long g_env_prof[8];
+#endif
+#if defined(ENV_PROF) && defined(__CUDA_ARCH__)
+#define ENV_PROF_ADD(k, v) atomicAdd(&g_env_prof[k], (unsigned long long)(v))
+#else
+#define ENV_PROF_ADD(k, v) ((void)0)
+#endif
+
 // BEHAVIOR 판 상수(가정 표시는 env.h K 와 같은 뜻)
 struct KB {
   static constexpr float b1_r = 0.5f;          // B1: 목표 점 0.5 m 안(CURRICULUM_BEHAVIOR2026 3절)
@@ -154,12 +165,18 @@ DEV void reset_beh(Core& c, BState& b, const bsc::SceneSet& ss, const bsc::BCurr
     bool ok = false;
     float x = 0.f, y = 0.f, yaw = 0.f;
     const float R = bsc::WIN_HALF - KP::win_margin;
+    int tries = 0;
     for (int t = 0; t < KP::spawn_tries && !ok; ++t) {
       x = rand_range(c.rng, -R, R);
       y = rand_range(c.rng, -R, R);
       yaw = rand_range(c.rng, -kPi, kPi);
       ok = spawn_ok(ss, E, x, y, yaw, cu.strict, cu.nofilter);
+      ++tries;
     }
+    ENV_PROF_ADD(3, 1);
+    ENV_PROF_ADD(4, tries);
+    if (!ok) ENV_PROF_ADD(5, 1);
+    (void)tries;
     if (!ok) { x = E.sx; y = E.sy; yaw = E.syaw; }
     c.x = x; c.y = y; c.yaw = yaw;
     b.fset = cu.strict ? 1 : 0;
@@ -398,7 +415,18 @@ DEV void step_env_beh(const Soa& s, int i, const float* act, float* obs, float* 
   rew[i] = o.reward;
   done[i] = o.done;
   s.iv[I_B_LKIND * s.N + i] = b.kind;   // 끝난 판의 단계(리셋 앞)
+#if defined(ENV_PROF) && defined(__CUDA_ARCH__)
+  const long long pc0 = clock64();
+#endif
   if (o.done != kRunning) reset_beh(c, b, ss, *cu);
+#if defined(ENV_PROF) && defined(__CUDA_ARCH__)
+  {
+    const unsigned long long dc = o.done != kRunning ? (unsigned long long)(clock64() - pc0) : 0ull;
+    if (o.done != kRunning) { ENV_PROF_ADD(2, 1); ENV_PROF_ADD(6, dc); }
+    const unsigned long long wm = __reduce_max_sync(__activemask(), (unsigned)dc);
+    if ((threadIdx.x & 31) == (__ffs(__activemask()) - 1)) ENV_PROF_ADD(0, wm);
+  }
+#endif
   store(s, i, c);
   store_b(s, i, b);
 }

@@ -6,8 +6,9 @@
 //
 // 커리큘럼(G4, 계획서 5.5): 단계마다 G1 환경 단계(env)와 처음 지도 비율(map: [C0, C1], 나머지 C2)을 둔다. 넘어가기 = 그 단계가 재는
 // 처음 지도(metric: 0 C0, 1 C1, 2 C2, -1 전체)의 에피소드 성공률(최근 window 바퀴 에피소드 가중) ≥ promote.
-// 넘어가기 판단은 장치가 한다(ppo_curr_*: 갱신 그래프 끝 커널이 창·문턱을 보고, 같은 환경이면 처음 지도 비율·행동 비트를 바로 바꿈 —
-// 호스트 왕복·지연 없음, 띄운 바퀴 수와 무관하게 결정적). 환경 단계가 바뀌면 장치가 요청만 적고, 호스트가 기록에서 보고 ppo_set_stage → ppo_curr_ack.
+// 넘어가기 판단은 장치가 한다(ppo_curr_*: 갱신 그래프 끝 커널이 창·문턱을 보고 처음 지도 비율·행동 비트·BEHAVIOR 값을 바로 바꿈 —
+// 호스트 왕복·지연 없음, 띄운 바퀴 수와 무관하게 결정적). 환경 단계가 바뀌어도 장치가 다음 바퀴 롤아웃 앞에서 모든 판을 새로 시작한다(evt 3,
+// 다시 만들기·그래프 다시 잡기 없음). 예전 판(evt 1: 호스트가 ppo_set_stage → ppo_curr_ack)도 처리는 남김.
 use serde_json::Value;
 mod runfolder; // 학습 뷰어 실행 폴더(run.json · progress.jsonl, TRAIN_VIEWER.md 4절) — 기록 스레드에서만
 use std::fs;
@@ -96,6 +97,8 @@ struct PpoConfig {
     bcurr: PpoBCurr,
     b_scenes: [u8; 256],
     b_rasc_dir: [u8; 256],
+    env_stages: u32,
+    pad_es: i32,
 }
 
 #[repr(C)]
@@ -313,6 +316,8 @@ fn make_config(v: &Value) -> PpoConfig {
         b_scenes: cstr256(&v.get("beh").and_then(|b| b.get("build")).and_then(|x| x.as_array())
             .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(",")).unwrap_or_default()),
         b_rasc_dir: cstr256(v.get("beh").and_then(|b| b.get("rasc_dir")).and_then(|x| x.as_str()).unwrap_or("")),
+        env_stages: 0,
+        pad_es: 0,
     }
 }
 
@@ -472,6 +477,7 @@ fn main() {
     c.map_p0 = stages[0].p0;
     c.map_p1 = stages[0].p1;
     c.beh = if stages.iter().any(|s| s.env >= 3) || gi(v.get("beh").unwrap_or(&Value::Null), "on", 0) != 0 { 1 } else { 0 };
+    c.env_stages = stages.iter().fold(0u32, |m, s| m | (1u32 << s.env));   // 장치 단계 바꾸기가 띄울 환경 커널 무리
     let h = unsafe { ppo_create(&c) };
     // BEHAVIOR 단계마다 장치 커리큘럼 값(장면 이름 → 장면 묶음 비트는 학습기가 묶음을 만든 뒤에야 앎)
     let mut nsc = 0;
@@ -557,10 +563,13 @@ fn main() {
                     st.name, cl.avg, metric_name(st.metric), window, st.promote, log.iter, log.env_steps, t0.elapsed().as_secs_f64(), nx.name
                 )))
                 .unwrap();
-                if cl.evt == 2 {
+                if cl.evt == 2 || cl.evt == 3 {
                     si = cl.si as usize;
                     tx.send(Msg::Stage(si, t0.elapsed().as_secs_f64())).unwrap();
                     let nx = &stages[si];
+                    if cl.evt == 3 {
+                        tx.send(Msg::Note(format!("curriculum: env {} restarted on device before iter {} (no host sync, no graph recapture)", env_name(nx.env), log.iter + 1))).unwrap();
+                    }
                     tx.send(Msg::Note(format!("curriculum: now {} (first map C0 {:.2} C1 {:.2} C2 {:.2}{}: switched on device from iter {}, no host round trip)",
                         nx.name, nx.p0, nx.p1, 1.0 - nx.p0 - nx.p1,
                         b_of[si].map(|b| format!(", B1 {:.2} B2 {:.2} B3 {:.2} scenes {:#x}", b.p1, b.p2, 1.0 - b.p1 - b.p2, b.scene_mask)).unwrap_or_default(),

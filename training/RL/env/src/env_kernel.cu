@@ -1,4 +1,5 @@
 // 환경 커널: 스레드 하나 = 판 하나. 호스트 쪽은 장치 메모리와 실행만(상태는 제자리 갱신 — CUDA 그래프로 잡을 수 있게).
+#include <cstddef>
 #include <cstdio>
 #include <vector>
 
@@ -13,8 +14,10 @@ __global__ void __launch_bounds__(128) init_kernel(Soa s, uint64_t seed, int sta
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < s.N) init_env<FURN>(s, i, seed, stage);
 }
+// ctl != nullptr(장치 단계 판): 단계를 장치 값에서 읽고, 이 커널 무리의 단계가 아니면 바로 끝남(블록 전체 같은 값)
 template <bool FURN>
-__global__ void __launch_bounds__(128) step_kernel(Soa s, const float* act, float* obs, float* rew, int* done, int stage, int arm_free, int bug) {
+__global__ void __launch_bounds__(128) step_kernel(Soa s, const float* act, float* obs, float* rew, int* done, int stage, int arm_free, int bug, const EnvCtl* ctl) {
+  if (ctl) { stage = ctl->stage; if (stage > 1) return; }
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < s.N) step_env<FURN>(s, i, act, obs, rew, done, stage, arm_free != 0, bug);
 }
@@ -67,7 +70,8 @@ __device__ void path_prepare_warp(const Core& c, bool need) {
   }
 }
 // A2 스텝 커널: step_env<true> 와 같은 일. 리셋의 장면 만들기·끝은 판마다, 경로 꼭짓점은 워프가(위). 길 없음 대비 고리(reset_a2_paths)도 같은 순서
-__global__ void __launch_bounds__(128) step_kernel_a2(Soa s, const float* act, float* obs, float* rew, int* done, int arm_free, int bug) {
+__global__ void __launch_bounds__(128) step_kernel_a2(Soa s, const float* act, float* obs, float* rew, int* done, int arm_free, int bug, const EnvCtl* ctl) {
+  if (ctl && ctl->stage != 2) return;   // 장치 단계 판: 커널 전체(모든 워프) 같은 값 — 아래 워프 동기 전에 끝남
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   const bool live = i < s.N;
   Core c{};
@@ -96,10 +100,43 @@ __global__ void __launch_bounds__(128) init_kernel_beh(Soa s, uint64_t seed, con
   if (i < s.N) init_env_beh(s, i, seed, *ss, *cu);
 }
 __global__ void __launch_bounds__(128) step_kernel_beh(Soa s, const float* act, float* obs, float* rew, int* done, int arm_free, int bug,
-                                                       const bsc::SceneSet* ss, const bsc::BCurr* cu, bsc::NavFb fb) {
+                                                       const bsc::SceneSet* ss, const bsc::BCurr* cu, bsc::NavFb fb, const EnvCtl* ctl) {
+  if (ctl && ctl->stage < kStageBeh) return;
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
+#ifdef ENV_PROF
+  const long long k0 = clock64();
+#endif
   if (i < s.N) step_env_beh(s, i, act, obs, rew, done, arm_free != 0, bug, *ss, cu, fb);
+#ifdef ENV_PROF
+  const unsigned long long kc = (unsigned long long)(clock64() - k0);
+  const unsigned long long km = __reduce_max_sync(0xffffffffu, (unsigned)kc);
+  if ((threadIdx.x & 31) == 0) atomicAdd(&g_env_prof[1], km);
+#endif
 }
+
+// 장치 단계 바꾸기(apply): 요청이 있으면 판마다 생성자와 같은 상태로 — 상태 칸을 모두 0 으로(생성자의 memset) 채우고 그 단계 init.
+// 요청이 없으면 바로 끝남(그래프에 늘 넣어 둠). 단계·요청 지우기는 다음 커널(env_commit_k)이 — 모든 판이 같은 요청을 읽은 뒤
+__global__ void __launch_bounds__(128) env_apply_k(Soa s, const EnvCtl* ctl, const bsc::SceneSet* ss, const bsc::BCurr* cu) {
+  const int pend = ctl->pend;
+  if (pend < 0) return;
+  const int i = blockIdx.x * blockDim.x + threadIdx.x, N = s.N;
+  if (i >= N) return;
+  const uint64_t seed = ctl->seed;
+  for (int k = 0; k < NUM_F; ++k) s.f[(size_t)k * N + i] = 0.f;
+  for (int k = 0; k < NUM_I; ++k) s.iv[(size_t)k * N + i] = 0;
+  s.rng[i] = 0;
+  if (pend >= kStageBeh) init_env_beh(s, i, seed, *ss, *cu);
+  else if (pend >= 2) init_env<true>(s, i, seed, pend);
+  else init_env<false>(s, i, seed, pend);
+}
+__global__ void env_commit_k(EnvCtl* ctl) {
+  if (ctl->pend >= 0) { ctl->stage = ctl->pend; ctl->pend = -1; }
+}
+
+#ifdef ENV_PROF
+void env_prof_read(unsigned long long out[8]) { cudaMemcpyFromSymbol(out, g_env_prof, sizeof(unsigned long long) * 8); }
+void env_prof_reset() { const unsigned long long z[8] = {}; cudaMemcpyToSymbol(g_env_prof, z, sizeof z); }
+#endif
 
 #define CK(x) do { cudaError_t e = (x); if (e != cudaSuccess) { std::fprintf(stderr, "CUDA error %s at %s:%d\n", cudaGetErrorString(e), __FILE__, __LINE__); std::abort(); } } while (0)
 
@@ -107,6 +144,11 @@ DeviceEnv::DeviceEnv(int N, int stage, uint64_t seed, bool arm_free, const bsc::
     : N_(N), stage_(stage), arm_free_(arm_free), ss_(ss_dev) {
   if (stage >= kStageBeh && !ss_dev) { std::fprintf(stderr, "DeviceEnv: BEHAVIOR stage %d needs a device SceneSet\n", stage); std::abort(); }
   CK(cudaMalloc(&bcurr_, sizeof(bsc::BCurr)));
+  {
+    const EnvCtl c0{stage, -1, (unsigned long long)seed};
+    CK(cudaMalloc(&ctl_, sizeof(EnvCtl)));
+    CK(cudaMemcpy(ctl_, &c0, sizeof c0, cudaMemcpyHostToDevice));
+  }
   CK(cudaMemcpy(bcurr_, &cu0, sizeof cu0, cudaMemcpyHostToDevice));
   CK(cudaMalloc(&f_, sizeof(float) * NUM_F * (size_t)N));
   CK(cudaMalloc(&iv_, sizeof(int) * NUM_I * (size_t)N));
@@ -119,14 +161,56 @@ DeviceEnv::DeviceEnv(int N, int stage, uint64_t seed, bool arm_free, const bsc::
   else init_kernel<false><<<(N + 127) / 128, 128>>>(s, seed, stage);
   CK(cudaGetLastError());
 }
-DeviceEnv::~DeviceEnv() { cudaFree(f_); cudaFree(iv_); cudaFree(rng_); cudaFree(bcurr_); }
+DeviceEnv::~DeviceEnv() {
+  cudaFree(f_); cudaFree(iv_); cudaFree(rng_); cudaFree(bcurr_); cudaFree(ctl_);
+  if (ctl_h_) {
+    for (void* e : ctl_ev_) if (e) cudaEventDestroy(static_cast<cudaEvent_t>(e));
+    cudaFreeHost(ctl_h_);
+  }
+}
+
+void DeviceEnv::set_dynamic(uint32_t families) {
+  fam_ = families | stage_family(stage_);
+  if ((fam_ & kFamBeh) && !ss_) { std::fprintf(stderr, "DeviceEnv: BEHAVIOR family needs a device SceneSet\n"); std::abort(); }
+  dyn_ = true;
+  if (!ctl_h_) {
+    CK(cudaHostAlloc(&ctl_h_, sizeof(EnvCtl) * 8, cudaHostAllocDefault));
+    for (auto& e : ctl_ev_) { cudaEvent_t ev; CK(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming)); e = ev; }
+  }
+}
+
+int DeviceEnv::request_stage(int stage, uint64_t seed) {
+  if (!dyn_ || !(fam_ & stage_family(stage))) return -1;
+  const int k = ctl_slot_++ % 8;
+  cudaEvent_t ev = static_cast<cudaEvent_t>(ctl_ev_[k]);
+  if (cudaEventQuery(ev) == cudaErrorNotReady) CK(cudaEventSynchronize(ev));   // 8 번 전 복사가 아직이면(드묾)
+  ctl_h_[k] = EnvCtl{stage_, stage, (unsigned long long)seed};
+  // pend·seed 만 덮어씀(stage 는 장치 값 그대로 — apply 가 바꿈)
+  CK(cudaMemcpyAsync(&ctl_->pend, &ctl_h_[k].pend, sizeof(EnvCtl) - offsetof(EnvCtl, pend), cudaMemcpyHostToDevice, 0));
+  CK(cudaEventRecord(ev, 0));
+  stage_ = stage;
+  return 0;
+}
+
+void DeviceEnv::apply() {
+  Soa s{f_, iv_, rng_, N_};
+  env_apply_k<<<(N_ + 127) / 128, 128>>>(s, ctl_, ss_, bcurr_src_ ? bcurr_src_ : bcurr_);
+  env_commit_k<<<1, 1>>>(ctl_);
+}
 
 void DeviceEnv::step(const float* act, float* obs, float* rew, int* done, int bug) {
   Soa s{f_, iv_, rng_, N_};
+  if (dyn_) {   // 장치 단계: 무리마다 띄우고 커널이 단계를 읽어 맞지 않으면 바로 끝남
+    const unsigned g = (N_ + 127) / 128;
+    if (fam_ & kFamBox) step_kernel<false><<<g, 128>>>(s, act, obs, rew, done, 0, arm_free_ ? 1 : 0, bug, ctl_);
+    if (fam_ & kFamA2) step_kernel_a2<<<g, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug, ctl_);
+    if (fam_ & kFamBeh) step_kernel_beh<<<g, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug, ss_, bcurr_src_ ? bcurr_src_ : bcurr_, nav_, ctl_);
+    return;
+  }
   if (stage_ >= kStageBeh)
-    step_kernel_beh<<<(N_ + 127) / 128, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug, ss_, bcurr_src_ ? bcurr_src_ : bcurr_, nav_);
-  else if (stage_ >= 2) step_kernel_a2<<<(N_ + 127) / 128, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug);
-  else step_kernel<false><<<(N_ + 127) / 128, 128>>>(s, act, obs, rew, done, stage_, arm_free_ ? 1 : 0, bug);
+    step_kernel_beh<<<(N_ + 127) / 128, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug, ss_, bcurr_src_ ? bcurr_src_ : bcurr_, nav_, nullptr);
+  else if (stage_ >= 2) step_kernel_a2<<<(N_ + 127) / 128, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug, nullptr);
+  else step_kernel<false><<<(N_ + 127) / 128, 128>>>(s, act, obs, rew, done, stage_, arm_free_ ? 1 : 0, bug, nullptr);
 }
 
 void DeviceEnv::download(std::vector<float>& f, std::vector<int>& iv, std::vector<uint64_t>& rng) const {
