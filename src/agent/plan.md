@@ -156,7 +156,8 @@ skillspec (Rust, 순수 함수, 의존성 0)
 
 | 도구 | 인자 | 결과(요약) | 끝냄 |
 |---|---|---|---|
-| `find_object` | `query: string`(한국어 가능), `k: int=3` | `[{id, label, room, landmark, relation, last_seen_ago_s, state: seen/moved/gone/held, confidence}]`, 없으면 `matches:[]` + `hint` | |
+| `search_objects` (10-05, 옛 `find_object`) | `query: string`(한국어 가능), `k: int=5`, `room?`, `state?` | 3 단계 중 ①② 를 도구 안에서: ① 이름·동의어·상위어 검색 → 없거나 약하면 ② **이름 무시 생김새 재검색**(물체별 시점 벡터로 P(질의어 \| 모습)). 결과는 글만: `[{id, name, name_p, alt:[{name,p}], match_type: name/appearance, registered?, attrs:[색·재질·크기], room, landmark, relation, state, last_seen_ago_s, dist_m, match, ask_user?}]`, 없으면 `matches:[]` + `hint` | |
+| `confirm_object` (10-05) | `id`, `name`, `source: enum(user, close_look)` | ③ 이름 고치기 — 물체 이름 사후에 강한 관측으로 반영, 다음부터 ① 에서 바로 찾음. 확인 기록은 보정 데이터 | |
 | `describe_object` | `id`, `with_image: bool=false` | 크기·높이·관측 수·처음 자리에서 움직인 거리 + (선택) best view RGB 256 px(`sm_snap_view`) | |
 | `list_place` | `place: string`(방 또는 가구 id) | 그 방/가구 위·안의 물체 표(최대 15) | |
 | `set_plan` | `goal: string`, `steps: [{skill: enum(35), objects: [id], spatial?: enum, memory?: enum}]` | 검증 결과 + 렌더한 문장 목록 → 승인 필요하면 `needs_approval` | |
@@ -165,6 +166,7 @@ skillspec (Rust, 순수 함수, 의존성 0)
 | `report` | `text`, `status: enum(progress, done, failed)` | — (스트리밍) | ✔ |
 | `remember` | `fact` | 대화 기억에 저장(물체 기억과 별도) | |
 
+- **물체 검색(10-05)**: 검색은 도구 안에서 벡터(SigLIP 2, 공용 물체 색인)로 하고 LLM 에는 **색인된 이름·속성 글만** 준다(LLM 은 API 라 벡터를 못 받음). 같은 색인을 RecallVLA 도 자기 질의 벡터로 검색하므로, `set_plan` 의 물체 id 는 VLA 에 **힌트**다. 예: "라디오 가져와" → ① 라디오 없음 → ② 소화기로 등록된 O27 이 라디오일 확률 2 등 → LLM 이 되묻거나 O27 을 힌트로 넘김 → 확인되면 `confirm_object`. 도구가 9 개가 되어 "8 개 이하" 원칙을 넘는다 — `confirm_object` 를 `check` 결과에서 자동으로 부르는 쪽도 후보. 설계 [model_selection 물체 찾기](../../docs/model_selection.md), [MAPVLA_SPEC 결정 기록](../../docs/map_vla/MAPVLA_SPEC.md).
 - 이동·스킬 실행 도구는 **LLM 에 주지 않는다**. `set_plan` 으로 계획을 넘기면 `TaskMachine` 이 실행한다. 복구 한도를 넘었을 때만 LLM 이 다시 불려 `set_plan`(남은 단계 교체) / `ask_user` / `report(failed)` 중 하나를 고른다.
 - `set_plan` 예(컵 → 쓰레기통):
 
@@ -357,7 +359,7 @@ Pending ─▶ Approach(move to) ─▶ Acquire(보이나?) ─▶ Execute(VLA s
 | 2 | Agent Loop & Tool Calling | `ragent` 뼈대: raw loop, 도구 8개 스키마, 오류 관찰값 | `ragent ask` 로 scene.json 질문 |
 | 3 | Context Engineering & ReAct | `ctx.rs` 16k 예산, system 글, 도구 설명 다듬기 | 맥락 크기 실측 표 |
 | 4 | State & Memory | 대화 요약·`remember`, 작업 상태 `task.json` | 요약 전후 정답률 |
-| 5 | Knowledge & Retrieval | 물체 기억 = retrieval tool(`find_object`), 한국어 사전 + 임베딩(Qwen3-Embedding, query 지시문 붙임 — week05 조사 결과) 후보 확장, 점수 하한 | `qa_where` v1 (120) |
+| 5 | Knowledge & Retrieval | 물체 기억 = retrieval tool(`search_objects`: 이름 → 생김새 재검색, `confirm_object`), 한국어 사전 + 임베딩(Qwen3-Embedding, query 지시문 붙임 — week05 조사 결과) 후보 확장, 점수 하한 | `qa_where` v1 (120) |
 | 6 | Planning & Reasoning | `set_plan` + 검증기 + 상태 기계, Plan-and-Execute vs ReAct 비교 | `cmd_mock` 성공률·호출 수 비교표 |
 | 7 | Agent Framework / MCP | 같은 도구를 MCP 서버로도 노출(`ragent mcp`, stdio) — 수업 비교용, 본 경로는 raw | raw vs MCP 지연·코드량 비교 |
 | 8 | Evaluation | 골든 세트·채점기·게이트·기준선 3개 | **Project 1**: 기억 QA 에이전트 + 평가 보고 |
