@@ -1,5 +1,5 @@
 """E0 시뮬 측정(헤드리스 OmniGibson, 빈 장면): 잡는 점 위치 / 그리퍼 폭 / 집는 높이 / 하중 / 문턱.
-  flock /tmp/claude-1000/og.lock python sim_grasp.py <out.json> [묶음: verify point width height payload quick step]
+  flock /tmp/claude-1000/og.lock python sim_grasp.py <out.json> [묶음: verify point width height payload quick step e7]  (e7: E7_CASES=cases.json)
   (손 링크 질량을 바꿔 하중을 싣는 방법은 안 된다: OmniGibson 은 로봇 링크 중력을 끈다 → 하중은 진짜 상자로)
   GRIP_KP=1e6 처럼 그리퍼 강성을 바꿔 볼 수 있다(results/ 는 1e6 기준, grip_kp1e4_baseline 만 1e4).
 각 시험: 가는 기둥(0.02 m 각, 고정) 위 상자 → 예비 자세(도구 축 뒤로 0.06 m, 열림) → 다가감 → 닫음 → 0.08 m 들기 → 2 s 버팀.
@@ -16,10 +16,12 @@ import kin  # noqa: E402
 
 OUT = sys.argv[1]
 GROUPS = sys.argv[2:] or ["point", "width", "height", "payload"]
+# E7(잡기 물리 E6 대조): 묶음 "e7" = 환경 변수 E7_CASES 의 JSON 경우 목록(training/RL/env/tools pnp_check --emit-e7 이 BEHAVIOR 집을 물체 크기·무게로 만듦)
+E7 = json.load(open(__import__("os").environ["E7_CASES"])) if "e7" in GROUPS else []
 
 # 크기별 상자를 미리 싣는다(실행 중 scale 을 바꾸면 PhysX 질량 뷰가 깨진다)
 SIZES = sorted({(s, s, s) for s in (0.02, 0.03, 0.04, 0.045)} | {(w, w, 0.03) for w in (0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08)}
-               | {(0.03, 0.03, 0.05)})
+               | {(0.03, 0.03, 0.05)} | {tuple(round(v, 4) for v in c["size"]) for c in E7})
 PARK = {sz: [3.0 + 0.3 * i, 2.0, 0.1] for i, sz in enumerate(SIZES)}
 objs = [dict(type="PrimitiveObject", name="box_%d" % i, primitive_type="Cube", size=1.0, scale=list(sz),
              rgba=[0.9, 0.2, 0.2, 1.0], position=PARK[sz]) for i, sz in enumerate(SIZES)] + [
@@ -234,6 +236,14 @@ if "payload" in GROUPS:
         rows.append(trial(f"payload near m={m}", edge_side + 0.05, zf(0.15), SIDE, DOWN, size=(0.03, 0.03, 0.03), mass=m))
         rows.append(trial(f"payload far m={m}", edge_side + 0.25, zf(0.25), SIDE, HORIZ, size=(0.03, 0.03, 0.05), mass=m))
     results["payload"] = rows
+if "e7" in GROUPS:   # 경우마다: 기둥 위 상자(좁은 변이 닫는 축 = 세계 x), 옆에서 위에서 잡기(바닥 0.15 m) 또는 옆 수평 잡기(0.30 m)
+    rows = []
+    for c in E7:
+        sz = tuple(round(v, 4) for v in c["size"])
+        top = c.get("pose", "top") == "top"
+        rows.append(trial("e7 %s %s" % (c["name"], c.get("pose", "top")), edge_side + c.get("d", 0.08), zf(c.get("h", 0.15 if top else 0.30)), SIDE,
+                          DOWN if top else HORIZ, size=sz, mass=c["mass"]))
+    results["e7"] = rows
 if "step" in GROUPS:
     # 문턱(마지막에, 로봇이 움직이므로): 로봇 앞 0.4 m 에 높이 h 판(가로 1 m, 깊이 0.1 m)을 두고 0.3 m/s 로 8 s 전진 → 넘었는지(base x 이동, 기울기)
     rows = []
