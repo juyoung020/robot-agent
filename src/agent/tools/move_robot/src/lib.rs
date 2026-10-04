@@ -14,6 +14,7 @@
 //! 그리퍼 = smooth [-1,1] → 손가락 0…0.05 m). 머리(카메라)는 NullJointController 라 움직일 수 없다.
 
 pub mod ffi;
+pub mod goal;
 pub mod limo;
 pub mod limo_mock;
 pub mod link;

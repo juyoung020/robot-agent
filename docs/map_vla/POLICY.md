@@ -77,6 +77,14 @@ GPU 학습 시스템(커널 합치기, FP8, GPU 환경 안에서 지도 만들�
 
 (10-03 판의 "6.1·6.2" 는 절 번호가 바뀌기 전 표기다. 안전 거르개는 7.1, 끝 조건은 7.2.)
 
+**통합 목표 지정(2026-10-05 구현, 앱 지도 두드리기 — 물체를 누르면 id, 바닥·면을 누르면 지점)**: 호출에 `goal` 을 넣을 수 있다(옛 `objects` 그대로 됨 — `objects[0]` = 집을 것, `[1]` = 놓을 곳 id).
+- `{"executor":"vla","skill":"put the cup here","goal":{"pick":{"id":"O12"},"place":{"point":[x,y(,z)]}},"max_s":40}` — 놓을 곳 = map 지점. `place` 는 `{"id":"O3"}` 도 됨. 지점은 놓을 곳만(집을 것은 id).
+- `{"executor":"vla","skill":"go here","goal":{"place":{"point":[x,y]}}}` — 지점이 있으면 `go here`·`move to …`·`approach …` 문장은 그 지점까지의 **마지막 다가가기**(종류 approach, 집을 것 없음)로 VLA 에 간다. 1.5 m 밖이면 지금처럼 `handback(too_far)` → `move_robot go_to`. 지점 없는 `move to` 는 그대로 move_robot 몫.
+- 시작 때 지점 검사(`goal.rs check_point`): **바닥**(지도의 아는 빈칸, 둘레 0.05 m 빈칸, 다른 물체 바닥 자국 밖, 몸통이 서는 칸에서 0.38 m 안) 또는 **면 위**(기억 물체 윗면 높이 0.05–0.52 m — CURRICULUM_BEHAVIOR2026 3.1 `place_top`, 윗면 사각형을 0.03 m 줄인 안쪽, 서는 칸에서 낮은 면 0.38 m·높은(> 0.25 m) 면 0.31 m 안). z 를 안 주면 xy 가 면 위면 그 윗면, 아니면 바닥(z 0, 한 층 가정). 맞지 않으면 **1.0 m 안 가장 가까운 맞는 자리로 옮기고** 결과 `point:{asked,point,on,support,snap_m,validated}` 에 적는다. 없으면 `status:"error", reason:"invalid_point"`. 지도가 없으면 바닥 점은 검사 없이 받음(`validated:false`).
+- 매 스텝 **목표 칸**(PICK·PLACE 두 칸 × 16, VLA_INPUT "목표 칸"과 같은 정의)을 지금 기억에서 id 로 풀어 만든다(물체가 `gone` 이거나 기억에서 빠지면 마지막으로 안 자리 + 잃음 1). 정책은 `VlaObs::goal`(원값·정규화 32), 밖의 엔진은 C ABI `mr_vla_goal_entries(r, raw32, norm32)`(정규화는 `tok_norm.h` 를 그대로 읽음).
+- 지점 놓기 확인: 그리퍼 열림 + 놓인 물체 가운데가 지점에서 수평 **0.05 m** 안 + 바닥이 지점 높이 **± 0.02 m** + 손끝 0.05 m 물러남 → done, 열고 물러났는데 밖이면 `failed(place_missed)`. 지점 다가가기 확인: 팔 받침에서 지점까지 0.38 m 안 + 멈춤.
+- 물체 간 관계(on/in/next to/near)는 어디에도 쓰지 않는다 — 숫자와 종류(물체/지점)뿐.
+
 ### 1.4 구현 상태 (10-04)
 
 코드: `src/agent/tools/move_robot` 의 `limo.rs`(몸·한계·순기구학) · `verify.rs`(자동 확인) · `vla.rs`(호출·나눔·물체 칸·정책 접점·거르개·끝 판정) ·

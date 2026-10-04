@@ -441,3 +441,33 @@ pub unsafe extern "C" fn mr_vla_busy(r: *const Robot) -> c_int {
     }
     (*r).vla_busy() as c_int
 }
+
+/// 이번 스텝의 목표 칸(집을 것·놓을 곳, 칸마다 16 — goal.rs / VLA_INPUT "목표 칸"): `raw32` 원값(m, base_link), `norm32` 정책 입력
+/// (X0 432..463 과 같은 배치·tok_norm.h 정규화). 둘 중 NULL 은 건너뜀. 반환: 0 채움, 1 VLA 단계 실행 중 아님(0 으로 채움), -2 인자 이상.
+///
+/// # Safety
+/// `r` 는 mr_new 가 준 것, `raw32`·`norm32` 는 NULL 이거나 float 32 개.
+#[no_mangle]
+pub unsafe extern "C" fn mr_vla_goal_entries(r: *const Robot, raw32: *mut f32, norm32: *mut f32) -> c_int {
+    if r.is_null() {
+        return -2;
+    }
+    let g = (*r).vla_goal_entries();
+    if !raw32.is_null() {
+        let o = std::slice::from_raw_parts_mut(raw32, 32);
+        for (k, x) in o.iter_mut().enumerate() {
+            *x = g.map_or(0.0, |g| g.raw[k / 16][k % 16]);
+        }
+    }
+    if !norm32.is_null() {
+        let o = std::slice::from_raw_parts_mut(norm32, 32);
+        for (k, x) in o.iter_mut().enumerate() {
+            *x = g.and_then(|g| g.norm.get(k).copied()).unwrap_or(0.0);
+        }
+    }
+    if g.is_some() {
+        0
+    } else {
+        1
+    }
+}

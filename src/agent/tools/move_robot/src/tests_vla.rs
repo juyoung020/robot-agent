@@ -350,3 +350,189 @@ fn vla_call_through_link_backend() {
     let r = run_tool(&json!({"executor": "vla", "skill": "move to table", "objects": ["O1"]}), &mut b);
     assert_eq!(r["route"], "move_robot");
 }
+
+// ---------------------------------------------------------------- 목표 칸(goal.rs, 2026-10-05 통합 목표 지정)
+
+use crate::goal::{self, GoalMemory, GoalRef, GoalSpec};
+
+#[test]
+fn tok_norm_header_is_parsed_not_copied() {
+    let (mu, sd) = goal::tok_norm();
+    assert_eq!(mu.len(), 111);
+    assert_eq!(sd.len(), 111);
+    assert_eq!(mu[0], goal::parse_hexf("0x1.23c478p-2").unwrap());
+    assert_eq!(mu[1], goal::parse_hexf("-0x1.f64bd8p-5").unwrap());
+    assert_eq!(sd[13], 1.0);
+    assert_eq!(goal::parse_hexf("0x0p+0"), Some(0.0));
+    assert_eq!(goal::parse_hexf("0x1p+0"), Some(1.0));
+    // 시뮬 lnf_d 는 ln 과 거의 같음
+    for x in [1.0f32, 1.5, 2.0, 5.0, 11.0] {
+        assert!((goal::lnf_d(x) - x.ln()).abs() < 2e-6, "{x}");
+    }
+}
+
+#[test]
+fn goal_entry_layout_rotation_eef_and_sincos() {
+    // 로봇 (1, 2) 왼쪽(+y)을 봄, 지점 (1, 4, 0.5) → 로봇 앞 2 m, 높이 base_link 0.35
+    let pose = [1.0, 2.0, std::f64::consts::FRAC_PI_2];
+    let eef = [0.1, 0.0, 0.3];
+    let v = goal::entry_raw(true, Some([1.0, 4.0, 0.5]), false, pose, eef);
+    let want = [1.0, 0.0, 1.0, 1.0, 0.0, 2.0, 0.0, 0.35, 2.0, 0.0, 1.0, 1.9, 0.0, 0.2, 0.0, 0.0];
+    for k in 0..16 {
+        assert!((v[k] - want[k]).abs() < 2e-3, "value {k}: {} vs {}", v[k], want[k]);
+    }
+    // 오른쪽 앞 45°: sin −0.707, cos 0.707
+    let w = goal::entry_raw(false, Some([2.0, 1.0, 0.15]), true, [1.0, 2.0, 0.0], eef);
+    assert_eq!((w[goal::GE_KOBJ], w[goal::GE_KPT], w[goal::GE_LOST]), (1.0, 0.0, 1.0));
+    assert!((w[goal::GE_SIN] + 0.7071).abs() < 1e-3 && (w[goal::GE_COS] - 0.7071).abs() < 1e-3);
+    assert!(w[goal::GE_POS + 2].abs() < 1e-6, "z base_link = world z − 0.15");
+    // 거리 0 이면 sin 0·cos 1
+    let z = goal::entry_raw(true, Some([1.0, 2.0, 0.0]), false, [1.0, 2.0, 0.3], eef);
+    assert_eq!((z[goal::GE_DIST], z[goal::GE_SIN], z[goal::GE_COS]), (0.0, 0.0, 1.0));
+    // 못 본 물체: 있음·물체만
+    let u = goal::entry_raw(false, None, true, pose, eef);
+    assert_eq!(u, [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn goal_normalisation_matches_hand_values() {
+    let mut raw = [[0f32; 16]; 2];
+    raw[1] = goal::entry_raw(true, Some([2.0, 0.0, 0.15]), false, [0.0; 3], [0.0, 0.0, 0.15]);
+    let n = goal::normalize(&raw);
+    assert!(n[..16].iter().all(|x| *x == 0.0), "absent PICK = zeros");
+    let (mu, sd) = (goal::parse_hexf("0x1.a3e4ccp+0").unwrap() as f64, goal::parse_hexf("0x1.f6347cp-2").unwrap() as f64); // 특징 6 (거리)
+    let want_d = ((1.0f64 + 2.0 / 0.5).ln() - mu) / sd;
+    assert!((n[16 + goal::GE_DIST] as f64 - want_d).abs() < 1e-5, "{} vs {want_d}", n[16 + goal::GE_DIST]);
+    let (mu0, sd0) = (goal::parse_hexf("0x1.23c478p-2").unwrap() as f64, goal::parse_hexf("0x1.5b0b7p+0").unwrap() as f64); // 특징 0 (x)
+    assert!((n[16 + goal::GE_POS] as f64 - ((5.0f64).ln() - mu0) / sd0).abs() < 1e-5);
+    // z = 0 → clip_log 0 → −μ/σ (특징 2)
+    let (mu2, sd2) = (goal::parse_hexf("0x1.3eee5ap-3").unwrap() as f64, goal::parse_hexf("0x1.15b66ap-2").unwrap() as f64);
+    assert!((n[16 + goal::GE_POS + 2] as f64 + mu2 / sd2).abs() < 1e-5);
+    // 깃발·sin·cos 그대로, 5 m 넘으면 자름(같은 값)
+    assert_eq!(&n[16..21], &[1.0, 0.0, 1.0, 1.0, 0.0]);
+    assert_eq!((n[16 + goal::GE_SIN], n[16 + goal::GE_COS]), (0.0, 1.0));
+    assert_eq!(goal::norm_len(6, 7.0), goal::norm_len(6, 5.0));
+    assert_eq!(goal::norm_len(0, f32::NAN), 0.0);
+    // 위치 모름이면 깃발만
+    raw[0] = goal::entry_raw(false, None, true, [0.0; 3], [0.0; 3]);
+    let n = goal::normalize(&raw);
+    assert_eq!(&n[..16], &[1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn goal_lost_flag_uses_last_known_position() {
+    let mk = |pos: [f64; 3], state| MemObject { id: "O7".into(), name: "cup".into(), score: 1.0, pos, extent: [0.06; 3], first_pos: pos, n_obs: 3, last_seen: 0.0, state };
+    let spec = GoalSpec { pick: Some(GoalRef::Obj("O7".into())), place: Some(GoalRef::Point([1.0, 1.0, 0.0])) };
+    let mut mem = GoalMemory::default();
+    let g = goal::build(&spec, &[mk([1.0, 0.0, 0.2], ObjState::Seen)], [0.0; 3], [0.1, 0.0, 0.3], &mut mem);
+    assert_eq!((g.raw[0][goal::GE_KNOWN], g.raw[0][goal::GE_LOST]), (1.0, 0.0));
+    assert_eq!((g.raw[1][goal::GE_KPT], g.raw[1][goal::GE_KNOWN]), (1.0, 1.0));
+    assert_eq!(g.norm.len(), 32);
+    // 사라짐(기억 자리가 바뀌어도 마지막으로 본 자리) → 잃음
+    let g = goal::build(&spec, &[mk([3.0, 0.0, 0.2], ObjState::Gone)], [0.0; 3], [0.1, 0.0, 0.3], &mut mem);
+    assert_eq!(g.raw[0][goal::GE_LOST], 1.0);
+    assert!((g.raw[0][goal::GE_POS] - 1.0).abs() < 1e-3, "last known x");
+    // 지도에서 빠짐 → 같은 마지막 자리 + 잃음
+    let g = goal::build(&spec, &[], [0.0; 3], [0.1, 0.0, 0.3], &mut mem);
+    assert_eq!((g.raw[0][goal::GE_KNOWN], g.raw[0][goal::GE_LOST]), (1.0, 1.0));
+    assert!((g.raw[0][goal::GE_POS] - 1.0).abs() < 1e-3);
+    // 한 번도 못 봄 → 위치 모름
+    let g = goal::build(&spec, &[], [0.0; 3], [0.1, 0.0, 0.3], &mut GoalMemory::default());
+    assert_eq!(g.raw[0][..5], [1.0, 1.0, 0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn goal_call_forms_old_and_unified() {
+    let c = vla::parse_call(&json!({"executor": "vla", "skill": "place cup on box", "objects": ["1", "O2"]})).unwrap();
+    assert_eq!(c.goal, GoalSpec { pick: Some(GoalRef::Obj("O1".into())), place: Some(GoalRef::Obj("O2".into())) });
+    let c = vla::parse_call(&json!({"executor": "vla", "skill": "place cup on box", "goal": {"pick": {"id": "O1"}, "place": {"id": 2}}})).unwrap();
+    assert_eq!(c.objects, vec!["O1".to_string(), "O2".to_string()]);
+    let c = vla::parse_call(&json!({"executor": "vla", "skill": "put the cup here", "goal": {"pick": {"id": "O1"}, "place": {"point": [0.2, -0.85]}}})).unwrap();
+    assert_eq!((c.kind, c.objects.clone(), c.point_req), (SkillKind::Place, vec!["O1".to_string()], Some(([0.2, -0.85], None))));
+    assert_eq!(c.anchor_point(), Some([0.2, -0.85, 0.0]));
+    // "go here" + 지점 = 지점까지 다가가기(VLA)
+    let c = vla::parse_call(&json!({"executor": "vla", "skill": "go here", "goal": {"place": {"point": [1.0, 0.0, 0.0]}}})).unwrap();
+    assert_eq!((c.kind, c.objects.len()), (SkillKind::Approach, 0));
+    let c = vla::parse_call(&json!({"executor": "vla", "skill": "move to the spot", "goal": {"place": {"point": [1.0, 0.0]}}})).unwrap();
+    assert_eq!(c.kind, SkillKind::Approach);
+    // 지점 없는 "move to" 는 여전히 move_robot 몫, 지점 집기·빈 지정은 오류
+    assert_eq!(vla::parse_call(&json!({"executor": "vla", "skill": "move to kitchen", "objects": ["O1"]})).unwrap_err()["route"], "move_robot");
+    assert!(vla::parse_call(&json!({"executor": "vla", "skill": "pick up cup", "goal": {"pick": {"point": [1, 0]}}})).is_err());
+    assert!(vla::parse_call(&json!({"executor": "vla", "skill": "put the cup here", "goal": {"place": {"point": [1, 0]}}})).is_err(), "place needs the held object");
+    assert!(vla::parse_call(&json!({"executor": "vla", "skill": "go here", "goal": {"place": {"point": [1, "x"]}}})).is_err());
+    assert!(vla::parse_call(&json!({"executor": "vla", "skill": "go here", "goal": {}})).is_err());
+}
+
+#[test]
+fn point_validation_and_snap() {
+    let objs: Vec<MemObject> = demo_scene().into_iter().map(|o| o.mem).collect();
+    // 지도 없음: 면 위 점은 그 윗면 높이로, 바닥 점은 검사 없이
+    let c = goal::check_point([0.2, -0.85], None, &objs, None).unwrap();
+    assert_eq!((c.on, c.support.as_deref(), c.snap_m), ("surface", Some("O2"), 0.0));
+    assert!((c.point[2] - 0.1).abs() < 1e-9);
+    // 윗면 가장자리 밖 3 cm 안쪽으로 옮김
+    let c = goal::check_point([0.2, -0.75], Some(0.1), &objs, None).unwrap();
+    assert!((c.point[1] - (-0.78)).abs() < 1e-9 && (c.snap_m - 0.03).abs() < 1e-9, "{c:?}");
+    let c = goal::check_point([0.0, 0.5], None, &objs, None).unwrap();
+    assert_eq!((c.on, c.validated), ("floor", false));
+    // 의자(O3, 윗면 0.8 m)는 놓을 면이 아님 → z 0.8 은 1 m 안에 맞는 자리가 없음
+    assert!(goal::check_point([3.0, 0.5], Some(0.8), &objs, None).is_err());
+    // 지도: x ≥ 1.2 는 벽. 벽 안 점은 가장 가까운 닿는 빈 바닥으로
+    let mut m = LimoMock::new(demo_scene());
+    m.world = Some(room_with_wall(1.2));
+    m.feed();
+    let (mi, a) = m.robot.nav.analyze();
+    let pm = goal::PlaceMap { grid: &mi.grid, a: &a };
+    let c = goal::check_point([1.4, 0.0], Some(0.0), &objs, Some(&pm)).unwrap();
+    assert!(c.validated && c.on == "floor" && c.point[0] < 1.2 && c.snap_m > 0.2 && c.snap_m <= goal::SNAP_MAX, "{c:?}");
+    let c0 = goal::check_point([0.5, 0.0], Some(0.0), &objs, Some(&pm)).unwrap();
+    assert_eq!(c0.snap_m, 0.0, "free reachable floor stays");
+    assert!(goal::check_point([2.6, 0.0], Some(0.0), &objs, Some(&pm)).is_err(), "nothing valid within 1 m");
+    // 바닥 점이 물체 바닥 자국 위면 옮김
+    let c = goal::check_point([0.9, 0.3], Some(0.0), &objs, Some(&pm)).unwrap();
+    assert!(c.snap_m > 0.0, "{c:?}");
+}
+
+#[test]
+fn put_here_on_surface_point_and_go_here() {
+    let mut m = LimoMock::new(demo_scene());
+    let r = m.run(&json!({"executor": "vla", "skill": "pick up cup", "goal": {"pick": {"id": "O1"}}}));
+    assert_eq!(st(&r), "done", "{r}");
+    // "put the cup here": 상자 윗면 위 지점(z 없음 → 윗면)
+    assert!(!m.robot.vla_start(&json!({"executor": "vla", "skill": "put the cup here", "goal": {"pick": {"id": "O1"}, "place": {"point": [0.22, -0.87]}}, "max_s": 40})));
+    let mut seen = None;
+    let mut r = Value::Null;
+    for _ in 0..m.max_steps {
+        if m.step(None) == crate::Tick::Done {
+            r = m.robot.take_result().unwrap();
+            break;
+        }
+        if seen.is_none() {
+            seen = m.robot.vla_goal_entries().filter(|g| g.raw[1][goal::GE_KPT] == 1.0).cloned();
+        }
+    }
+    has_result_fields(&r);
+    assert_eq!(st(&r), "done", "{r}");
+    assert!(r["evidence"]["m"]["to_point_m"].as_f64().unwrap() <= goal::POINT_R, "{r}");
+    assert_eq!(r["point"]["on"], "surface");
+    assert_eq!(r["goal"]["pick"]["id"], "O1");
+    let g = seen.expect("goal entries during the run");
+    assert_eq!(&g.raw[0][..5], &[1.0, 1.0, 0.0, 1.0, 0.0], "PICK = held object, located");
+    assert_eq!(&g.raw[1][..5], &[1.0, 0.0, 1.0, 1.0, 0.0], "PLACE = point");
+    let mut raw = [0f32; 32];
+    let mut nrm = [0f32; 32];
+    assert_eq!(unsafe { crate::ffi::mr_vla_goal_entries(&m.robot, raw.as_mut_ptr(), nrm.as_mut_ptr()) }, 1, "not running now");
+    assert!(raw.iter().all(|x| *x == 0.0));
+    // "go here": 지점까지 다가가기
+    let r = m.run(&json!({"executor": "vla", "skill": "go here", "goal": {"place": {"point": [1.0, 0.6, 0.0]}}, "max_s": 30}));
+    assert_eq!(st(&r), "done", "{r}");
+    assert_eq!(r["kind"], "approach");
+    // 먼 지점은 handback too_far
+    let r = m.run(&json!({"executor": "vla", "skill": "go here", "goal": {"place": {"point": [4.0, 0.0]}}}));
+    assert_eq!((st(&r), r["reason"].as_str().unwrap()), ("handback", "too_far"), "{r}");
+    // 지도 있는데 둘레 1 m 에 놓을 데가 없음 → error invalid_point
+    m.world = Some(room_with_wall(1.2));
+    m.feed();
+    let r = m.run(&json!({"executor": "vla", "skill": "go here", "goal": {"place": {"point": [2.7, 0.0, 0.0]}}}));
+    assert_eq!((st(&r), r["reason"].as_str().unwrap()), ("error", "invalid_point"), "{r}");
+}

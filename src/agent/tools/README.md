@@ -172,3 +172,11 @@ C ABI 추가(`include/move_robot.h`): `mr_set_map(r, &sgrt_map_view)`(평가기 
 - C ABI: `mr_vla_start`, `mr_vla_tick`(안의 대역 정책), `mr_vla_tick_ext`(밖의 엔진 행동·끝 신호·확신), `mr_filter`(거르개만), `mr_vla_set_objects`(scenemap `sm_object` 배열 포인터)·`mr_vla_set_objects_json`,
   `mr_vla_contacts`(몸통/팔), `mr_vla_stop`, `mr_vla_busy`. VLA 단계 중에는 `mr_tick` 대신 `mr_vla_tick` 만.
 - 정책은 아직 학습된 VLA 가 없어 대역(`scripted` 기본, `replay:<jsonl>`, `external`)이다. 손으로: `move-robot vla-mock '<call>' …`.
+
+## 2026-10-05 변경: VLA 통합 목표 지정(집을 것·놓을 곳 = 물체 id 또는 지점) — [POLICY.md](../../../docs/map_vla/POLICY.md) 1.3
+
+- 호출 `"goal":{"pick":{"id":"O12"},"place":{"id":"O3"} | {"point":[x,y(,z)]}}`(옛 `objects` 도 됨). `"skill":"go here"` + `place.point` = 지점까지 마지막 다가가기(1.5 m 안).
+- 지점 검사·옮기기(`src/goal.rs check_point`): 아는 빈 바닥 또는 0.05–0.52 m 윗면, 몸통이 서는 칸에서 닿음(낮은 곳 0.38 m·높은 면 0.31 m), 아니면 1.0 m 안 가장 가까운 맞는 자리 → 결과 `point.snap_m`, 없으면 `error(invalid_point)`.
+- 매 스텝 목표 칸 2 × 16(있음·물체·지점·앎·잃음·x·y·z·거리·sin·cos·손끝 기준 xyz, base_link) + 정규화 32(`tok_norm.h` 를 include_str! 로 읽음, ln 은 시뮬 `lnf_d` 그대로) → `VlaObs::goal`, C ABI `mr_vla_goal_entries(r, raw32, norm32)`.
+  id 풀기는 `goal::resolve`(지금은 `mr_vla_set_objects` 기억 스냅숏) 한 곳 — 실시간 기억 id 풀이가 move_robot 에 들어오면 이 함수만 바꾼다.
+- 지점 놓기 done = 놓임 + 수평 0.05 m + 바닥 ± 0.02 m(학습 쪽과 같은 수). 시험 7 개 더함(`cargo test --release` lib 57).

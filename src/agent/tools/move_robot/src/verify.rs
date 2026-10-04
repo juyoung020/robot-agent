@@ -149,6 +149,8 @@ pub struct Evidence<'a> {
     pub target: Option<&'a MemObject>,
     /// 놓기의 받침·그릇
     pub support: Option<&'a MemObject>,
+    /// 놓기·다가가기의 지점(map, 검사·옮긴 뒤) — 있으면 받침 대신 이 점으로 판정(goal.rs `at_point`)
+    pub point: Option<[f64; 3]>,
     /// 로봇 map 자세 (x, y, yaw)
     pub pose: [f64; 3],
     /// 그리퍼 벌림 비율(측정)과 지령
@@ -197,6 +199,30 @@ pub fn evidence(e: &Evidence) -> (Verdict, Value) {
                 return (Verdict::Running, json!({"why": "gripper closed on something; target not lifted yet", "m": m}));
             }
             (Verdict::Running, json!({"why": "gripper still open", "m": m}))
+        }
+        K::Place if e.point.is_some() => {
+            let p = e.point.unwrap();
+            let Some(t) = e.target else { return (Verdict::Unknown, json!({"why": "held object not in memory", "gripper": g})) };
+            let (ok, d, dz) = crate::goal::at_point(t, p);
+            let rel = to_robot(e.pose, t.pos);
+            let retreat = ((rel[0] - e.eef[0]).powi(2) + (rel[1] - e.eef[1]).powi(2) + (rel[2] - e.eef[2]).powi(2)).sqrt();
+            let m = json!({"gripper": g, "to_point_m": (d * 1000.0).round() / 1000.0, "bottom_dz_m": (dz * 1000.0).round() / 1000.0, "eef_to_object_m": r2(retreat), "state": t.state.name()});
+            if opened && ok && retreat > RETREAT_M {
+                return (Verdict::Done, json!({"why": format!("gripper opened; {} rests within {:.2} m of the point", t.id, crate::goal::POINT_R), "m": m}));
+            }
+            if opened && t.state != ObjState::Held && !ok && retreat > RETREAT_M {
+                return (Verdict::Failed, json!({"why": "gripper opened but the object is not at the destination point", "m": m}));
+            }
+            (Verdict::Running, json!({"why": if opened { "gripper open; hand not withdrawn yet" } else { "still holding" }, "m": m}))
+        }
+        K::Approach if e.point.is_some() => {
+            let rel = to_robot(e.pose, e.point.unwrap());
+            let d = (rel[0] + 0.04).hypot(rel[1]);
+            let m = json!({"reach_m": r2(d), "base_speed": r2(e.base_speed)});
+            if d <= REACH_M && e.base_speed < 0.02 && e.base_turn.abs() < 0.05 {
+                return (Verdict::Done, json!({"why": format!("point within arm reach ({d:.2} m), base stopped"), "m": m}));
+            }
+            (Verdict::Running, json!({"why": format!("{d:.2} m from the arm base"), "m": m}))
         }
         K::Place => {
             let Some(t) = e.target else { return (Verdict::Unknown, json!({"why": "held object not in memory", "gripper": g})) };

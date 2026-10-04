@@ -2,6 +2,7 @@
 //! 그래서 VLA 행동도 `go_to`/`delta` 와 같은 지도 장애물·깊이 정지 코드([`Robot::free_ahead`])를 지난다(POLICY 7.1).
 
 use crate::limo::{LimoState, ACTION_DIM as A8};
+use crate::goal::{self, GoalRef};
 use crate::verify::{self, MemObject, ObjState};
 use crate::vla::{self, build_slots, make_policy, parse_call, progress_check, FilterInfo, SkillKind, VlaObs, VlaOut, VlaRun};
 use crate::{Robot, Tick};
@@ -52,35 +53,80 @@ impl Robot {
             Ok(p) => p,
             Err(e) => return self.vla_immediate(json!({"status": "unavailable", "executor": "vla", "message": e})),
         };
-        // 시작 조건(POLICY 1.2): 기억에 있음, 1.5 m 안, 보이거나 불확실도 작음
+        let mut call = call;
         let p = self.vla.params.clone();
         let now = self.sim_now();
         let pose = self.nav.pose;
-        let id = call.anchor_id().to_string();
+        // 놓을 지점 검사(바닥 빈칸·면 윗면, 닿음) → 가장 가까운 맞는 자리로 옮김(goal.rs check_point)
+        let mut pcheck = None;
+        if let Some((xy, z)) = call.point_req {
+            let checked = if self.nav.have_map {
+                let (m, a) = self.nav.analyze();
+                goal::check_point(xy, z, &self.vla.objects, Some(&goal::PlaceMap { grid: &m.grid, a: &a }))
+            } else {
+                goal::check_point(xy, z, &self.vla.objects, None)
+            };
+            match checked {
+                Ok(c) => {
+                    call.goal.place = Some(GoalRef::Point(c.point));
+                    pcheck = Some((c, [xy[0], xy[1], z.unwrap_or(f64::NAN)]));
+                }
+                Err(e) => {
+                    let mut v = vla::result("error", "invalid_point", json!({"why": e}), None, &call, 0, None);
+                    v["message"] = json!(e);
+                    v["hint"] = json!("tap a free floor spot or the top of a low surface (0.05–0.52 m) the robot can reach");
+                    return self.vla_immediate(v);
+                }
+            }
+        }
         let hb = |reason: &str, ev: Value| vla::result("handback", reason, ev, None, &call, 0, None);
-        let Some(o) = self.vla.find(&id).cloned() else {
-            let known: Vec<String> = self.vla.objects.iter().take(20).map(|o| o.id.clone()).collect();
-            let v = hb("not_in_map", json!({"why": format!("{id} is not in the object memory"), "known_ids": known}));
-            return self.vla_immediate(v);
-        };
-        let rel = verify::to_robot(pose, o.pos);
-        let dist = rel[0].hypot(rel[1]);
-        let unc = self.vla.uncertainty(&o, now, pose, self.nav.odo_m);
-        let visible = now - o.last_seen <= p.visible_s && o.state != ObjState::Gone;
-        let m = json!({"dist_m": (dist * 100.0).round() / 100.0, "rel_m": [(rel[0] * 100.0).round() / 100.0, (rel[1] * 100.0).round() / 100.0], "visible": visible, "unc_m": (unc * 100.0).round() / 100.0, "state": o.state.name()});
-        if o.state == ObjState::Gone {
-            return self.vla_immediate(hb("not_visible", json!({"why": format!("{id} is marked gone in memory"), "m": m})));
+        // 시작 조건(POLICY 1.2): 기준이 지점이면 1.5 m 안만, 물체면 기억에 있음·1.5 m 안·보이거나 불확실도 작음
+        if let Some(pt) = call.anchor_point() {
+            let rel = verify::to_robot(pose, pt);
+            let dist = rel[0].hypot(rel[1]);
+            let mut m = json!({"dist_m": (dist * 100.0).round() / 100.0, "rel_m": [(rel[0] * 100.0).round() / 100.0, (rel[1] * 100.0).round() / 100.0]});
+            if let Some((c, asked)) = &pcheck {
+                m["point"] = c.to_json(*asked);
+            }
+            if dist > p.start_max_m {
+                return self.vla_immediate(hb("too_far", json!({"why": format!("the point is {dist:.2} m away (VLA starts within {:.1} m)", p.start_max_m), "m": m, "next": "move_robot go_to"})));
+            }
+            if call.kind == SkillKind::Place {
+                if let Some(id) = call.pick_id() {
+                    if self.vla.find(id).is_none() {
+                        let v = hb("not_in_map", json!({"why": format!("{id} (the held object) is not in the object memory")}));
+                        return self.vla_immediate(v);
+                    }
+                }
+            }
+        } else {
+            let id = call.anchor_id().unwrap_or("").to_string();
+            let Some(o) = self.vla.find(&id).cloned() else {
+                let known: Vec<String> = self.vla.objects.iter().take(20).map(|o| o.id.clone()).collect();
+                let v = hb("not_in_map", json!({"why": format!("{id} is not in the object memory"), "known_ids": known}));
+                return self.vla_immediate(v);
+            };
+            let rel = verify::to_robot(pose, o.pos);
+            let dist = rel[0].hypot(rel[1]);
+            let unc = self.vla.uncertainty(&o, now, pose, self.nav.odo_m);
+            let visible = now - o.last_seen <= p.visible_s && o.state != ObjState::Gone;
+            let m = json!({"dist_m": (dist * 100.0).round() / 100.0, "rel_m": [(rel[0] * 100.0).round() / 100.0, (rel[1] * 100.0).round() / 100.0], "visible": visible, "unc_m": (unc * 100.0).round() / 100.0, "state": o.state.name()});
+            if o.state == ObjState::Gone {
+                return self.vla_immediate(hb("not_visible", json!({"why": format!("{id} is marked gone in memory"), "m": m})));
+            }
+            if dist > p.start_max_m {
+                return self.vla_immediate(hb("too_far", json!({"why": format!("{id} is {dist:.2} m away (VLA starts within {:.1} m)", p.start_max_m), "m": m, "next": "move_robot go_to"})));
+            }
+            if !visible && unc > p.unc_max_m {
+                return self.vla_immediate(hb("not_visible", json!({"why": format!("{id} not seen for {:.1} s and memory uncertainty {unc:.2} m > {:.2} m", now - o.last_seen, p.unc_max_m), "m": m})));
+            }
         }
-        if dist > p.start_max_m {
-            return self.vla_immediate(hb("too_far", json!({"why": format!("{id} is {dist:.2} m away (VLA starts within {:.1} m)", p.start_max_m), "m": m, "next": "move_robot go_to"})));
-        }
-        if !visible && unc > p.unc_max_m {
-            return self.vla_immediate(hb("not_visible", json!({"why": format!("{id} not seen for {:.1} s and memory uncertainty {unc:.2} m > {:.2} m", now - o.last_seen, p.unc_max_m), "m": m})));
-        }
-        let tgt = self.vla.find(&call.objects[0]).map(|o| o.pos);
+        let tgt = call.objects.first().and_then(|id| self.vla.find(id)).map(|o| o.pos);
         self.vla.filter.init = false; // 다음 관측에서 유지값을 다시 잡는다(튀지 않게)
         let c0 = (self.vla.contacts_body, self.vla.contacts_arm);
-        self.vla.run = Some(VlaRun::new(call, policy, &LimoState::default(), pose, tgt, c0));
+        let mut run = VlaRun::new(call, policy, &LimoState::default(), pose, tgt, c0);
+        run.point_check = pcheck;
+        self.vla.run = Some(run);
         false
     }
 
@@ -169,12 +215,14 @@ impl Robot {
         run.steps += 1;
         run.t = run.steps as f64 * dt;
         if run.steps == 1 {
-            let tgt = self.vla.find(&run.call.objects[0]).map(|o| o.pos);
+            let tgt = run.call.objects.first().and_then(|id| self.vla.find(id)).map(|o| o.pos);
             run.prog = (0.0, st.arm, st.grip, pose, tgt);
         }
         if let Some(e) = ext {
             run.ext = Some(e);
         }
+        // 목표 칸(매 스텝, 지금 지도에서 id 풀기 — 사라지면 마지막으로 안 자리 + 잃음)
+        run.goal_now = goal::build(&run.call.goal, &self.vla.objects, pose, st.eef, &mut run.goal_mem);
         // 정책(10 Hz): 실행기 스텝 3 개마다 한 번
         let every = ((1.0 / (dt * p.policy_hz)).round() as u64).max(1);
         if (run.steps - 1) % every == 0 {
@@ -188,7 +236,7 @@ impl Robot {
                 let ctx = &self.vla;
                 let slots = build_slots(&ctx.objects, pose, &run.call.objects, now, &|o| ctx.uncertainty(o, now, pose, odo), p.visible_s);
                 let last = ctx.filter.prev;
-                let obs = VlaObs { skill: &run.call.skill, kind: run.call.kind, body: &st, slots: &slots, t: run.t - dt, last_cmd: &last };
+                let obs = VlaObs { skill: &run.call.skill, kind: run.call.kind, body: &st, slots: &slots, t: run.t - dt, last_cmd: &last, goal: &run.goal_now };
                 run.out = run.policy.act(&obs);
             }
             run.policy_steps += 1;
@@ -204,13 +252,15 @@ impl Robot {
         }
         // 자동 확인(verify.rs) — 대상·받침은 set_plan id 로
         let kind = run.call.kind;
-        let target = self.vla.find(&run.call.objects[0]).cloned();
-        let support = if kind == SkillKind::Place { run.call.objects.get(1).and_then(|i| self.vla.find(i)).cloned() } else { None };
-        let anchor = self.vla.find(run.call.anchor_id()).cloned();
+        let point = run.call.anchor_point();
+        let target = run.call.objects.first().and_then(|id| self.vla.find(id)).cloned();
+        let support = if kind == SkillKind::Place && point.is_none() { run.call.objects.get(1).and_then(|i| self.vla.find(i)).cloned() } else { None };
+        let anchor = run.call.anchor_id().and_then(|id| self.vla.find(id)).cloned();
         let ev = verify::Evidence {
             kind,
             target: target.as_ref(),
             support: support.as_ref(),
+            point,
             pose,
             grip: st.grip,
             grip_cmd: a[7],
@@ -225,7 +275,7 @@ impl Robot {
         };
         let body_contacts = self.vla.contacts_body.saturating_sub(run.contacts0.0);
         let stalled = progress_check(&mut run, &p, &st, pose, target.as_ref().map(|o| o.pos));
-        let decision = run.decide(&p, &info, body_contacts, anchor.as_ref(), goal_visible, goal_unc, verdict, stalled);
+        let decision = run.decide(&p, &info, body_contacts, anchor.as_ref(), point.is_some(), goal_visible, goal_unc, verdict, stalled);
         match decision {
             None => {
                 Self::write8(out, &a);
@@ -246,6 +296,11 @@ impl Robot {
                 Tick::Done
             }
         }
+    }
+
+    /// 이번 스텝의 목표 칸(원값 32, 정규화 32 — goal.rs). 실행 중이 아니면 None
+    pub fn vla_goal_entries(&self) -> Option<&crate::goal::GoalEntries> {
+        self.vla.run.as_ref().map(|r| &r.goal_now)
     }
 
     /// 지금 물체 칸(시험·기록용): set_plan id 로 목표인지가 켜진 칸들

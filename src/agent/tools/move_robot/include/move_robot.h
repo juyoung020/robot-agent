@@ -37,6 +37,10 @@ ssize_t mr_overlay_json(MrRobot *r, char *buf, size_t cap);
 
 /* ---- VLA 실행기 (LIMO + OMX-F, docs/map_vla/POLICY.md 1.3·7.1·7.2) ----
  * 호출 {"executor":"vla","skill":"<skillspec 문장>","objects":["O12",...],"max_s":30[,"policy":"scripted|replay:<jsonl>|external"]}
+ *   또는 통합 목표 지정(2026-10-05, 앱 지도 두드리기): "goal":{"pick":{"id":"O12"},"place":{"id":"O3"} | {"point":[x,y(,z)]}}
+ *   (point = map 좌표 m, z 없으면 면 위면 그 윗면·아니면 바닥). 지점은 시작 때 검사(아는 빈 바닥 또는 0.05–0.52 m 윗면, 몸통이 서는 칸에서 닿음)하고
+ *   1.0 m 안 가장 가까운 맞는 자리로 옮김 — 결과 "point":{asked,point,on,support,snap_m,validated}, 없으면 status "error" reason "invalid_point".
+ *   "go here"/"move to"/"approach" + place.point = 지점까지 마지막 다가가기(1.5 m 안, 멀면 handback too_far). 놓기 + 지점 = 놓임 + 수평 0.05 m·바닥 ±0.02 m.
  * 결과(mr_take_result) {"status":"done|failed|timeout|handback","reason","evidence","steps","min_clear_m","contacts",...}
  * 행동 8 = [vx m/s, wz rad/s, omx_joint1..5 rad(목표 위치), 그리퍼 벌림 0..1] — 이미 안전 거르개를 지난 값.
  * proprio = LIMO 평가기 proprio 24 (base_qvel 3, arm_0_qpos 5, arm_0_qvel 5, eef_0_pos 3, eef_0_quat 4, gripper_0_qpos 2, gripper_0_qvel 2).
@@ -55,6 +59,9 @@ int mr_vla_set_objects_json(MrRobot *r, const char *objects_json, double now);
 void mr_vla_contacts(MrRobot *r, unsigned long long body, unsigned long long arm);   /* 누적: 몸통 / 팔·그리퍼 */
 int mr_vla_stop(MrRobot *r);                 /* 1 멈춤(결과 handback "cancelled"), 0 실행 중 아님 */
 int mr_vla_busy(const MrRobot *r);
+/* 이번 스텝의 목표 칸 2 × 16 (0 PICK, 1 PLACE; 값 = 있음, 물체, 지점, 앎, 잃음, x, y, z, 거리, sin, cos, 손끝 기준 x, y, z, 0, 0 — base_link m).
+ * raw32 원값, norm32 정책 입력(tok_norm.h 정규화, 학습 X0 432..463 과 같은 배치). NULL 은 건너뜀. 0 채움 / 1 실행 중 아님(0) / -2 */
+int mr_vla_goal_entries(const MrRobot *r, float *raw32, float *norm32);
 
 #ifdef __cplusplus
 }

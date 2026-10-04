@@ -18,6 +18,7 @@
 //! 결과: `{"status":"done|failed|timeout|handback","reason","evidence","steps","min_clear_m","contacts", …}`.
 
 use crate::limo::{self, LimoState, ACTION_DIM as A8};
+use crate::goal::{GoalEntries, GoalMemory, GoalRef, GoalSpec, PointCheck};
 use crate::verify::{self, MemObject, ObjState, Verdict};
 use serde_json::{json, Value};
 use std::f64::consts::PI;
@@ -116,20 +117,37 @@ pub fn default_budget_s(k: SkillKind) -> f64 {
 pub struct VlaCall {
     pub skill: String,
     pub kind: SkillKind,
-    /// 정규화한 물체 id ("O12")
+    /// 정규화한 물체 id ("O12"): [집을 것, 놓을 곳 id] 차례(옛 꼴과 같음). 지점 놓기·지점 가기면 [집을 것] 또는 빈 목록
     pub objects: Vec<String>,
     pub budget_s: f64,
     pub policy: String,
+    /// 목표 칸 지정(goal.rs). 지점은 시작 때 검사·옮긴 뒤 값으로 바뀜
+    pub goal: GoalSpec,
+    /// 부른 그대로의 놓을 지점(map x, y, z 없으면 None) — 시작 때 검사
+    pub point_req: Option<([f64; 2], Option<f64>)>,
 }
 
 impl VlaCall {
-    /// 시작 조건을 재는 물체: 놓기는 받침(objects[1]), 그 밖은 objects[0]
-    pub fn anchor_id(&self) -> &str {
-        if self.kind == SkillKind::Place && self.objects.len() > 1 {
-            &self.objects[1]
-        } else {
-            &self.objects[0]
+    /// 시작 조건을 재는 물체: 놓기는 받침(objects[1]), 그 밖은 objects[0]. 지점이 기준이면 None([`VlaCall::anchor_point`])
+    pub fn anchor_id(&self) -> Option<&str> {
+        if self.anchor_point().is_some() {
+            return None;
         }
+        if self.kind == SkillKind::Place && self.objects.len() > 1 {
+            Some(&self.objects[1])
+        } else {
+            self.objects.first().map(|s| s.as_str())
+        }
+    }
+    /// 지점이 기준인 단계(지점에 놓기, 지점으로 다가가기)
+    pub fn anchor_point(&self) -> Option<[f64; 3]> {
+        match self.kind {
+            SkillKind::Place | SkillKind::Approach => self.goal.place_point(),
+            _ => None,
+        }
+    }
+    pub fn pick_id(&self) -> Option<&str> {
+        self.goal.pick_id()
     }
 }
 
@@ -155,30 +173,86 @@ pub fn parse_call(args: &Value) -> Result<VlaCall, Value> {
     if skill.is_empty() {
         return Err(err("skill is required: the step sentence from set_plan (skillspec)", None));
     }
-    let (r, why) = route(&skill);
-    match r {
-        Route::MoveRobot => return Err(err(&format!("'{skill}' is not a VLA step: {why}"), Some("move_robot"))),
-        Route::Undecided => return Err(err(&format!("'{skill}': no executor ({why})"), None)),
-        Route::Vla => {}
-    }
-    let kind = SkillKind::from_sentence(&skill);
-    let objects: Vec<String> = match a.get("objects") {
-        Some(Value::Array(xs)) => xs
-            .iter()
-            .filter_map(|x| match x {
-                Value::String(s) => Some(verify::norm_id(s)),
-                Value::Number(n) => n.as_u64().map(|k| format!("O{k}")),
-                _ => None,
-            })
-            .filter(|s| !s.is_empty())
-            .collect(),
+    let nid = |x: &Value| -> Option<String> {
+        match x {
+            Value::String(s) => Some(verify::norm_id(s)).filter(|s| !s.is_empty()),
+            Value::Number(n) => n.as_u64().map(|k| format!("O{k}")),
+            _ => None,
+        }
+    };
+    let mut objects: Vec<String> = match a.get("objects") {
+        Some(Value::Array(xs)) => xs.iter().filter_map(nid).collect(),
         _ => vec![],
     };
-    if objects.is_empty() {
-        return Err(err("objects is required: the set_plan object ids of this step, e.g. [\"O12\"] (target first; place: [object, support])", None));
+    // 통합 목표 지정: {"goal": {"pick": {"id"}, "place": {"id"} | {"point": [x, y(, z)]}}}
+    let mut goal = GoalSpec::default();
+    let mut point_req = None;
+    if let Some(g) = a.get("goal").filter(|g| !g.is_null()) {
+        let bad = |m: &str| err(&format!("goal: {m} — use {{\"pick\": {{\"id\": \"O12\"}}, \"place\": {{\"id\": \"O3\"}} | {{\"point\": [x, y, z]}}}}"), None);
+        if !g.is_object() {
+            return Err(bad("must be an object"));
+        }
+        if let Some(p) = g.get("pick").filter(|p| !p.is_null()) {
+            match p.get("id").and_then(nid) {
+                Some(id) => goal.pick = Some(GoalRef::Obj(id)),
+                None => return Err(bad("pick needs an object id (points are place-only)")),
+            }
+        }
+        if let Some(p) = g.get("place").filter(|p| !p.is_null()) {
+            if let Some(id) = p.get("id").and_then(nid) {
+                goal.place = Some(GoalRef::Obj(id));
+            } else if let Some(xs) = p.get("point").and_then(|x| x.as_array()) {
+                let v: Vec<f64> = xs.iter().filter_map(|x| x.as_f64()).collect();
+                if !(v.len() == 2 || v.len() == 3) || v.len() != xs.len() || v.iter().any(|x| !x.is_finite()) {
+                    return Err(bad("place.point must be [x, y] or [x, y, z] (map frame, m)"));
+                }
+                point_req = Some(([v[0], v[1]], v.get(2).copied()));
+                goal.place = Some(GoalRef::Point([v[0], v[1], v.get(2).copied().unwrap_or(0.0)]));
+            } else {
+                return Err(bad("place needs an id or a point"));
+            }
+        }
+        if goal.pick.is_none() && goal.place.is_none() {
+            return Err(bad("give pick and/or place"));
+        }
+        // objects(옛 꼴)를 goal 에서: [집을 것, 놓을 곳 id]
+        objects = vec![];
+        if let Some(id) = goal.pick_id() {
+            objects.push(id.to_string());
+        }
+        if let Some(id) = goal.place_id() {
+            if objects.is_empty() {
+                return Err(bad("a place object needs the picked object id too (pick.id)"));
+            }
+            objects.push(id.to_string());
+        }
+    } else {
+        goal.pick = objects.first().map(|s| GoalRef::Obj(s.clone()));
+        goal.place = objects.get(1).map(|s| GoalRef::Obj(s.clone()));
     }
-    if kind == SkillKind::Place && objects.len() < 2 {
-        return Err(err("place needs objects [held object id, support/container id]", None));
+    // 실행기 나눔: 지점이 있으면 "go here"·"move to"·"approach" 문장은 지점까지의 마지막 다가가기(VLA, 1.5 m 안 — 멀면 handback too_far → go_to)
+    let mut kind = SkillKind::from_sentence(&skill);
+    if point_req.is_some() && matches!(kind, SkillKind::MoveTo | SkillKind::Approach | SkillKind::Other) {
+        kind = SkillKind::Approach;
+    } else {
+        let (r, why) = route(&skill);
+        match r {
+            Route::MoveRobot => return Err(err(&format!("'{skill}' is not a VLA step: {why}"), Some("move_robot"))),
+            Route::Undecided => return Err(err(&format!("'{skill}': no executor ({why})"), None)),
+            Route::Vla => {}
+        }
+    }
+    if objects.is_empty() && point_req.is_none() {
+        return Err(err("objects is required: the set_plan object ids of this step, e.g. [\"O12\"] (target first; place: [object, support]) — or goal {pick, place}", None));
+    }
+    if kind == SkillKind::Place && (objects.is_empty() || (objects.len() < 2 && point_req.is_none())) {
+        return Err(err("place needs objects [held object id, support/container id] or goal {pick: {id}, place: {id} | {point}}", None));
+    }
+    if !matches!(kind, SkillKind::Place | SkillKind::Approach | SkillKind::Pick) && point_req.is_some() {
+        return Err(err("a place point is only for place / approach (go here) / pick steps", None));
+    }
+    if kind != SkillKind::Approach && objects.is_empty() {
+        return Err(err("this step needs the object id (goal.pick.id)", None));
     }
     let num = |k: &str| a.get(k).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())));
     let budget_s = num("budget_s").or(num("max_s")).unwrap_or_else(|| default_budget_s(kind));
@@ -191,7 +265,7 @@ pub fn parse_call(args: &Value) -> Result<VlaCall, Value> {
         .map(String::from)
         .or_else(|| std::env::var("MR_VLA_POLICY").ok())
         .unwrap_or_else(|| "scripted".into());
-    Ok(VlaCall { skill, kind, objects, budget_s: budget_s.min(600.0), policy })
+    Ok(VlaCall { skill, kind, objects, budget_s: budget_s.min(600.0), policy, goal, point_req })
 }
 
 fn err(msg: &str, route: Option<&str>) -> Value {
@@ -277,6 +351,8 @@ pub struct VlaObs<'a> {
     pub t: f64,
     /// 직전 명령(거른 뒤)
     pub last_cmd: &'a [f64; A8],
+    /// 목표 칸 2 × 16(집을 것·놓을 곳, goal.rs): 원값 `raw` 와 정책 입력 `norm`(X0 432..463 과 같은 배치)
+    pub goal: &'a GoalEntries,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -410,8 +486,22 @@ impl VlaPolicy for ScriptedPolicy {
         }
         // 다가갈 칸: 놓기는 받침(두 번째 목표), 그 밖은 첫 목표
         let goals: Vec<&Slot> = o.slots.iter().filter(|s| s.is_goal).collect();
-        let tgt = if o.kind == SkillKind::Place { goals.get(1).or(goals.first()) } else { goals.first() };
-        let Some(tgt) = tgt.copied() else {
+        // 놓을 곳·다가갈 곳이 지점이면 목표 칸(놓을 곳)의 로봇 기준 자리로(크기 0)
+        let pe = &o.goal.raw[crate::goal::PLACE];
+        let pt_slot = (matches!(o.kind, SkillKind::Place | SkillKind::Approach) && pe[crate::goal::GE_KPT] > 0.5).then(|| Slot {
+            id: "point".into(),
+            rel: [pe[crate::goal::GE_POS] as f64, pe[crate::goal::GE_POS + 1] as f64, pe[crate::goal::GE_POS + 2] as f64 + crate::goal::BASE_Z],
+            dist: pe[crate::goal::GE_DIST] as f64,
+            bearing: (pe[crate::goal::GE_SIN] as f64).atan2(pe[crate::goal::GE_COS] as f64),
+            extent: [0.0; 3],
+            state: ObjState::Seen,
+            is_goal: true,
+            visible: true,
+            unc_m: 0.0,
+            age_s: 0.0,
+        });
+        let tgt = if pt_slot.is_some() { pt_slot.as_ref() } else if o.kind == SkillKind::Place { goals.get(1).or(goals.first()).copied() } else { goals.first().copied() };
+        let Some(tgt) = tgt else {
             return out(a, 0.0);
         };
         let tp = o.t - self.t_phase;
@@ -781,6 +871,10 @@ pub struct VlaRun {
     pub min_clear: f64,
     pub contacts0: (u64, u64),
     pub last_verdict: (Verdict, Value),
+    /// 목표 칸: 마지막으로 안 자리(잃음 표시용), 이번 스텝 칸, 시작 때 지점 검사 결과
+    pub goal_mem: GoalMemory,
+    pub goal_now: GoalEntries,
+    pub point_check: Option<(PointCheck, [f64; 3])>,
 }
 
 /// 실행기 문맥(Robot 안에 늘 있음): 기억 물체·시각 맞추기·접촉·거르개·지금 실행
@@ -878,7 +972,7 @@ pub fn result(status: &str, reason: &str, evidence: Value, run: Option<&VlaRun>,
     let mut r = json!({
         "status": status, "reason": reason, "evidence": evidence,
         "steps": run.map_or(0, |r| r.policy_steps), "min_clear_m": min_clear.filter(|x| x.is_finite()).map(r2), "contacts": contacts,
-        "executor": "vla", "skill": call.skill, "kind": call.kind.name(), "objects": call.objects,
+        "executor": "vla", "skill": call.skill, "kind": call.kind.name(), "objects": call.objects, "goal": call.goal.to_json(),
     });
     if let Some(run) = run {
         r["policy"] = json!(run.policy.name());
@@ -887,6 +981,9 @@ pub fn result(status: &str, reason: &str, evidence: Value, run: Option<&VlaRun>,
         r["budget_s"] = json!(call.budget_s);
         r["end_prob"] = json!(r2(run.out.end_prob));
         r["filter"] = json!({"clipped_steps": run.n_clipped, "base_stops": run.n_base_stops, "arm_blocked": run.n_arm_blocked});
+        if let Some((c, asked)) = &run.point_check {
+            r["point"] = c.to_json(*asked);
+        }
     }
     match status {
         "handback" => {
@@ -943,12 +1040,17 @@ impl VlaRun {
             min_clear: f64::INFINITY,
             contacts0,
             last_verdict: (Verdict::Unknown, Value::Null),
+            goal_mem: GoalMemory::default(),
+            goal_now: GoalEntries::default(),
+            point_check: None,
         }
     }
 
     /// 끝 조건 판정(7.2 표 순서: 안전 → 대상 사라짐 → 끝 신호 + 확인 → 확신 낮음 → 진척 없음 → 시간)
     /// 반환: Some((status, reason, evidence))
-    pub(crate) fn decide(&mut self, p: &VlaParams, info: &FilterInfo, body_contacts: u64, goal: Option<&MemObject>, goal_visible: bool, goal_unc: f64, verdict: (Verdict, Value), stalled: bool) -> Option<(&'static str, String, Value)> {
+    /// `point_anchor`: 기준이 지점(지점에 놓기·지점으로 다가가기) — 사라질 대상이 없다
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn decide(&mut self, p: &VlaParams, info: &FilterInfo, body_contacts: u64, goal: Option<&MemObject>, point_anchor: bool, goal_visible: bool, goal_unc: f64, verdict: (Verdict, Value), stalled: bool) -> Option<(&'static str, String, Value)> {
         let t = self.t;
         self.last_verdict = verdict.clone();
         if body_contacts > 0 {
@@ -964,7 +1066,7 @@ impl VlaRun {
             self.heavy_since = None;
         }
         let held = goal.map_or(false, |g| g.state == ObjState::Held);
-        let lost = match goal {
+        let lost = !point_anchor && match goal {
             None => true,
             Some(g) => g.state == ObjState::Gone || (!goal_visible && goal_unc > p.unc_max_m && !held),
         };
