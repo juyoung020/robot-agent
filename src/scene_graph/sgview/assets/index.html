@@ -353,10 +353,8 @@ function drawObjects() {
       gObjs.add(pts);
       if (sel) { const y = new THREE.Points(ent.geom, pointMat({ size:(o.points.voxel || 0.02) * opt("n_psize") * 1.5, color:0xffe14a, opacity:0.5, square:true })); y.userData.shared = true; gObjs.add(y); }
     } else if (!o.points || !ent || !ent.geom) {
-      // no points: state-coloured sphere (+ optional box)
-      const r = Math.max(0.06, Math.min(0.25, Math.max(...o.extent) * 0.15));
-      const s = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 8), new THREE.MeshBasicMaterial({ color:sel ? 0xffe14a : st, transparent:o.state === "gone", opacity:o.state === "gone" ? 0.45 : 1 }));
-      s.position.set(...o.pos); gObjs.add(s);
+      // no points (yet): draw nothing at the object's place — the object is still its node in the graph layer.
+      // A stand-in sphere here looked like a graph node that had dropped to the floor. Optional box only.
       if (opt("c_boxes")) {
         const b = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(...o.extent.map(v => Math.min(v, 3)))), new THREE.LineBasicMaterial({ color:st }));
         b.position.set(...o.pos); gObjs.add(b);
