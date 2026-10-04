@@ -742,6 +742,7 @@ void Bc::forward_teacher(NetBufs& b, int M) {
 
 // 렌더(render_batch 판씩) → K11 패치 → 얼린 인코더 → sb.tok [M × 128][784]
 void Bc::vis_encode(const RenderState* rs, int M) {
+  if (vis_skip) return;
   const int E = bcr::batch(rnd);
   for (int e0 = 0; e0 < M; e0 += E) {
     const int m = M - e0 < E ? M - e0 : E;

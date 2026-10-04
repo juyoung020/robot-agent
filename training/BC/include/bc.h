@@ -192,6 +192,7 @@ struct Bc {
   int bug = 0;                 // 음성 대조(검증): 1 MSE 기울기 배율 2 빠뜨림, 2 A3 → A2 dX 의 ELU' 빠뜨림, 3 flow 손실 기울기 배율 2 빠뜨림,
                                //                  4 P1 dX(영상 칸)의 ELU' 빠뜨림, 5 E1 → 몸통 dX 의 ELU' 빠뜨림
   bool keep_slot_bufs = false; // 검증: 칸 MLP 뒤 묶음이 dZ S2·S1 도 전역에
+  bool vis_skip = false;       // 측정용(bench 겹침 시험): vis_encode 를 건너뜀
 
   explicit Bc(const BcConfig& c);
   ~Bc();

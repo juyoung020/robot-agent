@@ -4,7 +4,7 @@
 //                                                        + 학생 입력·청크 라벨·flow 입력 CPU == GPU + 기록 = 본 것(학생 입력, 다시 렌더한 영상 토큰)
 //   bc_verify v6 [--lite]                                : 그래프 == 즉시 실행(기록·학습·DAgger 롤아웃 섞어서, 영상 학생은 렌더·인코더 포함) 비트 동일
 //   bc_verify v7 [--lite]                                : 같은 씨앗 두 번 비트 동일 / 다른 씨앗은 달라야
-//   bc_verify bench [N] [T] [mb] [K] [--lite]            : 처리량(영상 학생은 렌더·인코딩·학습 나눠서)
+//   bc_verify bench [N] [T] [mb] [K] [--lite]            : 처리량(영상 학생은 렌더·인코딩·학습 나눠서). BC_OVERLAP_PROBE=1 이면 두 스트림 겹치기 시험도(README 점검 절)
 // 기본은 영상 학생(영상 + 글 + flow 청크 16), --lite 는 student-lite(MSE, 영상·글 없음).
 // 규칙(9절): GPU 오차(GPU − FP64) ≤ 2 × 바닥(EMUL − FP64), 상대 L2, 텐서마다. 통과 = 종료 코드 0. --negative 는 버그를 넣어 반드시 실패해야 0.
 #include <algorithm>
@@ -704,6 +704,30 @@ static int run_bench(int N, int T, int mb, int K) {
                 u / K - t_vis);
     const float t_vr = ev([&] { b.vis_encode(b.rs_roll, N); }, 2);
     std::printf("  per rollout step (N %d): render+encode %.2f ms of %.2f ms\n", N, t_vr, r_st / T);
+    if (getenv("BC_OVERLAP_PROBE")) {   // 렌더(CUDA 코어)와 인코더(텐서 코어)를 두 스트림에 같이 띄우면 얼마나 겹치나(값은 버림 — 시간만)
+      cudaStream_t sa, sb2;
+      cudaStreamCreateWithFlags(&sa, cudaStreamNonBlocking); cudaStreamCreateWithFlags(&sb2, cudaStreamNonBlocking);
+      cudaEvent_t a0, a1, b1;
+      cudaEventCreate(&a0); cudaEventCreate(&a1); cudaEventCreate(&b1);
+      const int E = bcr::batch(b.rnd);
+      auto rend = [&](cudaStream_t s) { for (int e = 0; e < N; e += E) bcr::render(b.rnd, b.rs_roll + e, std::min(E, N - e), s); };
+      auto encd = [&](cudaStream_t s) { b.enc.run(2 * N, b.sb.tok, s); };
+      auto tm = [&](auto&& f) { f(); VCK(cudaDeviceSynchronize()); cudaEventRecord(a0, sa); cudaStreamWaitEvent(sb2, a0, 0); f(); cudaEventRecord(a1, sa); cudaEventRecord(b1, sb2);
+                                cudaStreamWaitEvent(sa, b1, 0); cudaEventRecord(a1, sa); cudaEventSynchronize(a1); float ms = 0; cudaEventElapsedTime(&ms, a0, a1); return ms; };
+      const float tr = tm([&] { rend(sa); }), te = tm([&] { encd(sb2); }), tc = tm([&] { rend(sa); encd(sb2); });
+      std::printf("  overlap probe (N %d): render %.2f ms, encoder %.2f ms, sum %.2f, both on two streams %.2f ms (hidden %.0f %% of render)\n", N, tr, te, tr + te, tc,
+                  100.0 * (tr + te - tc) / tr);
+      // 학생 갱신(영상 빼고)과 다음 미니배치 인코더를 같이 띄우면
+      b.vis_skip = true;
+      auto upd = [&](cudaStream_t) { b.update_step(); };   // 스레드 기본 스트림(per-thread)
+      auto enc2 = [&](cudaStream_t s) { b.enc.run(2 * mb, b.sb.tok, s); };
+      auto tm2 = [&](auto&& f) { f(); VCK(cudaDeviceSynchronize()); cudaEventRecord(a0, cudaStreamPerThread); cudaStreamWaitEvent(sb2, a0, 0); f();
+                                 cudaEventRecord(b1, sb2); cudaStreamWaitEvent(cudaStreamPerThread, b1, 0); cudaEventRecord(a1, cudaStreamPerThread); cudaEventSynchronize(a1);
+                                 float ms = 0; cudaEventElapsedTime(&ms, a0, a1); return ms; };
+      const float ts_ = tm2([&] { upd(0); }), te2 = tm2([&] { enc2(sb2); }), tc2 = tm2([&] { upd(0); enc2(sb2); });
+      b.vis_skip = false;
+      std::printf("  overlap probe (mb %d): student step %.2f ms, encoder %.2f ms, sum %.2f, both %.2f ms\n", mb, ts_, te2, ts_ + te2, tc2);
+    }
   }
   return 0;
 }
