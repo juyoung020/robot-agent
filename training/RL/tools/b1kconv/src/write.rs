@@ -59,6 +59,7 @@ pub fn assemble(sc: &mut Scene, t: &Tables) -> Vec<u8> {
         (S_PLACES, bytes_of(&pn.places), pn.places.len() as u32, std::mem::size_of::<PlaceRec>() as u32),
         (S_PAIRS, bytes_of(&pn.pairs), pn.pairs.len() as u32, std::mem::size_of::<PairRec>() as u32),
         (S_PNP_RANGES, bytes_of(&pn.ranges), pn.ranges.len() as u32, std::mem::size_of::<PnpRange>() as u32),
+        (S_FLOOR_Z, raw(&pn.floor_z), pn.floor_z.len() as u32, 2),
     ];
     let hsz = std::mem::size_of::<FileHeader>();
     let mut off = hsz.div_ceil(64) * 64;

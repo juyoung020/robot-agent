@@ -63,7 +63,7 @@ macro_rules! rec {
 }
 
 pub const MAGIC: u32 = 0x4353_4152; // "RASC" little endian
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 pub const NSEC: usize = 28;
 pub const NONE16: u16 = 0xFFFF;
 
@@ -260,14 +260,21 @@ rec!(PoseRec, "task object state in one instance", {
 });
 
 rec!(LimitsRec, "pick-and-place limits used for PICKS/PLACES (2 records: [0] outer = inclusion, [1] inner = flag bit 0)", {
-    pick_z: f32 => "max bottom height (m) of a graspable object (top-down grasp from the LIMO base)",
+    pick_z: f32 => "max bottom height (m) of a graspable object (= pick surface height)",
     place_top: f32 => "max top height (m) of an ontop support",
     inside_margin: f32 => "an open container may be this much higher than place_top (m)",
     max_mass: f32 => "max mass (kg; category average)",
     max_w: f32 => "max of the smaller horizontal box side (m) = gripper opening",
     min_side: f32 => "min smaller horizontal side (m) of an ontop support",
     min_top: f32 => "min top height (m) of an ontop support (floor is its own kind)",
-    reach: f32 => "max xy distance (m) from a free base cell center to the object's box footprint",
+    reach_side: f32 => "grasp point reach beyond the body side edge (m), E0",
+    reach_front: f32 => "grasp point reach beyond the body front edge (m), E0",
+    edge_side: f32 => "body side edge from the joint1 axis (m); a base cell center is taken as the joint1 axis",
+    edge_front: f32 => "body front edge from the joint1 axis (m)",
+    topdown_z: f32 => "top-down grasps work up to this object bottom height (m); above it only a side grasp",
+    edge_dist: f32 => "side grasp above topdown_z: object within this distance (m) of its surface edge, and of the body side edge",
+    threshold: f32 => "max floor step (m) the base crosses (TRAV components are cut at larger steps)",
+    reserved: [f32; 2] => "0",
 });
 
 rec!(PickRec, "graspable object candidate", {
@@ -284,7 +291,9 @@ rec!(PickRec, "graspable object candidate", {
     n_approach: u32 => "TRAV-free cells within reach of the footprint",
     src_place: u32 => "PlaceRec index it rests on / in (same level or scene level), 0xffffffff = unknown",
     flags: u32 => "RASC_PK_*",
-    reserved: [u32; 2] => "0",
+    edge_d: f32 => "distance (m) from the object center to the nearest edge of its ontop source surface, NaN if none",
+    comp_inner: u16 => "like comp, with the inner threshold",
+    reserved: u16 => "0",
 });
 
 rec!(PlaceRec, "support candidate (ontop surface, open container, or a room's floor)", {
@@ -299,6 +308,8 @@ rec!(PlaceRec, "support candidate (ontop surface, open container, or a room's fl
     n_approach: u32 => "TRAV-free cells within reach (floor: free cells of the room)",
     comp: u16 => "TRAV component (largest among approach cells), 0xffff = none",
     flags: u16 => "bit 0: also within the inner (strict) limits",
+    comp_inner: u16 => "like comp, with the inner threshold",
+    reserved: u16 => "0",
 });
 
 rec!(PairRec, "pick-and-place candidate: object, source support, target support", {
@@ -306,7 +317,7 @@ rec!(PairRec, "pick-and-place candidate: object, source support, target support"
     src: u32 => "PlaceRec index of the source support (= pick.src_place)",
     dst: u32 => "PlaceRec index of the target support",
     rel: u8 => "RASC_P_ONTOP or RASC_P_INSIDE",
-    reachable: u8 => "bit 0: pick and target approach cells share a TRAV component; bit 1: both within inner limits; bit 2: instance robot start in that component",
+    reachable: u8 => "bit 0: pick and target share a TRAV component (outer threshold); bit 1: both within inner limits; bit 2: instance robot start in that component; bit 3: same component and robot start with the inner threshold",
     room_pick: u16 => "RoomRec index of the object",
     room_dst: u16 => "RoomRec index of the target",
     reserved: u16 => "0",
@@ -321,12 +332,14 @@ rec!(PnpRange, "per-instance ranges into PICKS/PLACES/PAIRS (n_inst + 1 entries;
     n_place: u16 => "",
     n_pair: u32 => "",
     robot_comp: u16 => "TRAV component of the robot start cell (0xffff none / scene level)",
-    reserved: u16 => "0",
+    robot_comp_inner: u16 => "same with the inner threshold",
 });
 
 pub const PNP_TASKOBJ: u32 = 0x8000_0000;
 pub const PK_FLAGS: &[(&str, u32, &str)] = &[
     ("INNER", 1, "also within the inner (strict) limits"),
+    ("SIDE_GRASP", 16, "bottom above topdown_z: only a side grasp, edge condition met (or EDGE_UNKNOWN)"),
+    ("EDGE_UNKNOWN", 32, "side grasp but the source is not an ontop surface (container or none): edge not checked"),
     ("MASS_UNKNOWN", 2, "category has no average mass (mass limit not applied)"),
     ("SCENE_OBJ", 4, "instance-level entry of a scene object in the task scope (overrides the scene-level one)"),
     ("IN_CLOSED", 8, "BDDL init puts it inside a closed articulated container"),
@@ -336,7 +349,7 @@ pub const PK_FLAGS: &[(&str, u32, &str)] = &[
 pub const SEC_NAMES: [&str; NSEC] = [
     "STRINGS", "CATS", "ROOMS", "OBJS", "BOXES", "DOORS", "JOINTS", "ROOM_GRID", "TRAV", "TRAV_NO_OBJ", "TRAV_NO_DOOR",
     "TRAV_OPEN_DOOR", "TASKS", "TASK_OBJS", "LITS", "VARS", "CANDS", "REMOVED", "INSTS", "POSES", "IN_ROOMS", "LIMITS",
-    "PICKS", "PLACES", "PAIRS", "PNP_RANGES", "RES26", "RES27",
+    "PICKS", "PLACES", "PAIRS", "PNP_RANGES", "FLOOR_Z", "RES27",
 ];
 pub const S_STRINGS: usize = 0;
 pub const S_CATS: usize = 1;
@@ -364,6 +377,7 @@ pub const S_PICKS: usize = 22;
 pub const S_PLACES: usize = 23;
 pub const S_PAIRS: usize = 24;
 pub const S_PNP_RANGES: usize = 25;
+pub const S_FLOOR_Z: usize = 26;
 
 // flags (objects and task objects)
 pub const FLAGS: &[(&str, u32, &str)] = &[
@@ -517,7 +531,7 @@ pub fn header_text() -> String {
     s.push_str(" *                  TRAV = floor_trav_0, TRAV_NO_OBJ = floor_trav_no_obj_0 (walls only),\n");
     s.push_str(" *                  TRAV_NO_DOOR = floor_trav_no_door_0, TRAV_OPEN_DOOR = floor_trav_open_door_0\n");
     s.push_str(" *   JOINTS         f32 pool (joint positions)\n");
-    s.push_str(" *   CANDS, REMOVED u16 pools; IN_ROOMS u32 pool (string offsets)\n */\n");
+    s.push_str(" *   CANDS, REMOVED u16 pools; IN_ROOMS u32 pool (string offsets)\n *   FLOOR_Z        i16[grid_h][grid_w] floor top height (mm) under each cell (floor object of the cell's room), -32768 = none\n */\n");
     s.push_str("#pragma once\n#include <stdint.h>\n#include <stddef.h>\n");
     s.push_str("#ifdef __cplusplus\n#define RASC_STATIC_ASSERT(c, m) static_assert(c, m)\n#else\n#define RASC_STATIC_ASSERT(c, m) _Static_assert(c, m)\n#endif\n\n");
     s.push_str(&format!("#define RASC_MAGIC 0x{MAGIC:08x}u\n#define RASC_VERSION {VERSION}u\n#define RASC_LAYOUT_HASH 0x{:08x}u\n\n", fnv(&lay)));

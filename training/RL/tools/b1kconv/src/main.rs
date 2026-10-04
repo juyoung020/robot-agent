@@ -170,7 +170,7 @@ fn convert_scene(p: &Paths, c: &mut scene::Common, name: &str, out_dir: Option<&
         let _ = writeln!(s, "  not-open task {ti}: closed at start in {a}/{n} instances");
     }
     if let Some(dir) = out_dir {
-        std::fs::write(format!("{dir}/{name}.rasc"), &bytes).map_err(|e| e.to_string())?;
+        util::write_atomic(&format!("{dir}/{name}.rasc"), &bytes).map_err(|e| e.to_string())?;
         let mut e = String::new();
         let _ = writeln!(e, "scene {name}");
         let _ = writeln!(e, "layout_hash {}", layout_hash());
@@ -181,8 +181,8 @@ fn convert_scene(p: &Paths, c: &mut scene::Common, name: &str, out_dir: Option<&
             let _ = writeln!(e, "sec {sn} {} {:016x}", sh.count, write::fnv64(b));
         }
         let _ = writeln!(e, "n_doc_lits {}", t.tasks.iter().map(|x| x.n_doc_lits as u32).sum::<u32>());
-        std::fs::write(format!("{dir}/{name}.pnp.tsv"), &pnp_txt.1).map_err(|e| e.to_string())?;
-        std::fs::write(format!("{dir}/{name}.expect"), e).map_err(|e| e.to_string())?;
+        util::write_atomic(&format!("{dir}/{name}.pnp.tsv"), pnp_txt.1.as_bytes()).map_err(|e| e.to_string())?;
+        util::write_atomic(&format!("{dir}/{name}.expect"), e.as_bytes()).map_err(|e| e.to_string())?;
     }
     Ok(SceneTasks { feas, summary: s })
 }
@@ -261,8 +261,8 @@ fn table_and_compare(all: &mut [task::FeasTask], doc: &str, out_dir: &str) -> St
         sw.push((t.idx, sw_.q()));
         slw.push((t.idx, lw_.q()));
     }
-    let _ = std::fs::write(format!("{out_dir}/task_table.md"), &table);
-    let _ = std::fs::write(format!("{out_dir}/feasibility.tsv"), &tsv);
+    let _ = util::write_atomic(&format!("{out_dir}/task_table.md"), table.as_bytes());
+    let _ = util::write_atomic(&format!("{out_dir}/feasibility.tsv"), tsv.as_bytes());
 
     let mut r = String::new();
     let summ = |v: &[(usize, f64)]| -> (Vec<usize>, Vec<usize>, f64) {
@@ -276,6 +276,11 @@ fn table_and_compare(all: &mut [task::FeasTask], doc: &str, out_dir: &str) -> St
     let _ = writeln!(r, "loose:  nonzero {} {:?}  q=1 {} {:?}  mean {:.4} ({:.3})   [doc: 14 [0,1,9,18,26,27,30,52,54,77,79,80,87,89] / 4 [0,1,80,87] / 0.087]", a.len(), a, b.len(), b, m, m);
     let doc_ok_l = a == vec![0, 1, 9, 18, 26, 27, 30, 52, 54, 77, 79, 80, 87, 89] && b == vec![0, 1, 80, 87] && format!("{m:.3}") == "0.087";
     let (a, b, m) = summ(&sw);
+    for th in [feas::STRICT_E0, feas::LOOSE_E0] {
+        let v: Vec<(usize, f64)> = all.iter().map(|t| (t.idx, feas::run(t, &th, feas::Geo::Doc).q())).collect();
+        let (a, b, m) = summ(&v);
+        let _ = writeln!(r, "{} (E0 limits, doc box heights): nonzero {} {:?} q=1 {:?} mean {:.4}", th.name, a.len(), a, b, m);
+    }
     let _ = writeln!(r, "strict, world box (rotation + bbox offset): nonzero {} {:?} q=1 {:?} mean {:.4}", a.len(), a, b, m);
     let (a, b, m) = summ(&slw);
     let _ = writeln!(r, "loose,  world box (rotation + bbox offset): nonzero {} {:?} q=1 {:?} mean {:.4}", a.len(), a, b, m);
@@ -381,7 +386,7 @@ fn main() {
             } else {
                 println!("({} tasks converted; the doc comparison needs all 7 scenes)", all.len());
             }
-            std::fs::write(format!("{}/summary.txt", a.out), summary).map_err(|e| e.to_string())?;
+            util::write_atomic(&format!("{}/summary.txt", a.out), summary.as_bytes()).map_err(|e| e.to_string())?;
             Ok(0)
         }
         "verify" => {
@@ -455,12 +460,12 @@ fn pnp_summary(sc: &scene::Scene, t: &write::Tables) -> (String, String) {
     let spairs = &pn.pairs[..sr.n_pair as usize];
     let _ = writeln!(
         s,
-        "  pnp scene: picks {} (inner {}, approachable {}) | supports ontop {} inside {} floors {} | pairs {} reachable {} reachable+inner {} | TRAV components {}",
+        "  pnp scene: picks {} (inner {}, approachable {}) | supports ontop {} inside {} floors {} | pairs {} reachable {} reachable+inner {} | TRAV components {} / {} (outer / inner floor-step threshold), step cuts {} / {}",
         sp.len(), sp.iter().filter(|p| p.flags & 1 != 0).count(), sp.iter().filter(|p| p.n_approach > 0).count(),
         kinds(spl, 1), kinds(spl, 2), kinds(spl, 3), spairs.len(), spairs.iter().filter(|p| p.reachable & 1 != 0).count(),
-        spairs.iter().filter(|p| p.reachable & 3 == 3).count(), pn.n_comp
+        spairs.iter().filter(|p| p.reachable & 3 == 3).count(), pn.n_comp[0], pn.n_comp[1], pn.step_cuts[0], pn.step_cuts[1]
     );
-    let mut tsv = String::from("task_index\ttask\tinstances\twith_pick\twith_pick_inner\twith_reachable_pair\twith_robot_reachable_pair\twith_robot_reachable_inner_pair\tpicks_per_inst\tpick_categories\n");
+    let mut tsv = String::from("task_index\ttask\tinstances\twith_pick\twith_pick_inner\twith_reachable_pair\twith_robot_reachable_pair\twith_robot_reachable_inner_pair(limits+threshold)\tpicks_per_inst\tpick_categories\n");
     let (mut ip, mut ipi, mut ir, mut irr, mut irri, mut npk, mut npl, mut npr) = (0, 0, 0, 0, 0, 0usize, 0usize, 0usize);
     let ni = t.insts.len();
     for tr in &t.tasks {
@@ -477,7 +482,7 @@ fn pnp_summary(sc: &scene::Scene, t: &write::Tables) -> (String, String) {
             b += pk.iter().any(|p| p.flags & 1 != 0) as usize;
             c += pr.iter().any(|p| p.reachable & 1 != 0) as usize;
             d += pr.iter().any(|p| p.reachable & 5 == 5) as usize;
-            e += pr.iter().any(|p| p.reachable & 7 == 7) as usize;
+            e += pr.iter().any(|p| p.reachable & 15 == 15) as usize;
             for p in pk {
                 let o = &t.tobjs[(p.obj & !PNP_TASKOBJ) as usize];
                 let cn = &sc.cat_names[o.cat as usize];

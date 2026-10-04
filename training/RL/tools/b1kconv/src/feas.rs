@@ -20,6 +20,9 @@ pub struct Th {
 }
 pub const STRICT: Th = Th { name: "strict", pick_z: 0.45, place_top: 0.50, max_mass: 0.25, max_w: 0.08, tog_z: 0.55 };
 pub const LOOSE: Th = Th { name: "loose", pick_z: 0.60, place_top: 0.62, max_mass: 0.5, max_w: 0.10, tog_z: 0.70 };
+/// E0 measured (5.3): toggle not measured (kept)
+pub const STRICT_E0: Th = Th { name: "strict-E0", pick_z: 0.45, place_top: 0.48, max_mass: 0.25, max_w: 0.04, tog_z: 0.55 };
+pub const LOOSE_E0: Th = Th { name: "loose-E0", pick_z: 0.50, place_top: 0.52, max_mass: 0.40, max_w: 0.06, tog_z: 0.70 };
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Geo {

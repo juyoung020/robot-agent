@@ -49,6 +49,7 @@ struct Scene {
     View<RascPlaceRec> places;
     View<RascPairRec> pairs;
     View<RascPnpRange> pnp_ranges;  // one per instance + last = scene level
+    View<int16_t> floor_z;          // [grid_h][grid_w] floor top (mm), INT16_MIN = none
     View<char> strings;
 
     const char* str(uint32_t off) const { return off < strings.n ? strings.p + off : ""; }
@@ -159,8 +160,9 @@ inline bool load_buffer(Scene& s, std::string* err) {
               sec_view(s, RASC_SEC_INSTS, &s.insts, sizeof(RascInstRec), err) && sec_view(s, RASC_SEC_POSES, &s.poses, sizeof(RascPoseRec), err) &&
               sec_view(s, RASC_SEC_IN_ROOMS, &s.in_rooms, 4, err) && sec_view(s, RASC_SEC_LIMITS, &s.limits, sizeof(RascLimitsRec), err) &&
               sec_view(s, RASC_SEC_PICKS, &s.picks, sizeof(RascPickRec), err) && sec_view(s, RASC_SEC_PLACES, &s.places, sizeof(RascPlaceRec), err) &&
-              sec_view(s, RASC_SEC_PAIRS, &s.pairs, sizeof(RascPairRec), err) && sec_view(s, RASC_SEC_PNP_RANGES, &s.pnp_ranges, sizeof(RascPnpRange), err);
-    if (ok && (s.limits.n != 2 || s.pnp_ranges.n != s.insts.n + 1)) { *err = "pick-and-place tables malformed"; return false; }
+              sec_view(s, RASC_SEC_PAIRS, &s.pairs, sizeof(RascPairRec), err) && sec_view(s, RASC_SEC_PNP_RANGES, &s.pnp_ranges, sizeof(RascPnpRange), err) &&
+              sec_view(s, RASC_SEC_FLOOR_Z, &s.floor_z, 2, err);
+    if (ok && (s.limits.n != 2 || s.pnp_ranges.n != s.insts.n + 1 || s.floor_z.n != (size_t)h.grid_w * h.grid_h)) { *err = "pick-and-place tables malformed"; return false; }
     if (!ok) return false;
     if (s.room_grid.n != (size_t)h.grid_w * h.grid_h) { *err = "room grid size"; return false; }
     if (s.strings.n == 0 || s.strings.p[s.strings.n - 1] != 0) { *err = "string pool not NUL terminated"; return false; }

@@ -111,3 +111,13 @@ pub fn py_round2(x: f64) -> f64 {
     let r = if d > 0.5 { f + 1.0 } else if d < 0.5 { f } else if f % 2.0 == 0.0 { f } else { f + 1.0 };
     r / 100.0
 }
+
+/// write to `<path>.tmp.<pid>`, fsync, rename over `path` (readers never see a half file)
+pub fn write_atomic(path: &str, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let tmp = format!("{path}.tmp.{}", std::process::id());
+    let mut f = std::fs::File::create(&tmp).map_err(|e| format!("{tmp}: {e}"))?;
+    f.write_all(bytes).and_then(|_| f.sync_all()).map_err(|e| format!("{tmp}: {e}"))?;
+    drop(f);
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename {tmp} -> {path}: {e}"))
+}

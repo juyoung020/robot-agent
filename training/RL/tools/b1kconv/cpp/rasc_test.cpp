@@ -268,7 +268,12 @@ static void test_file(const std::string& path) {
             const RascPickRec& p = s.picks[r.pick_off + k];
             CHECK(p.inst == inst, "pick inst");
             CHECK(p.z0 <= L.pick_z && p.min_w <= L.max_w && (std::isnan(p.mass) ? (p.flags & RASC_PK_MASS_UNKNOWN) != 0 : p.mass <= L.max_mass), "pick outside outer limits");
-            bool inner = p.z0 <= LI.pick_z && p.min_w <= LI.max_w && (std::isnan(p.mass) || p.mass <= LI.max_mass);
+            bool side = p.z0 > L.topdown_z;
+            CHECK(side == ((p.flags & RASC_PK_SIDE_GRASP) != 0), "side grasp flag");
+            CHECK(!side || std::isnan(p.edge_d) || p.edge_d <= L.edge_dist, "side grasp beyond the surface edge limit");
+            CHECK(std::isnan(p.edge_d) == ((p.flags & RASC_PK_EDGE_UNKNOWN) != 0) || !side, "edge unknown flag");
+            bool inner = p.z0 <= LI.pick_z && p.min_w <= LI.max_w && (std::isnan(p.mass) || p.mass <= LI.max_mass) &&
+                         (p.z0 <= LI.topdown_z || (!std::isnan(p.edge_d) && p.edge_d <= LI.edge_dist));
             CHECK(inner == ((p.flags & RASC_PK_INNER) != 0), "pick inner flag");
             CHECK(p.src_place == RASC_NONE32 || p.src_place < s.places.n, "pick src");
             if (p.obj & RASC_PNP_TASKOBJ) {
@@ -296,9 +301,18 @@ static void test_file(const std::string& path) {
             CHECK(a.rel == (d.kind == 2 ? RASC_P_INSIDE : RASC_P_ONTOP), "pair rel");
             CHECK(((a.reachable & 1) != 0) == (p.comp != RASC_NONE16 && p.comp == d.comp), "pair reachable bit");
             CHECK(((a.reachable & 4) == 0) || (!scene && r.robot_comp == p.comp), "pair robot bit");
+            CHECK(((a.reachable & 8) != 0) == (!scene && r.robot_comp_inner != RASC_NONE16 && r.robot_comp_inner == p.comp_inner && p.comp_inner == d.comp_inner), "pair inner robot bit");
             CHECK(a.room_pick == p.room && a.room_dst == d.room, "pair rooms");
         }
     }
+    // floor heights: known under every room cell, sane range
+    size_t fz_room = 0, fz_room_known = 0;
+    for (size_t i = 0; i < s.floor_z.n; i++) {
+        if (s.floor_z[i] != INT16_MIN) CHECK(s.floor_z[i] > -2000 && s.floor_z[i] < 2000, "floor z %d", s.floor_z[i]);
+        if (s.room_grid[i]) { fz_room++; fz_room_known += s.floor_z[i] != INT16_MIN; }
+    }
+    CHECK(fz_room_known == fz_room, "floor height unknown under %zu room cells", fz_room - fz_room_known);
+    CHECK(L.threshold >= LI.threshold && L.max_w >= LI.max_w && L.pick_z >= LI.pick_z, "outer limits narrower than inner");
     CHECK(picks_seen == s.picks.n && places_seen == s.places.n && pairs_seen == s.pairs.n, "pnp ranges do not tile the sections");
 
     CHECK(n_doc == n_doc_lits_expect,"doc literals %" PRIu64 " != %" PRIu64, n_doc, n_doc_lits_expect);
