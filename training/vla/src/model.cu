@@ -19,6 +19,19 @@ using net::f2bf;
 #define MCK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) { std::fprintf(stderr, "CUDA %s at %s:%d\n", cudaGetErrorString(e_), __FILE__, __LINE__); std::abort(); } } while (0)
 #define MKC() MCK(cudaGetLastError())
 static unsigned nb(long long n, int t = 256) { return (unsigned)((n + t - 1) / t); }
+// 잔차 끝단: out = Rin + A·Wᵀ (+ b) — 예전 복사 → += → bias_add 와 같은 값(A2)
+static void mm_res(const uint16_t* A, int lda, int M, const uint16_t* W, int N, int K, const float* Rin, float* out, int ld, const float* bias, cudaStream_t st) {
+  tk::Epi e;
+  e.kind = tk::EK_RES; e.C = out; e.ldc = ld; e.R = Rin; e.ldr = ld; e.bias = bias;
+  tk::mme(A, lda, M, W, N, K, e, st);
+}
+// 치우침(+ GELU bf16) 끝단: out = A·Wᵀ + b, outb = bf16(gelu(out)) (A4)
+static void mm_bias(const uint16_t* A, int lda, int M, const uint16_t* W, int N, int K, float* out, int ld, const float* bias, uint16_t* outb, bool gelu,
+                    cudaStream_t st) {
+  tk::Epi e;
+  e.kind = tk::EK_BIAS; e.C = out; e.ldc = ld; e.bias = bias; e.Cb = outb; e.ldcb = N; e.gelu = gelu ? 1 : 0;
+  tk::mme(A, lda, M, W, N, K, e, st);
+}
 constexpr int TEMB = 32;
 constexpr int DWCH = 1024;   // dW split-K 조각 행 수
 // 비교용: RVLA_DN_OLD=1 이면 학습 DeltaNet 을 예전 재귀 꼴(FP32, 검문점 16 스텝)로
@@ -751,8 +764,7 @@ static void q_layer_fwd(Model& m, int l, int B, int L, const float* Xin, float* 
     a.B = B; a.n = L; a.nq = c.nq; a.nkv = c.nkv; a.hd = c.hd; a.scale = 1.f / std::sqrt((float)c.hd); a.O = s.O; a.ldo = c.nq * c.hd; a.lse = s.lse;
     tk::att_fwd(a, st);
     qk::gate(s.O, s.T0, Ly.wqkv.N, R, c.nq, c.hd, s.Ag, st);
-    MCK(cudaMemcpyAsync(s.Xmid, Xin, sizeof(float) * (size_t)R * H, cudaMemcpyDeviceToDevice, st));
-    tk::mm(s.Ag, c.nq * c.hd, R, W + Ly.wo.off, H, c.nq * c.hd, s.Xmid, H, true, st);
+    mm_res(s.Ag, c.nq * c.hd, R, W + Ly.wo.off, H, c.nq * c.hd, Xin, s.Xmid, H, nullptr, st);
   } else {
     const int li = c.lin_in(), la = c.lin_all();
     tk::mm(s.A1, H, R, W + Ly.win.off, la, H, s.T0, la, false, st);
@@ -763,14 +775,12 @@ static void q_layer_fwd(Model& m, int l, int B, int L, const float* Xin, float* 
     if (dn_old()) qk::deltanet(Qn, Kn, s.T1 + 2 * c.lh * c.dk, li, s.Gb, s.Bb, B, L, c.lh, c.dk, c.dv, nullptr, nullptr, false, s.O, st, ck ? s.dnws0 : nullptr);
     else tk::dnc_fwd(Qn, Kn, s.T1 + 2 * c.lh * c.dk, li, s.Gb, s.Bb, B, L, c.lh, c.dk, c.dv, nullptr, nullptr, false, s.O, s.dnws, ck, st);
     qk::gnorm(s.O, s.T0 + li, la, R, c.lh, c.dv, P + Ly.gnw, c.eps, s.Ag, st);
-    MCK(cudaMemcpyAsync(s.Xmid, Xin, sizeof(float) * (size_t)R * H, cudaMemcpyDeviceToDevice, st));
-    tk::mm(s.Ag, c.lh * c.dv, R, W + Ly.wout.off, H, c.lh * c.dv, s.Xmid, H, true, st);
+    mm_res(s.Ag, c.lh * c.dv, R, W + Ly.wout.off, H, c.lh * c.dv, Xin, s.Xmid, H, nullptr, st);
   }
   qk::rmsnorm(s.Xmid, R, H, P + Ly.ln2, true, c.eps, s.A2, nullptr, nullptr, st);
   tk::mm(s.A2, H, R, W + Ly.wgu.off, 2 * c.I, H, s.GU, 2 * c.I, false, st);
   qk::swiglu(s.GU, R, c.I, s.Hh, st);
-  MCK(cudaMemcpyAsync(Xout, s.Xmid, sizeof(float) * (size_t)R * H, cudaMemcpyDeviceToDevice, st));
-  tk::mm(s.Hh, c.I, R, W + Ly.wdn.off, H, c.I, Xout, H, true, st);
+  mm_res(s.Hh, c.I, R, W + Ly.wdn.off, H, c.I, s.Xmid, Xout, H, nullptr, st);
 }
 // 뒤: s.dR = 층 출력 기울기 → 층 입력 기울기(제자리). 앞 중간값은 q_layer_fwd 를 다시 불러 만든다
 static void q_layer_bwd(Model& m, int l, int B, int L, cudaStream_t st) {
@@ -858,24 +868,17 @@ static void v_block_fwd(Model& m, int l, int Rv, const float* Xin, float* Xout, 
   const float* P = m.ap.V;
   const int D = c.vD;
   tk::ln_fwd(Xin, Rv, D, P + b.ln1g, P + b.ln1b, c.vEps, s.vA1, nullptr, st);
-  tk::mm(s.vA1, D, Rv, W + b.qkv.off, 3 * D, D, s.vQKV, 3 * D, false, st);
-  tk::bias_add(s.vQKV, Rv, 3 * D, 3 * D, P + b.qkvb, st);
+  mm_bias(s.vA1, D, Rv, W + b.qkv.off, 3 * D, D, s.vQKV, 3 * D, P + b.qkvb, nullptr, false, st);
   tk::AttP a;
   a.Q = s.vQKV; a.ldq = 3 * D; a.K1 = s.vQKV + D; a.V1 = s.vQKV + 2 * D; a.ldk1 = 3 * D; a.L1 = c.vT; a.n1c = c.vT;
   a.B = Rv / c.vT; a.n = c.vT; a.nq = c.vHeads; a.nkv = c.vHeads; a.hd = D / c.vHeads; a.scale = 1.f / std::sqrt((float)(D / c.vHeads));
   a.O = s.vO; a.ldo = D; a.lse = s.vlse;
   tk::att_fwd(a, st);
   tk::f2bf(s.vO, (long long)Rv * D, s.vAo, st);
-  MCK(cudaMemcpyAsync(s.vXm, Xin, sizeof(float) * (size_t)Rv * D, cudaMemcpyDeviceToDevice, st));
-  tk::mm(s.vAo, D, Rv, W + b.proj.off, D, D, s.vXm, D, true, st);
-  tk::bias_add(s.vXm, Rv, D, D, P + b.projb, st);
+  mm_res(s.vAo, D, Rv, W + b.proj.off, D, D, Xin, s.vXm, D, P + b.projb, st);
   tk::ln_fwd(s.vXm, Rv, D, P + b.ln2g, P + b.ln2b, c.vEps, s.vA2, nullptr, st);
-  tk::mm(s.vA2, D, Rv, W + b.fc1.off, c.vMLP, D, s.vH1, c.vMLP, false, st);
-  tk::bias_add(s.vH1, Rv, c.vMLP, c.vMLP, P + b.fc1b, st);
-  tk::gelu_fwd(s.vH1, (long long)Rv * c.vMLP, s.vAg, st);
-  MCK(cudaMemcpyAsync(Xout, s.vXm, sizeof(float) * (size_t)Rv * D, cudaMemcpyDeviceToDevice, st));
-  tk::mm(s.vAg, c.vMLP, Rv, W + b.fc2.off, D, c.vMLP, Xout, D, true, st);
-  tk::bias_add(Xout, Rv, D, D, P + b.fc2b, st);
+  mm_bias(s.vA2, D, Rv, W + b.fc1.off, c.vMLP, D, s.vH1, c.vMLP, P + b.fc1b, s.vAg, true, st);
+  mm_res(s.vAg, c.vMLP, Rv, W + b.fc2.off, D, c.vMLP, s.vXm, Xout, D, P + b.fc2b, st);
 }
 static void v_block_bwd(Model& m, int l, int Rv, cudaStream_t st) {
   Model::WS& s = *m.w;
@@ -935,13 +938,11 @@ static void e_block_fwd(Model& m, int f, const VBatch& bt, const float* Xin, flo
   a.B = B; a.n = c.Hc; a.nq = Q.nq; a.nkv = Q.nkv; a.hd = Q.hd; a.scale = 1.f / std::sqrt((float)Q.hd); a.O = s.eO; a.ldo = QW; a.lse = s.else_;
   tk::att_fwd(a, st);
   qk::gate(s.eO, s.eT, ldT, RA, Q.nq, Q.hd, s.eAg, st);
-  MCK(cudaMemcpyAsync(s.eXm, Xin, sizeof(float) * (size_t)RA * De, cudaMemcpyDeviceToDevice, st));
-  tk::mm(s.eAg, QW, RA, W + e.o.off, De, QW, s.eXm, De, true, st);
+  mm_res(s.eAg, QW, RA, W + e.o.off, De, QW, Xin, s.eXm, De, nullptr, st);
   qk::rmsnorm(s.eXm, RA, De, P + e.ln2, true, Q.eps, s.eA2, nullptr, nullptr, st);
   tk::mm(s.eA2, De, RA, W + e.gu.off, 2 * c.Ie, De, s.eGU, 2 * c.Ie, false, st);
   qk::swiglu(s.eGU, RA, c.Ie, s.eHh, st);
-  MCK(cudaMemcpyAsync(Xout, s.eXm, sizeof(float) * (size_t)RA * De, cudaMemcpyDeviceToDevice, st));
-  tk::mm(s.eHh, c.Ie, RA, W + e.dn.off, De, c.Ie, Xout, De, true, st);
+  mm_res(s.eHh, c.Ie, RA, W + e.dn.off, De, c.Ie, s.eXm, Xout, De, nullptr, st);
 }
 static void e_block_bwd(Model& m, int f, const VBatch& bt, cudaStream_t st) {
   Model::WS& s = *m.w;
@@ -992,10 +993,9 @@ static void phi_fwd(Model& m, long long r0, long long rows, cudaStream_t st) {
   Model::WS& s = *m.w;
   const VCfg& c = m.c;
   const int H = m.q.c.H;
-  tk::mm(m.phin + r0 * MEM_K, MEM_K, (int)rows, m.ap.W + m.g_w1[VG_OBJ].off, c.obj_hid, MEM_K, s.gH1 + r0 * c.obj_hid, c.obj_hid, false, st);
-  tk::gelu_fwd(s.gH1 + r0 * c.obj_hid, rows * c.obj_hid, s.gH + r0 * c.obj_hid, st);
-  tk::mm(s.gH + r0 * c.obj_hid, c.obj_hid, (int)rows, m.ap.W + m.g_w2.off, H, c.obj_hid, s.gOut[VG_OBJ] + r0 * H, H, false, st);
-  tk::bias_add(s.gOut[VG_OBJ] + r0 * H, (int)rows, H, H, m.ap.V + m.g_b2, st);
+  mm_bias(m.phin + r0 * MEM_K, MEM_K, (int)rows, m.ap.W + m.g_w1[VG_OBJ].off, c.obj_hid, MEM_K, s.gH1 + r0 * c.obj_hid, c.obj_hid, nullptr,
+          s.gH + r0 * c.obj_hid, true, st);
+  mm_bias(s.gH + r0 * c.obj_hid, c.obj_hid, (int)rows, m.ap.W + m.g_w2.off, H, c.obj_hid, s.gOut[VG_OBJ] + r0 * H, H, m.ap.V + m.g_b2, nullptr, false, st);
 }
 static tk::AttP mem_cross_att(Model& m, int k, int B) {
   Model::WS& s = *m.w;
@@ -1054,19 +1054,16 @@ static void mem_fwd(Model& m, const VBatch& bt, cudaStream_t st) {
       MKC();
     }
     tk::f2bf(b.O, Rl * H, b.Ob, st);
-    MCK(cudaMemcpyAsync(b.zx, s.mz[k], sizeof(float) * (size_t)Rl * H, cudaMemcpyDeviceToDevice, st));
-    tk::mm(b.Ob, H, (int)Rl, W + e.wo.off, H, H, b.zx, H, true, st);
+    mm_res(b.Ob, H, (int)Rl, W + e.wo.off, H, H, s.mz[k], b.zx, H, nullptr, st);
     qk::rmsnorm(b.zx, (int)Rl, H, P + e.lns, true, Q.eps, b.as, nullptr, nullptr, st);
     tk::mm(b.as, H, (int)Rl, W + e.sqkv.off, 3 * H, H, b.QKV, 3 * H, false, st);
     tk::att_fwd(mem_self_att(m, k, B), st);
     tk::f2bf(b.Os, Rl * H, b.Osb, st);
-    MCK(cudaMemcpyAsync(b.zs, b.zx, sizeof(float) * (size_t)Rl * H, cudaMemcpyDeviceToDevice, st));
-    tk::mm(b.Osb, H, (int)Rl, W + e.so.off, H, H, b.zs, H, true, st);
+    mm_res(b.Osb, H, (int)Rl, W + e.so.off, H, H, b.zx, b.zs, H, nullptr, st);
     qk::rmsnorm(b.zs, (int)Rl, H, P + e.lnm, true, Q.eps, b.am, nullptr, nullptr, st);
     tk::mm(b.am, H, (int)Rl, W + e.gu.off, 2 * I, H, b.GU, 2 * I, false, st);
     qk::swiglu(b.GU, (int)Rl, I, b.Hh, st);
-    MCK(cudaMemcpyAsync(s.mz[k + 1], b.zs, sizeof(float) * (size_t)Rl * H, cudaMemcpyDeviceToDevice, st));
-    tk::mm(b.Hh, I, (int)Rl, W + e.dn.off, H, I, s.mz[k + 1], H, true, st);
+    mm_res(b.Hh, I, (int)Rl, W + e.dn.off, H, I, b.zs, s.mz[k + 1], H, nullptr, st);
   }
   qk::rmsnorm(s.mz[c.mem_blk], (int)Rl, H, P + m.m_lnout, true, Q.eps, nullptr, s.gOut[VG_MEM], nullptr, st);
   // 있음 머리 + InfoNCE
@@ -1180,14 +1177,12 @@ static void forward_all(Model& m, const VBatch& bt, bool train, cudaStream_t st)
   const uint16_t* W = m.ap.W;
   const float* P = m.ap.V;
   // 영상 탑
-  tk::mm(bt.patches, c.vK, Rv, W + m.v_patch.off, c.vD, c.vK, s.vX[0], c.vD, false, st);
-  tk::bias_add(s.vX[0], Rv, c.vD, c.vD, P + m.v_patchb, st);
+  mm_bias(bt.patches, c.vK, Rv, W + m.v_patch.off, c.vD, c.vK, s.vX[0], c.vD, P + m.v_patchb, nullptr, false, st);
   addpos_k<<<nb((long long)Rv * c.vD), 256, 0, st>>>(s.vX[0], (long long)Rv * c.vD, c.vT, c.vD, P + m.v_pos);
   MKC();
   for (int l = 0; l < c.vL; ++l) v_block_fwd(m, l, Rv, s.vX[l], s.vX[l + 1], st);
   tk::ln_fwd(s.vX[c.vL], Rv, c.vD, P + m.v_lnfg, P + m.v_lnfb, c.vEps, s.vTok, nullptr, st);
-  tk::mm(s.vTok, c.vD, Rv, W + m.v_proj.off, H, c.vD, s.vOut, H, false, st);
-  tk::bias_add(s.vOut, Rv, H, H, P + m.v_projb, st);
+  mm_bias(s.vTok, c.vD, Rv, W + m.v_proj.off, H, c.vD, s.vOut, H, P + m.v_projb, nullptr, false, st);
   // 묶음(mem: OBJ = 정밀 칸 φ, MEM = 기억 요약 — mem_fwd 가 만듦)
   if (c.mem) mem_fwd(m, bt, st);
   else MCK(cudaMemsetAsync(m.loss + 3, 0, 8, st));
@@ -1195,10 +1190,8 @@ static void forward_all(Model& m, const VBatch& bt, bool train, cudaStream_t st)
     if (!m.grp_on(g) || g == VG_MEM || (c.mem && g == VG_OBJ)) continue;
     const int rows = B * kVGrp[g].n_tok;
     if (g == VG_OBJ) {
-      tk::mm(bt.grp[g], kVGrp[g].K, rows, W + m.g_w1[g].off, c.obj_hid, kVGrp[g].K, s.gH1, c.obj_hid, false, st);
-      tk::gelu_fwd(s.gH1, (long long)rows * c.obj_hid, s.gH, st);
-      tk::mm(s.gH, c.obj_hid, rows, W + m.g_w2.off, H, c.obj_hid, s.gOut[g], H, false, st);
-      tk::bias_add(s.gOut[g], rows, H, H, P + m.g_b2, st);
+      mm_bias(bt.grp[g], kVGrp[g].K, rows, W + m.g_w1[g].off, c.obj_hid, kVGrp[g].K, s.gH1, c.obj_hid, nullptr, s.gH, true, st);
+      mm_bias(s.gH, c.obj_hid, rows, W + m.g_w2.off, H, c.obj_hid, s.gOut[g], H, P + m.g_b2, nullptr, false, st);
     } else {
       tk::mm(bt.grp[g], kVGrp[g].K, rows, W + m.g_w1[g].off, H, kVGrp[g].K, s.gOut[g], H, false, st);
     }

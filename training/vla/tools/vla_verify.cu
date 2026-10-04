@@ -540,6 +540,11 @@ static int run_v67(bool real, int B, int Lmin) {
   m.step_grads(h.vb, st);
   auto r3 = snap();
   const size_t d7 = diff(r0, r1), d6 = diff(r0, r2), dk = diff(r0, r3);
+  {   // 비트 같은 융합 확인용: 기울기·손실 전부의 FNV-1a(융합 전 빌드와 같아야 함)
+    uint64_t hsh = 1469598103934665603ull;
+    for (uint16_t v : r0) { hsh ^= v; hsh *= 1099511628211ull; }
+    std::printf("[hash] %s mem %d: %016llx over %zu words\n", real ? "real" : "tiny", (int)c.mem, (unsigned long long)hsh, r0.size());
+  }
   std::printf("[v7] %s: same input twice %zu / %zu words differ; [v6] graph vs eager %zu differ; other noise key -> %zu differ (should be > 0)\n",
               real ? "real" : "tiny", d7, r0.size(), d6, dk);
   return (d7 == 0 && d6 == 0 && dk > 0) ? 0 : 1;

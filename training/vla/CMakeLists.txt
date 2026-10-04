@@ -17,7 +17,7 @@ find_package(OpenMP REQUIRED)
 set(RLNET ${CMAKE_CURRENT_LIST_DIR}/../RL/network)
 set(INC ${CMAKE_CURRENT_LIST_DIR}/include ${CMAKE_CURRENT_LIST_DIR}/src ${RLNET}/include ${RLNET}/src)
 
-add_library(rvla STATIC src/st.cpp src/qwen.cu src/qkern.cu src/tkern.cu src/dnchunk.cu src/flash.cu src/model.cu src/optim.cu)
+add_library(rvla STATIC src/st.cpp src/qwen.cu src/qkern.cu src/tkern.cu src/vgemm.cu src/dnchunk.cu src/flash.cu src/model.cu src/optim.cu)
 target_include_directories(rvla PUBLIC ${INC})
 target_link_libraries(rvla PUBLIC CUDA::cudart)
 

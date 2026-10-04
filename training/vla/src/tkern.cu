@@ -114,6 +114,7 @@ void mm_dw(const uint16_t* dZ, int ldz, const uint16_t* X, int ldx, int M, int N
   int sp = std::min(spmax, std::max(1, (280 + tiles - 1) / tiles));
   const int ch = ((M + sp - 1) / sp + 31) / 32 * 32;
   sp = (M + ch - 1) / ch;
+  if (sp == 1) { mme_dw1(dZ, ldz, X, ldx, M, N, K, G, gacc, st); return; }   // 조각 하나: 끝단에서 바로 bf16(같은 값)
   p.A = dZ; p.lda = ldz; p.B = X; p.ldb = ldx; p.M = N; p.N = K; p.K = M; p.C = ws; p.ldc = K; p.kchunk = ch;
   qk::gl<true, true, EPI_SPLIT_F32>(p, sp, st);
   dwred_k<<<nb(n), 256, 0, st>>>(ws, sp, n, G, gacc);
