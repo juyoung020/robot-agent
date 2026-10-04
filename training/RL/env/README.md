@@ -95,7 +95,7 @@ cmake --build ~/ra_envbuild -j4
 
 API(뷰어·학습기용, 뒤로 맞음 — 예전 호출은 그대로):
 - `DeviceEnv(N, stage, seed, arm_free, const bsc::SceneSet* ss_dev = nullptr, const bsc::BCurr& cu0 = kBCurrDefault)`, `kStageBeh = 3`. `bcurr_dev()`·`set_bcurr_source(ptr)`(장치 커리큘럼 값), `set_nav(map.nav_fb())`(지도 거리장·목표 확정 되먹임). `CpuEnv(..., &scenes.host, cu)` 와 `CpuEnv::nav`.
-- SoA 끝에 더함(앞 자리 번호 그대로): `F_B_WX..F_B_DIST`(창 가운데 세계 좌표 — **판의 x·y·목표는 창 좌표**, 세계 = 창 + (F_B_WX, F_B_WY)), `I_B_KIND`(0 상자 방, 1 B1, 2 B2, 3 B3), `I_B_SCENE`, `I_B_ENT`(→ `SceneBuild::ent`: 물체 9·놓을 곳·이름·RASC 번호), `I_B_ROOM`, `I_B_FSET`(쓴 거르개), `I_B_INSTR`(지시문 행). `I_NF` = 0 이라 상자 가구는 없다 — BEHAVIOR 판 장면은 `SceneBuild::sc[I_B_SCENE]`(상자·방)·`ent[I_B_ENT].prim` 으로 그린다.
+- SoA 끝에 더함(앞 자리 번호 그대로): `F_B_WX..F_B_DIST`(창 가운데 세계 좌표 — **판의 x·y·목표는 창 좌표**, 세계 = 창 + (F_B_WX, F_B_WY)), `I_B_KIND`(0 상자 방, 1 B1, 2 B2, 3 B3), `I_B_SCENE`, `I_B_ENT`(→ `SceneBuild::ent`: 물체 9·놓을 곳·이름·RASC 번호), `I_B_ROOM`, `I_B_FSET`(쓴 거르개), `I_B_INSTR`(지시문 행), `I_B_LKIND`(이 스텝이 보고한 판 — 끝났으면 끝난 판 — 의 단계, 학습기 B1/B2/B3 에피소드 표용). `I_NF` = 0 이라 상자 가구는 없다 — BEHAVIOR 판 장면은 `SceneBuild::sc[I_B_SCENE]`(상자·방)·`ent[I_B_ENT].prim` 으로 그린다.
 - `step_core` 는 같은 연산을 공용 조각으로 나눈 것(결과 바이트 같음, 뷰어 훅 그대로).
 
 잰 값(5.4절): `env_verify 2048 600 --stage 3 --follow` 비트 동일(대본 판 B1 성공 407·B2 312·B3 241), 음성 대조 30,059,004·11,539,830 불일치로 실패(정상). 상자 방 env 스트림 해시 6 설정이 f5b4ec7 빌드와 같음. 처리량(ms/스텝) A2 0.176 / 0.235, BEHAVIOR 0.336 / 0.444(N 4,096 / 32,768). `pnp_check` 10,000 판 위반 0(느슨·엄격), GPU == CPU 고르기 비트 동일. 장면 묶음 장치 61.2 MB, 만들기 약 9 s(CPU, 장면마다 스레드).

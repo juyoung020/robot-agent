@@ -7,6 +7,17 @@
 extern "C" {
 #endif
 
+/* BEHAVIOR 커리큘럼 장치 값 = env bscene.h bsc::BCurr 와 같은 배치(학습기가 static_assert) */
+typedef struct PpoBCurr {
+  float p1, p2;           /* B1·B2 비율(나머지 B3) */
+  uint32_t scene_mask;    /* 쓸 장면 비트(장면 묶음 번호 — ppo_scene_mask 로 이름 → 비트) */
+  int32_t split;          /* 0 학습 인스턴스, 1 공개 평가, 2 둘 다 */
+  float yaw_jit;          /* B1 시작 yaw 흔들기 ±rad */
+  int32_t strict;         /* 1 = 집기·놓기 엄격 거르개 판만 */
+  int32_t nofilter;       /* 음성 대조용(0) */
+  int32_t eval_instr;     /* 1 = 지시문을 평가용(heldout) 문장에서 */
+} PpoBCurr;
+
 typedef struct PpoConfig {
   int32_t n_env;        /* 판 수 */
   int32_t horizon;      /* 롤아웃 스텝 T */
@@ -42,6 +53,12 @@ typedef struct PpoConfig {
   float aug_p_erase, aug_p_syn, aug_p_hyper, aug_p_wrong;       /* 이름 흔들기 */
   float aug_p_slot_drop, aug_p_map_off;                         /* 칸 지우기, 지도 통째로 비우기 */
   int32_t aug_eval_unseen;                                      /* 1 = 처음 보는 이름(heldout)으로 평가 */
+  /* E2 BEHAVIOR 집 장면(env 단계 3 = 커리큘럼 B1–B3, CURRICULUM_BEHAVIOR2026 3·5.4절). 상자 방만 쓰면 beh 0 = 장면 묶음을 만들지 않음(예전과 같음) */
+  int32_t beh;            /* 1 = 장면 묶음(bscene_host)을 만들어 환경·지도에 붙임(커리큘럼에 env 3 이 있을 때 실행기가 켬). 상자 방 판은 결과 비트 그대로 */
+  int32_t map_nav_k;      /* 지도 다가가기 거리장 주기(스텝, 0 = 기본 10 — map MapCurr::nav_k) */
+  PpoBCurr bcurr;         /* 처음 BEHAVIOR 커리큘럼 값(B1/B2 비율·장면 비트·split·엄격·지시문 heldout) — 장치 값, 바꾸기는 ppo_set_bcurr·장치 커리큘럼 */
+  char b_scenes[256];     /* 만들 장면 이름(쉼표, 빈 = RASC 폴더 전부) */
+  char b_rasc_dir[256];   /* RASC 폴더(빈 = ~/ra_b1k) */
 } PpoConfig;
 
 typedef struct PpoLog {
@@ -59,6 +76,8 @@ typedef struct PpoLog {
   float n_c[3];          /* 이 바퀴에 끝난 에피소드 수: 처음 지도 C0·C1·C2 별 */
   float s_c[3], k_c[3];  /* 그 성공·충돌 비율 */
   float goal_known;      /* 롤아웃 끝에 목표(컵)가 지도에 확정된 판 비율 */
+  float n_b[3];          /* 이 바퀴에 끝난 BEHAVIOR 에피소드 수: B1·B2·B3 별(상자 방 0) */
+  float s_b[3], k_b[3];  /* 그 성공·충돌 비율 */
 } PpoLog;
 
 void* ppo_create(const PpoConfig* cfg);
@@ -94,8 +113,10 @@ typedef struct PpoCurrStage {
   int32_t env;        /* 환경 단계(A0 ...) */
   float p0, p1;       /* 처음 지도 C0·C1 비율 */
   float promote;      /* 넘어가기 문턱(창 평균 성공률) */
-  int32_t metric;     /* −1 = 전체 에피소드, 0/1/2 = 처음 지도 C0/C1/C2 에피소드 */
+  int32_t metric;     /* −1 = 전체 에피소드, 0/1/2 = 처음 지도 C0/C1/C2 에피소드, 3/4/5 = BEHAVIOR B1/B2/B3 에피소드 */
   uint32_t act_mask;  /* 0 = 바꾸지 않음 */
+  int32_t b_set;      /* 1 = 이 단계에 들어갈 때 BEHAVIOR 커리큘럼 값을 bcurr 로(같은 환경이면 장치가 바로) */
+  PpoBCurr bcurr;
 } PpoCurrStage;
 typedef struct PpoCurrLog {   /* 기록 한 칸(PpoLog 와 같은 바퀴) */
   int32_t si;         /* 이 바퀴 끝의 장치 단계 번호(−1 = 장치 커리큘럼 끔) */
@@ -111,6 +132,14 @@ int ppo_curr_set(void* h, const PpoCurrStage* st, int32_t n, int32_t window, int
 int ppo_curr_ack(void* h, int32_t si);
 /* 마지막으로 ppo_poll 이 꺼낸 바퀴의 커리큘럼 기록 */
 int ppo_curr_log(void* h, PpoCurrLog* out);
+/* BEHAVIOR 커리큘럼 값 바꾸기(장치 값, 비동기 복사 하나 — 판 리셋 때 커널이 읽음, 다시 잡기 없음) */
+int ppo_set_bcurr(void* h, const PpoBCurr* b);
+/* 장면 이름(쉼표) → 장면 묶음 비트(이름이 없으면 0). 장면 묶음이 없으면(beh 0) 0 */
+uint32_t ppo_scene_mask(void* h, const char* names);
+/* 장면 묶음의 i 번째 장면 이름(없으면 NULL) */
+const char* ppo_scene_name(void* h, int32_t i);
+/* 구조체 크기(실행기가 자기 배치와 견줌): 0 PpoConfig, 1 PpoLog, 2 PpoCurrStage, 3 PpoCurrLog, 4 PpoBCurr */
+int64_t ppo_struct_size(int32_t which);
 
 #ifdef __cplusplus
 }

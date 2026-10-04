@@ -16,8 +16,22 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+// BEHAVIOR 커리큘럼 장치 값(ppo_capi.h PpoBCurr = env bsc::BCurr)
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
+struct PpoBCurr {
+    p1: f32,
+    p2: f32,
+    scene_mask: u32,
+    split: i32,
+    yaw_jit: f32,
+    strict: i32,
+    nofilter: i32,
+    eval_instr: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 struct PpoConfig {
     n_env: i32,
     horizon: i32,
@@ -76,6 +90,12 @@ struct PpoConfig {
     aug_p_slot_drop: f32,
     aug_p_map_off: f32,
     aug_eval_unseen: i32,
+    // E2 BEHAVIOR(env 단계 3): 장면 묶음·커리큘럼 시작 값
+    beh: i32,
+    map_nav_k: i32,
+    bcurr: PpoBCurr,
+    b_scenes: [u8; 256],
+    b_rasc_dir: [u8; 256],
 }
 
 #[repr(C)]
@@ -111,6 +131,9 @@ struct PpoLog {
     s_c: [f32; 3],
     k_c: [f32; 3],
     goal_known: f32,
+    n_b: [f32; 3],
+    s_b: [f32; 3],
+    k_b: [f32; 3],
 }
 
 #[repr(C)]
@@ -122,6 +145,8 @@ struct PpoCurrStage {
     promote: f32,
     metric: i32,
     act_mask: u32,
+    b_set: i32,
+    bcurr: PpoBCurr,
 }
 
 #[repr(C)]
@@ -155,6 +180,66 @@ extern "C" {
     fn ppo_issued(h: *mut std::ffi::c_void) -> i64;
     fn ppo_num_params(h: *mut std::ffi::c_void) -> i64;
     fn ppo_device_bytes(h: *mut std::ffi::c_void) -> i64;
+    fn ppo_set_bcurr(h: *mut std::ffi::c_void, b: *const PpoBCurr) -> i32;
+    fn ppo_struct_size(which: i32) -> i64;
+    fn ppo_scene_mask(h: *mut std::ffi::c_void, names: *const std::os::raw::c_char) -> u32;
+    fn ppo_scene_name(h: *mut std::ffi::c_void, i: i32) -> *const std::os::raw::c_char;
+}
+
+fn cstr256(s: &str) -> [u8; 256] {
+    let mut b = [0u8; 256];
+    let n = s.len().min(255);
+    b[..n].copy_from_slice(&s.as_bytes()[..n]);
+    b
+}
+
+// BEHAVIOR 커리큘럼 값(설정): 전역 "beh" 기본 + 단계 "b" 덮어쓰기. 장면은 이름 목록(비면 장면 묶음 전부) — 비트는 학습기를 만든 뒤 ppo_scene_mask 로
+#[derive(Clone, Debug, Default)]
+struct BSpec {
+    p1: f32,
+    p2: f32,
+    scenes: Vec<String>,
+    split: i32,
+    yaw_jit: f32,
+    strict: i32,
+    eval_instr: i32,
+}
+fn parse_bspec(v: &Value, base: &BSpec) -> BSpec {
+    let mut b = base.clone();
+    if let Some(m) = v.get("mix").and_then(|x| x.as_array()) {
+        b.p1 = m.first().and_then(|x| x.as_f64()).unwrap_or(b.p1 as f64) as f32;
+        b.p2 = m.get(1).and_then(|x| x.as_f64()).unwrap_or(b.p2 as f64) as f32;
+    }
+    if let Some(a) = v.get("scenes").and_then(|x| x.as_array()) {
+        b.scenes = a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect();
+    }
+    b.split = gi(v, "split", b.split as i64) as i32;
+    b.yaw_jit = gf(v, "yaw_jit", b.yaw_jit as f64) as f32;
+    b.strict = gi(v, "strict", b.strict as i64) as i32;
+    b.eval_instr = gi(v, "eval_instr", b.eval_instr as i64) as i32;
+    b
+}
+fn bcurr_of(h: *mut std::ffi::c_void, b: &BSpec, all: u32) -> PpoBCurr {
+    let mask = if b.scenes.is_empty() {
+        all
+    } else {
+        let names = std::ffi::CString::new(b.scenes.join(",")).unwrap();
+        let m = unsafe { ppo_scene_mask(h, names.as_ptr()) };
+        assert!(m != 0, "beh: none of the scenes {:?} is in the scene set", b.scenes);
+        m
+    };
+    PpoBCurr { p1: b.p1, p2: b.p2, scene_mask: mask, split: b.split, yaw_jit: b.yaw_jit, strict: b.strict, nofilter: 0, eval_instr: b.eval_instr }
+}
+
+fn env_name(e: i32) -> String {
+    if e >= 3 { "B".to_string() } else { format!("A{}", e) }   // 3 = BEHAVIOR 집(B1–B3), 0–2 = 상자 방 A0–A2(= B0)
+}
+fn metric_name(m: i32) -> String {
+    match m {
+        0..=2 => format!("C{}", m),
+        3..=5 => format!("B{}", m - 2),
+        _ => "all".to_string(),
+    }
 }
 
 fn gi(v: &Value, k: &str, d: i64) -> i64 {
@@ -222,6 +307,12 @@ fn make_config(v: &Value) -> PpoConfig {
         aug_p_slot_drop: gf(v.get("aug").unwrap_or(&Value::Null), "p_slot_drop", 0.0) as f32,
         aug_p_map_off: gf(v.get("aug").unwrap_or(&Value::Null), "p_map_off", 0.0) as f32,
         aug_eval_unseen: gi(v.get("aug").unwrap_or(&Value::Null), "eval_unseen", 0) as i32,
+        beh: 0,
+        map_nav_k: gi(v.get("beh").unwrap_or(&Value::Null), "nav_k", 0) as i32,
+        bcurr: PpoBCurr::default(),
+        b_scenes: cstr256(&v.get("beh").and_then(|b| b.get("build")).and_then(|x| x.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(",")).unwrap_or_default()),
+        b_rasc_dir: cstr256(v.get("beh").and_then(|b| b.get("rasc_dir")).and_then(|x| x.as_str()).unwrap_or("")),
     }
 }
 
@@ -235,21 +326,24 @@ struct Stage {
     promote: f64,
     metric: i32,
     act_mask: u32, // 0 = 바꾸지 않음(설정 act_mask/act_dims 그대로)
+    b: Option<BSpec>, // env 3(BEHAVIOR) 단계만: 그 단계의 B1/B2 비율·장면·split·엄격·지시문
 }
 
-fn parse_stages(cur: &Value, default_env: i32, default_promote: f64) -> Vec<Stage> {
+fn parse_stages(cur: &Value, default_env: i32, default_promote: f64, bbase: &BSpec) -> Vec<Stage> {
+    let bfor = |env: i32, e: &Value| if env >= 3 { Some(parse_bspec(e.get("b").unwrap_or(&Value::Null), bbase)) } else { None };
     let arr = match cur.get("stages").and_then(|x| x.as_array()) {
         Some(a) => a.clone(),
-        None => return vec![Stage { name: format!("A{}", default_env), env: default_env, p0: 0.0, p1: 0.0, promote: default_promote, metric: -1, act_mask: 0 }],
+        None => return vec![Stage { name: format!("A{}", default_env), env: default_env, p0: 0.0, p1: 0.0, promote: default_promote, metric: -1, act_mask: 0, b: bfor(default_env, &Value::Null) }],
     };
     arr.iter()
         .map(|e| {
             if let Some(k) = e.as_i64() {
                 // 예전 꼴(G3): 정수 = 환경 단계, 지도는 빈 지도
-                Stage { name: format!("A{}", k), env: k as i32, p0: 0.0, p1: 0.0, promote: default_promote, metric: -1, act_mask: 0 }
+                Stage { name: format!("A{}", k), env: k as i32, p0: 0.0, p1: 0.0, promote: default_promote, metric: -1, act_mask: 0, b: bfor(k as i32, &Value::Null) }
             } else {
                 let m = e.get("map").and_then(|x| x.as_array()).cloned().unwrap_or_default();
                 let p = |i: usize| m.get(i).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+                let env = gi(e, "env", default_env as i64) as i32;
                 Stage {
                     name: e.get("name").and_then(|x| x.as_str()).unwrap_or("?").to_string(),
                     env: gi(e, "env", default_env as i64) as i32,
@@ -258,6 +352,7 @@ fn parse_stages(cur: &Value, default_env: i32, default_promote: f64) -> Vec<Stag
                     promote: gf(e, "promote", default_promote),
                     metric: gi(e, "metric", -1) as i32,
                     act_mask: gi(e, "act_mask", 0) as u32,
+                    b: bfor(env, e),
                 }
             }
         })
@@ -276,7 +371,7 @@ fn writer(rx: mpsc::Receiver<Msg>, out: PathBuf, n_per_iter: f64, print_every: i
     let mut csv = fs::File::create(out.join("log.csv")).expect("log.csv");
     writeln!(
         csv,
-        "iter,env_steps,wall_s,stage,succ,coll,tout,n_eps,ep_ret,ep_len,rew_mean,kl,clipfrac,entropy,pg_loss,v_loss,grad_norm,lr,adv_std,value_mean,std0,std1,map_task,rollout_ms,update_ms,gpu_env_steps_per_s,n_c0,n_c1,n_c2,succ_c0,succ_c1,succ_c2,coll_c0,coll_c1,coll_c2,goal_known"
+        "iter,env_steps,wall_s,stage,succ,coll,tout,n_eps,ep_ret,ep_len,rew_mean,kl,clipfrac,entropy,pg_loss,v_loss,grad_norm,lr,adv_std,value_mean,std0,std1,map_task,rollout_ms,update_ms,gpu_env_steps_per_s,n_c0,n_c1,n_c2,succ_c0,succ_c1,succ_c2,coll_c0,coll_c1,coll_c2,goal_known,n_b1,n_b2,n_b3,succ_b1,succ_b2,succ_b3,coll_b1,coll_b2,coll_b3"
     )
     .unwrap();
     let mut notes = fs::File::create(out.join("events.txt")).expect("events.txt");
@@ -286,20 +381,26 @@ fn writer(rx: mpsc::Receiver<Msg>, out: PathBuf, n_per_iter: f64, print_every: i
                 let gpu_sps = n_per_iter / ((l.rollout_ms + l.update_ms) as f64 * 1e-3);
                 writeln!(
                     csv,
-                    "{},{},{:.3},{},{:.4},{:.4},{:.4},{},{:.3},{:.1},{:.5},{:.5},{:.4},{:.4},{:.5},{:.5},{:.4},{:.3e},{:.4},{:.4},{:.4},{:.4},{:.4},{:.3},{:.3},{:.4e},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4}",
+                    "{},{},{:.3},{},{:.4},{:.4},{:.4},{},{:.3},{:.1},{:.5},{:.5},{:.4},{:.4},{:.5},{:.5},{:.4},{:.3e},{:.4},{:.4},{:.4},{:.4},{:.4},{:.3},{:.3},{:.4e},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4}",
                     l.iter, l.env_steps, wall, l.stage, l.succ, l.coll, l.tout, l.n_eps as i64, l.ep_ret, l.ep_len, l.rew_mean, l.kl, l.clipfrac,
                     l.entropy, l.pg_loss, l.v_loss, l.grad_norm, l.lr, l.adv_std, l.value_mean, l.std0, l.std1, l.map_task, l.rollout_ms,
                     l.update_ms, gpu_sps, l.n_c[0] as i64, l.n_c[1] as i64, l.n_c[2] as i64, l.s_c[0], l.s_c[1], l.s_c[2], l.k_c[0], l.k_c[1], l.k_c[2],
-                    l.goal_known
+                    l.goal_known, l.n_b[0] as i64, l.n_b[1] as i64, l.n_b[2] as i64, l.s_b[0], l.s_b[1], l.s_b[2], l.k_b[0], l.k_b[1], l.k_b[2]
                 )
                 .unwrap();
                 if let Some(r) = rf.as_mut() { r.log(&l, wall, gpu_sps); }
                 if l.iter % print_every == 0 || l.iter == 1 {
                     println!(
-                        "it {:5}  steps {:10.3e}  t {:6.0}s  A{}  succ {:.3} coll {:.3} tout {:.3}  C0/1/2 {:.2}/{:.2}/{:.2} (n {}/{}/{})  goal {:.2}  len {:5.1}  kl {:.4} lr {:.1e} σ {:.2}/{:.2}  roll {:.1}+upd {:.1} ms ({:.2e} st/s)",
-                        l.iter, l.env_steps as f64, wall, l.stage, l.succ, l.coll, l.tout, l.s_c[0], l.s_c[1], l.s_c[2], l.n_c[0] as i64,
+                        "it {:5}  steps {:10.3e}  t {:6.0}s  {}  succ {:.3} coll {:.3} tout {:.3}  C0/1/2 {:.2}/{:.2}/{:.2} (n {}/{}/{})  goal {:.2}  len {:5.1}  kl {:.4} lr {:.1e} σ {:.2}/{:.2}  roll {:.1}+upd {:.1} ms ({:.2e} st/s)",
+                        l.iter, l.env_steps as f64, wall, env_name(l.stage), l.succ, l.coll, l.tout, l.s_c[0], l.s_c[1], l.s_c[2], l.n_c[0] as i64,
                         l.n_c[1] as i64, l.n_c[2] as i64, l.goal_known, l.ep_len, l.kl, l.lr, l.std0, l.std1, l.rollout_ms, l.update_ms, gpu_sps
                     );
+                    if l.n_b.iter().sum::<f32>() > 0.0 {
+                        println!(
+                            "          BEHAVIOR B1/B2/B3 succ {:.3}/{:.3}/{:.3} coll {:.3}/{:.3}/{:.3} (n {}/{}/{})",
+                            l.s_b[0], l.s_b[1], l.s_b[2], l.k_b[0], l.k_b[1], l.k_b[2], l.n_b[0] as i64, l.n_b[1] as i64, l.n_b[2] as i64
+                        );
+                    }
                 }
             }
             Msg::Ckpt(b, p) => {
@@ -325,6 +426,13 @@ fn main() {
         eprintln!("usage: ppo_run <config.json> [--out DIR] [--minutes M] [--resume CKPT] [--seed S]");
         std::process::exit(2);
     }
+    unsafe {   // C ABI 구조체 배치 확인(ppo_capi.h 와 이 파일이 어긋나면 바로 멈춤)
+        use std::mem::size_of;
+        for (k, n, name) in [(0, size_of::<PpoConfig>(), "PpoConfig"), (1, size_of::<PpoLog>(), "PpoLog"), (2, size_of::<PpoCurrStage>(), "PpoCurrStage"),
+                             (3, size_of::<PpoCurrLog>(), "PpoCurrLog"), (4, size_of::<PpoBCurr>(), "PpoBCurr")] {
+            assert_eq!(ppo_struct_size(k) as usize, n, "C ABI size mismatch: {}", name);
+        }
+    }
     let text = fs::read_to_string(&args[1]).expect("config");
     let v: Value = serde_json::from_str(&text).expect("config json");
     let mut out = PathBuf::from(v.get("out").and_then(|x| x.as_str()).unwrap_or("runs/ppo"));
@@ -349,7 +457,9 @@ fn main() {
     let cfg = make_config(&v);
     let cur = v.get("curriculum").cloned().unwrap_or(Value::Null);
     let promote_default = gf(&cur, "promote_success", 0.8);
-    let stages = parse_stages(&cur, cfg.stage, promote_default);
+    // BEHAVIOR(env 3) 기본값: CURRICULUM_BEHAVIOR2026 5.4 의 env_verify 기본 섞음(B1 0.34·B2 0.33·B3 나머지), 학습 인스턴스, 느슨 거르개
+    let bbase = parse_bspec(v.get("beh").unwrap_or(&Value::Null), &BSpec { p1: 0.34, p2: 0.33, ..Default::default() });
+    let stages = parse_stages(&cur, cfg.stage, promote_default, &bbase);
     let window = gi(&cur, "window", 20) as usize;
     let stop_success = gf(&cur, "stop_success", 2.0);
     let ckpt_every = gi(&v, "ckpt_every", 200);
@@ -361,7 +471,14 @@ fn main() {
     c.stage = stages[0].env;
     c.map_p0 = stages[0].p0;
     c.map_p1 = stages[0].p1;
+    c.beh = if stages.iter().any(|s| s.env >= 3) || gi(v.get("beh").unwrap_or(&Value::Null), "on", 0) != 0 { 1 } else { 0 };
     let h = unsafe { ppo_create(&c) };
+    // BEHAVIOR 단계마다 장치 커리큘럼 값(장면 이름 → 장면 묶음 비트는 학습기가 묶음을 만든 뒤에야 앎)
+    let mut nsc = 0;
+    while !unsafe { ppo_scene_name(h, nsc) }.is_null() { nsc += 1; }
+    let all_mask: u32 = if nsc >= 32 { u32::MAX } else { (1u32 << nsc) - 1 };
+    let b_of: Vec<Option<PpoBCurr>> = stages.iter().map(|s| s.b.as_ref().map(|b| bcurr_of(h, b, all_mask))).collect();
+    if let Some(b) = &b_of[0] { unsafe { ppo_set_bcurr(h, b) }; }
     let n_per_iter = (c.n_env as f64) * (c.horizon as f64);
     let (tx, rx) = mpsc::channel::<Msg>();
     let out_w = out.clone();
@@ -389,6 +506,7 @@ fn main() {
             }
             ppo_set_map_curriculum(h, stages[si].p0, stages[si].p1, c.map_kmin, c.map_kmax, c.map_reveal_r);
             if stages[si].act_mask != 0 { ppo_set_act_mask(h, stages[si].act_mask); }
+            if let Some(b) = &b_of[si] { ppo_set_bcurr(h, b); }
         }
         tx.send(Msg::Note(format!("start at stage {} ({:?})", si, stages[si]))).unwrap();
         tx.send(Msg::Stage(si, 0.0)).unwrap();
@@ -398,7 +516,11 @@ fn main() {
         // 장치 커리큘럼: 단계 표·창을 장치에(시작 때 한 번). 판단은 갱신 그래프 끝 커널이 바퀴마다
         let tab: Vec<PpoCurrStage> = stages
             .iter()
-            .map(|s| PpoCurrStage { env: s.env, p0: s.p0, p1: s.p1, promote: s.promote as f32, metric: s.metric, act_mask: s.act_mask })
+            .zip(b_of.iter())
+            .map(|(s, b)| PpoCurrStage {
+                env: s.env, p0: s.p0, p1: s.p1, promote: s.promote as f32, metric: s.metric, act_mask: s.act_mask,
+                b_set: b.is_some() as i32, bcurr: b.unwrap_or_default(),
+            })
             .collect();
         let r = unsafe { ppo_curr_set(h, tab.as_ptr(), tab.len() as i32, window as i32, si as i32) };
         assert_eq!(r, 0, "device curriculum: at most 16 stages, window 1..64");
@@ -431,16 +553,18 @@ fn main() {
                 let st = &stages[si];
                 let nx = &stages[si + 1];
                 tx.send(Msg::Note(format!(
-                    "curriculum: stage {} success {:.3} (metric C{}, window {}) >= {} at iter {} / {} env-steps / {:.0} s -> {} (decided on device)",
-                    st.name, cl.avg, st.metric, window, st.promote, log.iter, log.env_steps, t0.elapsed().as_secs_f64(), nx.name
+                    "curriculum: stage {} success {:.3} (metric {}, window {}) >= {} at iter {} / {} env-steps / {:.0} s -> {} (decided on device)",
+                    st.name, cl.avg, metric_name(st.metric), window, st.promote, log.iter, log.env_steps, t0.elapsed().as_secs_f64(), nx.name
                 )))
                 .unwrap();
                 if cl.evt == 2 {
                     si = cl.si as usize;
                     tx.send(Msg::Stage(si, t0.elapsed().as_secs_f64())).unwrap();
                     let nx = &stages[si];
-                    tx.send(Msg::Note(format!("curriculum: now {} (first map C0 {:.2} C1 {:.2} C2 {:.2}: switched on device from iter {}, no host round trip)",
-                        nx.name, nx.p0, nx.p1, 1.0 - nx.p0 - nx.p1, log.iter + 1))).unwrap();
+                    tx.send(Msg::Note(format!("curriculum: now {} (first map C0 {:.2} C1 {:.2} C2 {:.2}{}: switched on device from iter {}, no host round trip)",
+                        nx.name, nx.p0, nx.p1, 1.0 - nx.p0 - nx.p1,
+                        b_of[si].map(|b| format!(", B1 {:.2} B2 {:.2} B3 {:.2} scenes {:#x}", b.p1, b.p2, 1.0 - b.p1 - b.p2, b.scene_mask)).unwrap_or_default(),
+                        log.iter + 1))).unwrap();
                 } else {
                     pending_env = Some(cl.req as usize);   // 환경을 새로 만들어야 함: 띄운 바퀴가 다 끝난 뒤
                 }
@@ -473,9 +597,11 @@ fn main() {
             assert_eq!(r, 0);
             unsafe { ppo_set_map_curriculum(h, nx.p0, nx.p1, c.map_kmin, c.map_kmax, c.map_reveal_r) };
             if nx.act_mask != 0 { unsafe { ppo_set_act_mask(h, nx.act_mask) }; }
+            if let Some(b) = &b_of[si] { unsafe { ppo_set_bcurr(h, b) }; }
             unsafe { ppo_curr_ack(h, si as i32) };
             pending_env = None;
-            tx.send(Msg::Note(format!("curriculum: now {} (env A{} recreated, rollout graph recaptured; first map C0 {:.2} C1 {:.2})", nx.name, nx.env, nx.p0, nx.p1))).unwrap();
+            tx.send(Msg::Note(format!("curriculum: now {} (env {} recreated, rollout graph recaptured; first map C0 {:.2} C1 {:.2}{})", nx.name, env_name(nx.env), nx.p0, nx.p1,
+                b_of[si].map(|b| format!(", B1 {:.2} B2 {:.2} scenes {:#x}", b.p1, b.p2, b.scene_mask)).unwrap_or_default()))).unwrap();
         }
         if (timeup || stop) && idle && !ckpt_pending {
             break;

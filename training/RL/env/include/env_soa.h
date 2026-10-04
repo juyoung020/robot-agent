@@ -24,6 +24,7 @@ enum FloatField {
 enum IntField { I_STEP, I_MAXSTEPS, I_OK, I_SEEN, I_EP, I_NF, I_FC0, I_FC_END = I_FC0 + N_FURN - 1,
                 I_B_KIND, I_B_SCENE, I_B_ENT, I_B_ROOM,   // BEHAVIOR 판: bsc::EntKind(0 = 상자 방), 장면, Entry 번호, 목표 방
                 I_B_FSET, I_B_INSTR,                       // 집기·놓기 판: 쓴 거르개(0 느슨, 1 엄격, −1 아님), 지시문 행(training/data/pnp_v1, −1 없음)
+                I_B_LKIND,                                 // 이 스텝이 보고한 판(끝났으면 끝난 판)의 단계 bsc::EntKind — 학습기 단계별 에피소드 표용(상자 방 0)
                 NUM_I };
 
 struct Soa {

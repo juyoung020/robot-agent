@@ -6,6 +6,7 @@
 #include <memory>
 #include <vector>
 
+#include "bscene_host.h"
 #include "env_api.h"
 #include "map_api.h"
 #include "net.h"
@@ -47,7 +48,10 @@ struct Trainer {
   cudaEvent_t curr_ev[8] = {};
   int curr_slot = 0;
   int* cur_len = nullptr;            // [N] 진행 중 에피소드 스텝 수
-  int* it_stat = nullptr;            // [3][3] 이 바퀴 단계별 (끝난 수, 성공, 충돌) — 기록 커널이 0 으로
+  // E2 BEHAVIOR(env 단계 3): 장면 묶음(호스트·장치, beh 1 일 때만)과 커리큘럼 장치 값(환경이 판 리셋 때 이 자리를 읽음 — 환경을 다시 만들어도 그대로)
+  std::unique_ptr<bsc::SceneBuild> scenes;
+  bsc::BCurr* bcurr_d = nullptr;
+  int* it_stat = nullptr;            // [6][3] 이 바퀴 (끝난 수, 성공, 충돌): 0..2 = 처음 지도 C0·C1·C2, 3..5 = BEHAVIOR B1·B2·B3 — 기록 커널이 0 으로
   unsigned long long* tab = nullptr; // [3 단계][2 컵 미리 확정][10 미리 확정 수][6] (끝난 수, 성공, 충돌, 시간초과, 스텝 합, 성공 스텝 합) 누적
 
   // 신경망 작업 버퍼(행 Mmax)
@@ -108,6 +112,8 @@ struct Trainer {
   void make_env(int stage);
   void set_map_curr(const gmap::MapCurr& c);
   void set_act_mask(uint32_t m);
+  void set_bcurr(const bsc::BCurr& b);
+  const bsc::SceneSet* ss_dev() const { return scenes ? scenes->dev : nullptr; }
   void capture();
   // 한 바퀴의 두 몸통(즉시 실행 또는 그래프 잡기 중에 부름)
   void rollout_body();

@@ -10,6 +10,13 @@
 #include "shaping.h"
 #include "trainer.h"
 
+#include <cstddef>
+
+// BEHAVIOR 커리큘럼 값: C ABI 구조체 = 환경 장치 값(같은 배치를 그대로 복사)
+static_assert(sizeof(PpoBCurr) == sizeof(bsc::BCurr) && offsetof(PpoBCurr, scene_mask) == offsetof(bsc::BCurr, scene_mask) &&
+                  offsetof(PpoBCurr, yaw_jit) == offsetof(bsc::BCurr, yaw_jit) && offsetof(PpoBCurr, eval_instr) == offsetof(bsc::BCurr, eval_instr),
+              "PpoBCurr == bsc::BCurr");
+
 namespace ppo {
 
 using namespace net;
@@ -140,8 +147,9 @@ __global__ void value_k(const float* val, int N, float* val_row) {
 }
 
 // ---- 처음 지도(완성도)별 에피소드 통계(G4, 5.6): 환경 스텝 뒤·지도 스텝 앞. met_init 은 아직 이 스텝의 판(끝난 판)의 처음 지도 부호 ----
-constexpr int TAB_Q = 6, TAB_C = 10;
-__global__ void epstat_k(const int* done, const float* met_init, int N, int* cur_len, int* it_stat, unsigned long long* tab) {
+// lkind: 환경이 이 스텝에 보고한 판의 BEHAVIOR 단계(env I_B_LKIND, 상자 방 0) → it_stat 3..5 줄(B1·B2·B3)
+constexpr int TAB_Q = 6, TAB_C = 10, IT_ROWS = 6;
+__global__ void epstat_k(const int* done, const float* met_init, const int* lkind, int N, int* cur_len, int* it_stat, unsigned long long* tab) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= N) return;
   int len = cur_len[i] + 1;
@@ -155,6 +163,13 @@ __global__ void epstat_k(const int* done, const float* met_init, int N, int* cur
     atomicAdd(&it_stat[st * 3], 1);
     if (d == env::kSuccess) atomicAdd(&it_stat[st * 3 + 1], 1);
     if (d == env::kCollision) atomicAdd(&it_stat[st * 3 + 2], 1);
+    const int bk = lkind[i];
+    if (bk >= 1 && bk <= 3) {
+      const int r = (2 + bk) * 3;
+      atomicAdd(&it_stat[r], 1);
+      if (d == env::kSuccess) atomicAdd(&it_stat[r + 1], 1);
+      if (d == env::kCollision) atomicAdd(&it_stat[r + 2], 1);
+    }
     unsigned long long* q = tab + (size_t)((st * 2 + g) * TAB_C + c) * TAB_Q;
     atomicAdd(q, 1ull);
     atomicAdd(q + (d == env::kSuccess ? 1 : d == env::kCollision ? 2 : 3), 1ull);
@@ -302,8 +317,12 @@ __global__ void __launch_bounds__(256) log_k(TrainState* ts, const float* met_ta
     L.n_c[k] = (float)n;
     L.s_c[k] = n > 0 ? (float)it_stat[k * 3 + 1] / (float)n : 0.f;
     L.k_c[k] = n > 0 ? (float)it_stat[k * 3 + 2] / (float)n : 0.f;
-    it_stat[k * 3] = it_stat[k * 3 + 1] = it_stat[k * 3 + 2] = 0;
+    const int r = (3 + k) * 3, nb = it_stat[r];
+    L.n_b[k] = (float)nb;
+    L.s_b[k] = nb > 0 ? (float)it_stat[r + 1] / (float)nb : 0.f;
+    L.k_b[k] = nb > 0 ? (float)it_stat[r + 2] / (float)nb : 0.f;
   }
+  for (int k = 0; k < IT_ROWS * 3; ++k) it_stat[k] = 0;
   L.stage = stage;
   out[it % ring] = L;
   ts->s_pg = ts->s_vl = ts->s_kl = ts->s_clip = ts->s_ent = ts->s_gnorm = 0.f;
@@ -320,7 +339,7 @@ struct CurrCtl {
   PpoCurrStage st[CURR_MAXS];
 };
 // 바퀴 끝(gae 가 이 바퀴 에피소드 수를 ts 에 둔 뒤, log_k 가 it_stat·ts 를 지우기 전): 창에 넣고 넘어가기 판단 → 같은 칸 번호의 기록
-__global__ void curr_k(CurrCtl* c, TrainState* ts, const int* it_stat, gmap::MapCurr* mc, int ring, PpoCurrLog* out) {
+__global__ void curr_k(CurrCtl* c, TrainState* ts, const int* it_stat, gmap::MapCurr* mc, bsc::BCurr* bc, int ring, PpoCurrLog* out) {
   PpoCurrLog L{-1, -1, 0, 0, 0.f, {0.f, 0.f, 0.f}};
   const long long it = ts->iter;
   if (c->on) {
@@ -355,6 +374,7 @@ __global__ void curr_k(CurrCtl* c, TrainState* ts, const int* it_stat, gmap::Map
           mc->p0 = nx.p0;
           mc->p1 = nx.p1;
           if (nx.act_mask) ts->act_mask = nx.act_mask;
+          if (nx.b_set && bc) *bc = *reinterpret_cast<const bsc::BCurr*>(&nx.bcurr);   // BEHAVIOR 비율·장면·엄격(판 리셋 때 환경이 읽음)
           L.evt = 2;
         }
       }
@@ -400,14 +420,39 @@ Trainer::Trainer(const PpoConfig& c) : cfg(c) {
   gae_part = alloc<float>((size_t)((N + 255) / 256) * GAE_NQ);
   first = alloc<int>(N);
   cur_len = alloc<int>(N);
-  it_stat = alloc<int>(9);
+  it_stat = alloc<int>(IT_ROWS * 3);
   tab = alloc<unsigned long long>((size_t)3 * 2 * TAB_C * TAB_Q);
   curr_d = alloc<gmap::MapCurr>(1);
   PCK(cudaHostAlloc(&curr_h, sizeof(gmap::MapCurr) * 8, cudaHostAllocDefault));
   for (int k = 0; k < 8; ++k) PCK(cudaEventCreateWithFlags(&curr_ev[k], cudaEventDisableTiming));
   {
-    const gmap::MapCurr c0{cfg.map_p0, cfg.map_p1, cfg.map_kmin, cfg.map_kmax, cfg.map_reveal_r, 0};
+    const gmap::MapCurr c0{cfg.map_p0, cfg.map_p1, cfg.map_kmin, cfg.map_kmax, cfg.map_reveal_r, cfg.map_nav_k};
     PCK(cudaMemcpy(curr_d, &c0, sizeof c0, cudaMemcpyHostToDevice));
+  }
+  // E2 BEHAVIOR: 장면 묶음(호스트에서 약 9 s, 장치 약 61 MB)과 커리큘럼 장치 값. 상자 방만이면 만들지 않는다
+  bcurr_d = alloc<bsc::BCurr>(1);
+  {
+    bsc::BCurr b0 = *reinterpret_cast<const bsc::BCurr*>(&cfg.bcurr);
+    if (cfg.beh || cfg.stage >= env::kStageBeh) {
+      cfg.beh = 1;
+      bsc::BuildOpt bo;
+      bo.quiet = true;
+      if (cfg.b_rasc_dir[0]) bo.dir = std::string(cfg.b_rasc_dir, strnlen(cfg.b_rasc_dir, sizeof cfg.b_rasc_dir));
+      const std::string only(cfg.b_scenes, strnlen(cfg.b_scenes, sizeof cfg.b_scenes));
+      for (size_t p = 0; p < only.size();) {
+        size_t q = only.find(',', p);
+        if (q == std::string::npos) q = only.size();
+        if (q > p) bo.only.push_back(only.substr(p, q - p));
+        p = q + 1;
+      }
+      scenes = std::make_unique<bsc::SceneBuild>();
+      std::string err;
+      if (!bsc::build_scenes(bo, *scenes, &err) || !bsc::upload(*scenes, &err)) { std::fprintf(stderr, "ppo: BEHAVIOR scene build failed: %s\n", err.c_str()); std::abort(); }
+      dev_bytes += scenes->dev_bytes;
+      if (b0.scene_mask == 0) b0.scene_mask = (1u << scenes->host.nsc) - 1u;
+      std::fprintf(stderr, "ppo: BEHAVIOR scenes %d, entries %d, device %.1f MB\n", scenes->host.nsc, scenes->host.nent, scenes->dev_bytes / 1e6);
+    }
+    PCK(cudaMemcpy(bcurr_d, &b0, sizeof b0, cudaMemcpyHostToDevice));
   }
 
   const size_t M = Mmax, MS = (size_t)Mmax * KSLOT;
@@ -520,6 +565,8 @@ Trainer::~Trainer() {
   if (ckpt_h) cudaFreeHost(ckpt_h);
   if (curr_h) cudaFreeHost(curr_h);
   vt.free_dev();
+  tok.reset(); map.reset(); env.reset();
+  if (scenes) bsc::free_dev(*scenes);
   for (auto& e : curr_ev) if (e) cudaEventDestroy(e);
 }
 
@@ -531,6 +578,20 @@ void Trainer::set_map_curr(const gmap::MapCurr& c) {
   curr_h[k] = c;
   PCK(cudaMemcpyAsync(curr_d, &curr_h[k], sizeof c, cudaMemcpyHostToDevice, 0));
   PCK(cudaEventRecord(curr_ev[k], 0));
+}
+
+// BEHAVIOR 커리큘럼 값 바꾸기: 같은 고정 호스트 링(칸 하나에 들어가게 둘로 나눠)으로 비동기 복사(다음 바퀴부터, 다시 잡기 없음)
+void Trainer::set_bcurr(const bsc::BCurr& b) {
+  static_assert(sizeof(bsc::BCurr) <= 2 * sizeof(gmap::MapCurr), "BCurr fits two staging slots");
+  const size_t half = sizeof(gmap::MapCurr);
+  for (int part = 0; part < 2; ++part) {
+    const size_t off = part * half, n = part == 0 ? half : sizeof b - half;
+    const int k = curr_slot++ % 8;
+    if (cudaEventQuery(curr_ev[k]) == cudaErrorNotReady) PCK(cudaEventSynchronize(curr_ev[k]));
+    std::memcpy(&curr_h[k], reinterpret_cast<const uint8_t*>(&b) + off, n);
+    PCK(cudaMemcpyAsync(reinterpret_cast<uint8_t*>(bcurr_d) + off, &curr_h[k], n, cudaMemcpyHostToDevice, 0));
+    PCK(cudaEventRecord(curr_ev[k], 0));
+  }
 }
 
 // 학습하는 행동 비트(TrainState::act_mask) 바꾸기: 같은 고정 호스트 링으로 4 B 복사 하나(다음 바퀴부터, 다시 잡기 없음)
@@ -548,8 +609,16 @@ void Trainer::make_env(int stage) {
   map.reset();
   env.reset();
   // 팔을 늘 풀어 둔다(행동 8, VLA_INPUT 5절): 꺼진 행동은 표본이 0 → 관절 목표 = 홈 + 0·범위 = 홈 자세라 예전(팔 묶음)과 비트가 같다(env_verify --arm-zero)
-  env = std::make_unique<env::DeviceEnv>(N, stage, cfg.seed * 1000003ull + 17ull + (uint64_t)stage, true);
-  map = std::make_unique<gmap::DeviceMap>(N, cfg.seed * 7919ull + 3ull + (uint64_t)stage);
+  // BEHAVIOR(beh 1): 환경·지도 모두 장면 묶음을 받는다 — 상자 방 판은 그 갈래를 지나지 않아 결과 비트가 같다(지도 BMapEnv::on 0, 환경은 상자 방 커널).
+  // 환경은 커리큘럼 값을 학습기 자리(bcurr_d)에서 읽고, BEHAVIOR 판의 다가가기 거리는 지도 거리장(정책이 아는 지도)으로
+  const bsc::SceneSet* ss = ss_dev();
+  if (stage >= env::kStageBeh && !ss) { std::fprintf(stderr, "ppo: env stage %d needs beh 1 (scene set)\n", stage); std::abort(); }
+  bsc::BCurr b0 = bsc::kBCurrDefault;
+  PCK(cudaMemcpy(&b0, bcurr_d, sizeof b0, cudaMemcpyDeviceToHost));
+  env = std::make_unique<env::DeviceEnv>(N, stage, cfg.seed * 1000003ull + 17ull + (uint64_t)stage, true, ss, b0);
+  if (ss) env->set_bcurr_source(bcurr_d);
+  map = std::make_unique<gmap::DeviceMap>(N, cfg.seed * 7919ull + 3ull + (uint64_t)stage, ss);
+  if (ss) env->set_nav(map->nav_fb());
   tok = std::make_unique<gmap::TokenRecorder>(N, T + 1);
   PCK(cudaMemset(obs_buf, 0, sizeof(float) * (size_t)(T + 1) * N_OBS_G1 * N));
   PCK(cudaMemset(obs_rows, 0, sizeof(float) * (size_t)(T + 1) * N_OBS_G1 * N));
@@ -669,7 +738,7 @@ void Trainer::log_iter() {
 }
 
 void Trainer::curr_iter() {
-  curr_k<<<1, 1>>>(cctl, ts, it_stat, curr_d, cfg.log_ring, cring_d);
+  curr_k<<<1, 1>>>(cctl, ts, it_stat, curr_d, bcurr_d, cfg.log_ring, cring_d);
   PCK(cudaGetLastError());
 }
 
@@ -691,7 +760,7 @@ void Trainer::rollout_step(int t) {
   sample_k<<<sb, 128>>>(mean, val, P + lay.logstd, ts, cfg.seed, t, N, act_env, act_buf, logp_buf, val_buf);
   env->step(act_env, obs_buf + (size_t)(t + 1) * N_OBS_G1 * N, rew_buf + (size_t)t * N, done_buf + (size_t)t * N);
   obs_rows_k<<<(N + 31) / 32, 256>>>(obs_buf + (size_t)(t + 1) * N_OBS_G1 * N, N, obs_rows + (size_t)(t + 1) * N_OBS_G1 * N);
-  epstat_k<<<sb, 128>>>(done_buf + (size_t)t * N, map->metrics() + (size_t)gmap::M_INIT * N, N, cur_len, it_stat, tab);
+  epstat_k<<<sb, 128>>>(done_buf + (size_t)t * N, map->metrics() + (size_t)gmap::M_INIT * N, env->soa().iv + (size_t)env::I_B_LKIND * N, N, cur_len, it_stat, tab);
   map->step(env->soa(), 0, 0, 0, tok->at(t + 1), curr_d);
 }
 
@@ -823,8 +892,46 @@ int ppo_load(void* h, const uint8_t* data, int64_t nbytes) {
   return 0;
 }
 int ppo_set_map_curriculum(void* h, float p0, float p1, int32_t kmin, int32_t kmax, float reveal_r) {
-  static_cast<Trainer*>(h)->set_map_curr(gmap::MapCurr{p0, p1, kmin, kmax, reveal_r, 0});
+  auto* t = static_cast<Trainer*>(h);
+  t->set_map_curr(gmap::MapCurr{p0, p1, kmin, kmax, reveal_r, t->cfg.map_nav_k});
   return 0;
+}
+int ppo_set_bcurr(void* h, const PpoBCurr* b) {
+  auto* t = static_cast<Trainer*>(h);
+  bsc::BCurr v = *reinterpret_cast<const bsc::BCurr*>(b);
+  if (v.scene_mask == 0 && t->scenes) v.scene_mask = (1u << t->scenes->host.nsc) - 1u;
+  t->set_bcurr(v);
+  return 0;
+}
+uint32_t ppo_scene_mask(void* h, const char* names) {
+  auto* t = static_cast<Trainer*>(h);
+  if (!t->scenes || !names) return 0;
+  uint32_t m = 0;
+  const std::string s(names);
+  for (size_t p = 0; p < s.size();) {
+    size_t q = s.find(',', p);
+    if (q == std::string::npos) q = s.size();
+    const std::string nm = s.substr(p, q - p);
+    for (size_t k = 0; k < t->scenes->sc.size(); ++k)
+      if (t->scenes->sc[k].name == nm) m |= 1u << k;
+    p = q + 1;
+  }
+  return m;
+}
+int64_t ppo_struct_size(int32_t which) {
+  switch (which) {
+    case 0: return sizeof(PpoConfig);
+    case 1: return sizeof(PpoLog);
+    case 2: return sizeof(PpoCurrStage);
+    case 3: return sizeof(PpoCurrLog);
+    case 4: return sizeof(PpoBCurr);
+    default: return -1;
+  }
+}
+const char* ppo_scene_name(void* h, int32_t i) {
+  auto* t = static_cast<Trainer*>(h);
+  if (!t->scenes || i < 0 || i >= (int)t->scenes->sc.size()) return nullptr;
+  return t->scenes->sc[i].name.c_str();
 }
 int ppo_set_act_mask(void* h, uint32_t mask) {
   static_cast<Trainer*>(h)->set_act_mask(mask);

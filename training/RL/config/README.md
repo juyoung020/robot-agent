@@ -11,6 +11,7 @@ Rust 실행기(`../ppo/driver`)가 읽는 JSON. 빠진 키는 실행기 기본�
 | `ppo_g4_notok.json` | G4 와 같고 지도 토큰만 끔(`use_map` 0) — 토큰 켬/끔 비교 |
 | `ppo_a2.json` | A2(가구, `../env/README.md`): A0C0 → A1C0 → A2C0(≥ 0.85, CURRICULUM A2) → A2C1 → A2C2, 충돌 추가 벌 −20, 지도 토큰 + 안 본 곳 광선(`use_map` 2), 20 분 |
 | `ppo_a2_notok.json` · `ppo_a2_nofront.json` | 같고 `use_map` 0(토큰 끔) · 1(안 본 곳 광선만 뺌) |
+| `ppo_b.json` | **E2 BEHAVIOR**(CURRICULUM_BEHAVIOR2026 3·3.1·5.4절): B0 = 상자 방 A0C0 → A1C0 → A2C0(회귀 단계) → B1 집 안 이동 C0 → C1 → C2 → B2 찾기 → B3 다가가기 → B1–B3 섞음. 아래 "ppo_b" |
 | `ppo_a2_ft40.json` · `ppo_a2_ft20.json` | A2 켬 씨앗 1 체크포인트를 `--resume` 으로 A2C2 단계만 10 분 더(충돌 추가 벌 −40 · −20 대조). `../ppo/README.md` "A2 충돌 빠른 시험" |
 
 `use_map`: 0 = 지도 입력 끔, 1 = G3/G4 지도 토큰, 2 = + 안 본 곳 광선 8(`../observation/README.md`). `ppo_run --seed S` 가 설정의 씨앗을 덮어쓴다.
@@ -40,3 +41,24 @@ G4 에서 더한 키:
 | 단계 | A0C0 [1,0] ≥ 0.9 → A1C0 [1,0] ≥ 0.8 → A1C1 [0.2, 0.8] ≥ 0.7 → A1C2 [0.1, 0.1] | 계획서 5.5: C0 ≥ 0.8, C1 ≥ 0.7. 앞 단계 약 20 % 유지(가정) — C1 단계는 C0 20 %, C2 단계는 C0·C1 각 10 %. A0 는 G3 처럼 ≥ 0.9 |
 | `window` | 20 바퀴, 에피소드 가중 | 지도 비율을 바꾸면 이미 띄운 바퀴(예전 비율)의 기록은 넘어가기 판단에서 뺌 |
 | `budget_minutes` | 35 | 토큰 켬/끔 두 판 + 확인 판 10 분 = GPU 약 80 분 |
+
+## ppo_b — BEHAVIOR 집 장면(env 3, 커리큘럼 B1–B3) 키와 가정
+
+env 3 단계가 하나라도 있으면 실행기가 `beh` 1 로 학습기를 만든다 → 장면 묶음(`env/src/bscene_host.cpp`, RASC `~/ra_b1k` 7 장면, 호스트 약 9 s·장치 61.2 MB)을 환경·지도에 붙인다. 상자 방 단계(A0–A2)는 장면 묶음이 붙어도 결과 비트가 같다(`ppo/README.md` E2 절).
+
+| 키 | 값 | 근거 / 가정 |
+|---|---|---|
+| `beh.scenes` | `house_single_floor`·`house_double_floor_lower`·`restaurant_diner`·`office_cubicles_right` | CURRICULUM 3절 제안(학습 집 4, 평가 집 = `Rs_int`·`hotel_suite_large`·`house_double_floor_upper`). 이름 → 장면 묶음 비트는 학습기를 만든 뒤 `ppo_scene_mask`. 비우면 묶음 전부. 단계 `b.scenes` 가 덮어씀 |
+| `beh.build` | 없음(= RASC 폴더 전부) | 만들 장면만 고르기(장치 메모리 줄이기) — 평가에 다른 집을 쓰려면 다 만든다 |
+| `beh.mix` | [0.34, 0.33] (B1, B2; 나머지 B3) | `env_verify`·`kBCurrDefault` 와 같은 기본. 단계 `b.mix` 가 덮어씀 |
+| `beh.split` | 0(학습 인스턴스) | CURRICULUM 3절: 공개 평가 인스턴스(1)는 평가만 |
+| `beh.strict` | 0(느슨 거르개) | 3.1절 표. 엄격(1)은 E0 엄격 한도 판만 |
+| `beh.eval_instr` | 0 | 1 = 지시문 heldout 문장(평가) |
+| `beh.yaw_jit` | 0.5 rad | **(가정)** B1 시작 yaw = 인스턴스 R1Pro 자세라 ±0.5 rad 흔듦(외우기 방지). 집기·놓기 판은 시작이 원래 무작위 |
+| `beh.nav_k` | 10 | 지도 다가가기 거리장 주기(map README E2, `nav_tradeoff`: K 10 의 판 보상 합 차 0.12 / 8.25) |
+| 단계 `b` | `{mix, scenes, split, strict, eval_instr, yaw_jit}` | env 3 단계에 들어갈 때 장치 값 `bsc::BCurr` 로(같은 환경이면 장치 커리큘럼 커널이 바로, 다른 환경이면 실행기가 `ppo_set_bcurr`) |
+| `metric` | 3 / 4 / 5 = B1 / B2 / B3 에피소드 | 0–2(C0–C2)·−1(전체)는 예전 그대로. 끝난 판의 단계 = 환경 `I_B_LKIND` |
+| 단계 문턱 | B0: A0C0 0.9 · A1C0 0.8 · A2C0 0.85, B1C0 0.85 · B1C1 0.7 · B1C2 0.7, B2 0.85, B3 0.85, 마지막 B123 멈춤 없음 | CURRICULUM 3절 표(B1 SR ≥ 85 %, B2 찾음률 ≥ 85 %, B3 SR ≥ 85 %)·5.5(C1 0.7). B1 의 C1·C2 문턱 0.7 은 G4 와 같게 **(가정)** |
+| 앞 단계 섞기 | B2 = B1 20 %, B3 = B1·B2 각 10 %, 지도는 C2 단계에서 C0·C1 각 10 % | CURRICULUM_APPROACH 4절 "앞 단계 약 20 %" **(가정: 나누는 법)** |
+| `act_dims` | 2(vx, wz) | B1–B3 모두 이동·다가가기(팔은 홈 자세 — B3 성공은 몸통 자세의 잡는 점 작업 공간) |
+| `budget_minutes` | 60 | **(가정)** 학습 시간은 아직 안 잼(이 작업은 연결·검증만) |

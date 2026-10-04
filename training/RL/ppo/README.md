@@ -13,7 +13,7 @@ G6(FP8): 설정 `"fp8"`(기본 0 = 예전과 비트 같음), `ppo_run --steps S`
 | `../network/` | CUDA/C++ | 손 BF16 GEMM, 집합, PPO 손실, Adam, CPU 참조판 |
 | `../observation/`, `../reward/` | CUDA/C++ | 관측 모으기(CPU·GPU 같은 소스), 퍼텐셜 모양 잡기 |
 | `tools/ppo_verify.cu` | C++/CUDA | 검증 V4–V7, 음성 대조, 처리량, 결정적 평가 |
-| `driver/` | Rust | 설정(JSON) 읽기, 실행 순서, 커리큘럼 단계 표(넘어가기 판단은 장치 `curr_k`, 환경 바꾸기만 호스트), 비동기 기록(CSV, 쓰기 스레드), 체크포인트(옆 스트림) |
+| `driver/` | Rust | 설정(JSON) 읽기, 실행 순서, 커리큘럼 단계 표(넘어가기 판단은 장치 `curr_k`, 환경 바꾸기만 호스트), 비동기 기록(CSV, 쓰기 스레드), 체크포인트(옆 스트림). env 3(BEHAVIOR B1–B3)은 아래 E2 절 |
 
 G1 `env/`·G2 `map/` 은 **소스를 읽기만** 해서 같이 빌드한다(API·내부 변경 없음). 하나 다른 것은 빌드 옵션 `--default-stream per-thread` 다. G1 `DeviceEnv::step`·G2 `DeviceMap::step` 은 스트림 0 에 띄우는데, 레거시 기본 스트림은 그래프로 잡을 수 없다. 이 옵션으로 빌드하면 스트림 0 이 이 스레드의 스트림이 되어 같은 그래프에 잡힌다.
 
@@ -472,6 +472,32 @@ nsys 2025.6.3 `--cuda-graph-trace=node`, `ppo_run` A2 설정에서 단계 문턱
 - **평가 바퀴 끝**(`eval_iterate` 의 GAE·기록 커널 셋)을 그래프 `g_eval` 로 잡았다. `ppo_verify eval`(A2, N 2,048, 8 바퀴) 출력이 전후 같음.
 - 검증(후): snap 네 판 기준 해시 그대로(`df44270c92d89405`·`87b1e529db01f789`·`2566b33636bdf785`·`67fb1685fb352d02`), V4 33/33·V5 36/36·V6 0 낱말(기본·`--a2`)·V7 같은 씨앗 0 / 다른 씨앗 2,704,508, slotcols 0/5.
 - 환경 바꾸기의 남은 빈틈(번마다 약 7 ms + 띄운 바퀴 비우기)은 `DeviceEnv` 를 단계마다 새로 만들기 때문이다(G1 `env/` 몫 — 단계가 장치 값이면 다시 만들기·다시 잡기가 없어짐).
+
+## E2 — BEHAVIOR 집 장면(env 단계 3, 커리큘럼 B1–B3)을 학습기에 연결(2026-10-04) — 잰 값
+계획서 [CURRICULUM_BEHAVIOR2026](../../../docs/map_vla/CURRICULUM_BEHAVIOR2026.md) 3·3.1·5.4절. 환경·지도 쪽은 `../env/README.md`·`../map/README.md` E2 절.
+
+| 곳 | 무엇 |
+|---|---|
+| `PpoConfig` | `beh`(1 = 장면 묶음 만들기), `map_nav_k`, `bcurr`(`PpoBCurr` = 환경 `bsc::BCurr` 와 같은 배치: B1·B2 비율, 장면 비트, split, yaw 흔들기, 엄격, 지시문 heldout), `b_scenes`(만들 장면), `b_rasc_dir` |
+| 학습기 | `beh` 1 이면 `bscene_host` 로 장면 묶음을 만들어(호스트 약 9 s, 장치 61.2 MB) **모든 단계**의 환경·지도에 붙인다(상자 방 판은 그 갈래를 지나지 않음 — 아래 비트 같음). 환경은 커리큘럼 값을 학습기 자리 `bcurr_d` 에서 읽고(`set_bcurr_source`), env 3 이면 지도 거리장 되먹임(`set_nav(map.nav_fb())`). `MapCurr::nav_k` = 설정 |
+| 장치 커리큘럼 | `PpoCurrStage` 에 `b_set`·`bcurr`: 같은 환경 단계 넘어가기(B1C0 → B1C1 → … → B2 → B3)는 `curr_k` 가 `MapCurr`·`act_mask` 와 함께 `BCurr` 도 바로 바꾼다(호스트 왕복 없음). 지표 `metric` 3/4/5 = B1/B2/B3 에피소드 — 끝난 판의 단계는 환경 새 칸 `I_B_LKIND`(상자 방 0) |
+| 기록 | `PpoLog` 끝에 `n_b[3]`·`s_b[3]`·`k_b[3]`(B1/B2/B3 끝난 판 수·성공·충돌), `log.csv` 끝 열 9 개. 실행 폴더(run.json·progress.jsonl) 키는 그대로 |
+| C ABI | `ppo_set_bcurr`, `ppo_scene_mask`(이름 → 비트), `ppo_scene_name`, `ppo_struct_size`(실행기가 구조체 크기를 견줌) |
+| 실행기 | 설정 `beh`(기본값)·단계 `b`(덮어쓰기), env 3 단계가 있으면 `beh` 1. `../config/ppo_b.json`(값·가정은 `../config/README.md` "ppo_b") |
+
+검증(잰 값):
+
+| 검사 | 결과 |
+|---|---|
+| 상자 방 비트 그대로 | `snap` 네 판의 옛 배치 해시(기록을 E2 앞 `PpoLog` 칸까지만 넣은 해시, `legacy-layout`)가 E2 앞 기준과 같음: `df44270c92d89405`·`87b1e529db01f789`·`2566b33636bdf785`·`67fb1685fb352d02`. A2 판을 장면 묶음 붙여(`--beh`) 돌려도 전체 해시까지 같음(`6ac31c4ac64f0782`) |
+| 새 전체 해시(`PpoLog` 36 B 늘어 기록 바이트가 바뀜) | N 1,024 T 32 3 바퀴 A1 `02decce76a40ce05` · N 2,048 T 64 6 바퀴 A1 `--aug` `de21e5dfb0927009` · N 4,096 A1 `6f110773dc366585` · N 4,096 A2 `--a2 --act8 --aug` `6ac31c4ac64f0782` |
+| env 3 `snap t.bin 2048 64 6 3 2` | `f39a35c7308341d3`(마지막 바퀴 B1/B2/B3 끝난 판 167/109/185) |
+| V6 `--stage 3` | 0 낱말 다름(10 바퀴, 에피소드 209) |
+| V7 `--stage 3` | 같은 씨앗 0 / 다른 씨앗 2,410,207 다름 |
+| `env_verify 2048 600`(A1) · `--stage 3 --follow` | 비트 동일, 끝 판수 8,907 / 3,420 / 1,543 · 대본 B1 407·B2 312·B3 241(E2 와 같음 — 새 칸 `I_B_LKIND` 도 CPU == GPU) |
+
+- 처리량(`ppo_verify bench 4096 64 10 4 2`, GPU 다른 일 없음): A2(`--a2`) 1.465e6 env-step/s(rollout 45.1 + update 133.9 ms, 2.00 GB), **env 3**(`--stage 3`, B1–B3 섞음) **1.175e6**(rollout 90.7 + update 132.5 ms, 2.07 GB).
+- 실행기 확인(학습 아님, 1 분, N 1,024, `ppo_b.json` 문턱을 모두 0·창 2 로 둔 사본): 9 단계를 모두 지남 — A0C0 → A1C0 → A2C0 → B1C0 은 환경 다시 만들기(호스트), B1C0 → B1C1 → B1C2 → B2 → B3 → B123 은 장치가 바로(판단 바퀴 + 1). 621 바퀴·60.2 s, env 3 바퀴 약 56 + 34 ms. 무작위 정책이라 성공률은 뜻 없음(B2 0.1–0.5, B1·B3 0).
 
 ## 다음
 1. ~~**G5**~~ **(끝남)**: 영상 학생 BC 0.740 → DAgger 8 번 0.946(교사 0.944) — `3b09389`, `../../BC/README.md`. 원래 계획: 학생(BC)이 같은 자라는 지도 + 이 교사(A2 토큰 켬, 씨앗 1 체크포인트) 궤적으로, DAgger → `../../BC/README.md`(student-lite: BC 0.933, DAgger 8 번 0.946 = 교사 0.946).

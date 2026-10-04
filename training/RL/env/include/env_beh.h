@@ -397,6 +397,7 @@ DEV void step_env_beh(const Soa& s, int i, const float* act, float* obs, float* 
   for (int k = 0; k < N_OBS; ++k) obs[k * s.N + i] = o.obs[k];
   rew[i] = o.reward;
   done[i] = o.done;
+  s.iv[I_B_LKIND * s.N + i] = b.kind;   // 끝난 판의 단계(리셋 앞)
   if (o.done != kRunning) reset_beh(c, b, ss, *cu);
   store(s, i, c);
   store_b(s, i, b);

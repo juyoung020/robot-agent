@@ -513,7 +513,7 @@ RASC v1  (little endian, 64 B 정렬, 머리에 구조체 크기 — 빌드가 �
 - **③ OmniGibson 대조**(IoU·경로 길이·깊이 50 곳)는 안 함 — E7 묶음으로. 
 - 창 12.8 m 고정(지도 창 이동은 판마다 옮김만, 판 안 따라 옮기기 없음) → B1 은 창에 들어가는 방 짝만. RS·HSL·RD B1 0, HDU·OCR 집기·놓기 0.
 - 정적 상자는 AABB 가 아닌 회전 상자지만 속이 찬 상자(탁자 밑으로 못 감), 문은 늘 열림, 판의 과제 물체는 지도 물체 9 칸 안 것만 부딪힘, 동역학은 바닥 높이 차를 무시(다닐 곳·시작 고르기만 문턱을 씀).
-- PPO 학습기(`ppo/trainer.cu`, 다른 에이전트 영역)는 아직 stage 3 를 띄우지 않는다(`DeviceEnv(N, 3, seed, arm, scenes.dev, cu)` + `DeviceMap(N, seed, scenes.dev)` + `env.set_nav(map.nav_fb())` 가 필요). 관측 쪽(`obs.h`)에 지시문 행(`I_B_INSTR` → `pnp_v1/instr128.f16`)을 넣는 일도 남음.
+- ~~PPO 학습기가 stage 3 를 못 띄움~~ → **됨**(2026-10-04): 학습기·실행기가 env 3 을 띄우고 장치 커리큘럼이 `BCurr`(B1/B2/B3 비율·장면·split·엄격·지시문)·`MapCurr`(C0/C1/C2)를 함께 바꾼다, 설정 `training/RL/config/ppo_b.json`(B0 → B1 C0/C1/C2 → B2 → B3 → 섞음). 잰 값은 [ppo README](../../training/RL/ppo/README.md) "E2" 절. 관측 쪽(`obs.h`)에 지시문 행(`I_B_INSTR` → `pnp_v1/instr128.f16`)을 넣는 일은 남음.
 - 이름 표에 없는 가구 종류(bench·ottoman)는 "furniture" 상위어, 생김새 행은 상자 하나.
 - 상자 방(A0–A2) 지도 토큰 `T_REACH` 를 잡는 점 표로 바꿀지(B0 비트 동일이 깨짐) — 결정 필요.
 

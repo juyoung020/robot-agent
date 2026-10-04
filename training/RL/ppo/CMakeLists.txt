@@ -29,10 +29,15 @@ add_library(ppofp8 OBJECT ${RL}/network/src/net_fp8.cu)
 set_target_properties(ppofp8 PROPERTIES CUDA_ARCHITECTURES OFF POSITION_INDEPENDENT_CODE ON)
 target_compile_options(ppofp8 PRIVATE -gencode=arch=compute_120a,code=sm_120a)
 target_include_directories(ppofp8 PRIVATE ${INC})
-add_library(ppo SHARED ${RL}/env/src/env_kernel.cu ${RL}/map/src/map_kernel.cu ${RL}/network/src/net_kernels.cu src/trainer.cu $<TARGET_OBJECTS:ppofp8>)
+# E2: BEHAVIOR 장면 묶음 만들기(호스트, RASC 로더 tools/b1kconv/cpp/rasc.h 읽기만) — 커리큘럼에 env 3 이 있을 때만 쓴다
+find_package(Threads REQUIRED)
+add_library(ppo SHARED ${RL}/env/src/env_kernel.cu ${RL}/map/src/map_kernel.cu ${RL}/network/src/net_kernels.cu src/trainer.cu ${RL}/env/src/bscene_host.cpp
+            $<TARGET_OBJECTS:ppofp8>)
 target_include_directories(ppo PUBLIC ${INC})
+target_include_directories(ppo PRIVATE ${RL}/tools/b1kconv/cpp)
+set_source_files_properties(${RL}/env/src/bscene_host.cpp PROPERTIES COMPILE_OPTIONS "-O2")
 target_compile_definitions(ppo PUBLIC VLA_DATA_DIR="${CMAKE_CURRENT_LIST_DIR}/../../data/vla_v1")   # 얼린 이름·생김새 표(observation/vec_tab.h)
-target_link_libraries(ppo PUBLIC CUDA::cudart)
+target_link_libraries(ppo PUBLIC CUDA::cudart Threads::Threads)
 
 # CPU 참조판(검증 전용): 신경망 FP64 / bf16 흉내
 add_library(netref STATIC ${RL}/network/src/net_ref.cpp)

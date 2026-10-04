@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -42,6 +43,8 @@ static bool g_g4data = false;   // v4/v5 --g4data: G4 자료(목표는 지도에
 static bool g_a2 = false;       // --a2: A2 환경(가구) + 지도 토큰에 안 본 곳 광선(use_map 2). v4/v5 는 --g4data 와 같이
 static bool g_act8 = false;     // --act8: 행동 8 모두 학습(act_mask 0xff — 팔·그리퍼 포함, VLA_INPUT 5절)
 static bool g_aug = false;      // --aug: 학습 때 흔들기 켬(속도 잡음·직전 명령·이름 흔들기·칸 지우기·지도 끄기, obs.h ObsAug)
+static bool g_beh = false;      // --beh: BEHAVIOR 장면 묶음을 만들어 환경·지도에 붙임(상자 방 단계면 결과 비트가 같아야 함). 단계 3 이면 늘 켬
+static int g_stage = -1;        // --stage S: v6/v7 의 환경 단계(−1 = 설정 그대로). 3 = BEHAVIOR B1–B3(장면 묶음 ~/ra_b1k)
 static PpoConfig small_cfg(uint64_t seed, int graphs, bool g4 = true) {
   PpoConfig c{};
   c.n_env = 512; c.horizon = 16; c.epochs = 2; c.minibatches = 4; c.stage = 1; c.use_map = 1; c.adaptive_lr = 0; c.use_graphs = graphs;
@@ -56,6 +59,12 @@ static PpoConfig small_cfg(uint64_t seed, int graphs, bool g4 = true) {
   if (!g4) { c.goal_from_map = 0; c.map_p0 = 0.f; c.map_p1 = 0.f; }   // G3 설정(특권 목표, 빈 지도) — V4/V5 기준 자료
   else if (g_a2) { c.stage = 2; c.use_map = 2; }
   if (g_act8) c.act_mask = 0xffu;
+  if (g_stage >= 0) c.stage = g_stage;
+  if (g_beh || c.stage >= 3) {   // BEHAVIOR: 기본 섞음(B1 0.34·B2 0.33·B3), 모든 장면, 학습 인스턴스
+    c.beh = 1;
+    c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0};
+    if (c.stage >= 3) c.use_map = 2;
+  }
   if (g_aug) {
     c.aug_on = 1; c.aug_vel_sigma = 0.05f; c.aug_prev_drop = 0.1f; c.aug_prev_sigma = 0.05f;
     c.aug_p_erase = 0.1f; c.aug_p_syn = 0.2f; c.aug_p_hyper = 0.1f; c.aug_p_wrong = 0.05f; c.aug_p_slot_drop = 0.1f; c.aug_p_map_off = 0.05f;
@@ -428,6 +437,7 @@ static int run_v7() {
 static int run_snap(const char* out, int N, int T, int iters, int stage, int use_map) {
   PpoConfig c = small_cfg(7, 1);
   c.n_env = N; c.horizon = T; c.minibatches = 4; c.epochs = 5; c.use_map = use_map; c.adaptive_lr = 1; c.stage = stage;
+  if (stage >= 3 && !c.beh) { c.beh = 1; c.bcurr = PpoBCurr{0.34f, 0.33f, 0u, 0, 0.f, 0, 0, 0}; }
   const Snap s = run_iters(c, iters);
   FILE* f = std::fopen(out, "wb");
   if (!f) { std::perror(out); return 2; }
@@ -438,11 +448,16 @@ static int run_snap(const char* out, int N, int T, int iters, int stage, int use
   };
   put(s.P.data(), 4 * s.P.size()); put(s.m.data(), 4 * s.m.size()); put(s.v.data(), 4 * s.v.size());
   put(s.obs.data(), 4 * s.obs.size()); put(s.adv.data(), 4 * s.adv.size()); put(s.val.data(), 4 * s.val.size()); put(s.act.data(), 4 * s.act.size());
-  put(s.tok.data(), s.tok.size()); put(s.tab.data(), 8 * s.tab.size()); put(s.logs.data(), sizeof(PpoLog) * s.logs.size());
+  put(s.tok.data(), s.tok.size()); put(s.tab.data(), 8 * s.tab.size());
+  // 옛 배치 해시(빌드 사이 견주기): 기록은 E2 앞 PpoLog 칸(goal_known 까지)만 — 같은 상자 방 판이면 E2 앞 기준 해시와 같아야 한다
+  uint64_t hl = h;
+  for (const PpoLog& q : s.logs)
+    for (size_t i = 0; i < offsetof(PpoLog, n_b); ++i) hl = (hl ^ ((const uint8_t*)&q)[i]) * 1099511628211ull;
+  put(s.logs.data(), sizeof(PpoLog) * s.logs.size());
   std::fclose(f);
   const PpoLog& L = s.logs.back();
-  std::printf("snap %s: N %d T %d iters %d A%d use_map %d -> FNV-1a %016llx (last log: kl %.6f succ %.4f ep_ret %.4f)\n", out, N, T, iters, stage, use_map,
-              (unsigned long long)h, L.kl, L.succ, L.ep_ret);
+  std::printf("snap %s: N %d T %d iters %d A%d use_map %d%s -> FNV-1a %016llx  legacy-layout %016llx (last log: kl %.6f succ %.4f ep_ret %.4f, B1/B2/B3 eps %.0f/%.0f/%.0f)\n",
+              out, N, T, iters, stage, use_map, c.beh ? " beh" : "", (unsigned long long)h, (unsigned long long)hl, L.kl, L.succ, L.ep_ret, L.n_b[0], L.n_b[1], L.n_b[2]);
   return 0;
 }
 
@@ -819,6 +834,8 @@ int main(int argc, char** argv) {
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--a2")) g_a2 = true;
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--act8")) g_act8 = true;
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--aug")) g_aug = true;
+  for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--beh")) g_beh = true;
+  for (int a = 2; a + 1 < argc; ++a) if (!std::strcmp(argv[a], "--stage")) g_stage = std::atoi(argv[a + 1]);
   if (m == "obs") return run_obs(neg);
   if (m == "slotcols") return run_slotcols();
   if (m == "bench") return run_bench(argc > 2 ? std::atoi(argv[2]) : 4096, argc > 3 ? std::atoi(argv[3]) : 64, argc > 4 ? std::atoi(argv[4]) : 20,
