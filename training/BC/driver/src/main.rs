@@ -40,6 +40,16 @@ struct BcConfig {
     map_kmax: i32,
     map_reveal_r: f32,
     pad: i32,
+    vision: i32,
+    head: i32,
+    chunk: i32,
+    flow_steps: i32,
+    text: i32,
+    render_profile: i32,
+    render_batch: i32,
+    img_dim: i32,
+    sample_render: i32,
+    pad2: i32,
 }
 
 #[repr(C)]
@@ -83,6 +93,7 @@ extern "C" {
     fn bc_load_student(h: H, path: *const std::os::raw::c_char) -> i32;
     fn bc_num_params(h: H) -> i64;
     fn bc_device_bytes(h: H) -> i64;
+    fn bc_load_text_table(h: H, path: *const std::os::raw::c_char) -> i32;
 }
 
 fn gi(v: &Value, k: &str, d: i64) -> i64 { v.get(k).and_then(|x| x.as_i64()).unwrap_or(d) }
@@ -203,6 +214,16 @@ fn main() {
         map_kmax: gi(&v, "map_kmax", 8) as i32,
         map_reveal_r: gf(&v, "map_reveal_r", 1.5) as f32,
         pad: 0,
+        vision: gi(&v, "vision", 0) as i32,
+        head: gi(&v, "head", 0) as i32,
+        chunk: gi(&v, "chunk", 16) as i32,
+        flow_steps: gi(&v, "flow_steps", 10) as i32,
+        text: gi(&v, "text", 0) as i32,
+        render_profile: gi(&v, "render_profile", 1) as i32,
+        render_batch: gi(&v, "render_batch", 256) as i32,
+        img_dim: 16,
+        sample_render: 1,
+        pad2: 0,
     };
     let r0 = gi(&v, "record_rollouts", 4) as usize;
     let u0 = gi(&v, "bc_updates", 100) as usize;
@@ -218,14 +239,23 @@ fn main() {
 
     let h = unsafe { bc_create(&c) };
     assert_eq!(unsafe { bc_load_teacher(h, cstr(&teacher).as_ptr()) }, 0, "teacher {}", teacher);
+    if c.text != 0 {
+        // 지시 문장 글 벡터 표(기본: 설정 파일 옆 ../data/instr_a2.f32)
+        let def = PathBuf::from(&args[1]).parent().map(|p| p.join("../data/instr_a2.f32")).unwrap_or_default();
+        let tp = v.get("text_table").and_then(|x| x.as_str()).map(|s| s.replace('~', &home)).unwrap_or(def.to_string_lossy().to_string());
+        let k = unsafe { bc_load_text_table(h, cstr(&tp).as_ptr()) };
+        assert!(k > 0, "text table {} ({})", tp, k);
+        println!("text table {}: {} sentences", tp, k);
+    }
     if let Some(p) = v.get("init_student").and_then(|x| x.as_str()) {
         assert_eq!(unsafe { bc_load_student(h, cstr(&p.replace('~', &home)).as_ptr()) }, 0);
     }
     let mut csv = fs::File::create(out.join("log.csv")).unwrap();
     writeln!(csv, "phase,wall_s,seq,kind,actor,record,count,adam_t,loss,grad_norm,disagree,n_eps,succ,coll,tout,n_c0,n_c1,n_c2,succ_c0,succ_c1,succ_c2,gpu_ms").unwrap();
     let mut run = Run { h, csv, phase: String::new(), t0: Instant::now(), logs: vec![] };
-    println!("bc_run: N {} T {} mb {} K {} cap {} student params {} device {:.2} GB, teacher {}, dagger {}", c.n_env, c.horizon, c.mb, c.upd_steps, c.cap,
-        unsafe { bc_num_params(h) }, unsafe { bc_device_bytes(h) } as f64 / 1e9, teacher, dagger);
+    println!("bc_run: N {} T {} mb {} K {} cap {} student params {} device {:.2} GB, teacher {}, dagger {} | vision {} text {} head {} (chunk {}, flow steps {}) render profile {}",
+        c.n_env, c.horizon, c.mb, c.upd_steps, c.cap, unsafe { bc_num_params(h) }, unsafe { bc_device_bytes(h) } as f64 / 1e9, teacher, dagger,
+        c.vision, c.text, if c.head != 0 { "flow" } else { "mse" }, c.chunk, c.flow_steps, c.render_profile);
     let mut results = serde_json::Map::new();
 
     let eval = |run: &mut Run, name: &str, actor: i32, results: &mut serde_json::Map<String, Value>| {

@@ -29,6 +29,17 @@ typedef struct BcConfig {
   int32_t map_kmin, map_kmax;
   float map_reveal_r;
   int32_t pad;
+  /* 영상 학생(G5 본판) — 모두 0 이면 student-lite(예전과 같은 MSE 학생) */
+  int32_t vision;       /* 1 = 카메라 2 장 → 얼린 SigLIP 2 패치 토큰(128 개) → 칸마다 P1(784 → img_dim, ELU) → 펼쳐 A1 입력에 */
+  int32_t head;         /* 0 = 한 스텝 MSE(A4), 1 = flow matching 행동 청크(E1–E3) */
+  int32_t chunk;        /* 청크 길이 H (head 1, ≤ 16) */
+  int32_t flow_steps;   /* 추론 오일러 스텝 수 (head 1) */
+  int32_t text;         /* 1 = 지시 문장 SigLIP 2 글 벡터(768, 미리 계산한 표)를 A1 입력에 */
+  int32_t render_profile;   /* 0 = 팀 기본, 1 = 싼 설정 */
+  int32_t render_batch; /* 렌더 한 번의 판 수(작업 공간 크기) */
+  int32_t img_dim;      /* P1 출력(토큰마다) — 16 고정 */
+  int32_t sample_render;    /* 1 = 미니배치 표본마다 다시 렌더(기본), 0 = 검증용 */
+  int32_t pad2;
 } BcConfig;
 
 typedef struct BcLog {
@@ -71,6 +82,8 @@ int bc_clear_table(void* h);
 int bc_save_student(void* h, const char* path);
 int bc_load_student(void* h, const char* path);
 int64_t bc_num_params(void* h);
+/* 지시 문장 글 벡터 표 읽기(text 1): f32 [k][768] 파일 — 동기, 시작 때만. 돌려준 값 = 문장 수(음수 = 오류) */
+int bc_load_text_table(void* h, const char* path);
 int64_t bc_device_bytes(void* h);
 int bc_sync(void* h);
 

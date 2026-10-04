@@ -24,9 +24,14 @@ set(INC ${RL}/env/include ${RL}/map/include ${RL}/network/include ${RL}/network/
         ${CMAKE_CURRENT_LIST_DIR}/include)
 
 # 학습 경로: 환경 + 지도 + 신경망 커널(RL 소스 그대로) + BC 학습기
-add_library(bc SHARED ${RL}/env/src/env_kernel.cu ${RL}/map/src/map_kernel.cu ${RL}/network/src/net_kernels.cu src/bc.cu)
+set(ENGINE_DIR ${CMAKE_CURRENT_LIST_DIR}/../../src/behavior-2026/src/sim/engine)
+add_library(bc SHARED ${RL}/env/src/env_kernel.cu ${RL}/map/src/map_kernel.cu ${RL}/network/src/net_kernels.cu src/bc.cu src/vit.cu src/bc_render.cu)
 target_include_directories(bc PUBLIC ${INC})
+target_include_directories(bc PRIVATE ${ENGINE_DIR})
 target_link_libraries(bc PUBLIC CUDA::cudart)
+# 팀 RenderBatch(서브모듈, 읽기만)를 쓰는 파일 하나에만 팀 렌더 빌드 규칙(-ftz=true 등) — render_bench 와 같음
+set_source_files_properties(src/bc_render.cu PROPERTIES COMPILE_OPTIONS
+  "-O2;-fmad=false;-prec-div=true;-prec-sqrt=true;-ftz=true;--expt-relaxed-constexpr;-Xcompiler=-ffp-contract=off")
 
 # CPU 참조판(검증 전용): RL 신경망 FP64 / bf16 흉내 층 함수
 add_library(bcnetref STATIC ${RL}/network/src/net_ref.cpp)
@@ -37,7 +42,6 @@ add_executable(bc_verify tools/bc_verify.cu)
 target_link_libraries(bc_verify bc bcnetref)
 
 # 224² 렌더 속도(계획서 4.5·10.3 의 6): 팀 RenderBatch(src/behavior-2026, 읽기만)를 include 로 쓴다. 팀 렌더 빌드 규칙(-ftz=true 등)을 이 대상에만.
-set(ENGINE_DIR ${CMAKE_CURRENT_LIST_DIR}/../../src/behavior-2026/src/sim/engine)
 if(EXISTS ${ENGINE_DIR}/cuda/render/render_batch.cuh AND EXISTS ${CMAKE_CURRENT_LIST_DIR}/tools/render_bench.cu)
   add_executable(render_bench tools/render_bench.cu)
   target_include_directories(render_bench PRIVATE ${ENGINE_DIR} ${INC})
@@ -46,8 +50,24 @@ if(EXISTS ${ENGINE_DIR}/cuda/render/render_batch.cuh AND EXISTS ${CMAKE_CURRENT_
   target_link_libraries(render_bench bc)
 endif()
 
+# 얼린 SigLIP 2 인코더 CPU 참조판(검증 전용)과 영상 경로 검증·측정
+add_library(vitref STATIC tools/vit_ref.cpp)
+target_include_directories(vitref PUBLIC ${INC} ${CUDAToolkit_INCLUDE_DIRS})
+target_compile_options(vitref PRIVATE -O3)
+target_link_libraries(vitref PUBLIC OpenMP::OpenMP_CXX)
+add_executable(vit_verify tools/vit_verify.cu)
+target_include_directories(vit_verify PRIVATE tools)
+target_link_libraries(vit_verify bc vitref)
+
 enable_testing()
+# 영상 학생(기본: 영상 + 글 + flow 청크) / student-lite(--lite)
 add_test(NAME v5_bc_step COMMAND bc_verify v5)
 add_test(NAME v5_bc_negative COMMAND bc_verify v5 --negative)
 add_test(NAME v6_graph_eq_eager COMMAND bc_verify v6)
 add_test(NAME v7_determinism COMMAND bc_verify v7)
+add_test(NAME v5_lite_step COMMAND bc_verify v5 --lite)
+add_test(NAME v5_lite_negative COMMAND bc_verify v5 --negative --lite)
+add_test(NAME v6_lite COMMAND bc_verify v6 --lite)
+add_test(NAME v7_lite COMMAND bc_verify v7 --lite)
+# 렌더 그래프(작업 공간 없이 잡기는 실패, 한 번 그린 뒤 잡기 == 즉시 실행), 인코더(기준값 디렉터리가 있으면 — vit_verify dump + tools/siglip_ref.py)
+add_test(NAME render_graph COMMAND vit_verify render-graph 256)
