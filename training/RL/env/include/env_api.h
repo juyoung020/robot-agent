@@ -8,9 +8,13 @@
 
 namespace env {
 
+// stage: 0/1/2 = 상자 방 A0/A1/A2(= 커리큘럼 B0, 예전 그대로), kStageBeh(3) = BEHAVIOR 집 장면(B1–B3, env_beh.h) — 장치 SceneSet 이 있어야 함
+constexpr int kStageBeh = 3;
+
 class DeviceEnv {
  public:
-  DeviceEnv(int N, int stage, uint64_t seed, bool arm_free = false);
+  // ss_dev: BEHAVIOR 판의 장치 장면 묶음(bscene_host.h SceneUpload::dev). cu0: 처음 커리큘럼 값(안쪽 장치 버퍼에 복사)
+  DeviceEnv(int N, int stage, uint64_t seed, bool arm_free = false, const bsc::SceneSet* ss_dev = nullptr, const bsc::BCurr& cu0 = bsc::kBCurrDefault);
   ~DeviceEnv();
   DeviceEnv(const DeviceEnv&) = delete;
   DeviceEnv& operator=(const DeviceEnv&) = delete;
@@ -20,10 +24,21 @@ class DeviceEnv {
   void download(std::vector<float>& f, std::vector<int>& iv, std::vector<uint64_t>& rng) const;
   // 장치 상태 보기(읽기 전용으로 쓸 것) — 지도 단계(training/RL/map)가 스텝 뒤에 이어서 읽는다
   Soa soa() const { return Soa{f_, iv_, rng_, N_}; }
+  int stage() const { return stage_; }
+  // BEHAVIOR 판: 커리큘럼 장치 값(판 리셋 때 커널이 읽음 — 바꿔도 다시 잡기 없음). src 를 주면 그 장치 자리를 읽는다(학습기 버퍼)
+  bsc::BCurr* bcurr_dev() { return bcurr_; }
+  void set_bcurr_source(const bsc::BCurr* src) { bcurr_src_ = src; }
+  // 지도 → 환경 되먹임(정책이 아는 지도의 거리장·목표 확정). 기본 없음 = 직선 거리, B2 는 보임만. gmap::DeviceMap::nav_fb() 를 넣는다
+  void set_nav(const bsc::NavFb& fb) { nav_ = fb; }
+  const bsc::SceneSet* scenes() const { return ss_; }
 
  private:
   int N_, stage_;
   bool arm_free_;
+  const bsc::SceneSet* ss_ = nullptr;
+  bsc::BCurr* bcurr_ = nullptr;
+  const bsc::BCurr* bcurr_src_ = nullptr;
+  bsc::NavFb nav_{nullptr, nullptr, nullptr};
   float* f_ = nullptr;
   int* iv_ = nullptr;
   uint64_t* rng_ = nullptr;
@@ -33,10 +48,13 @@ class DeviceEnv {
 struct CpuEnv {
   int N, stage;
   bool arm_free;
+  const bsc::SceneSet* ss = nullptr;   // BEHAVIOR 판: 호스트 장면 묶음(bscene_host.h SceneUpload::host)
+  bsc::BCurr curr;
+  bsc::NavFb nav{nullptr, nullptr, nullptr};   // 호스트 배열(CpuMap 의 nav_fb())
   std::vector<float> f;
   std::vector<int> iv;
   std::vector<uint64_t> rng;
-  CpuEnv(int N_, int stage_, uint64_t seed, bool arm_free_ = false);
+  CpuEnv(int N_, int stage_, uint64_t seed, bool arm_free_ = false, const bsc::SceneSet* ss_host = nullptr, const bsc::BCurr& cu0 = bsc::kBCurrDefault);
   void step(const std::vector<float>& act, std::vector<float>& obs, std::vector<float>& rew, std::vector<int>& done);
 };
 

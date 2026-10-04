@@ -90,24 +90,42 @@ __global__ void __launch_bounds__(128) step_kernel_a2(Soa s, const float* act, f
   if (live) store(s, i, c);
 }
 
+// BEHAVIOR 판(E2): 스레드 하나 = 판 하나. 장면·시작 조건 표는 모든 판이 같이 읽는다(장치 SceneSet 하나)
+__global__ void __launch_bounds__(128) init_kernel_beh(Soa s, uint64_t seed, const bsc::SceneSet* ss, const bsc::BCurr* cu) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < s.N) init_env_beh(s, i, seed, *ss, *cu);
+}
+__global__ void __launch_bounds__(128) step_kernel_beh(Soa s, const float* act, float* obs, float* rew, int* done, int arm_free, int bug,
+                                                       const bsc::SceneSet* ss, const bsc::BCurr* cu, bsc::NavFb fb) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < s.N) step_env_beh(s, i, act, obs, rew, done, arm_free != 0, bug, *ss, cu, fb);
+}
+
 #define CK(x) do { cudaError_t e = (x); if (e != cudaSuccess) { std::fprintf(stderr, "CUDA error %s at %s:%d\n", cudaGetErrorString(e), __FILE__, __LINE__); std::abort(); } } while (0)
 
-DeviceEnv::DeviceEnv(int N, int stage, uint64_t seed, bool arm_free) : N_(N), stage_(stage), arm_free_(arm_free) {
+DeviceEnv::DeviceEnv(int N, int stage, uint64_t seed, bool arm_free, const bsc::SceneSet* ss_dev, const bsc::BCurr& cu0)
+    : N_(N), stage_(stage), arm_free_(arm_free), ss_(ss_dev) {
+  if (stage >= kStageBeh && !ss_dev) { std::fprintf(stderr, "DeviceEnv: BEHAVIOR stage %d needs a device SceneSet\n", stage); std::abort(); }
+  CK(cudaMalloc(&bcurr_, sizeof(bsc::BCurr)));
+  CK(cudaMemcpy(bcurr_, &cu0, sizeof cu0, cudaMemcpyHostToDevice));
   CK(cudaMalloc(&f_, sizeof(float) * NUM_F * (size_t)N));
   CK(cudaMalloc(&iv_, sizeof(int) * NUM_I * (size_t)N));
   CK(cudaMalloc(&rng_, sizeof(uint64_t) * (size_t)N));
   CK(cudaMemset(f_, 0, sizeof(float) * NUM_F * (size_t)N));   // A0/A1 는 가구 칸을 쓰지 않으므로 CPU 참조판(0)과 같게
   CK(cudaMemset(iv_, 0, sizeof(int) * NUM_I * (size_t)N));
   Soa s{f_, iv_, rng_, N};
-  if (stage >= 2) init_kernel<true><<<(N + 127) / 128, 128>>>(s, seed, stage);
+  if (stage >= kStageBeh) init_kernel_beh<<<(N + 127) / 128, 128>>>(s, seed, ss_dev, bcurr_);
+  else if (stage >= 2) init_kernel<true><<<(N + 127) / 128, 128>>>(s, seed, stage);
   else init_kernel<false><<<(N + 127) / 128, 128>>>(s, seed, stage);
   CK(cudaGetLastError());
 }
-DeviceEnv::~DeviceEnv() { cudaFree(f_); cudaFree(iv_); cudaFree(rng_); }
+DeviceEnv::~DeviceEnv() { cudaFree(f_); cudaFree(iv_); cudaFree(rng_); cudaFree(bcurr_); }
 
 void DeviceEnv::step(const float* act, float* obs, float* rew, int* done, int bug) {
   Soa s{f_, iv_, rng_, N_};
-  if (stage_ >= 2) step_kernel_a2<<<(N_ + 127) / 128, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug);
+  if (stage_ >= kStageBeh)
+    step_kernel_beh<<<(N_ + 127) / 128, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug, ss_, bcurr_src_ ? bcurr_src_ : bcurr_, nav_);
+  else if (stage_ >= 2) step_kernel_a2<<<(N_ + 127) / 128, 128>>>(s, act, obs, rew, done, arm_free_ ? 1 : 0, bug);
   else step_kernel<false><<<(N_ + 127) / 128, 128>>>(s, act, obs, rew, done, stage_, arm_free_ ? 1 : 0, bug);
 }
 

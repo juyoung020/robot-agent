@@ -14,9 +14,16 @@ enum FloatField {
   F_PDIST, F_PAIM,
   F_FB0, F_FB_END = F_FB0 + 5 * N_FURN - 1,   // A2 가구 상자 [k*5 + 값]
   F_PD0, F_PD_END = F_PD0 + N_PN - 1,          // A2 경로 거리 꼭짓점
+  // BEHAVIOR 장면 판(E2, env_beh.h). 상자 방(A0–A2) 판은 0 그대로(읽지도 쓰지도 않음) — 앞 자리 번호는 그대로
+  F_B_WX, F_B_WY,                              // 창 가운데(세계)
+  F_B_PX, F_B_PY,                              // 지난 스텝 자리(진행 보상: 같은 거리장으로 두 자리를 잼)
+  F_B_TZ, F_B_EX0, F_B_EX2 = F_B_EX0 + 2,      // 목표 높이 가운데, 목표 상자 크기
+  F_B_DIST,                                    // 마지막 유효 거리(관측)
   NUM_F
 };
-enum IntField { I_STEP, I_MAXSTEPS, I_OK, I_SEEN, I_EP, I_NF, I_FC0, I_FC_END = I_FC0 + N_FURN - 1, NUM_I };
+enum IntField { I_STEP, I_MAXSTEPS, I_OK, I_SEEN, I_EP, I_NF, I_FC0, I_FC_END = I_FC0 + N_FURN - 1,
+                I_B_KIND, I_B_SCENE, I_B_ENT, I_B_ROOM,   // BEHAVIOR 판: bsc::EntKind(0 = 상자 방), 장면, Entry 번호, 목표 방
+                NUM_I };
 
 struct Soa {
   float* f;          // NUM_F * N
@@ -89,3 +96,5 @@ DEV void step_env(const Soa& s, int i, const float* act, float* obs, float* rew,
 }
 
 }  // namespace env
+
+#include "env_beh.h"   // BEHAVIOR 장면 판(E2)

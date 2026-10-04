@@ -512,22 +512,22 @@ DEV void reset_tail(Core& c) {
 struct NoHook { DEV void operator()(const struct Core&) const {} };   // 서브스텝마다 부르는 훅(뷰어용). GPU·검증에서는 아무것도 안 해서 비용이 없다
 
 // ---- 한 제어 스텝 ----------------------------------------------------------------------------------------------------
-// act: 정규화 행동 [-1,1]^8. 이 단계(approach)는 몸통 2 만 쓴다(팔·그리퍼는 홈으로 고정).
-template <class Hook>
-DEV void step_core(Core& c, const float act_in[N_ACT], StepOut& o, bool arm_free, const Hook& hook) {
-  float act[N_ACT];
+// 공용 조각(상자 방 step_core 와 BEHAVIOR 판 step_core_beh 가 같이 씀 — 연산·순서는 예전 step_core 그대로)
+// 행동 자르기·jerk·명령(속도·팔 목표)
+DEV void act_prepare(const Core& c, const float act_in[N_ACT], float act[N_ACT], float& jerk, float& v_cmd, float& w_cmd, float q_cmd[N_Q], bool arm_free) {
   for (int i = 0; i < N_ACT; ++i) act[i] = clampf(act_in[i], -1.f, 1.f);
-  float jerk = 0.f;
+  jerk = 0.f;
   for (int i = 0; i < N_ACT; ++i) { const float d = act[i] - c.last_act[i]; jerk = jerk + d * d; }
-
-  const float v_cmd = act[0] * K::v_max, w_cmd = act[1] * K::w_max;
-  float q_cmd[N_Q];
+  v_cmd = act[0] * K::v_max; w_cmd = act[1] * K::w_max;
   home_q(q_cmd);
   if (arm_free) {   // 다음 커리큘럼(집기): 행동 2–7 이 관절 목표(홈 기준 ± 범위)
     const float range[N_Q] = {1.5f, 1.2f, 1.2f, 1.2f, 1.5f, 0.6f};
     for (int k = 0; k < N_Q; ++k) q_cmd[k] = q_cmd[k] + act[2 + k] * range[k];
   }
-  bool hit = false;
+}
+// 서브스텝 10 번(가속 제한 속도 추종 + 중점 적분 + 팔 서보). coll(c) 가 참이면 그 서브스텝에서 멈추고 true
+template <class Hook, class Coll>
+DEV bool substeps(Core& c, float v_cmd, float w_cmd, const float q_cmd[N_Q], const Hook& hook, const Coll& coll) {
   const float dt = K::dt;
   for (int s = 0; s < K::sub; ++s) {
     // 속도 추종(가속 제한)
@@ -550,28 +550,42 @@ DEV void step_core(Core& c, const float act_in[N_ACT], StepOut& o, bool arm_free
       c.qd[k] = dq / dt;
     }
     hook(c);
-    if (collides(c)) { hit = true; break; }
+    if (coll(c)) return true;
   }
-
-  // ---- 관측: 몸 상태 56 ----
+  return false;
+}
+// 관측: 몸 상태 56(앞 53 + 손끝 → 목표 3). tz = 목표 높이 가운데(map 높이). 돌려주는 값: 다음 자리 n, 몸 기준 목표 tb, yaw sin·cos
+DEV int obs_body(const Core& c, const float act[N_ACT], float tz, float* obs, float tb[3], float& sn, float& cs) {
   Fk f;
   fk(c.q, c.qd, f);
   int n = 0;
-  for (int k = 0; k < N_Q; ++k) o.obs[n++] = c.q[k];
-  for (int k = 0; k < N_Q; ++k) o.obs[n++] = c.qd[k];
-  for (int k = 0; k < 5; ++k) for (int i = 0; i < 3; ++i) o.obs[n++] = f.p[k][i];
-  for (int i = 0; i < 3; ++i) o.obs[n++] = f.ee_p[i];
-  for (int i = 0; i < 6; ++i) o.obs[n++] = f.ee_R[(i % 2) + 3 * (i / 2)] * 1.f;   // 앞 두 열(열 우선 6D): R[:,0], R[:,1]
-  for (int i = 0; i < 3; ++i) o.obs[n++] = f.ee_v[i];
-  for (int i = 0; i < 3; ++i) o.obs[n++] = f.ee_w[i];
-  o.obs[n++] = c.v; o.obs[n++] = 0.f; o.obs[n++] = c.w;
-  for (int i = 0; i < N_ACT; ++i) o.obs[n++] = act[i];   // 직전 명령(이번 행동이 다음 스텝의 직전)
+  for (int k = 0; k < N_Q; ++k) obs[n++] = c.q[k];
+  for (int k = 0; k < N_Q; ++k) obs[n++] = c.qd[k];
+  for (int k = 0; k < 5; ++k) for (int i = 0; i < 3; ++i) obs[n++] = f.p[k][i];
+  for (int i = 0; i < 3; ++i) obs[n++] = f.ee_p[i];
+  for (int i = 0; i < 6; ++i) obs[n++] = f.ee_R[(i % 2) + 3 * (i / 2)] * 1.f;   // 앞 두 열(열 우선 6D): R[:,0], R[:,1]
+  for (int i = 0; i < 3; ++i) obs[n++] = f.ee_v[i];
+  for (int i = 0; i < 3; ++i) obs[n++] = f.ee_w[i];
+  obs[n++] = c.v; obs[n++] = 0.f; obs[n++] = c.w;
+  for (int i = 0; i < N_ACT; ++i) obs[n++] = act[i];   // 직전 명령(이번 행동이 다음 스텝의 직전)
   // 손끝 → 목표(몸 좌표 base_link): 목표 월드를 몸 기준으로
-  float sn, cs;
   sincosf_d(c.yaw, &sn, &cs);
   const float dx = c.tx - c.x, dy = c.ty - c.y;
-  const float tb[3] = {cs * dx + sn * dy, -sn * dx + cs * dy, K::tgt_z - 0.15f};
-  for (int i = 0; i < 3; ++i) o.obs[n++] = tb[i] - f.ee_p[i];
+  tb[0] = cs * dx + sn * dy; tb[1] = -sn * dx + cs * dy; tb[2] = tz - 0.15f;
+  for (int i = 0; i < 3; ++i) obs[n++] = tb[i] - f.ee_p[i];
+  return n;
+}
+
+// act: 정규화 행동 [-1,1]^8. 이 단계(approach)는 몸통 2 만 쓴다(팔·그리퍼는 홈으로 고정).
+template <class Hook>
+DEV void step_core(Core& c, const float act_in[N_ACT], StepOut& o, bool arm_free, const Hook& hook) {
+  float act[N_ACT], jerk, v_cmd, w_cmd, q_cmd[N_Q];
+  act_prepare(c, act_in, act, jerk, v_cmd, w_cmd, q_cmd, arm_free);
+  const bool hit = substeps(c, v_cmd, w_cmd, q_cmd, hook, [](const Core& cc) { return collides(cc); });
+
+  // ---- 관측: 몸 상태 56 ----
+  float tb[3], sn, cs;
+  int n = obs_body(c, act, K::tgt_z, o.obs, tb, sn, cs);
 
   // ---- 과제 값: 카메라→목표, 에임, 보임, 속도 ----
   const float cam_wx = c.x + cs * K::cam_x, cam_wy = c.y + sn * K::cam_x;

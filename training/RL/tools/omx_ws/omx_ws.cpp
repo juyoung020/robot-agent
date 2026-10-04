@@ -5,14 +5,19 @@
 // 바닥 아래(z < −base_z, base_footprint 아래)는 뺀다. 표본 사이 틈은 닫힘(팽창 1 칸 → 침식 1 칸)으로 메운다.
 // 출력: training/RL/map/include/omx_workspace.h (손으로 고치지 않는다). 빌드·실행:
 //   g++ -std=c++17 -O2 -ffp-contract=off -I training/RL/env/include training/RL/tools/omx_ws/omx_ws.cpp -o /tmp/omx_ws && /tmp/omx_ws > training/RL/map/include/omx_workspace.h
+// --grasp: 잡는 점(E0, CURRICULUM_BEHAVIOR2026 5.3) = omx_end_effector_link 에서 손가락 축(그 링크 x)으로 −0.0119 m 로 같은 표를 만든다
+//   (namespace omxwsg, 매크로 OMX_WSG_ROWS) → training/RL/env/include/omx_workspace_grasp.h. B3 다가가기 성공 판정(env_beh.h)이 쓴다
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 #include "env.h"
 
-int main() {
+int main(int argc, char** argv) {
+  const bool grasp = argc > 1 && std::string(argv[1]) == "--grasp";
+  constexpr float kGraspOff = -0.0119f;   // E0 잰 값(link5 x 0.080 = ee 링크 −0.0119 m)
   constexpr float RES = 0.01f, R_MAX = 0.50f, Z_LO = -0.15f, Z_HI = 0.55f;
   constexpr int NR = 50, NZ = 70;
   static_assert(NR <= 64, "one uint64 row");
@@ -36,7 +41,9 @@ int main() {
           q[4] = -1.5707964f + 3.1415927f * (float)d / (float)(S5 - 1);
           env::Fk f;
           env::fk(q, qd, f);
-          const float r = std::sqrt((f.ee_p[0] - ax) * (f.ee_p[0] - ax) + (f.ee_p[1] - ay) * (f.ee_p[1] - ay)), z = f.ee_p[2];
+          float P[3] = {f.ee_p[0], f.ee_p[1], f.ee_p[2]};
+          if (grasp) for (int k = 0; k < 3; ++k) P[k] = P[k] + kGraspOff * f.ee_R[3 * k];   // 링크 x 축 = ee_R 첫 열
+          const float r = std::sqrt((P[0] - ax) * (P[0] - ax) + (P[1] - ay) * (P[1] - ay)), z = P[2];
           if (z < -0.15f) { ++n_floor; continue; }   // base_footprint 아래 = 바닥 속
           const int ir = (int)std::floor(r / RES), iz = (int)std::floor((z - Z_LO) / RES);
           if (ir < 0 || ir >= NR || iz < 0 || iz >= NZ) { ++n_out; continue; }
@@ -69,22 +76,25 @@ int main() {
   for (int iz = 0; iz < NZ; ++iz) for (int ir = 0; ir < NR; ++ir) if (clo[(size_t)iz * NR + ir]) {
     rmax = std::fmax(rmax, (ir + 1) * RES); zmin = std::fmin(zmin, Z_LO + iz * RES); zmax = std::fmax(zmax, Z_LO + (iz + 1) * RES);
   }
-  std::printf("// 생성: training/RL/tools/omx_ws/omx_ws.cpp (손으로 고치지 않는다). OMX-F 손끝(omx_end_effector_link) 작업 공간, URDF 순기구학 +\n");
+  const char* ns = grasp ? "omxwsg" : "omxws";
+  const char* mac = grasp ? "OMX_WSG_ROWS" : "OMX_WS_ROWS";
+  if (grasp) std::printf("// 생성: training/RL/tools/omx_ws/omx_ws.cpp --grasp (손으로 고치지 않는다). OMX-F **잡는 점**(omx_end_effector_link 에서 링크 x 로 −0.0119 m, E0) 작업 공간, URDF 순기구학 +\n");
+  else std::printf("// 생성: training/RL/tools/omx_ws/omx_ws.cpp (손으로 고치지 않는다). OMX-F 손끝(omx_end_effector_link) 작업 공간, URDF 순기구학 +\n");
   std::printf("// 관절 한계 env::K::q_lo/q_hi(src/robot/real_limits.json). joint2·3·4 %d×%d×%d, joint5 %d 값(±90°) 훑음, 바닥(z < −0.15 m) 뺌, 닫힘 1 칸.\n", S2, S3, S4, S5);
   std::printf("// 표: (r = joint1 축에서 수평 거리, z = base_link 높이) %d × %d 칸, %.2f m. 칸 %d 개(그중 닫힘으로 메운 칸 %d), 표본 %lld 개(바닥 아래 %lld, 표 밖 %lld).\n",
               NR, NZ, RES, n_cells, n_fill, n_in, n_floor, n_out);
   std::printf("// 범위: r ≤ %.2f m, z %.2f – %.2f m (base_link). joint1 축 base_link 자리 (%.5f, %.5f).\n", rmax, zmin, zmax, ax, ay);
-  std::printf("#pragma once\n#include <cstdint>\nnamespace omxws {\n");
+  std::printf("#pragma once\n#include <cstdint>\nnamespace %s {\n", ns);
   std::printf("constexpr float RES = %#.9gf, Z_LO = %#.9gf, AX = %#.9gf, AY = %#.9gf;\nconstexpr int NR = %d, NZ = %d;\n", RES, Z_LO, ax, ay, NR, NZ);
-  std::printf("#define OMX_WS_ROWS \\\n  { \\\n");
+  std::printf("#define %s \\\n  { \\\n", mac);
   for (int iz = 0; iz < NZ; ++iz) {
     uint64_t w = 0;
     for (int ir = 0; ir < NR; ++ir) if (clo[(size_t)iz * NR + ir]) w |= 1ull << ir;
     std::printf("    0x%016llxull,%s \\\n", (unsigned long long)w, "");
   }
   std::printf("  }\n");
-  std::printf("constexpr uint64_t kRows[NZ] = OMX_WS_ROWS;   // 호스트\n#ifdef __CUDACC__\nstatic __constant__ uint64_t kRowsDev[NZ] = OMX_WS_ROWS;   // 장치(같은 표)\n#endif\n");
+  std::printf("constexpr uint64_t kRows[NZ] = %s;   // 호스트\n#ifdef __CUDACC__\nstatic __constant__ uint64_t kRowsDev[NZ] = %s;   // 장치(같은 표)\n#endif\n", mac, mac);
   std::printf("#ifdef __CUDACC__\n__host__ __device__ __forceinline__\n#else\ninline\n#endif\nuint64_t row(int iz) {\n#ifdef __CUDA_ARCH__\n  return kRowsDev[iz];\n#else\n  return kRows[iz];\n#endif\n}\n");
-  std::printf("}  // namespace omxws\n");
+  std::printf("}  // namespace %s\n", ns);
   return 0;
 }
