@@ -105,7 +105,7 @@ scenemap 물체(`sm_object`: `pos`, `extent`, `first_pos`, `n_obs`, `score`, `la
 - 행동 8 = 몸통(vx, wz) 2 + 팔 joint1–5 5 + 그리퍼 1. 리모를 메카넘으로 쓰면 몸통 3(vx, vy, wz)으로 9.
 - 청크: 10 Hz × 16–32 스텝(1.6–3.2 s). 앞 몇 스텝만 실행하고 새 영상·지도로 다시 추론한다.
 - 액션 전문가: flow matching(π0.5·`BC` 계획과 같음).
-- **글 출력(2026-10-04 설계 추가)**: 행동 앞에 같은 모델이 **지금 단계 문장**(예 "pick up the cup from the table", "the cup is not in the map; explore the living room", ≤ 16 토큰)을 내고, 행동 전문가는 그 문장을 포함한 prefix 를 본다(π0.5 의 고수준 단계 → 저수준 행동). 큰 모델 사양·토큰 배치는 [MAPVLA_SPEC.md](MAPVLA_SPEC.md) 2.3절. 지금 작은 학생(아래 구현 상태)은 글을 내지 않는다.
+- **글 출력(결정 2026-10-04, π0.5 꼴)**: 같은 모델이 추론마다 **다음 단계 문장**(짧은 명령문, ≤ 16 토큰 — 예 "go to the living room" → "pick up the cup from the table" → "put it on the shelf")을 먼저 내고, 행동 전문가는 그 단계 문장까지 든 prefix 를 보고 청크를 낸다. 입력 지시는 에이전트가 넘긴 **전체 목표 + 물체 id**(id 는 칸의 "목표인지"). 지도 기억이 입력이라 안 보이는 물체·다른 방으로 가는 단계도 고른다. 대화·긴 생성은 하지 않는다. 사양은 [MAPVLA_SPEC.md](MAPVLA_SPEC.md) 2.3·2.4·2.6절. 지금 작은 학생(아래 구현 상태)은 글을 내지 않는다.
 
 > **구현 상태(5절)**: 행동 8(차동). 환경은 늘 팔을 풀고, 단계마다 학습하는 행동은 **장치 값 비트 가림**(PPO `TrainState::act_mask`·`ppo_set_act_mask`·설정 단계 `act_mask`, BC `act_mask`·`bc_set_act_mask`) — 꺼진 행동은 0(= 팔 홈 자세)이라 팔 묶음과 비트가 같다(`env_verify --arm-zero`). 교사 표본·logp·엔트로피, BC 라벨·MSE·flow 손실, 학생 출력이 같은 가림을 쓴다. 학생 청크 = 10 Hz × H(기본 16) × 행동 8, flow matching 행동 전문가(토큰마다 학생은 행동 토큰 H 개가 prefix 를 보는 트랜스포머).
 
