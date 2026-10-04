@@ -1,8 +1,8 @@
 // 물체 찾기 색인(include/sgsearch.h) 논리 시험 — GPU·글 인코더 없이 라벨 표만.
 //   test_sgclip_objindex LABEL_DIR OUT_DIR
-// 가짜 기억: 물체 벡터 = 라벨 표 글 벡터 섞기(A′ 형식 objects/O<id>_views.f16 · _emb.f16), view.json.
+// 가짜 기억: 물체 벡터 = 라벨 표 글 벡터 섞기(objprob 형식 objects/O<id>_views.f16 · _emb.f16), view.json.
 //   O1 "fire extinguisher" 로 등록, 생김새는 라디오(+ 소화기 조금)   — 사용자 시나리오
-//   O2 "cup" / O3 "straight chair" / O4 "sofa"(벡터 없음) / O5 "radio" 아닌 다른 시점 둘(A′ views 2 개)
+//   O2 "cup" / O3 "straight chair" / O4 "sofa"(벡터 없음) / O5 "radio" 아닌 다른 시점 둘(objprob views 2 개)
 // 확인: ① 이름(아래말 "chair" → straight chair, 한국어 "소파"), 없는 물체 0 개, ② "radio"/"라디오" → O1 생김새 후보(자동),
 //       확인(user) 뒤 ① 이 바로 찾음, confirmations.jsonl 한 줄, 다시 열어도 그대로(기록 다시 적용), names.json,
 //       sgs_search_vec(RecallVLA), 잘못된 인자 → error JSON.
@@ -143,7 +143,7 @@ int main(int argc, char** argv) {
   sgs_object_json(X, 1, b.data(), int(b.size()));
   std::printf("O1 %s\n", b.data());
   CHECK(json::parse(b.data())["name"] == "radio", "O1 name radio after confirm");
-  // A′ 형식 name_post({"top", "external"}) — 바탕으로 쓰이고, 지도가 받은 확인("map":"applied")은 external 이면 두 번 세지 않음
+  // objprob 형식 name_post({"top", "external"}) — 바탕으로 쓰이고, 지도가 받은 확인("map":"applied")은 external 이면 두 번 세지 않음
   {
     json v2 = v;
     v2["objects"].push_back({{"id", 6}, {"name", "kettle"},
@@ -151,7 +151,7 @@ int main(int argc, char** argv) {
     std::ofstream(mem + "/view.json") << v2.dump();
     CHECK(sgs_reload(X, err, sizeof(err)) == 0, "reload %s", err);
     r = search(X, "teapot");
-    CHECK(!r["hits"].empty() && r["hits"][0]["id"] == 6 && r["hits"][0]["match_type"] == "name", "A' name_post object form read: %s", r.dump().c_str());
+    CHECK(!r["hits"].empty() && r["hits"][0]["id"] == 6 && r["hits"][0]["match_type"] == "name", "objprob name_post object form read: %s", r.dump().c_str());
     sgs_label_of(X, "주전자", b.data(), int(b.size()));
     std::printf("label_of(주전자) = %s\n", b.data());
     sgs_label_of(X, "라디오", b.data(), int(b.size()));

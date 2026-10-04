@@ -50,8 +50,8 @@ void cropDepthMm(const float* depth_m, int dw, int dh, int img_w, int img_h, con
 // 검출 k 의 마스크를 자른 상자·출력 크기로(출력 화소 중심 → 검출 영상 화소 → 마스크 칸). 255 안, 0 밖
 void cropMask(const sm_detections* d, int k, const int32_t box[4], int out_w, int out_h, std::vector<uint8_t>* out);
 
-// ---- A′ 모습 신뢰도(10-05): 임베딩 z ~ vMF(μ, κ) 의 집중도 κ 를 모습 품질에서 ----
-// κ 가 클수록 물체 대표 벡터 μ 에 가깝다(768-d vMF: E[1 − μ·z] ≈ (d − 1) / 2κ). 맞춘 값은 tools/aprime_fit.py(시뮬 정답: 물체마다
+// ---- objprob 모습 신뢰도(10-05): 임베딩 z ~ vMF(μ, κ) 의 집중도 κ 를 모습 품질에서 ----
+// κ 가 클수록 물체 대표 벡터 μ 에 가깝다(768-d vMF: E[1 − μ·z] ≈ (d − 1) / 2κ). 맞춘 값은 tools/objprob_fit.py(시뮬 정답: 물체마다
 // 깨끗한 기준 벡터에서 모습 임베딩이 벗어난 정도를 품질 칸마다 재어 κ = (d − 1) / 2·평균(1 − cos)).
 //   κ = k0 · s/(s + s0) · (잘림이면 trunc) · 1/(1 + (깊이/d0)²) · (보임 비율)^occ · exp(−카메라 회전 빠르기 / blur_w)
 //   s = 마스크 넓이의 제곱근(검출 영상 화소)
@@ -62,7 +62,7 @@ struct ViewQuality {
   float vis = 1;                  // 보인 비율(전체 다시 담기: 구름 점 중 안 가린 것, 검출 조각: 1)
   float cam_w = 0;                // 카메라 광축 회전 빠르기 rad/s(흐림)
 };
-// 기본값 = aprime_fit.py(radio r3, 정답 물체 23 개·관측 1만 남짓): κ ≈ 4369·s/(s + 40), 잘림·깊이(≤ 4 m)는 차이 없음(맞춤이 1·∞ 로 감,
+// 기본값 = objprob_fit.py(radio r3, 정답 물체 23 개·관측 1만 남짓): κ ≈ 4369·s/(s + 40), 잘림·깊이(≤ 4 m)는 차이 없음(맞춤이 1·∞ 로 감,
 // log rms 0.11). occ·blur 는 맞출 자료가 없어 끔(1·0) — 통째 다시 담기의 보인 비율은 occ 로 켤 수 있음
 struct KappaParams {
   double k0 = 4369, s0 = 40, trunc = 1.0, d0 = 100.0, occ = 1.0, blur_w = 0.0;

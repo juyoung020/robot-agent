@@ -128,9 +128,9 @@ struct ObjParams {
   double move_v = 0.3, move_min_d = 0.25;
   double move_max_cam_w = 0.6;    // 카메라 광축이 이보다 빨리(rad/s) 돌면 그 keyframe 은 움직임 근거로 안 씀(자세 오차가 물체를 쓸어 감).
                                   // 상자가 영상 가장자리에 닿은 관측(잘림)도 안 씀
-  // ---- A′(10-05, objprob.hpp): 이름 없는 같은 것 판정·기하 구조물 거르기·물체 임베딩 vMF·이름 사후. 끄면(기본) 위 규칙 그대로.
+  // ---- objprob(10-05, objprob.hpp): 이름 없는 같은 것 판정·기하 구조물 거르기·물체 임베딩 vMF·이름 사후. 끄면(기본) 위 규칙 그대로.
   // 켜려면 검출마다 임베딩(ObjFrame.emb)이 있어야 한다(capi sm_set_object_model·sm_set_det_embeddings)
-  bool aprime = false;
+  bool objprob = false;
   bool ap_name_struct_skip = false; // true: 검출 하나의 이름(cls)이 구조물이면 버림(옛 규칙). 끔(기본): FastSAM 조각의 이름은 자주 틀려
                                     // (소파 조각 → partition·baseboard) 기하·합친 물체의 이름 사후로만 거름
   ApParams ap;
@@ -139,13 +139,13 @@ struct ObjParams {
   double ap_r0 = 0.02, ap_r1 = 0.01;   // 관측 중심 잡음 σ = r0 + r1·깊이(m) — 조각·잘림이면 반 폭을 더함
 };
 
-// A′ 진단 셈(ObjectMap::apStats)
+// objprob 진단 셈(ObjectMap::apStats)
 struct ApStats {
   long n_through = 0, n_obs = 0, n_wall = 0, n_wall_name = 0, n_ceil = 0, n_floor = 0, n_name_struct = 0;
   long n_assoc = 0, n_new = 0, n_merge = 0, n_obj_struct = 0, n_reenc_req = 0, n_reenc_done = 0;
 };
 
-// A′ 통째 다시 담기 요청(검출 마스크 격자와 같은 배치의 마스크)
+// objprob 통째 다시 담기 요청(검출 마스크 격자와 같은 배치의 마스크)
 struct ReencReq {
   uint32_t id = 0;
   float box[4] = {0, 0, 0, 0};    // 검출 영상 화소
@@ -190,11 +190,11 @@ struct MapObject {
   double max_det_z = 0;           // 이 물체를 검출한 가장 먼 카메라 깊이(사라짐 판정은 이 거리 안에서만)
   double gone_t = 0;              // 사라짐 판정 시각
   bool appeared = false;          // 전에 본 자리에 새로 나타남(옮겨짐 잇기 후보)
-  ApStatePtr ap;                  // A′ 상태(임베딩·이름 사후·칼만 분산) — aprime 일 때만
+  ApStatePtr ap;                  // objprob 상태(임베딩·이름 사후·칼만 분산) — objprob 일 때만
 };
 
 // 이름 번호의 종류
-// kKindStructObj(A′ 만): 문·창·계단 — 지우지 않고 노드(구조 물체: structural·안 옮김)로 내보냄. 벽·바닥·천장만 kKindStructure(지움)
+// kKindStructObj(objprob 만): 문·창·계단 — 지우지 않고 노드(구조 물체: structural·안 옮김)로 내보냄. 벽·바닥·천장만 kKindStructure(지움)
 enum ClassKind : uint8_t { kKindObject = 0, kKindStructure = 1, kKindStatic = 2, kKindStructObj = 3 };
 
 // 한 keyframe 의 검출 k → 물체(update 가 채움, lastAssoc()). obj_id 0 = 물체에 안 붙음(점 부족·손에 든 것 등)
@@ -220,7 +220,7 @@ struct ObjFrame {
   double base_xy[2] = {0, 0};         // map 기준 베이스 위치(몸 점 거르기)
   const Capsule* self_caps = nullptr; // map 기준 로봇 팔 캡슐(순기구학) — 이 안 깊이 점은 버림. NULL = 안 거름(R1)
   int n_self_caps = 0;
-  // A′: 검출마다 SigLIP 임베딩(dets->n × emb_dim, L2 정규화), 벽 선분(map, ax ay bx by — 기하 구조물 거르기)
+  // objprob: 검출마다 SigLIP 임베딩(dets->n × emb_dim, L2 정규화), 벽 선분(map, ax ay bx by — 기하 구조물 거르기)
   const float* emb = nullptr;
   int emb_dim = 0;
   const double* wall_segs = nullptr;
@@ -265,7 +265,7 @@ class ObjectMap {
   }
   const ObjParams& params() const { return p_; }
   ObjParams& paramsMut() { return p_; }
-  // ---- A′ ----
+  // ---- objprob ----
   void setTextModel(ApText t) { text_ = std::move(t); }
   const ApText& textModel() const { return text_; }
   const ApStats& apStats() const { return aps_; }
@@ -276,10 +276,10 @@ class ObjectMap {
                      std::vector<ReencReq>* out);
   // 통째 임베딩 하나(z: dim, L2) — 조각 벡터 대신 μ·이름에 쓰임
   void addWholeView(uint32_t id, const float* z, int dim, double kappa, double stamp, const double cam[6]);
-  // 노드로 내보낼 물체인가: 확정 + (A′ export_named 면) 이름이 정해졌고 구조물 이름이 아님
+  // 노드로 내보낼 물체인가: 확정 + (objprob export_named 면) 이름이 정해졌고 구조물 이름이 아님
   bool exportable(const MapObject& m) const {
     if (!m.confirmed) return false;
-    if (!p_.aprime || !p_.ap.export_named || !m.ap) return true;
+    if (!p_.objprob || !p_.ap.export_named || !m.ap) return true;
     if (m.ap->post.empty()) return false;
     if (text_.object_label >= 0 && m.cls == text_.object_label) return false;
     return kindOf(m.cls) != kKindStructure;   // 문·창·계단(kKindStructObj)은 내보냄
@@ -298,7 +298,7 @@ class ObjectMap {
   double firstView(double x, double y, double range) const;   // range(수평 m) 이하에서 처음 본 시각(없으면 1e300)
   void relink(double t);
   void remapId(uint32_t from, uint32_t to);
-  // A′
+  // objprob
   void apMergePass(double t);
   void apRename(MapObject& m);
   bool apStructObject(MapObject& m);

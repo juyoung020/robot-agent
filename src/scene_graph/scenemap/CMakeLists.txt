@@ -134,7 +134,7 @@ add_test(NAME limo_e2e COMMAND test_limo_e2e)
 add_executable(test_limo_held tests/test_limo_held.cpp)
 target_link_libraries(test_limo_held scenemap)
 add_test(NAME limo_held COMMAND test_limo_held)
-# A′ 물체 모델(objprob.hpp): vMF r·μ·합침, 덜 세기, 이름 사후(상위어·엔트로피·바깥 관측), 받침 막기, 평면 맞춤, 접촉
-add_executable(test_aprime tests/test_aprime.cpp)
-target_link_libraries(test_aprime scenemap)
-add_test(NAME aprime COMMAND test_aprime)
+# 확률 물체 모델(objprob)(objprob.hpp): vMF r·μ·합침, 덜 세기, 이름 사후(상위어·엔트로피·바깥 관측), 받침 막기, 평면 맞춤, 접촉
+add_executable(test_objprob tests/test_objprob.cpp)
+target_link_libraries(test_objprob scenemap)
+add_test(NAME objprob COMMAND test_objprob)

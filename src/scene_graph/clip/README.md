@@ -86,8 +86,8 @@ RecallVLA 실행기는 같은 색인에 자기 질의 벡터(SigLIP 2 글 공간
 
 | 것 | 어디서 | 비고 |
 |---|---|---|
-| 물체 벡터 | A′: `objects/O<id>_views.f16`(n × 768 FP16, 상위 시점) → `objects/O<id>_emb.f16`(μ). 없으면 **대체**: best view 사진(`O<id>_rgb.png`·`_mask.png`)을 영상 엔진으로 뽑아 `cache/objsearch/O<id>_view.f16`(사진 크기·시각이 바뀐 것만 다시) | A′ 판이 들어오면 저절로 그쪽을 씀 |
-| 등록 이름 | view.json `name`, (A′) `name_post: [[이름, p] …]` 이 있으면 그것을 이름 사후 바탕으로 | A′ 의 view.json 이름 칸 형식은 아직 미정 — 들어오면 맞춤 |
+| 물체 벡터 | objprob: `objects/O<id>_views.f16`(n × 768 FP16, 상위 시점) → `objects/O<id>_emb.f16`(μ). 없으면 **대체**: best view 사진(`O<id>_rgb.png`·`_mask.png`)을 영상 엔진으로 뽑아 `cache/objsearch/O<id>_view.f16`(사진 크기·시각이 바뀐 것만 다시) | objprob 판이 들어오면 저절로 그쪽을 씀 |
+| 등록 이름 | view.json `name`, (objprob) `name_post: [[이름, p] …]` 이 있으면 그것을 이름 사후 바탕으로 | objprob 의 view.json 이름 칸 형식은 아직 미정 — 들어오면 맞춤 |
 | 확인 기록 | 기억 폴더 `confirmations.jsonl`(한 줄 = 확인 하나: id·이름·synset·source·우도비·질의·그때 사후 전/후·생김새 확률·벡터 출처·표 sha) | **원본**(보정 데이터). 다시 열면 다시 적용 |
 | 이름 캐시 | `cache/objsearch/names.json`(물체마다 이름·확률·대안·속성·벡터 출처) | 언제든 다시 셈 |
 | 라벨 집합 U | 라벨 표 main synset 3,244 + 이 기억의 등록·확인 이름 | 표 줄 4,785 개 FP16 행렬 하나 |
@@ -97,7 +97,7 @@ RecallVLA 실행기는 같은 색인에 자기 질의 벡터(SigLIP 2 글 공간
 - 생김새 분포(물체 안 상대 확률): 시점 v 마다 `s_vc = t · max_{c 의 줄} cos(z_v, 글)`(t = 111.8, SigLIP 2 logit scale), `m_c = 평균_v log softmax_c s_vc`,
   `P_app(c|o) = softmax_c m_c`. 날 코사인(작고 흔들림) 대신 같은 물체 안에서 이름끼리 견준다. U 밖 질의(자유 글·tail 이름)는 질의를 라벨 하나로 더한
   분포를 물체마다 시점 normalizer 로 바로 셈(µs).
-- 이름 사후: `P_name(c|o) ∝ 바탕(c) · Λ_reg(c) · Λ_ext(c)`, 바탕 = A′ 사후 또는 P_app, `Λ_reg`(등록 이름) = 3, `Λ_ext` = 확인 우도비 곱(user 50, close_look 10).
+- 이름 사후: `P_name(c|o) ∝ 바탕(c) · Λ_reg(c) · Λ_ext(c)`, 바탕 = objprob 사후 또는 P_app, `Λ_reg`(등록 이름) = 3, `Λ_ext` = 확인 우도비 곱(user 50, close_look 10).
   보여 주는 이름은 낱 라벨 1 위와 "말해진 이름(등록·확인)과 그 아래말" 묶음 질량 중 큰 것(등록 "chair" + 생김새 "folding chair" → chair).
 - ① 이름: 질의 → 라벨 표 이름(영어·한국어 전부·동의어, main 먼저) → 뜻 전부(한국어 이름은 기계 번역이 섞여 "빗자루" → broom·awning·shredder —
   글 인코더로 질의와 cos 가 1 위에서 0.05 안인 뜻만) → 그 synset 과 아래말(너무 넓은 말 container·device … 는 아래말 안 씀).
@@ -106,16 +106,16 @@ RecallVLA 실행기는 같은 색인에 자기 질의 벡터(SigLIP 2 글 공간
   이름으로 확실한(p_name ≥ 0.6) 물체가 있으면 영상↔영상 cos 도 `σ(25 (cos − 0.85))`(시뮬 정답: 같은 종류 시점 cos 중앙 0.71, 다른 종류 99 % 0.82).
 - 합친 점수 `match = 1 − (1 − p_name)(1 − p_query)(1 − p_img)`, `match_type` = 이름이 맞으면 name, 아니면 appearance.
 - ③ `sgs_confirm(id, 이름, user|close_look)`: `Λ_ext ×= 우도비` → 다음 찾기는 ① 에서 바로. 이름이 U 밖이면 라벨을 더하고 모든 물체 분포를 다시(≈ 8 ms).
-- (10-05) `sgs_confirm_ex(…, extra)`: 같은 확인 + 기록 한 줄에 덧붙일 JSON(에이전트 실시간 기억이 `{"map":"applied"|"not_aprime"|…,"map_label"}` — 지도 scenemap 에도
-  `sm_observe_object_name` 으로 넣었는지). `"map":"applied"` 확인은 view.json A′ `name_post.external` 이 true 가 되면(지도가 이미 셈) 다시 열 때 그 우도비를 빼서
+- (10-05) `sgs_confirm_ex(…, extra)`: 같은 확인 + 기록 한 줄에 덧붙일 JSON(에이전트 실시간 기억이 `{"map":"applied"|"not_objprob"|…,"map_label"}` — 지도 scenemap 에도
+  `sm_observe_object_name` 으로 넣었는지). `"map":"applied"` 확인은 view.json objprob `name_post.external` 이 true 가 되면(지도가 이미 셈) 다시 열 때 그 우도비를 빼서
   두 번 세지 않는다. `sgs_label_of(이름)` = 라벨 표 영어 이름(지도 라벨과 맞추기).
-- (10-05 고침) A′ `name_post` 는 `{"top":[[이름,p]…],"p","entropy","rolled","external"}` 객체인데 색인이 배열 형식만 읽어 A′ 이름 사후를 통째로 무시했다 — 두 형식 다 읽음.
+- (10-05 고침) objprob `name_post` 는 `{"top":[[이름,p]…],"p","entropy","rolled","external"}` 객체인데 색인이 배열 형식만 읽어 objprob 이름 사후를 통째로 무시했다 — 두 형식 다 읽음.
 
 **결과 JSON**(`sgs_search_json`, 도구가 기억 자리 정보를 붙여 LLM 글로): `{query, resolved{kind, label, ko, senses}, step2, best_name, n_name_hits,
 hits:[{id, name, name_ko, name_p, registered, alt:[[이름, p]…], attrs, vec, nv, match, match_type, p_name, p_query, q_rank, p_registered, p_img?, like?}], n_objects, us}`
 
 **측정**(`tools/eval_objsearch.py`, BEHAVIOR `house_double_floor_lower` LIMO 탐사 기억 = `~/datasets/sim_detcmp/A_fastsam`(FastSAM-s + SigLIP 2,
-등록 이름 어휘 62 개 — 정답과 맞는 이름이 적음), A′ 전이라 대체 벡터(best view 사진 1 장). 질의 = 지도에 있는 정답 종류 18 개를 사람이 부를 말로
+등록 이름 어휘 62 개 — 정답과 맞는 이름이 적음), 확률 모드 전이라 대체 벡터(best view 사진 1 장). 질의 = 지도에 있는 정답 종류 18 개를 사람이 부를 말로
 ("chair" → straight_chair, "refrigerator" → fridge …), 관련 물체 = 정답 짝 + 정답 상자 안에 중심이 든 물체(같은 물건의 조각·중복).
 "이름 못 찾는 물체" = 이름만 찾기가 돌려주지 않는 관련 물체(18 질의 모두 있음). 없는 물체 질의 40 개(컵·노트북·자전거 …).
 문턱은 gt 판에서 골랐다(같은 장면의 slam 판은 반쯤 따로 본 셈).
@@ -143,6 +143,6 @@ hits:[{id, name, name_ko, name_p, registered, alt:[[이름, p]…], attrs, vec, 
 - 속성: 색·재질 확률 ≥ 0.6 만 씀 — sim 283 물체 중 216 개에 하나 이상(검정 67 이 가장 많음: 어두운 사진). 정답이 없어 정확도는 재지 않았다(빨간 라디오 → red,
   파란 천 소파 → blue·fabric 은 사진으로 확인).
 
-**한계**: 대체 벡터는 시점 1 장(best view) — A′ 상위 5 시점이 오면 나아질 것(재지 않음). 등록 이름 우도비 3·확인 우도비 50/10·문턱은 손으로 정한 값(확인 기록이
+**한계**: 대체 벡터는 시점 1 장(best view) — objprob 상위 5 시점이 오면 나아질 것(재지 않음). 등록 이름 우도비 3·확인 우도비 50/10·문턱은 손으로 정한 값(확인 기록이
 쌓이면 맞출 것). 한국어는 라벨 표 한국어 이름이 기계 번역이 섞여 영어보다 낮다 — 에이전트가 영어 낱말로 바꿔 부르면 낫다(도구 설명에 적음).
 영상↔영상 경로는 이번 평가 질의에선 거의 안 켜짐(이름으로 확실한 본보기가 드묾).

@@ -169,7 +169,7 @@ int sm_robot_fk(int32_t robot, const float* proprio, int32_t n_proprio, sm_body_
  * sm_set_kind_names 는 그 종류의 표를 통째로 바꾼다(names == NULL: 기본 표로). 지금 labels 에 바로 적용되고,
  * 이미 만들어진 물체는 그대로 둔다(sm_reset 뒤부터 깨끗). */
 enum { SM_KIND_OBJECT = 0, SM_KIND_STRUCTURE = 1, SM_KIND_STATIC = 2,
-       SM_KIND_STRUCT_OBJ = 3 /* A′ 만: 문·창·계단·난간·기둥 — 노드로 내보내되 structural = 1·movable = 0(집는 물체 아님). 옛 규칙은 구조물(1) */ };
+       SM_KIND_STRUCT_OBJ = 3 /* objprob 만: 문·창·계단·난간·기둥 — 노드로 내보내되 structural = 1·movable = 0(집는 물체 아님). 옛 규칙은 구조물(1) */ };
 int sm_set_kind_names(sm_ctx*, int32_t kind, const char* const* names, int32_t n);
 /* 스냅숏 물체 id 가 옮길 수 있는 것인가: 1 / 0(고정), -1 = 없음 */
 int sm_snap_movable(const sm_snapshot_t*, uint32_t id);
@@ -402,12 +402,12 @@ int sm_snap_place_path(const sm_snapshot_t*, const double from[2], const double 
  * json == NULL 이면 지움. 물체 id 기준(사라져도 남음, sm_reset 에서 비움) */
 int sm_set_object_meta(sm_ctx*, uint32_t obj_id, const char* json_members);
 
-/* ---- A′ 물체 모델(10-05, scenemap/objprob.hpp — README "A′") ----
+/* ---- 확률 물체 모델(objprob)(10-05, scenemap/objprob.hpp — README "scenemap 확률 모드") ----
  * FastSAM 조각 + SigLIP 2 임베딩: 기하 구조물 거르기 → 이름 없는 같은 것 판정(로지스틱 = 로그 우도비) → 합친 물체 통째 다시 담기 →
  * 이름 = 범주 사후 확률 → 물체마다 벡터 저장. 켜지 않으면 옛 이름 기준 규칙 그대로(바이트 같음).
  * 순서: sm_set_labels → sm_set_text_model(·sm_set_label_stats) → sm_set_object_model(c, 1). 검출 keyframe 마다
  * sm_set_det_embeddings → sm_push_image_* → sm_reencode_requests → (호출자가 SigLIP) → sm_set_object_embeddings. */
-int sm_set_object_model(sm_ctx*, int32_t aprime);   /* 1 = A′, 0 = 옛 규칙 */
+int sm_set_object_model(sm_ctx*, int32_t objprob);   /* 1 = 확률 모드(objprob), 0 = 옛 규칙 */
 /* 이름 표의 글 임베딩: rows × dim(L2), row_label[r] = sm_set_labels 번호. logit = SigLIP 시그모이드 척도·치우침 */
 int sm_set_text_model(sm_ctx*, const float* text, const int32_t* row_label, int32_t rows, int32_t dim, float logit_scale, float logit_bias);
 /* 라벨마다 log 사전 확률·log(가장 긴 변 m) 가우스(sd ≤ 0 = 안 씀)·상위어 라벨(-1 = 없음), object_label = 상위어도 못 정할 때 이름(-1 = 없음).
@@ -423,11 +423,11 @@ int sm_reencode_requests(sm_ctx*, const sm_reenc_req** reqs, const uint32_t** bi
 /* 요청 결과: ids[i] 의 통째 임베딩 emb[i·dim ..](L2). κ·시점은 요청 때 것 */
 int sm_set_object_embeddings(sm_ctx*, const uint32_t* ids, const float* emb, int32_t n, int32_t dim);
 /* 바깥 이름 관측(confirm_object 등): 물체 id 가 이름 name(sm_set_labels 표)이라는 증거, 자연 로그 우도비 log_lr(> 0 = 그렇다).
- * 이름 사후에 그대로 더해 두며 영상 모습이 더 와도 줄이지 않는다. 0 = 성공, -2 = 이름 없음, -3 = 물체 없음·A′ 아님 */
+ * 이름 사후에 그대로 더해 두며 영상 모습이 더 와도 줄이지 않는다. 0 = 성공, -2 = 이름 없음, -3 = 물체 없음·objprob 아님 */
 int sm_observe_object_name(sm_ctx*, uint32_t id, const char* name, float log_lr);
 /* 진단 셈: [0] 관측 [1] 벽(큼) [2] 벽(작고 구조물 이름) [3] 천장 [4] 바닥 [5] 검출 이름이 구조물 [6] 붙음 [7] 새 물체 [8] 병합
  * [9] 구조물 덩어리 지움 [10] 다시 담기 요청 [11] 다시 담기 받음 [12] 벽 너머(창 밖) 관측 버림 [13..15] 0 */
-int sm_get_aprime_stats(sm_ctx*, int64_t out[16]);
+int sm_get_objprob_stats(sm_ctx*, int64_t out[16]);
 
 #ifdef __cplusplus
 }

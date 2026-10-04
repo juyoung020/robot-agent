@@ -184,7 +184,7 @@ std::string viewJson(const SaveInput& in, const SaveOut& ok) {
       o << ",\"points\":{\"path\":\"" << plyPath(b.id) << "\",\"n\":" << in.clouds[i].size() << ",\"voxel\":" << in.voxel
         << ",\"stamp\":" << in.clouds[i].stamp << "}";
     if (in.rooms) o << ",\"room\":" << objRoom(in, i);
-    if (i < int(in.obj_meta.size()) && !in.obj_meta[i].empty()) o << "," << in.obj_meta[i];   // A′ 불확실성·벡터 경로 등
+    if (i < int(in.obj_meta.size()) && !in.obj_meta[i].empty()) o << "," << in.obj_meta[i];   // objprob 불확실성·벡터 경로 등
     o << "}";
   }
   o << "],\"events\":[";

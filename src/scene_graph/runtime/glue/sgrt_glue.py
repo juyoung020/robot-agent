@@ -35,7 +35,7 @@ import numpy as np
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[3]  # repo root (src/scene_graph/runtime/glue -> ../../../..)
 LIB = os.environ.get("SGRT_LIB", str(pathlib.Path.home() / "sgrt_build/libsgrt.so"))
-# YOLOE 는 보관됨(2026-10-05, ~/ovdet_models/archive): 물체 인식은 FastSAM-s + SigLIP 2(A′)로 옮기는 중. 옮길 때까지 보관 엔진을 쓴다
+# YOLOE 는 보관됨(2026-10-05, ~/ovdet_models/archive): 물체 인식은 FastSAM-s + SigLIP 2(objprob)로 옮기는 중. 옮길 때까지 보관 엔진을 쓴다
 ENGINE = os.environ.get("SGRT_ENGINE", str(pathlib.Path.home() / "ovdet_models/archive/x86_sm120/yoloe-11l-all.plan"))
 PROMPTS = ROOT / "src/scene_graph/ovdet/config/task_prompts.txt"
 HEAD_K = (306.0, 306.0, 360.0, 360.0)  # omnigibson.eval.utils.eval_utils.CAMERA_INTRINSICS["R1Pro"]["head"] (720x720)

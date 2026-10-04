@@ -1,4 +1,4 @@
-// A′ 물체 모델(include/scenemap/objprob.hpp): vMF 임베딩 사후·이름 범주 사후·같은 것 로지스틱·평면 맞춤.
+// 확률 물체 모델(objprob)(include/scenemap/objprob.hpp): vMF 임베딩 사후·이름 범주 사후·같은 것 로지스틱·평면 맞춤.
 #include "scenemap/objprob.hpp"
 
 #include <algorithm>
@@ -95,37 +95,107 @@ inline uint64_t cellKey3(int64_t i, int64_t j, int64_t k) {
 
 }  // namespace
 
-ApPlane apPlaneFit(const float* xyz, int n) {
-  ApPlane P;
-  if (n < 8) return P;
-  double m[3] = {0, 0, 0};
-  for (int i = 0; i < n; ++i) for (int k = 0; k < 3; ++k) m[k] += xyz[3 * i + k];
-  for (double& v : m) v /= n;
+namespace {
+
+// 점들(idx)의 평균·공분산 고유 분해: 법선 = 가장 작은 고유 벡터, ev 오름차순
+void pcaOf(const float* xyz, const std::vector<int>& idx, double m[3], double ev[3], double V[3][3]) {
+  m[0] = m[1] = m[2] = 0;
+  for (int i : idx) for (int k = 0; k < 3; ++k) m[k] += xyz[3 * i + k];
+  const double inv = 1.0 / double(std::max<size_t>(1, idx.size()));
+  for (int k = 0; k < 3; ++k) m[k] *= inv;
   double C[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
-  for (int i = 0; i < n; ++i) {
+  for (int i : idx) {
     const double d[3] = {xyz[3 * i] - m[0], xyz[3 * i + 1] - m[1], xyz[3 * i + 2] - m[2]};
     for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) C[a][b] += d[a] * d[b];
   }
-  for (auto& r : C) for (double& v : r) v /= n;
-  double ev[3], V[3][3];
+  for (auto& r : C) for (double& v : r) v *= inv;
   eigSym3(C, ev, V);
+}
+
+inline uint64_t splitmix(uint64_t& s) {
+  uint64_t z = (s += 0x9E3779B97F4A7C15ull);
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+  return z ^ (z >> 31);
+}
+
+}  // namespace
+
+uint64_t apSeed(uint64_t a, uint64_t b) {
+  uint64_t s = a * 0x9E3779B97F4A7C15ull ^ (b + 0x632BE59BD9B4E019ull);
+  return splitmix(s);
+}
+
+ApPlane apPlaneFit(const float* xyz, int n, double tau, uint64_t seed, int max_iters) {
+  ApPlane P;
+  if (n < 8 || tau <= 0) return P;
+  // 1. RANSAC: 세 점 평면 가설, 점수 = 표본(≤ 256 점) 중 |거리| ≤ tau 수. 적응 반복(99 % 확신) — 최대 max_iters
+  uint64_t rs = seed ^ (uint64_t(n) << 32);
+  const int ns = std::min(n, 256);
+  const int sstep = std::max(1, n / ns);
+  double best[4] = {0, 0, 1, 0};
+  int best_c = -1, need = std::max(1, max_iters);
+  for (int it = 0; it < need && it < max_iters; ++it) {
+    int id[3];
+    id[0] = int(splitmix(rs) % uint64_t(n));
+    do id[1] = int(splitmix(rs) % uint64_t(n)); while (id[1] == id[0]);
+    do id[2] = int(splitmix(rs) % uint64_t(n)); while (id[2] == id[0] || id[2] == id[1]);
+    const float* a = xyz + 3 * id[0];
+    const float* b = xyz + 3 * id[1];
+    const float* c = xyz + 3 * id[2];
+    const double u[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]}, v[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+    double nn[3] = {u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]};
+    const double L = std::sqrt(nn[0] * nn[0] + nn[1] * nn[1] + nn[2] * nn[2]);
+    if (L < 1e-6) continue;   // 거의 한 줄(넓이 < 0.5 mm²)
+    for (double& x : nn) x /= L;
+    const double d0 = -(nn[0] * a[0] + nn[1] * a[1] + nn[2] * a[2]);
+    int cnt = 0;
+    for (int i = 0; i < n; i += sstep) cnt += std::fabs(nn[0] * xyz[3 * i] + nn[1] * xyz[3 * i + 1] + nn[2] * xyz[3 * i + 2] + d0) <= tau;
+    if (cnt > best_c) {
+      best_c = cnt;
+      best[0] = nn[0]; best[1] = nn[1]; best[2] = nn[2]; best[3] = d0;
+      const double w = double(cnt) / double((n + sstep - 1) / sstep);
+      const double pw = w * w * w;
+      if (pw > 0.999999) break;
+      if (pw > 1e-9) need = std::max(8, int(std::ceil(std::log(0.01) / std::log(1.0 - pw))));
+    }
+  }
+  if (best_c < 3) return P;
+  // 2. 안쪽 점만으로 다시 맞춤(PCA) → 그 평면의 안쪽 점 다시 골라 한 번 더
+  std::vector<int> in;
+  in.reserve(size_t(n));
+  double m[3], ev[3], V[3][3];
+  const double* pl = best;
+  double ref[4];
+  for (int pass = 0; pass < 2; ++pass) {
+    in.clear();
+    for (int i = 0; i < n; ++i)
+      if (std::fabs(pl[0] * xyz[3 * i] + pl[1] * xyz[3 * i + 1] + pl[2] * xyz[3 * i + 2] + pl[3]) <= tau) in.push_back(i);
+    if (in.size() < 3) return P;
+    pcaOf(xyz, in, m, ev, V);
+    ref[0] = V[0][0]; ref[1] = V[1][0]; ref[2] = V[2][0];
+    ref[3] = -(ref[0] * m[0] + ref[1] * m[1] + ref[2] * m[2]);
+    pl = ref;
+  }
+  const int ni = int(in.size());
   for (int k = 0; k < 3; ++k) P.n[k] = V[k][0];
   P.thick = std::sqrt(std::max(0.0, ev[0]));
-  // 주축 두 방향 폭(10~90 백분위)·높이·수평 폭
-  std::vector<double> a(static_cast<size_t>(n)), b(static_cast<size_t>(n)), z(static_cast<size_t>(n)), h(static_cast<size_t>(n));
-  // 수평 주방향: 가로 성분 공분산의 큰 고유 방향
-  double sxx = 0, sxy = 0, syy = 0;
-  for (int i = 0; i < n; ++i) {
+  P.inl = double(ni) / n;
+  // 안쪽 점: 주축 두 방향 폭(10~90 백분위)·높이·수평 폭
+  std::vector<double> a(static_cast<size_t>(ni)), b(static_cast<size_t>(ni)), z(static_cast<size_t>(ni)), h(static_cast<size_t>(ni));
+  double sxx = 0, sxy = 0, syy = 0;   // 수평 주방향: 가로 성분 공분산의 큰 고유 방향
+  for (int i : in) {
     const double dx = xyz[3 * i] - m[0], dy = xyz[3 * i + 1] - m[1];
     sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
   }
   const double th = 0.5 * std::atan2(2 * sxy, sxx - syy), hc = std::cos(th), hs = std::sin(th);
-  for (int i = 0; i < n; ++i) {
+  for (int q = 0; q < ni; ++q) {
+    const int i = in[size_t(q)];
     const double d[3] = {xyz[3 * i] - m[0], xyz[3 * i + 1] - m[1], xyz[3 * i + 2] - m[2]};
-    a[size_t(i)] = d[0] * V[0][2] + d[1] * V[1][2] + d[2] * V[2][2];
-    b[size_t(i)] = d[0] * V[0][1] + d[1] * V[1][1] + d[2] * V[2][1];
-    z[size_t(i)] = xyz[3 * i + 2];
-    h[size_t(i)] = d[0] * hc + d[1] * hs;
+    a[size_t(q)] = d[0] * V[0][2] + d[1] * V[1][2] + d[2] * V[2][2];
+    b[size_t(q)] = d[0] * V[0][1] + d[1] * V[1][1] + d[2] * V[2][1];
+    z[size_t(q)] = xyz[3 * i + 2];
+    h[size_t(q)] = d[0] * hc + d[1] * hs;
   }
   P.span1 = pctOf(a, 0.9) - pctOf(a, 0.1);
   P.span2 = pctOf(b, 0.9) - pctOf(b, 0.1);
@@ -295,7 +365,7 @@ void apMerge(ApState& a, const ApState& b, const ApParams& p) {
 void apName(ApState& s, const ApText& T, const ApParams& p, double size) {
   if (!T.ready()) return;
   // 이름 우도 = 조각 + 통째(통째 무게 whole_w). 통째만 쓰면 모습 1–2 개라 사후가 납작했다(radio r3: 상위 0.1–0.3, 이름 대부분 "object") —
-  // 정답 물체마다 조각만 모아도 이름이 31 개 중 26 개 맞음(aprime_fit). 합친 뒤 예전 통째는 조각으로 넘어가 있다(apMerge)
+  // 정답 물체마다 조각만 모아도 이름이 31 개 중 26 개 맞음(objprob_fit). 합친 뒤 예전 통째는 조각으로 넘어가 있다(apMerge)
   const int C = T.n_labels;
   thread_local std::vector<float> L;
   L.assign(size_t(C), 0.f);

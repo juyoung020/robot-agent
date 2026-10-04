@@ -1,4 +1,4 @@
-// A′ 물체 모델(objprob.hpp) 시험: vMF r 합·μ, 같은 시각 조각은 서로 덜 세지 않음·비슷한 시점은 덜 셈, 이름 사후(상위어로 올림·
+// 확률 물체 모델(objprob)(objprob.hpp) 시험: vMF r 합·μ, 같은 시각 조각은 서로 덜 세지 않음·비슷한 시점은 덜 셈, 이름 사후(상위어로 올림·
 // 엔트로피), 바깥 이름 관측이 영상 모습에 덮이지 않음, 받침이면 같은 것이 아님, 평면 맞춤(세운 얇은 평면·수평면), 접촉
 #include <cmath>
 #include <cstdio>
@@ -95,18 +95,63 @@ int main() {
     q.f[5] = 0;
     CHECK(apLogit(q, p) > 0, "touching same %.2f", apLogit(q, p));
   }
-  // 5. 평면 맞춤: x = 1 의 세운 얇은 평면(2 m × 2 m), z = 2.4 의 수평면
+  // 5. 평면 맞춤(RANSAC): x = 1 의 세운 얇은 평면(2 m × 2 m), z = 2.4 의 수평면
   {
     std::vector<float> P;
     for (int i = 0; i < 40; ++i)
       for (int j = 0; j < 40; ++j) P.insert(P.end(), {1.0f + 0.001f * float((i * 7 + j) % 3), 0.05f * i, 0.05f * j});
-    const ApPlane a = apPlaneFit(P.data(), int(P.size() / 3));
-    CHECK(a.ok && a.thick < 0.005 && std::fabs(a.n[2]) < 0.1 && a.hspan > 1.5, "vertical plane thick %.3f nz %.2f hspan %.2f", a.thick, a.n[2], a.hspan);
+    const ApPlane a = apPlaneFit(P.data(), int(P.size() / 3), 0.02, 1);
+    CHECK(a.ok && a.thick < 0.005 && std::fabs(a.n[2]) < 0.1 && a.hspan > 1.5 && a.inl > 0.99, "vertical plane thick %.3f nz %.2f hspan %.2f inl %.2f",
+          a.thick, a.n[2], a.hspan, a.inl);
     P.clear();
     for (int i = 0; i < 40; ++i)
       for (int j = 0; j < 40; ++j) P.insert(P.end(), {0.05f * i, 0.05f * j, 2.4f});
-    const ApPlane b = apPlaneFit(P.data(), int(P.size() / 3));
+    const ApPlane b = apPlaneFit(P.data(), int(P.size() / 3), 0.02, 2);
     CHECK(b.ok && std::fabs(b.n[2]) > 0.99 && std::fabs(b.zmed - 2.4) < 1e-3, "horizontal nz %.2f z %.2f", b.n[2], b.zmed);
+  }
+  // 5b. 잡음 + 바깥 점: 천장(z = 2.5, σ 1 cm) 1200 점 + 벽 모서리 쪽 세운 띠 300 점 + 흩어진 300 점(합 1800, 평면 67 %)
+  //     — 안쪽 점 법선·높이는 천장 그대로(PCA 는 기울고 중앙 높이가 내려감). 같은 시드는 같은 답
+  {
+    uint64_t r = 12345;
+    auto u01 = [&]() { r = r * 6364136223846793005ull + 1442695040888963407ull; return double(r >> 11) * (1.0 / 9007199254740992.0); };
+    auto gau = [&]() { return std::sqrt(-2 * std::log(std::max(1e-12, u01()))) * std::cos(6.283185307 * u01()); };
+    std::vector<float> P;
+    for (int i = 0; i < 1200; ++i) P.insert(P.end(), {float(3 * u01()), float(2 * u01()), float(2.5 + 0.01 * gau())});
+    for (int i = 0; i < 300; ++i) P.insert(P.end(), {float(3 * u01()), float(2.0 + 0.01 * gau()), float(1.5 + u01())});
+    for (int i = 0; i < 300; ++i) P.insert(P.end(), {float(3 * u01()), float(2 * u01()), float(3 * u01())});
+    const int n = int(P.size() / 3);
+    const ApPlane a = apPlaneFit(P.data(), n, 0.03, apSeed(7, 1));
+    CHECK(a.ok && std::fabs(a.n[2]) > 0.99 && std::fabs(a.zmed - 2.5) < 0.01 && a.inl > 0.6 && a.inl < 0.8 && a.thick < 0.015,
+          "noisy ceiling nz %.3f z %.3f inl %.2f thick %.3f", a.n[2], a.zmed, a.inl, a.thick);
+    const ApPlane b = apPlaneFit(P.data(), n, 0.03, apSeed(7, 1));
+    CHECK(b.inl == a.inl && b.zmed == a.zmed && b.n[2] == a.n[2], "deterministic %.4f %.4f", a.inl, b.inl);
+    // 세운 벽(y = 0, σ 1.5 cm) 80 % + 앞 가구 20 %: 벽 법선
+    P.clear();
+    for (int i = 0; i < 800; ++i) P.insert(P.end(), {float(2 * u01()), float(0.015 * gau()), float(2.4 * u01())});
+    for (int i = 0; i < 200; ++i) P.insert(P.end(), {float(0.5 + 0.5 * u01()), float(0.1 + 0.5 * u01()), float(0.8 * u01())});
+    const ApPlane c = apPlaneFit(P.data(), int(P.size() / 3), 0.04, apSeed(8, 2));
+    CHECK(c.ok && std::fabs(c.n[1]) > 0.99 && c.inl > 0.75 && c.hspan > 1.5 && c.zhi - c.zlo > 1.5, "wall ny %.3f inl %.2f hspan %.2f",
+          c.n[1], c.inl, c.hspan);
+  }
+  // 5c. 휜 면(반지름 0.4 m 반원통 — 소파 등받이·화분)은 지배 평면이 아님: 안쪽 비율 < 0.7(ApParams::plane_inl 0.8 아래)
+  {
+    std::vector<float> P;
+    for (int i = 0; i < 60; ++i)
+      for (int j = 0; j < 20; ++j) {
+        const double t = 3.14159265 * i / 59;
+        P.insert(P.end(), {float(0.4 * std::cos(t)), float(0.4 * std::sin(t)), float(0.04 * j)});
+      }
+    const ApPlane a = apPlaneFit(P.data(), int(P.size() / 3), 0.02, apSeed(9, 3));
+    CHECK(a.ok && a.inl < 0.7 && a.inl < ApParams().plane_inl, "curved inl %.2f", a.inl);
+    // 구(반지름 0.3 m)도
+    P.clear();
+    for (int i = 0; i < 30; ++i)
+      for (int j = 0; j < 30; ++j) {
+        const double th = 3.14159265 * (i + 0.5) / 30, ph = 6.2831853 * j / 30;
+        P.insert(P.end(), {float(0.3 * std::sin(th) * std::cos(ph)), float(0.3 * std::sin(th) * std::sin(ph)), float(1 + 0.3 * std::cos(th))});
+      }
+    const ApPlane b = apPlaneFit(P.data(), int(P.size() / 3), 0.02, apSeed(9, 4));
+    CHECK(b.inl < 0.7 && b.inl < ApParams().plane_inl, "sphere inl %.2f", b.inl);
   }
   // 6. 접촉: 4 cm 칸 이웃 안
   {

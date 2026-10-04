@@ -1,7 +1,7 @@
 // sgsearch 물체 색인 + 찾기(include/sgsearch.h). 식과 근거는 헤더 머리말, 측정은 README "물체 찾기".
 //
 // 자료
-//   U(라벨 집합)  : main synset 전부 + 등록·확인·A′ 이름. 라벨마다 표 줄들(점수 = 줄 중 최대 cos) 또는 자유 이름 벡터 하나.
+//   U(라벨 집합)  : main synset 전부 + 등록·확인·objprob 이름. 라벨마다 표 줄들(점수 = 줄 중 최대 cos) 또는 자유 이름 벡터 하나.
 //                   모든 줄을 FP16 행렬 R(nr × 768) 하나로 — 시점 하나 = nr 번 SIMD 내적(sgc_dot_f16).
 //   물체          : 시점 벡터 V(nv × 768), μ, 시점별 logZ_v = logsumexp_c t·s_vc, m_c = 평균_v(t·s_vc − logZ_v), N = logsumexp_c m_c
 //                   (P_app(c) = exp(m_c − N)), m 상위 8 개(순위·대안 이름), 색·재질 낱말.
@@ -106,7 +106,7 @@ struct Obj {
   uint32_t id = 0;
   std::string reg, reg_l;     // 등록 이름(view.json name), 소문자
   int reg_c = -1;
-  std::vector<std::pair<int, float>> ap_post;   // A′ 이름 사후(라벨, p) — 있으면 바탕
+  std::vector<std::pair<int, float>> ap_post;   // objprob 이름 사후(라벨, p) — 있으면 바탕
   std::string vsrc = "none";
   int nv = 0;
   std::vector<float> V, mu;   // nv × D, D
@@ -116,7 +116,7 @@ struct Obj {
   std::vector<std::string> attrs;
   std::map<int, float> lext;  // 라벨 → Σ log 우도비(확인)
   std::map<int, float> lext_map;   // 그중 지도에도 넣은 것(sm_observe_object_name 성공, 기록 "map":"applied")
-  bool ap_external = false;   // A′ 사후에 바깥 관측이 이미 들어 있음(view.json name_post.external)
+  bool ap_external = false;   // objprob 사후에 바깥 관측이 이미 들어 있음(view.json name_post.external)
   std::string rgb, mask;      // best view 사진(상대 경로)
 };
 
@@ -333,7 +333,7 @@ Post posterior(const sgs_index* X, const Obj& o) {
   return P;
 }
 
-// 라벨 묶음(예: 질의 synset 과 그 아래말)의 사후 질량 Σ 바탕(c)·Λ(c) / Z. 바탕 = A′ 사후 / P_app / (벡터 없으면) 등록 이름 0.5
+// 라벨 묶음(예: 질의 synset 과 그 아래말)의 사후 질량 Σ 바탕(c)·Λ(c) / Z. 바탕 = objprob 사후 / P_app / (벡터 없으면) 등록 이름 0.5
 double postMass(const Obj& o, const Post& P, const std::vector<int>& cs) {
   double s = 0;
   for (int c : cs) {
@@ -386,7 +386,7 @@ NameView nameView(const sgs_index* X, const Obj& o) {
   return n;
 }
 
-// 말해진 이름: 등록·확인(+)·A′ 사후 0.2 이상
+// 말해진 이름: 등록·확인(+)·objprob 사후 0.2 이상
 std::vector<int> asserted(const Obj& o) {
   std::vector<int> a;
   if (o.reg_c >= 0) a.push_back(o.reg_c);
@@ -403,7 +403,7 @@ std::vector<int> asserted(const Obj& o) {
 bool readPng(const std::string& path, int want_channels, std::vector<uint8_t>* px, int* w, int* h) {
 #if !SGS_HAVE_PNG
   (void)path, (void)want_channels, (void)px, (void)w, (void)h;
-  return false;   // libpng 없이 빌드: 대체 벡터 뽑기 꺼짐(A′ 벡터·캐시는 그대로)
+  return false;   // libpng 없이 빌드: 대체 벡터 뽑기 꺼짐(objprob 벡터·캐시는 그대로)
 #else
   png_image im;
   std::memset(&im, 0, sizeof(im));
@@ -584,8 +584,8 @@ void build(sgs_index* X) {
     Obj& o = X->obj[i];
     const std::string b = X->mem + "/objects/O" + std::to_string(o.id);
     int n = 0;
-    if (readF16(b + "_views.f16", &o.V, &n)) o.nv = n, o.vsrc = "aprime_views", ++n_ap;
-    else if (readF16(b + "_emb.f16", &o.V, &n)) o.V.resize(D), o.nv = 1, o.vsrc = "aprime_mu", ++n_mu;
+    if (readF16(b + "_views.f16", &o.V, &n)) o.nv = n, o.vsrc = "objprob_views", ++n_ap;
+    else if (readF16(b + "_emb.f16", &o.V, &n)) o.V.resize(D), o.nv = 1, o.vsrc = "objprob_mu", ++n_mu;
     else {
       const std::string k = fileKey(X->mem + "/" + o.rgb) + "|" + fileKey(X->mem + "/" + o.mask);
       const std::string key = "O" + std::to_string(o.id);
@@ -610,14 +610,14 @@ void build(sgs_index* X) {
     if (s > 0)
       for (float& x : o.mu) x = float(x / std::sqrt(s));
   }
-  // 등록 이름·A′ 사후 → 라벨(U 에 더함)
+  // 등록 이름·objprob 사후 → 라벨(U 에 더함)
   for (size_t i = 0; i < X->obj.size(); ++i) {
     Obj& o = X->obj[i];
     bool add = false;
     o.reg_c = labelFor(X, o.reg, &add);
   }
   for (const json& jo : v.value("objects", json::array())) {
-    // A′ 형식 {"top": [[이름, p] …], "p", "entropy", "rolled", "external"}(scenemap README "A′ 저장 형식"), 옛 형식 [[이름, p] …]
+    // objprob 형식 {"top": [[이름, p] …], "p", "entropy", "rolled", "external"}(scenemap README "확률 모드" 저장 형식), 옛 형식 [[이름, p] …]
     const json* np = jo.contains("name_post") ? &jo["name_post"] : nullptr;
     if (np && np->is_object()) {
       if (np->value("external", false)) X->obj[size_t(X->by_id[jo.value("id", 0u)])].ap_external = true;
@@ -633,7 +633,7 @@ void build(sgs_index* X) {
       }
   }
   loadConfirmations(X);
-  // 지도(A′)가 이미 받은 확인은 name_post 에 들어 있으므로 두 번 세지 않는다(external 이 아니면 아직 저장 전 — 여기서 셈)
+  // 지도(objprob)가 이미 받은 확인은 name_post 에 들어 있으므로 두 번 세지 않는다(external 이 아니면 아직 저장 전 — 여기서 셈)
   for (Obj& o : X->obj) {
     if (!o.ap_external || o.ap_post.empty()) continue;
     for (auto& [c, l] : o.lext_map) {
@@ -651,7 +651,7 @@ void build(sgs_index* X) {
   const auto t4 = std::chrono::steady_clock::now();
   saveNames(X);
   auto ms = [](auto a, auto b) { return r3(std::chrono::duration<double, std::milli>(b - a).count()); };
-  X->stats = {{"objects", X->obj.size()}, {"vec_aprime_views", n_ap}, {"vec_aprime_mu", n_mu}, {"vec_cache", n_cache}, {"vec_encoded", n_enc},
+  X->stats = {{"objects", X->obj.size()}, {"vec_objprob_views", n_ap}, {"vec_objprob_mu", n_mu}, {"vec_cache", n_cache}, {"vec_encoded", n_enc},
               {"vec_none", n_none}, {"labels", X->U.size()}, {"label_rows", X->row_lab.size()}, {"attr_words", X->W.empty() ? 0 : kNW},
               {"ms_read", ms(t0, t1)}, {"ms_encode", ms(t1, t2)}, {"ms_labels", ms(t2, t3)}, {"ms_appearance", ms(t3, t4)},
               {"ms_total", ms(t0, std::chrono::steady_clock::now())}, {"threads", X->nthreads}, {"simd", sgc_simd()}};
