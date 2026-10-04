@@ -1,0 +1,56 @@
+{
+  "_doc": "map/include/map.h MP 값의 LIMO 재보정 제안. R1 값(../calib.json, 지금 map.h)은 그대로 두고, 이 파일은 LIMO 기록으로 맞춘 값이다. 근거·방법·n 은 README.md.",
+  "robot": "limo_omx in BEHAVIOR/OmniGibson (sim). eyes camera 720x720 fx 306 at z 0.18 m, diff-drive, odometry = base_qvel integration (scenemap slam2d pushVelocity)",
+  "caveats": [
+    "single run: SLAM residual target is ONE explore run (explore_20261004_094010_turning_on_radio_frontier_limo); odometry bias from ONE spin+straight recording (limo3); per-detection stats from that same short recording (80 keyframes, COCO-80 detector)",
+    "camera FK offset: all three LIMO runs were recorded before commit 391c04b (eyes moved +x 0.010 m to the lens). The 1 cm FK error is inside the SLAM residual target (rms 3.1 cm), so kf_corr/odo_* noise may be slightly too large for the fixed camera",
+    "explore run has no rec.bin: raw odometry and per-detection stats could not be taken from it; it uses the open-vocab detector (272, 20 prompts) while limo3 rec.bin uses COCO-80",
+    "map_drift trajectories are synthetic in the G1 room (kind 2 = LIMO-explore-like 13.4 m); real path cannot be replayed in the MP scene"
+  ],
+  "proposed": {
+    "odo_bt":      {"r1": 0.030,    "limo": 0.0082, "unit": "per-episode translation scale bias sigma", "source": "limo3 rec.bin, sm_bench --robot limo_omx --pose odom vs G (GT)", "n": "1 straight segment, 0.80 m", "method": "odom/GT distance - 1 = +0.82 %; single sample -> sigma = |b|"},
+    "odo_br":      {"r1": 0.13,     "limo": 0.0121, "unit": "per-episode rotation scale bias sigma", "source": "same", "n": "1 spin, 6.34 rad (363 deg), 52 keyframes", "method": "linear fit of yaw error vs GT yaw: +1.21 %/rad, residual std 3e-5 rad (pure bias, no noise)"},
+    "odo_bw":      {"r1": 0.031066, "limo": 0.0,    "unit": "rad/m yaw drift while straight", "source": "same", "n": "1 straight 0.80 m", "method": "odom yaw change -4e-5 rad vs GT -1e-5 rad (< 5e-5 rad/m)"},
+    "odo_t":       {"r1": 0.15,  "limo": 0.06,  "unit": "per-step sigma / step distance (effective)", "source": "map_drift fit to explore SLAM residual", "n": "grid 2400 + 360 points x 128 ep (CPU), check 1024 ep (GPU)", "method": "loss = sum log^2 (rms xy, rms yaw weight 1; max xy, max yaw weight 0.5), kind 2"},
+    "odo_rr":      {"r1": 0.035, "limo": 0.005, "unit": "per-step sigma / |dtheta| (effective)", "source": "same", "n": "same", "method": "same (grid lower edge; 0.005-0.01 equivalent)"},
+    "odo_rt":      {"r1": 0.03,  "limo": 0.02,  "unit": "rad per m per step (effective)", "source": "same", "n": "same", "method": "same"},
+    "kf_corr_xy":  {"r1": 0.025, "limo": 0.0075, "source": "same", "n": "same", "method": "same"},
+    "kf_corr_yaw": {"r1": 0.7,   "limo": 0.15,  "source": "same", "n": "same", "method": "same"},
+    "p_conf":      {"r1": 0.07,  "limo": 0.08,  "source": "explore confirmed objects vs GT AABB (open-vocab): mislabel 3/16 = 0.19", "n": 16, "method": "map_drift kind 2 (512 ep) p_conf sweep 0.07-0.35 -> confirmed mislabel 0.18/0.21/0.25 at 0.07/0.08/0.09", "alt_coco": "per-detection mislabel 32/132 = 0.24 (limo3, COCO-80); p_conf 0.24 gives confirmed mislabel 0.49 in map_drift, real COCO confirmed 6/14 (limo3), 11/19 (limo4)"},
+    "n_ghost":     {"r1": 3,     "limo": 3,     "source": "kept", "method": "only p_ghost refit"},
+    "p_ghost":     {"r1": 1.0,   "limo": 0.03,  "source": "limo3 rec.bin per-detection: 1 false (no GT AABB) / 133 dets, keyframes with >=1 false 1/80 = 0.013; explore confirmed false 0/16", "n": "80 keyframes, 133 dets; 16 confirmed", "method": "map_drift sweep: p_ghost 0.03 -> keyframes with fake 0.012, confirmed false 0.04"},
+    "lat_n":       {"r1": 0.04,  "limo": 0.023, "unit": "m", "source": "limo3 rec.bin correct detections, centroid robust sigma (1.4826 MAD) x/y around per-object median", "n": "100 dets, 4 objects", "method": "vertical 0.007 m"}
+  },
+  "kept_r1_not_fitted": {
+    "p_miss_near": {"value": 0.15, "why": "no visible (frame, object) pair < 1.5 m in limo3"},
+    "p_miss_mid":  {"value": 0.10, "why": "LIMO 1.5-2.5 m: 20/74 = 0.27 but 18 of 20 misses are one wall-mounted TV (others 2/52 = 0.04); 5 objects, COCO only"},
+    "p_miss_far":  {"value": 0.79, "why": "no visible pair 2.5-3.0 m; 3-6 m: drop_in_sink 10/10 missed (beyond Dabai 3 m, not used by MP)"},
+    "ext_n": {"value": 0.05, "why": "not measured"},
+    "dn0_dn2": {"value": [0.0, 0.006], "why": "Dabai datasheet, robot-independent; sim depth is noiseless"}
+  },
+  "measured": {
+    "slam_vs_gt_explore": {"run": "explore_20261004_094010_turning_on_radio_frontier_limo", "file": "poses.csv (map_* vs gt_map_*), pose_diag.json", "n_keyframes": 291, "path_m": 13.17, "turn_deg": 879, "sim_s": 58.4,
+      "rms_xy_m": 0.0305, "max_xy_m": 0.0534, "rms_yaw_deg": 0.256, "max_yaw_deg": 0.662, "last_xy_m": 0.0408, "last_yaw_deg": 0.487, "at_step_900": {"path_m": 7.0, "rms_xy_m": 0.0226, "max_xy_m": 0.035, "rms_yaw_deg": 0.20}},
+    "slam_vs_gt_limo4": {"run": "scratchpad limo4 (40 s map test)", "path_m": 5.02, "turn_deg": 662, "n_keyframes": 200, "rms_xy_m": 0.0132, "max_xy_m": 0.0272, "rms_yaw_deg": 0.206, "max_yaw_deg": 0.372},
+    "raw_odom_limo3": {"run": "scratchpad limo3 rec.bin (14 s: spin 363 deg + 0.8 m straight)", "tool": "sm_bench --robot limo_omx --pose odom --no-dets (behavior-2026-limo build)", "rot_scale_bias": 0.0121, "trans_scale_bias": 0.0082, "yaw_drift_straight_rad_per_m": 0.0, "final_err_xy_m": 0.0635, "final_err_yaw_rad": 0.0769, "slam_replay_final": {"xy_m": 0.0040, "yaw_rad": 0.0024}},
+    "detections_limo3": {"detector": "COCO-80", "keyframes": 80, "dets": 133, "strict_or_lenient": 100, "mislabel": 32, "false": 1, "fp_per_keyframe": 0.013,
+      "miss_by_dist": {"lt1.5": [0, 0], "1.5-2.5": [20, 74], "2.5-3.0": [0, 0], "3-6": [10, 10]}, "miss_by_class": {"wall_mounted_tv": [18, 22], "coffee_table": [2, 13], "straight_chair": [0, 26], "breakfast_table": [0, 13], "drop_in_sink": [10, 10]},
+      "top_mislabels": {"potted plant on fixed_window": 12, "bench on coffee_table": 6, "suitcase on radio": 4, "tv on top_cabinet": 3}},
+    "confirmed_objects": [
+      {"run": "explore_20261004_094010 (open-vocab 272, 20 prompts)", "n": 16, "correct": 13, "strict": 10, "lenient": 3, "mislabel": 3, "false": 0, "pos_err_correct_m": {"n": 13, "median_3d": 0.20, "median_xy": 0.08, "rms_3d": 0.53, "max_3d": 1.56}},
+      {"run": "limo3 (COCO-80, 14 s)", "n": 14, "correct": 8, "mislabel": 6, "false": 0, "pos_err_correct_m": {"n": 8, "median_3d": 0.23, "median_xy": 0.21}},
+      {"run": "limo4 (COCO-80, 40 s)", "n": 19, "correct": 7, "mislabel": 11, "false": 1, "pos_err_correct_m": {"n": 7, "median_3d": 0.29, "median_xy": 0.29}}]
+  },
+  "map_drift_check_gpu_1024ep": {
+    "kind2_limo_explore_like": {"path_m": 13.40, "turn_deg": 760, "sim_s": 55.5,
+      "r1_values": {"rms_xy_cm": 5.25, "rms_yaw_deg": 0.792, "max_xy_cm": 12.26, "max_yaw_deg": 4.03, "kf_with_fake": 0.350, "confirmed": [0.64, 0.14, 0.22]},
+      "limo_values": {"rms_xy_cm": 2.82, "rms_yaw_deg": 0.233, "max_xy_cm": 5.45, "max_yaw_deg": 0.680, "kf_with_fake": 0.012, "confirmed": [0.75, 0.21, 0.04]},
+      "real": {"rms_xy_cm": 3.05, "rms_yaw_deg": 0.256, "max_xy_cm": 5.34, "max_yaw_deg": 0.662, "kf_with_fake": 0.013, "confirmed": [0.81, 0.19, 0.0]}},
+    "kind3_limo4_like": {"path_m": 5.07, "turn_deg": 728, "sim_s": 30.0,
+      "r1_values": {"rms_xy_cm": 8.13, "rms_yaw_deg": 0.746, "max_xy_cm": 22.25, "max_yaw_deg": 4.76},
+      "limo_values": {"rms_xy_cm": 4.71, "rms_yaw_deg": 0.312, "max_xy_cm": 8.74, "max_yaw_deg": 1.53},
+      "real": {"rms_xy_cm": 1.32, "rms_yaw_deg": 0.206, "max_xy_cm": 2.72, "max_yaw_deg": 0.372}},
+    "confirmed_order": ["correct", "mislabel", "false"],
+    "base_map_h": "working tree map.h md5 75b599971599101d4b56025a7777e2bd (HEAD fbae36a + uncommitted), patched copy in scratch build, see tools/map_drift_limo.patch"
+  }
+}

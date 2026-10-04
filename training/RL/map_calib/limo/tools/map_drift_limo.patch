@@ -1,0 +1,88 @@
+--- map/include/map.h
++++ map/include/map.h
+@@ -14,6 +14,36 @@
+ #include "env.h"
+ #include "env_soa.h"
+ // 맞춤 값(README "보정"). map_drift 로 다시 맞출 때만 -D 로 바꾼다
++#ifndef ODO_T_V
++#define ODO_T_V 0.15f
++#endif
++#ifndef ODO_RR_V
++#define ODO_RR_V 0.035f
++#endif
++#ifndef ODO_RT_V
++#define ODO_RT_V 0.03f
++#endif
++#ifndef ODO_BT_V
++#define ODO_BT_V 0.030f
++#endif
++#ifndef ODO_BR_V
++#define ODO_BR_V 0.13f
++#endif
++#ifndef ODO_BW_V
++#define ODO_BW_V 0.031066f
++#endif
++#ifndef P_CONF_V
++#define P_CONF_V 0.07f
++#endif
++#ifndef PMN_V
++#define PMN_V 0.15f
++#endif
++#ifndef PMM_V
++#define PMM_V 0.10f
++#endif
++#ifndef PMF_V
++#define PMF_V 0.79f
++#endif
+ #ifndef KF_CORR_XY_V
+ #define KF_CORR_XY_V 0.025f
+ #endif
+@@ -100,16 +130,16 @@
+   static constexpr int prune_steps = 100, gone_min_steps = 20;   // prune_s 10 s, gone_min_s 2 s (제어 10 Hz, 영상 = 제어 스텝 (가정))
+   // ---- 오도메트리·slam ----
+   // 걸음마다 랜덤워크: 이동 σ = odo_t·거리, 회전 σ = odo_rr·|dθ| + odo_rt·거리 (R1 시뮬 기록 보정, calib.json 맞춤 B)
+-  static constexpr float odo_t = 0.15f, odo_rr = 0.035f, odo_rt = 0.03f;
++  static constexpr float odo_t = ODO_T_V, odo_rr = ODO_RR_V, odo_rt = ODO_RT_V;
+   // 판마다 뽑는 배율 치우침(판 리셋 때 가우스, 판 안에서 고정): 이동 배율 σ 3.0 %, 회전 배율 σ 13 %, 직진 중 yaw σ 1.78 °/m
+   // (R1 시뮬 기록 보정: 원 오도메트리 대 GT 구간 분석. R1 은 회전을 늘 +13 % 더 셌다. LIMO 는 부호를 모르므로 ± 대칭으로 뽑는다)
+-  static constexpr float odo_bt = 0.030f, odo_br = 0.13f, odo_bw = 0.031066f;
++  static constexpr float odo_bt = ODO_BT_V, odo_br = ODO_BR_V, odo_bw = ODO_BW_V;
+   // keyframe 맞추기가 되돌리는 오차 비율, xy 와 yaw 따로 (맞춤)
+   static constexpr float kf_corr_xy = KF_CORR_XY_V, kf_corr_yaw = KF_CORR_YAW_V;
+   // ---- 검출 ----
+   // 놓침 확률, 카메라–물체 중심 거리별 계단(R1 시뮬 기록 보정: < 1.5 m 0.15, 1.5–2.5 m 0.10, ≥ 2.5 m 0.79. 거리 무관 평균은 0.21)
+-  static constexpr float miss_d1 = 1.5f, miss_d2 = 2.5f, p_miss_near = 0.15f, p_miss_mid = 0.10f, p_miss_far = 0.79f;
+-  static constexpr float p_conf = 0.07f;                         // 틀린 이름 (R1 시뮬 기록 보정)
++  static constexpr float miss_d1 = 1.5f, miss_d2 = 2.5f, p_miss_near = PMN_V, p_miss_mid = PMM_V, p_miss_far = PMF_V;
++  static constexpr float p_conf = P_CONF_V;                         // 틀린 이름 (R1 시뮬 기록 보정)
+   // 가짜 물체: 판마다 정해진 유령 자리 n_ghost 개가 시야에 들면 keyframe 마다 p_ghost 로 다시 검출된다(R1 시뮬 기록 보정:
+   // keyframe 의 76 % 에 가짜가 하나 이상, 평균 1.46 개, 같은 자리에 되풀이). 개수·확률은 G1 판에서 그 비율에 맞춘 값 (맞춤)
+   static constexpr int n_ghost = N_GHOST_V;
+--- map/tools/map_drift.cpp
++++ map/tools/map_drift.cpp
+@@ -73,15 +73,21 @@
+     return S.T;
+   }
+   const float m = 0.6f;
++  const float Lmax = kind == 1 ? 16.5f : (kind == 2 ? 13.2f : 3.9f), vmax = kind == 1 ? 0.45f : 0.40f, wmax = 0.8f;
++  if (kind == 3) {   // limo4 비슷: 제자리 한 바퀴(0.6 rad/s) 뒤 돌기·가기
++    S.x = 0.f; S.y = 0.f; S.th = 0.f;
++    for (int i = 0; i < 10; ++i) S.ctrl(0.f, 0.f);
++    S.turn(2.f * (float)M_PI - 0.02f, 0.6f);
++  } else
+   S.x = (u01(r) * 2.f - 1.f) * (rhx - m); S.y = (u01(r) * 2.f - 1.f) * (rhy - m); S.th = (u01(r) * 2.f - 1.f) * (float)M_PI;
+   float L = 0.f;
+-  while (L < 16.5f && S.T.x.size() < 5000) {
++  while (L < Lmax && S.T.x.size() < 5000) {
+     float gx, gy, d;
+     do { gx = (u01(r) * 2.f - 1.f) * (rhx - m); gy = (u01(r) * 2.f - 1.f) * (rhy - m); d = hypotf(gx - S.x, gy - S.y); } while (d < 0.5f);
+-    S.turn(wrapf(atan2f(gy - S.y, gx - S.x) - S.th), 0.8f);
++    S.turn(wrapf(atan2f(gy - S.y, gx - S.x) - S.th), wmax);
+     d = hypotf(gx - S.x, gy - S.y);
+-    if (L + d > 16.5f) d = 16.5f - L + 0.01f;
+-    L += S.drive(d, 0.45f);
++    if (L + d > Lmax) d = Lmax - L + 0.01f;
++    L += S.drive(d, vmax);
+   }
+   return S.T;
+ }
