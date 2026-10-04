@@ -1,7 +1,7 @@
 # 오프라인 한 번 쓰는 기준값 덤프(GPU_TRAINING 9절 "Python 기준값" — 학습·추론 경로에 없음).
 # HF transformers(FP32, CPU)로 Qwen3.5 글 몸통의 층별 은닉 상태와 탐욕 디코딩 토큰을 뽑는다.
 #   python qwen_ref.py MODEL_DIR OUT_DIR
-# 출력: OUT_DIR/manifest.json, p{i}_ids.i32, p{i}_h{l}.f32([L][hidden], l = 0 임베딩, 1..24 층 출력, 25 끝 norm 뒤),
+# 출력: OUT_DIR/manifest.json, p{i}_glog.f32(탐욕 스텝마다 로짓 — 갈림이 거의 같은 값끼리인지 보려고), p{i}_ids.i32, p{i}_h{l}.f32([L][hidden], l = 0 임베딩, 1..24 층 출력, 25 끝 norm 뒤),
 #       p{i}_gen.i32(탐욕 새 토큰), vocab.bin(토큰 번호 → 바이트, 디코딩 표), tok_*.i32(지시·단계 문장 토큰 표).
 import json, os, struct, sys
 
@@ -49,7 +49,9 @@ for i, p in enumerate(prompts):
     for l, v in hs.items():
         v[0].float().numpy().tofile(f"{out}/p{i}_h{l}.f32")
     with torch.no_grad():
-        g = model.generate(input_ids=ids, max_new_tokens=24, do_sample=False, use_cache=True)
+        go = model.generate(input_ids=ids, max_new_tokens=24, do_sample=False, use_cache=True, output_logits=True, return_dict_in_generate=True)
+    g = go.sequences
+    torch.stack([l[0].float() for l in go.logits]).numpy().tofile(f"{out}/p{i}_glog.f32")   # 탐욕 스텝마다 HF 로짓 [스텝][어휘]
     gen = g[0, ids.shape[1]:]
     gen.numpy().astype("int32").tofile(f"{out}/p{i}_gen.i32")
     man["prompts"].append({"text": p, "n": int(ids.shape[1]), "gen": tok.decode(gen), "n_gen": int(gen.shape[0])})
