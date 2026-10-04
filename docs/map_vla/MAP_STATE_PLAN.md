@@ -83,10 +83,31 @@ dynamic(움직이는 중 잡기) 행은 셋 다 0 — moving 은 로봇 그리�
 - 시험 `tools/sm_tok_test.cpp`(ctest `sm_tok`): 442 경우 0 실패 — 지도 전체를 같은 SE(2)로 옮기면 토큰 같음(회전에서는 T_EEF_S 제외: 팔 끝 ↔ 상자 거리가 map 축 상자라 map 을 돌리면 바뀜 — GPU 형식 그대로의 성질), 평행 이동만이면 모든 값 같음, 로봇만 θ 돌리면 T_POS 가 Rz(−θ)·방위 −θ·거리/크기/상태 그대로, 로봇만 옮기면 T_POS = Rᵀ(p − x), 목표 맨 앞·거리 순·빈 칸·문·속도.
 - 아직: GPU `make_tokens` 와 같은 입력으로 비트 비교는 안 했다(GPU 쪽 입력이 `MapCore` 라 짝 만들기가 필요).
 
+**5단계 앞 — objmap 바뀜 규칙 고침(behavior-2026 `3ed710f`, 위 진단 1–3 과 실제 검출 실패).** 규칙은 `ObjParams` 기본값이라 로봇(sgrt·sm_bench, R1·LIMO)도 같은 규칙을 쓴다. 자세한 표는 behavior-2026 `src/scene_graph/scenemap/README.md` "물체 바뀜 규칙".
+- 옮겨짐 잇기: 안 맞은 관측을 그 자리에서 사라짐과 잇지 않고 새 후보로 만든 뒤, keyframe 끝 `relink` 가 사라진 m ↔ 새 n 을 잇는다 — n 확정·3 번 이상, n 처음 > m 마지막(시간), 거리 ≤ min(8 m, 1 m + 1 m/s·시간 차), n 자리를 처음 검출한 거리 이하에서 5 s 넘게 전에 본 적 있음(처음 가 본 곳에서 찾은 것은 새 물체), 더 가까운 같은 이름이 n 이후 안 보였으면 30 s 기다림. 새 자리를 먼저 보면 새 id 로 생겼다가 옛 자리가 사라짐이 되면 옛 id 로 다시 이어진다.
+- 사라짐: 큰 것·고정 종류도 판정(놓침 6, 4 s 또는 카메라 0.5 m 이동). 근거 = 물체 점 48 개 투영(시야·가림·크기, 이 물체를 검출한 가장 먼 거리 안), 새 시점의 놓침만(카메라 0.1 m·5° 또는 자리 너머가 보임), 다른 이름으로 검출되면 안 셈, 검출률로 필요한 놓침 수(`gone_eps` 0.02). 관측 5 번 미만은 사라질 때 지움.
+- 이름 표(물체별 점수 합, 짝 후보 = 표 몫 ≥ 0.2, 병합은 IoU ≥ 0.5 면 이름 달라도), 바닥 조각 거르기(점 90 백분위 높이 < 0.05 m, 러그·카펫 제외), 움직이는 중 따라가기(3 번 잇달아 0.3 m/s 넘게 같은 쪽 + 쉬던 상자를 벗어남, 잘린 관측·0.6 rad/s 넘는 회전 제외; 어댑터 `moving` 열 = 옮겨짐 상태에서 두 프레임 잇달아 3 cm/프레임 넘게).
+- `dom_bench_det --dump/--load`: 검출·이름 캐시(시퀀스당 6 MB) — GPU 없이 규칙만 다시 돌려 비교.
+
+다시 잰 점수(세 시퀀스 합, F1; 괄호는 P / R):
+
+| 입력 | static | change | moved | removed | added | swapped | dynamic | static 시퀀스 거짓 변화 |
+|---|---|---|---|---|---|---|---|---|
+| 완벽한 검출, 전 | 0.919 | 0.275 | 0.154 | 0.286 | 0.444 | 0 | 0 | 1 |
+| 완벽한 검출, 후 | **0.928** (0.988 / 0.875) | **0.591** (0.650 / 0.542) | 0.667 | 0.600 | 0.800 | 0 | **0.431** (0.902 / 0.284) | 1 |
+| FastSAM-s + SigLIP 2, 전 | 0.414 (0.299 / 0.670) | 0.047 | 0 | 0.102 | 0.083 | 0 | 0 | 186 |
+| FastSAM-s + SigLIP 2, 후 | **0.687** (0.675 / 0.699) | **0.152** (0.095 / 0.375) | 0.195 | 0.063 | 0.203 | 0 | 0 | 48 |
+| ConceptGraphs(참고) | 0.621 | 0.143 | 0 | 0 | | | | |
+
+- 실제 검출 static 시퀀스 지도 FP: phantom 228 → 16, duplicate 99 → 28. 떼어 보기: 바닥 조각 거르기 끔 static 0.555·change 0.110, 이름 모으기 끔 0.688·0.156. `gone_eps 0.1` 이면 0.697·0.187 이지만 R1 에서 맞은 물체가 줄어 기본은 0.02.
+- 남은 실패: swapped 0(같은 이름 쌍은 생김새 없이 구별 불가, 9–20 m 교환은 잇기 거리 8 m 밖), 실제 검출 removed 가 0.102 → 0.063(사라짐 근거를 엄하게 해 dynamic 시퀀스 stale 이 늘어남 — 대신 static 시퀀스 거짓 removed·실제 물체 놓침이 줄어 static R 0.670 → 0.699), 실제 검출 dynamic 0(FastSAM 마스크가 움직이는 동안 쪼개지고 이름이 흔들림).
+- 우리 로봇(R1 기록 3 개 × slam·gt·odom, `sm_bench` 와 `sgrt_replay` 결과 같음): 자세 CSV·`map.pgm` 바이트 같음. 9 판 합 확정 물체 275 → 249, 사라짐 21 → 13, 옮겨짐 9 → 22(odom 떠밀림 다시 잇기 대부분), 정답(`gt.csv.objects.json`) 대비 이름 맞는 짝 49 → 49, 아무 물체에도 없음 132 → 122, 다른 물체 위 59 → 52, 찾은 정답 물체 63 → 62. objmap 257 → 374 µs/keyframe. LIMO explore 기록(`gt_poses.csv.objects.json` 있는 것)은 sgrt 기록(rec.bin)이 없어 재생 못 함 — 규칙·값은 LIMO 도 같다.
+- GPU 근사판(`training/RL/map/include/map.h`)에 옮길 것(아직 안 고침): ① 짝짓기 이름 비교 → 이름 표 몫 ≥ 0.2(다르면 키 +0.02) ② 바닥 조각 거르기 ③ 안 맞은 관측의 즉시 옮겨짐 잇기(1148–1160 근처) 없애고 `appeared` + `relink` ④ 부재 확인(1194–1208): 고정·큰 것 포함, 표본 투영·검출 거리·새 시점·다른 이름·검출률 k·카메라 0.5 m ⑤ 관측 < 5 사라짐 지움 ⑥ 움직임 따라가기 ⑦ 병합 이름 달라도 IoU ≥ 0.5. 나머지 값(confirm·prune_s·moved_d·gone_misses 3·gone_min_s 2·occl·da_*·big·grow_max·max_ext)은 그대로.
+
 **남은 일**
-- 업데이터 규칙 고치기(위 진단 1–3: 사라짐→옮겨짐 잇기 문턱, 새 자리를 먼저 본 경우 옛 물체와 잇기, 큰 물체의 사라짐 판정) 후 같은 어댑터로 다시 채점. 고치는 곳은 behavior-2026 `objmap.cpp`.
-- 실제 검출: 이름을 프레임마다 정하지 말고 물체 단위로 모으기(이름 흔들림 → duplicate), 바닥 조각 거르기.
-- dynamic 행: 사람이 옮기는 물체를 moving 으로 표시하는 규칙이 없다.
+- swapped·같은 이름 옮김을 가리려면 생김새(구름 모양·SigLIP 임베딩) 비교가 필요.
+- 실제 검출 removed·dynamic: 검출 마스크 쪼개짐·이름 흔들림이 남은 원인.
+- GPU 근사판을 위 ①–⑦ 로 맞추기(학습 쪽 작업).
 - 5단계(우리 로봇 데이터와 짝지어 학습)는 안 함.
 
 재현:
@@ -94,7 +115,9 @@ dynamic(움직이는 중 잡기) 행은 셋 다 0 — moving 은 로봇 그리�
 cmake -S <behavior-2026>/src/scene_graph/scenemap -B build/sm && cmake --build build/sm --target dom_bench
 cmake -S <behavior-2026>/src/scene_graph/runtime -B build/rt && cmake --build build/rt --target dom_bench_det
 build/sm/dom_bench  ~/datasets/dom_office_seed1/data/<seq> preds/perfect
-build/rt/dom_bench_det ~/datasets/dom_office_seed1/data/<seq> preds/fastsam_siglip --classify
+build/rt/dom_bench_det ~/datasets/dom_office_seed1/data/<seq> preds/fastsam_siglip --classify [--dump dets/<seq>.gz]
+build/rt/dom_bench_det ~/datasets/dom_office_seed1/data/<seq> preds/replay --load dets/<seq>.gz   # GPU 없이 규칙만
+SM_OBJ_PARAMS="gone_eps=0.1" build/sm/dom_bench ...                                                   # 매개변수 비교
 ~/dom_venv/bin/dynamic-object-mapping check-submission ~/datasets/dom_office_seed1/data preds/perfect
 ~/dom_venv/bin/dynamic-object-mapping score ~/datasets/dom_office_seed1/data preds/perfect
 ```
