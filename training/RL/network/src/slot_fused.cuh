@@ -27,7 +27,8 @@ struct SinBuf {
 constexpr int SB_R = 32;                       // 한 번에 다루는 칸 행(= 미니배치 행 2)
 constexpr int SB_L2 = S_H + 8;                 // s2o·dZ2·dZ1·sin·W2 줄 간격(bf16) 72
 constexpr int SB_L1 = 104;                     // s1o 줄 간격: 열 0..79 + dW S2 의 n 타일 96 까지 0 + 8
-static_assert(SLOT_IN <= S_H && kLayers[L_S2].K == 80 && kLayers[L_S1].N == S_H && kLayers[L_S2].N == S_H, "slot MLP shapes");
+static_assert(!kSlotFused || SLOT_IN <= S_H, "fused slot kernels need slot input <= 64");
+static_assert(kLayers[L_S2].K == 80 && kLayers[L_S1].N == S_H && kLayers[L_S2].N == S_H, "slot MLP shapes");
 template <class Gen>
 struct SlotBwdP {
   const float* dpool; const uint16_t* s2o; const uint16_t* s1o; Gen gen; const uint32_t* mask; const uint8_t* amax;

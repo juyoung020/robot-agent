@@ -31,6 +31,7 @@ target_compile_options(ppofp8 PRIVATE -gencode=arch=compute_120a,code=sm_120a)
 target_include_directories(ppofp8 PRIVATE ${INC})
 add_library(ppo SHARED ${RL}/env/src/env_kernel.cu ${RL}/map/src/map_kernel.cu ${RL}/network/src/net_kernels.cu src/trainer.cu $<TARGET_OBJECTS:ppofp8>)
 target_include_directories(ppo PUBLIC ${INC})
+target_compile_definitions(ppo PUBLIC VLA_DATA_DIR="${CMAKE_CURRENT_LIST_DIR}/../../data/vla_v1")   # 얼린 이름·생김새 표(observation/vec_tab.h)
 target_link_libraries(ppo PUBLIC CUDA::cudart)
 
 # CPU 참조판(검증 전용): 신경망 FP64 / bf16 흉내

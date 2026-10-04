@@ -62,6 +62,19 @@ struct PpoConfig {
     coll_extra: f32,
     fp8: i32,
     pad_fp8: i32,
+    // VLA_INPUT 5·6절: 행동 가림(장치 값)과 학습 때 흔들기(observation/obs.h ObsAug)
+    act_mask: u32,
+    aug_on: i32,
+    aug_vel_sigma: f32,
+    aug_prev_drop: f32,
+    aug_prev_sigma: f32,
+    aug_p_erase: f32,
+    aug_p_syn: f32,
+    aug_p_hyper: f32,
+    aug_p_wrong: f32,
+    aug_p_slot_drop: f32,
+    aug_p_map_off: f32,
+    aug_eval_unseen: i32,
 }
 
 #[repr(C)]
@@ -111,6 +124,7 @@ extern "C" {
     fn ppo_ckpt_poll(h: *mut std::ffi::c_void, data: *mut *const u8, nbytes: *mut i64) -> i32;
     fn ppo_load(h: *mut std::ffi::c_void, data: *const u8, nbytes: i64) -> i32;
     fn ppo_set_map_curriculum(h: *mut std::ffi::c_void, p0: f32, p1: f32, kmin: i32, kmax: i32, reveal_r: f32) -> i32;
+    fn ppo_set_act_mask(h: *mut std::ffi::c_void, mask: u32) -> i32;
     fn ppo_issued(h: *mut std::ffi::c_void) -> i64;
     fn ppo_num_params(h: *mut std::ffi::c_void) -> i64;
     fn ppo_device_bytes(h: *mut std::ffi::c_void) -> i64;
@@ -169,6 +183,18 @@ fn make_config(v: &Value) -> PpoConfig {
         coll_extra: gf(v.get("shaping").unwrap_or(&Value::Null), "coll", 0.0) as f32,
         fp8: gi(v, "fp8", 0) as i32,
         pad_fp8: 0,
+        act_mask: gi(v, "act_mask", 0) as u32,
+        aug_on: gi(v.get("aug").unwrap_or(&Value::Null), "on", 0) as i32,
+        aug_vel_sigma: gf(v.get("aug").unwrap_or(&Value::Null), "vel_sigma", 0.0) as f32,
+        aug_prev_drop: gf(v.get("aug").unwrap_or(&Value::Null), "prev_drop", 0.0) as f32,
+        aug_prev_sigma: gf(v.get("aug").unwrap_or(&Value::Null), "prev_sigma", 0.0) as f32,
+        aug_p_erase: gf(v.get("aug").unwrap_or(&Value::Null), "p_erase", 0.0) as f32,
+        aug_p_syn: gf(v.get("aug").unwrap_or(&Value::Null), "p_syn", 0.0) as f32,
+        aug_p_hyper: gf(v.get("aug").unwrap_or(&Value::Null), "p_hyper", 0.0) as f32,
+        aug_p_wrong: gf(v.get("aug").unwrap_or(&Value::Null), "p_wrong", 0.0) as f32,
+        aug_p_slot_drop: gf(v.get("aug").unwrap_or(&Value::Null), "p_slot_drop", 0.0) as f32,
+        aug_p_map_off: gf(v.get("aug").unwrap_or(&Value::Null), "p_map_off", 0.0) as f32,
+        aug_eval_unseen: gi(v.get("aug").unwrap_or(&Value::Null), "eval_unseen", 0) as i32,
     }
 }
 
@@ -181,18 +207,19 @@ struct Stage {
     p1: f32,
     promote: f64,
     metric: i32,
+    act_mask: u32, // 0 = 바꾸지 않음(설정 act_mask/act_dims 그대로)
 }
 
 fn parse_stages(cur: &Value, default_env: i32, default_promote: f64) -> Vec<Stage> {
     let arr = match cur.get("stages").and_then(|x| x.as_array()) {
         Some(a) => a.clone(),
-        None => return vec![Stage { name: format!("A{}", default_env), env: default_env, p0: 0.0, p1: 0.0, promote: default_promote, metric: -1 }],
+        None => return vec![Stage { name: format!("A{}", default_env), env: default_env, p0: 0.0, p1: 0.0, promote: default_promote, metric: -1, act_mask: 0 }],
     };
     arr.iter()
         .map(|e| {
             if let Some(k) = e.as_i64() {
                 // 예전 꼴(G3): 정수 = 환경 단계, 지도는 빈 지도
-                Stage { name: format!("A{}", k), env: k as i32, p0: 0.0, p1: 0.0, promote: default_promote, metric: -1 }
+                Stage { name: format!("A{}", k), env: k as i32, p0: 0.0, p1: 0.0, promote: default_promote, metric: -1, act_mask: 0 }
             } else {
                 let m = e.get("map").and_then(|x| x.as_array()).cloned().unwrap_or_default();
                 let p = |i: usize| m.get(i).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
@@ -203,6 +230,7 @@ fn parse_stages(cur: &Value, default_env: i32, default_promote: f64) -> Vec<Stag
                     p1: p(1),
                     promote: gf(e, "promote", default_promote),
                     metric: gi(e, "metric", -1) as i32,
+                    act_mask: gi(e, "act_mask", 0) as u32,
                 }
             }
         })
@@ -333,6 +361,7 @@ fn main() {
                 assert_eq!(ppo_set_stage(h, stages[si].env), 0);
             }
             ppo_set_map_curriculum(h, stages[si].p0, stages[si].p1, c.map_kmin, c.map_kmax, c.map_reveal_r);
+            if stages[si].act_mask != 0 { ppo_set_act_mask(h, stages[si].act_mask); }
         }
         tx.send(Msg::Note(format!("start at stage {} ({:?})", si, stages[si]))).unwrap();
         tx.send(Msg::Stage(si, 0.0)).unwrap();
@@ -393,6 +422,7 @@ fn main() {
                     si += 1;
                     tx.send(Msg::Stage(si, t0.elapsed().as_secs_f64())).unwrap();
                     unsafe { ppo_set_map_curriculum(h, nx.p0, nx.p1, c.map_kmin, c.map_kmax, c.map_reveal_r) };
+                    if nx.act_mask != 0 { unsafe { ppo_set_act_mask(h, nx.act_mask) }; }
                     ignore_upto = unsafe { ppo_issued(h) };
                     tx.send(Msg::Note(format!("curriculum: now {} (first map C0 {:.2} C1 {:.2} C2 {:.2}: device value, no sync, no recapture; from iter {})",
                         nx.name, nx.p0, nx.p1, 1.0 - nx.p0 - nx.p1, ignore_upto + 1))).unwrap();
@@ -424,6 +454,7 @@ fn main() {
             let r = unsafe { ppo_set_stage(h, nx.env) };
             assert_eq!(r, 0);
             unsafe { ppo_set_map_curriculum(h, nx.p0, nx.p1, c.map_kmin, c.map_kmax, c.map_reveal_r) };
+            if nx.act_mask != 0 { unsafe { ppo_set_act_mask(h, nx.act_mask) }; }
             win.clear();
             pending_env = false;
             tx.send(Msg::Note(format!("curriculum: now {} (env A{} recreated, rollout graph recaptured; first map C0 {:.2} C1 {:.2})", nx.name, nx.env, nx.p0, nx.p1))).unwrap();

@@ -11,6 +11,7 @@
 #include "net.h"
 #include "net_ops.h"
 #include "ppo_capi.h"
+#include "vec_tab.h"
 
 namespace ppo {
 
@@ -64,6 +65,8 @@ struct Trainer {
   int splits[net::N_LAYER] = {};
   float *gn_part = nullptr, *loss_part = nullptr;
   net::TrainState* ts = nullptr;
+  obsv::VecTables vt;               // 얼린 이름·생김새 표(training/data/vla_v1)
+  obsv::ObsAug* aug_d = nullptr;    // 학습 때 흔들기(장치 값)
   net::LossHyper lh;
   net::AdamHyper ah;
 
@@ -89,6 +92,7 @@ struct Trainer {
 
   void make_env(int stage);
   void set_map_curr(const gmap::MapCurr& c);
+  void set_act_mask(uint32_t m);
   void capture();
   // 한 바퀴의 두 몸통(즉시 실행 또는 그래프 잡기 중에 부름)
   void rollout_body();

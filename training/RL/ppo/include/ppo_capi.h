@@ -35,6 +35,13 @@ typedef struct PpoConfig {
   float coll_extra;       /* 충돌로 끝난 스텝에 더하는 보상(학습기 쪽, reward/shaping.h). 0 = 끔(G3) */
   int32_t fp8;            /* G6: 몸통 층(A1–A3, C1–C3) FP8 켬 비트(net::Fp8Bits: 1 앞, 2 dgrad, 4 wgrad). 0 = BF16(기본, G3–G5 와 비트 같음) */
   int32_t pad_fp8;
+  /* VLA_INPUT 5·6절(v2 관측): 행동 8 의 커리큘럼 가림과 학습 때 흔들기(observation/obs.h ObsAug). 모두 0 이면 예전과 같음 */
+  uint32_t act_mask;      /* 학습하는 행동 비트(0 = act_dims 앞에서부터). 꺼진 행동은 0 고정 = 팔 홈 자세. 장치 값 — ppo_set_act_mask 로 단계마다 */
+  int32_t aug_on;         /* 1 = 아래 흔들기 켬(롤아웃·갱신이 같은 열쇠 = 같은 입력) */
+  float aug_vel_sigma, aug_prev_drop, aug_prev_sigma;           /* 속도 잡음 σ, 직전 명령 지우기 확률·잡음 σ */
+  float aug_p_erase, aug_p_syn, aug_p_hyper, aug_p_wrong;       /* 이름 흔들기 */
+  float aug_p_slot_drop, aug_p_map_off;                         /* 칸 지우기, 지도 통째로 비우기 */
+  int32_t aug_eval_unseen;                                      /* 1 = 처음 보는 이름(heldout)으로 평가 */
 } PpoConfig;
 
 typedef struct PpoLog {
@@ -72,6 +79,8 @@ int ppo_load(void* h, const uint8_t* data, int64_t nbytes); /* 동기, 시작 �
 int ppo_set_map_curriculum(void* h, float p0, float p1, int32_t kmin, int32_t kmax, float reveal_r);
 /* 띄운 바퀴 수(누적, 이어 하기면 체크포인트 바퀴부터) */
 int64_t ppo_issued(void* h);
+/* 학습하는 행동 비트 바꾸기(장치 값, 비동기 복사 하나 — 다시 잡기 없음). 다음에 띄우는 바퀴부터 */
+int ppo_set_act_mask(void* h, uint32_t mask);
 int64_t ppo_num_params(void* h);
 int64_t ppo_device_bytes(void* h);
 

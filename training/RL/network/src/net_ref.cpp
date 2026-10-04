@@ -258,13 +258,13 @@ void loss(Mode md, const double* mean, const double* val, const double* logstd, 
         const float ls = (float)logstd[k];
         inv[k] = std::exp(-ls);
         z[k] = (b.act[(size_t)r * N_ACT + k] - (float)mean[(size_t)r * N_ACT + k]) * inv[k];
-        if (k < h.act_dims) logp = logp + (-0.5f * z[k] * z[k] - ls - 0.5f * kLog2Pi);
+        if ((h.act_mask >> k) & 1u) logp = logp + (-0.5f * z[k] * z[k] - ls - 0.5f * kLog2Pi);
       }
       const float lr_ = logp - b.oldlogp[r], ratio = std::exp(lr_);
       const float s1 = ratio * A, rc = std::fmin(std::fmax(ratio, 1.f - h.clip), 1.f + h.clip), s2 = rc * A;
       const float g = (s1 <= s2) ? -ratio * A : 0.f;
       for (int k = 0; k < N_ACT; ++k) {
-        const bool on = k < h.act_dims;
+        const bool on = (h.act_mask >> k) & 1u;
         const float mu = (float)mean[(size_t)r * N_ACT + k], ex = std::fabs(mu) - 1.f;
         const float db = (on && h.bound_coef != 0.f && ex > 0.f) ? h.bound_coef * 2.f * ex * (mu > 0.f ? 1.f : -1.f) : 0.f;
         if (db != 0.f) q[12] += (double)(h.bound_coef * ex * ex);
@@ -293,13 +293,13 @@ void loss(Mode md, const double* mean, const double* val, const double* logstd, 
       for (int k = 0; k < N_ACT; ++k) {
         inv[k] = std::exp(-logstd[k]);
         z[k] = ((double)b.act[(size_t)r * N_ACT + k] - mean[(size_t)r * N_ACT + k]) * inv[k];
-        if (k < h.act_dims) logp += -0.5 * z[k] * z[k] - logstd[k] - 0.5 * 1.8378770664093453;
+        if ((h.act_mask >> k) & 1u) logp += -0.5 * z[k] * z[k] - logstd[k] - 0.5 * 1.8378770664093453;
       }
       const double lr_ = logp - b.oldlogp[r], ratio = std::exp(lr_);
       const double s1 = ratio * A, rc = std::fmin(std::fmax(ratio, 1.0 - h.clip), 1.0 + h.clip), s2 = rc * A;
       const double g = (s1 <= s2) ? -ratio * A : 0.0;
       for (int k = 0; k < N_ACT; ++k) {
-        const bool on = k < h.act_dims;
+        const bool on = (h.act_mask >> k) & 1u;
         const double mu = mean[(size_t)r * N_ACT + k], ex = std::fabs(mu) - 1.0;
         const double db = (on && h.bound_coef != 0.f && ex > 0.0) ? h.bound_coef * 2.0 * ex * (mu > 0.0 ? 1.0 : -1.0) : 0.0;
         if (db != 0.0) q[12] += h.bound_coef * ex * ex;
@@ -323,7 +323,7 @@ void loss(Mode md, const double* mean, const double* val, const double* logstd, 
     }
   }
   if (md == EMUL) for (int k = 0; k < N_ACT; ++k) q[k] = (double)(qf[k] - h.ent_coef) + h.ent_coef;   // 아래에서 빼는 ent_coef 도 FP32 로
-  for (int k = 0; k < N_ACT; ++k) dls[k] = k < h.act_dims ? q[k] - h.ent_coef : 0.0;
+  for (int k = 0; k < N_ACT; ++k) dls[k] = ((h.act_mask >> k) & 1u) ? q[k] - h.ent_coef : 0.0;
   st[0] = q[8] / M;
   st[1] = q[9] / M;
   st[2] = q[10] / M;
@@ -364,7 +364,7 @@ static void run_impl(Mode md, const std::vector<double>& P, const Batch& b, cons
   loss(md, tr.mean.data(), tr.val.data(), logstd, b, h, tr.dz[L_A4].data(), tr.dz[L_C4].data(), dls, st);
   tr.pg = st[0]; tr.vl = st[1]; tr.kl = st[2]; tr.clipfrac = st[3];
   tr.ent = 0.0;
-  for (int k = 0; k < h.act_dims; ++k) tr.ent += logstd[k] + 0.5 + 0.5 * 1.8378770664093453;
+  for (int k = 0; k < N_ACT; ++k) if ((h.act_mask >> k) & 1u) tr.ent += logstd[k] + 0.5 + 0.5 * 1.8378770664093453;
   tr.loss = tr.pg + h.vf_coef * tr.vl - h.ent_coef * tr.ent + st[4];
   if (!backward) return;
   tr.grad.assign(lay.total, 0.0);

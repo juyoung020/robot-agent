@@ -227,10 +227,11 @@ NDEV uint32_t assemble(const float* obs, int stride, int i, const gmap::MapTok& 
     float v = 0.f;
     if (c < net::N_OBS_G1) {
       v = (show || !goal_col(c)) ? obs[(size_t)c * stride + i] : 0.f;
-      if (on && vel_col(c) && aug->vel_sigma > 0.f) v = v + aug->vel_sigma * aug_gauss(aug_hash(*aug, k0, k1, 0x56454c00ull + (uint64_t)c));
-      if (on && c >= G_PREV && c < G_PREV + env::N_ACT) {
-        if (ar.prev_off) v = 0.f;
-        else if (aug->prev_sigma > 0.f) v = v + aug->prev_sigma * aug_gauss(aug_hash(*aug, k0, k1, 0x50524500ull + (uint64_t)c));
+      if (on) {
+        const bool pv = c >= G_PREV && c < G_PREV + env::N_ACT, vl = vel_col(c);
+        const float sg = pv ? aug->prev_sigma : vl ? aug->vel_sigma : 0.f;
+        const float nz = sg * aug_gauss(aug_hash(*aug, k0, k1, (pv ? 0x50524500ull : 0x56454c00ull) + (uint64_t)c));
+        v = (pv && ar.prev_off) ? 0.f : v + nz;
       }
       v = clamp10(v);
     } else if (um && c < net::N_OBS_G1 + gmap::N_WALL) {

@@ -21,13 +21,15 @@ struct TrainState {
   float r_sum, ep_ret_sum, ep_len_sum, v_sum;
   int n_succ, n_coll, n_tout;
   float comp_sum;        // 지도 완성도(과제 물체 확정) 합
+  uint32_t act_mask;     // 학습하는 행동 비트(커리큘럼 단계마다 장치 값 — 다시 잡기 없이 바꿈). 꺼진 행동은 0 고정(표본·logp·엔트로피에서 뺌)
+  int act_pad;
 };
 
 struct LossHyper {
   float clip, vclip, vf_coef, ent_coef;
   int adaptive_lr;
   float kl_target, lr_min, lr_max;
-  int act_dims;   // 앞에서부터 이만큼만 학습(나머지 행동은 0 고정, logp·엔트로피에서 뺌)
+  int act_dims;   // (예전 값, 커널은 쓰지 않음) 학습하는 행동은 장치 값 TrainState::act_mask
   float bound_coef;   // 정책 평균이 행동 자르기(±1) 밖이면 coef·(|μ|−1)² (행 평균). 0 이면 끔(G3 와 비트 같음)
 };
 struct AdamHyper {

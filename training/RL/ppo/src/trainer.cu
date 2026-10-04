@@ -28,11 +28,14 @@ T_* Trainer::alloc(size_t n) {
 
 // ---- 관측 모으기(롤아웃: 판 i 그대로 / 갱신: 섞은 표본) ----
 constexpr int AS_L = 16, AS_E = 8;
+// 흔들기 열쇠 = (바퀴, 스텝 << 32 | 판): 롤아웃과 갱신 모으기가 같은 (스텝, 판)에 같은 입력을 만든다
 __global__ void __launch_bounds__(AS_L * AS_E) assemble_k(const float* obs_row, const gmap::MapTok* tok_row, int N, int use_map, int goal_mode,
-                                                          uint16_t* x0, uint16_t* sin, uint32_t* mask) {
+                                                          uint16_t* x0, uint16_t* sin, uint32_t* mask, obsv::VecTab vt, const obsv::ObsAug* aug,
+                                                          const TrainState* ts, int t) {
   const int e = blockIdx.x * AS_E + threadIdx.x / AS_L, lane = threadIdx.x % AS_L;
   if (e >= N) return;
-  const uint32_t mk = obsv::assemble(obs_row + (size_t)e * N_OBS_G1, 1, 0, tok_row[e], x0 + (size_t)e * X0_W, sin + (size_t)e * KSLOT * SLOT_IN, use_map, goal_mode, lane, AS_L);
+  const uint32_t mk = obsv::assemble(obs_row + (size_t)e * N_OBS_G1, 1, 0, tok_row[e], x0 + (size_t)e * X0_W, sin + (size_t)e * KSLOT * SLOT_IN, use_map, goal_mode, lane, AS_L,
+                                     vt, aug, (uint64_t)ts->iter, ((uint64_t)t << 32) | (uint64_t)e);
   if (lane == 0) mask[e] = mk;
 }
 
@@ -76,6 +79,7 @@ struct GatherP {
   const float* obs_buf /* 행 판 obs_rows [T+1][N][80] */; const gmap::MapTok* tok0; const float* act_buf; const float* logp_buf; const float* val_buf; const float* adv_buf;
   const float* ret_buf; int N, T, MB, base, epoch, hb, use_map, goal_mode; uint64_t seed; const TrainState* ts;
   uint16_t* x0; uint16_t* sin; uint32_t* mask; float *act, *oldlogp, *oldv, *adv, *ret;
+  obsv::VecTab vt; const obsv::ObsAug* aug;
 };
 __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
   const int r = blockIdx.x * AS_E + threadIdx.x / AS_L, lane = threadIdx.x % AS_L;
@@ -85,7 +89,8 @@ __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
   const uint32_t p = feistel_perm((uint32_t)(g.base + r), S, g.hb, key);
   const int t = (int)(p / (uint32_t)g.N), i = (int)(p % (uint32_t)g.N);
   const uint32_t mk = obsv::assemble(g.obs_buf + ((size_t)t * g.N + i) * N_OBS_G1, 1, 0, g.tok0[(size_t)t * g.N + i], g.x0 + (size_t)r * X0_W,
-                                     g.sin + (size_t)r * KSLOT * SLOT_IN, g.use_map, g.goal_mode, lane, AS_L);
+                                     g.sin + (size_t)r * KSLOT * SLOT_IN, g.use_map, g.goal_mode, lane, AS_L, g.vt, g.aug, (uint64_t)g.ts->iter,
+                                     ((uint64_t)t << 32) | (uint64_t)i);
   if (lane < N_ACT) g.act[(size_t)r * N_ACT + lane] = g.act_buf[((size_t)t * g.N + i) * N_ACT + lane];
   if (lane == 0) {
     g.mask[r] = mk;
@@ -97,11 +102,12 @@ __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
 }
 
 // ---- 행동 표본(장치 난수) · logp · 가치 ----
-__global__ void sample_k(const float* mean, const float* val, const float* logstd, const TrainState* ts, uint64_t seed, int t, int N, int act_dims,
+__global__ void sample_k(const float* mean, const float* val, const float* logstd, const TrainState* ts, uint64_t seed, int t, int N,
                          float* act_env, float* act_buf, float* logp_buf, float* val_buf) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= N) return;
   const uint64_t it = (uint64_t)ts->iter;
+  const uint32_t am = ts->act_mask;   // 커리큘럼 가림(장치 값)
   float logp = 0.f;
   for (int k = 0; k < N_ACT; ++k) {
     const uint64_t h = hash4(seed, it, ((uint64_t)t << 8) | (uint64_t)k, (uint64_t)i);
@@ -110,8 +116,8 @@ __global__ void sample_k(const float* mean, const float* val, const float* logst
     const float eps = sqrtf(-2.f * logf(u1)) * cospif(2.f * u2);
     const float ls = logstd[k];
     const float mu = mean[(size_t)i * N_ACT + k];
-    float a = 0.f;   // 학습하지 않는 행동은 0 고정(CURRICULUM 3절)
-    if (k < act_dims) {
+    float a = 0.f;   // 학습하지 않는 행동은 0 고정(CURRICULUM 3절) — 팔·그리퍼 0 = 홈 자세
+    if ((am >> k) & 1u) {
       a = mu + expf(ls) * eps;
       const float inv = expf(-ls);
       const float z = (a - mu) * inv;   // ppo_loss_k 와 같은 식(첫 미니배치 비율이 정확히 1)
@@ -402,6 +408,18 @@ Trainer::Trainer(const PpoConfig& c) : cfg(c) {
   TrainState h{};
   h.lr = cfg.lr;
   h.adv_std = 1.f;
+  h.act_mask = cfg.act_mask ? cfg.act_mask : ((1u << cfg.act_dims) - 1u);
+  if (!vt.load()) std::abort();
+  vt.upload();
+  dev_bytes += vt.dev_bytes();
+  aug_d = alloc<obsv::ObsAug>(1);
+  {
+    obsv::ObsAug a = obsv::kAugOff;
+    a.on = cfg.aug_on; a.eval_unseen = cfg.aug_eval_unseen; a.vel_sigma = cfg.aug_vel_sigma; a.prev_drop = cfg.aug_prev_drop; a.prev_sigma = cfg.aug_prev_sigma;
+    a.p_erase = cfg.aug_p_erase; a.p_syn = cfg.aug_p_syn; a.p_hyper = cfg.aug_p_hyper; a.p_wrong = cfg.aug_p_wrong; a.p_slot_drop = cfg.aug_p_slot_drop;
+    a.p_map_off = cfg.aug_p_map_off; a.seed = cfg.seed * 0x2545F4914F6CDD1Dull + 0xA06ull;
+    PCK(cudaMemcpy(aug_d, &a, sizeof a, cudaMemcpyHostToDevice));
+  }
   PCK(cudaMemcpy(ts, &h, sizeof h, cudaMemcpyHostToDevice));
 
   const int R = cfg.log_ring > 1 ? cfg.log_ring : 16;
@@ -430,6 +448,7 @@ Trainer::~Trainer() {
   if (ring_h) cudaFreeHost(ring_h);
   if (ckpt_h) cudaFreeHost(ckpt_h);
   if (curr_h) cudaFreeHost(curr_h);
+  vt.free_dev();
   for (auto& e : curr_ev) if (e) cudaEventDestroy(e);
 }
 
@@ -443,12 +462,22 @@ void Trainer::set_map_curr(const gmap::MapCurr& c) {
   PCK(cudaEventRecord(curr_ev[k], 0));
 }
 
+// 학습하는 행동 비트(TrainState::act_mask) 바꾸기: 같은 고정 호스트 링으로 4 B 복사 하나(다음 바퀴부터, 다시 잡기 없음)
+void Trainer::set_act_mask(uint32_t m) {
+  const int k = curr_slot++ % 8;
+  if (cudaEventQuery(curr_ev[k]) == cudaErrorNotReady) PCK(cudaEventSynchronize(curr_ev[k]));
+  std::memcpy(&curr_h[k], &m, sizeof m);
+  PCK(cudaMemcpyAsync(&ts->act_mask, &curr_h[k], sizeof m, cudaMemcpyHostToDevice, 0));
+  PCK(cudaEventRecord(curr_ev[k], 0));
+}
+
 void Trainer::make_env(int stage) {
   cfg.stage = stage;
   tok.reset();
   map.reset();
   env.reset();
-  env = std::make_unique<env::DeviceEnv>(N, stage, cfg.seed * 1000003ull + 17ull + (uint64_t)stage);
+  // 팔을 늘 풀어 둔다(행동 8, VLA_INPUT 5절): 꺼진 행동은 표본이 0 → 관절 목표 = 홈 + 0·범위 = 홈 자세라 예전(팔 묶음)과 비트가 같다(env_verify --arm-zero)
+  env = std::make_unique<env::DeviceEnv>(N, stage, cfg.seed * 1000003ull + 17ull + (uint64_t)stage, true);
   map = std::make_unique<gmap::DeviceMap>(N, cfg.seed * 7919ull + 3ull + (uint64_t)stage);
   tok = std::make_unique<gmap::TokenRecorder>(N, T + 1);
   PCK(cudaMemset(obs_buf, 0, sizeof(float) * (size_t)(T + 1) * N_OBS_G1 * N));
@@ -517,7 +546,7 @@ void Trainer::backward(int M) {
   gemm_dw2(kLayers[a1], dz[a1], dz[c1], x0, x0, M, ws[a1], ws[c1], ch, 0);
   gemm_dx_pool(kLayers[a1], dz[a1], M, Wl(a1), dpool, false, 0);
   gemm_dx_pool(kLayers[c1], dz[c1], M, Wl(c1), dpool, true, 0);
-  if (!slot_old() && ch % 32 == 0) {   // 칸 MLP 뒤 묶음(한 커널, 같은 결과)
+  if (!slot_old() && ch % 32 == 0 && kSlotFused) {   // 칸 MLP 뒤 묶음(한 커널, 같은 결과)
     slot_bwd(dpool, s2o, s1o, sin, mask, amax, Wl(L_S2), M, ch, ws[L_S2], ws[L_S1], keep_slot_bufs ? dz[L_S2] : nullptr, keep_slot_bufs ? dz[L_S1] : nullptr, 0);
   } else {
     pool_bwd(dpool, s2o, mask, amax, M, dz[L_S2], 0);
@@ -535,7 +564,7 @@ void Trainer::backward(int M) {
 
 void Trainer::gather(int epoch, int mb) {
   GatherP g{obs_rows, tok->at(0), act_buf, logp_buf, val_buf, adv_buf, ret_buf, N, T, MB, mb * MB, epoch, half_bits((uint32_t)(N * T)), cfg.use_map,
-            cfg.goal_from_map, cfg.seed, ts, x0, sin, mask, mb_act, mb_oldlogp, mb_oldv, mb_adv, mb_ret};
+            cfg.goal_from_map, cfg.seed, ts, x0, sin, mask, mb_act, mb_oldlogp, mb_oldv, mb_adv, mb_ret, vt.dev(), aug_d};
   gather_k<<<(MB + AS_E - 1) / AS_E, AS_L * AS_E>>>(g);
   PCK(cudaGetLastError());
 }
@@ -574,10 +603,10 @@ void Trainer::rollout_body() {
 // 롤아웃 한 스텝(t < T): 관측 모으기 → 정책 앞 → 표본 → 환경 → 지도. t == T: 마지막 가치(부트스트랩)만
 void Trainer::rollout_step(int t) {
   const int ab = (N + AS_E - 1) / AS_E, sb = (N + 127) / 128;
-  assemble_k<<<ab, AS_L * AS_E>>>(obs_rows + (size_t)t * N_OBS_G1 * N, tok->at(t), N, cfg.use_map, cfg.goal_from_map, x0, sin, mask);
+  assemble_k<<<ab, AS_L * AS_E>>>(obs_rows + (size_t)t * N_OBS_G1 * N, tok->at(t), N, cfg.use_map, cfg.goal_from_map, x0, sin, mask, vt.dev(), aug_d, ts, t);
   forward(N);
   if (t == T) { value_k<<<sb, 128>>>(val, N, val_buf + (size_t)T * N); return; }
-  sample_k<<<sb, 128>>>(mean, val, P + lay.logstd, ts, cfg.seed, t, N, cfg.act_dims, act_env, act_buf, logp_buf, val_buf);
+  sample_k<<<sb, 128>>>(mean, val, P + lay.logstd, ts, cfg.seed, t, N, act_env, act_buf, logp_buf, val_buf);
   env->step(act_env, obs_buf + (size_t)(t + 1) * N_OBS_G1 * N, rew_buf + (size_t)t * N, done_buf + (size_t)t * N);
   obs_rows_k<<<(N + 31) / 32, 256>>>(obs_buf + (size_t)(t + 1) * N_OBS_G1 * N, N, obs_rows + (size_t)(t + 1) * N_OBS_G1 * N);
   epstat_k<<<sb, 128>>>(done_buf + (size_t)t * N, map->metrics() + (size_t)gmap::M_INIT * N, N, cur_len, it_stat, tab);
@@ -706,6 +735,10 @@ int ppo_load(void* h, const uint8_t* data, int64_t nbytes) {
 }
 int ppo_set_map_curriculum(void* h, float p0, float p1, int32_t kmin, int32_t kmax, float reveal_r) {
   static_cast<Trainer*>(h)->set_map_curr(gmap::MapCurr{p0, p1, kmin, kmax, reveal_r, 0});
+  return 0;
+}
+int ppo_set_act_mask(void* h, uint32_t mask) {
+  static_cast<Trainer*>(h)->set_act_mask(mask);
   return 0;
 }
 int64_t ppo_issued(void* h) { return static_cast<Trainer*>(h)->issued; }

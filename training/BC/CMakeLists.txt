@@ -40,6 +40,7 @@ target_compile_definitions(bcvit PRIVATE TN_HPROMO=${TN_HPROMO})
 target_include_directories(bcvit PRIVATE ${INC})
 add_library(bc SHARED ${RL}/env/src/env_kernel.cu ${RL}/map/src/map_kernel.cu ${RL}/network/src/net_kernels.cu src/bc.cu src/bc_render.cu $<TARGET_OBJECTS:bcvit>)
 target_include_directories(bc PUBLIC ${INC})
+target_compile_definitions(bc PUBLIC VLA_DATA_DIR="${CMAKE_CURRENT_LIST_DIR}/../data/vla_v1")   # 얼린 이름·생김새·지시 표(observation/vec_tab.h)
 target_include_directories(bc PRIVATE ${ENGINE_DIR})
 target_link_libraries(bc PUBLIC CUDA::cudart)
 # 팀 RenderBatch(서브모듈, 읽기만)를 쓰는 파일 하나에만 팀 렌더 빌드 규칙(-ftz=true 등) — render_bench 와 같음

@@ -39,6 +39,8 @@ static std::vector<double> fv(const std::vector<float>& v) { return std::vector<
 
 static bool g_g4data = false;   // v4/v5 --g4data: G4 자료(목표는 지도에서, 처음 지도 섞음)로. v6/v7 은 늘 G4 자료
 static bool g_a2 = false;       // --a2: A2 환경(가구) + 지도 토큰에 안 본 곳 광선(use_map 2). v4/v5 는 --g4data 와 같이
+static bool g_act8 = false;     // --act8: 행동 8 모두 학습(act_mask 0xff — 팔·그리퍼 포함, VLA_INPUT 5절)
+static bool g_aug = false;      // --aug: 학습 때 흔들기 켬(속도 잡음·직전 명령·이름 흔들기·칸 지우기·지도 끄기, obs.h ObsAug)
 static PpoConfig small_cfg(uint64_t seed, int graphs, bool g4 = true) {
   PpoConfig c{};
   c.n_env = 512; c.horizon = 16; c.epochs = 2; c.minibatches = 4; c.stage = 1; c.use_map = 1; c.adaptive_lr = 0; c.use_graphs = graphs;
@@ -52,6 +54,11 @@ static PpoConfig small_cfg(uint64_t seed, int graphs, bool g4 = true) {
   c.bound_coef = 0.5f;   // 자르기 밖 평균 벌(G4)도 검사에 넣음 — V4/V5 의 흔든 미니배치에서 |μ| > 1 인 행이 있게 아래에서 평균 출력을 키움
   if (!g4) { c.goal_from_map = 0; c.map_p0 = 0.f; c.map_p1 = 0.f; }   // G3 설정(특권 목표, 빈 지도) — V4/V5 기준 자료
   else if (g_a2) { c.stage = 2; c.use_map = 2; }
+  if (g_act8) c.act_mask = 0xffu;
+  if (g_aug) {
+    c.aug_on = 1; c.aug_vel_sigma = 0.05f; c.aug_prev_drop = 0.1f; c.aug_prev_sigma = 0.05f;
+    c.aug_p_erase = 0.1f; c.aug_p_syn = 0.2f; c.aug_p_hyper = 0.1f; c.aug_p_wrong = 0.05f; c.aug_p_slot_drop = 0.1f; c.aug_p_map_off = 0.05f;
+  }
   c.fp8 = std::getenv("NET_FP8") ? std::atoi(std::getenv("NET_FP8")) : 0;   // G6: 몸통 층 FP8 비트(1 앞, 2 dgrad, 4 wgrad)
   netref::set_fp8(c.fp8);                                                    // CPU 흉내(바닥)도 같은 FP8 처방
   return c;
@@ -118,7 +125,7 @@ static netref::Batch make_batch(Trainer& tr, netref::Hyper& hy) {
   }
   VCK(cudaMemcpy(tr.mb_oldlogp, b.oldlogp.data(), sizeof(float) * M, cudaMemcpyHostToDevice));
   VCK(cudaMemcpy(tr.mb_oldv, b.oldv.data(), sizeof(float) * M, cudaMemcpyHostToDevice));
-  hy = netref::Hyper{tr.cfg.clip, tr.cfg.vclip, tr.cfg.vf_coef, tr.cfg.ent_coef, tr.cfg.act_dims, tr.cfg.bound_coef};
+  hy = netref::Hyper{tr.cfg.clip, tr.cfg.vclip, tr.cfg.vf_coef, tr.cfg.ent_coef, dl(tr.ts, 1)[0].act_mask, tr.cfg.bound_coef};
   {
     tr.forward(M);
     VCK(cudaDeviceSynchronize());
@@ -622,6 +629,51 @@ static int run_eval(const char* path, int stage, int iters, int N, int use_map, 
   return 0;
 }
 
+// 관측 모으기 CPU == GPU(v2: 정규화·얼린 표·흔들기·행동 8): 롤아웃 끝 스텝 T 의 assemble 결과(X0·칸 줄·채운 칸 비트)를
+// 같은 G1 관측·지도 토큰·표·열쇠로 CPU 가 다시 만들어 비트 비교. --negative: CPU 쪽 흔들기 열쇠의 스텝을 하나 틀리게(반드시 달라야 함)
+static int run_obs(bool neg) {
+  PpoConfig c = small_cfg(5, 0);
+  ppo::Trainer tr(c);
+  for (int k = 0; k < 2; ++k) tr.iterate();
+  VCK(cudaDeviceSynchronize());
+  PpoLog L;
+  while (tr.poll(&L)) {}
+  tr.rollout_body();   // 끝 스텝 T 의 assemble 이 x0·sin·mask 에 남음(갱신 전)
+  VCK(cudaDeviceSynchronize());
+  const int N = tr.N, T = tr.T;
+  const std::vector<float> rows = dl(tr.obs_rows + (size_t)T * N_OBS_G1 * N, (size_t)N_OBS_G1 * N);
+  std::vector<gmap::MapTok> tok(N);
+  VCK(cudaMemcpy(tok.data(), tr.tok->at(T), sizeof(gmap::MapTok) * N, cudaMemcpyDeviceToHost));
+  const std::vector<uint16_t> gx0 = dl(tr.x0, (size_t)N * X0_W), gsin = dl(tr.sin, (size_t)N * KSLOT * SLOT_IN);
+  const std::vector<uint32_t> gmk = dl(tr.mask, N);
+  const TrainState s = dl(tr.ts, 1)[0];
+  obsv::ObsAug a = dl(tr.aug_d, 1)[0];
+  const obsv::VecTab vt = tr.vt.host();
+  std::vector<uint16_t> x0((size_t)X0_W, 0), sn((size_t)KSLOT * SLOT_IN, 0);
+  long bad = 0, nslot = 0, nonzero_name = 0;
+  for (int e = 0; e < N; ++e) {
+    std::fill(x0.begin(), x0.end(), 0);
+    const uint64_t k1 = ((uint64_t)(neg ? T - 1 : T) << 32) | (uint64_t)e;
+    const uint32_t mk = obsv::assemble(rows.data() + (size_t)e * N_OBS_G1, 1, 0, tok[e], x0.data(), sn.data(), tr.cfg.use_map, tr.cfg.goal_from_map, 0, 1, vt, &a,
+                                       (uint64_t)s.iter, k1);
+    for (int q = X0_OBS; q < X0_W; ++q) if (x0[q] != gx0[(size_t)e * X0_W + q]) { if (bad < 5 && !neg) std::printf("  x0 env %d col %d cpu %04x gpu %04x raw %.4f\n", e, q, x0[q], gx0[(size_t)e * X0_W + q], q - X0_OBS < N_OBS_G1 ? rows[(size_t)e * N_OBS_G1 + q - X0_OBS] : 0.f); ++bad; }   // 집합 칸 [0, 128) 은 칸 MLP 뒤 커널이 씀
+    for (int q = 0; q < KSLOT * SLOT_IN; ++q) if (sn[q] != gsin[(size_t)e * KSLOT * SLOT_IN + q] && bad < 8 && !neg) std::printf("  sin env %d slot %d col %d cpu %04x gpu %04x\n", e, q / SLOT_IN, q % SLOT_IN, sn[q], gsin[(size_t)e * KSLOT * SLOT_IN + q]);
+    for (int q = 0; q < KSLOT * SLOT_IN; ++q) bad += sn[q] != gsin[(size_t)e * KSLOT * SLOT_IN + q];
+    bad += mk != gmk[e];
+    nslot += __builtin_popcount(mk);
+    for (int b = 0; b < KSLOT; ++b)
+      if ((mk >> b) & 1u)
+        for (int q = net::SLOT_NAME; q < net::SLOT_APP; ++q) if (sn[(size_t)b * SLOT_IN + q]) { ++nonzero_name; break; }
+  }
+  std::printf("obs assemble CPU vs GPU (N %d, step %d, iter %lld, use_map %d, aug %d, act_mask 0x%x): %ld words differ; filled slots %.2f/env, slots with a name vector %.3f\n",
+              N, T, (long long)s.iter, tr.cfg.use_map, a.on, s.act_mask, bad, (double)nslot / N, nslot ? (double)nonzero_name / nslot : 0.0);
+  if (neg) {
+    std::printf("negative control (wrong augmentation key on CPU): %s\n", bad > 0 ? "differs (expected)" : "IDENTICAL (bad)");
+    return bad > 0 ? 0 : 1;
+  }
+  return bad == 0 ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
   if (argc < 2) { std::fprintf(stderr, "usage: ppo_verify v4|v5|v6|v7|bench [--negative]\n"); return 2; }
   const std::string m = argv[1];
@@ -629,6 +681,9 @@ int main(int argc, char** argv) {
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--negative")) neg = true;
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--g4data")) g_g4data = true;
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--a2")) g_a2 = true;
+  for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--act8")) g_act8 = true;
+  for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--aug")) g_aug = true;
+  if (m == "obs") return run_obs(neg);
   if (m == "bench") return run_bench(argc > 2 ? std::atoi(argv[2]) : 4096, argc > 3 ? std::atoi(argv[3]) : 64, argc > 4 ? std::atoi(argv[4]) : 20,
                                      argc > 5 ? std::atoi(argv[5]) : 4, argc > 6 ? std::atoi(argv[6]) : 1);
   if (m == "v4" || m == "v5") {

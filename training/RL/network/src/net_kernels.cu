@@ -205,13 +205,38 @@ void pool_bwd(const float* dpool, const uint16_t* s2o, const uint32_t* mask, con
 }
 
 // 칸 MLP 묶음(slot_fused.cuh) — sin 버퍼에서 읽는 판
+// 칸 입력이 64 칸보다 넓으면(v2: 숫자 33 + 이름 128 + 생김새 128 = 304) 묶음 커널을 못 쓴다 → 예전 따로 커널 길(같은 식, NET_SLOT_OLD 와 같음)
+template <bool F>
+static void slot_fwd_d(const uint16_t* sin, const uint32_t* mask, const uint16_t* W1, const uint16_t* W2, int M, uint16_t* s1o, uint16_t* s2o, uint16_t* x0,
+                       uint8_t* amax, cudaStream_t st) {
+  if constexpr (F) {
+    slot_fwd_t(SinBuf{sin}, mask, W1, W2, M, s1o, s2o, x0, amax, st);
+  } else {
+    gemm_fwd(kLayers[L_S1], sin, M * KSLOT, W1, s1o, st);
+    gemm_fwd(kLayers[L_S2], s1o, M * KSLOT, W2, s2o, st);
+    pool_fwd(s2o, mask, M, x0, amax, st);
+  }
+}
+template <bool F>
+static void slot_bwd_d(const float* dpool, const uint16_t* s2o, const uint16_t* s1o, const uint16_t* sin, const uint32_t* mask, const uint8_t* amax,
+                       const uint16_t* W2, int M, int kchunk, float* ws2, float* ws1, uint16_t* dz2_out, uint16_t* dz1_out, cudaStream_t st) {
+  if constexpr (F) {
+    slot_bwd_t(dpool, s2o, s1o, SinBuf{sin}, mask, amax, W2, M, kchunk, ws2, ws1, dz2_out, dz1_out, st);
+  } else {
+    if (!dz2_out || !dz1_out) { std::fprintf(stderr, "slot_bwd: wide slot input needs dZ S2/S1 buffers\n"); std::abort(); }
+    pool_bwd(dpool, s2o, mask, amax, M, dz2_out, st);
+    gemm_dw(kLayers[L_S2], dz2_out, s1o, M * KSLOT, ws2, kchunk, st);
+    gemm_dx_dact(kLayers[L_S2], dz2_out, M * KSLOT, W2, s1o, kLayers[L_S1].N, dz1_out, 0, st);
+    gemm_dw(kLayers[L_S1], dz1_out, sin, M * KSLOT, ws1, kchunk, st);
+  }
+}
 void slot_fwd(const uint16_t* sin, const uint32_t* mask, const uint16_t* W1, const uint16_t* W2, int M, uint16_t* s1o, uint16_t* s2o, uint16_t* x0,
               uint8_t* amax, cudaStream_t st) {
-  slot_fwd_t(SinBuf{sin}, mask, W1, W2, M, s1o, s2o, x0, amax, st);
+  slot_fwd_d<kSlotFused>(sin, mask, W1, W2, M, s1o, s2o, x0, amax, st);
 }
 void slot_bwd(const float* dpool, const uint16_t* s2o, const uint16_t* s1o, const uint16_t* sin, const uint32_t* mask, const uint8_t* amax,
               const uint16_t* W2, int M, int kchunk, float* ws2, float* ws1, uint16_t* dz2_out, uint16_t* dz1_out, cudaStream_t st) {
-  slot_bwd_t(dpool, s2o, s1o, SinBuf{sin}, mask, amax, W2, M, kchunk, ws2, ws1, dz2_out, dz1_out, st);
+  slot_bwd_d<kSlotFused>(dpool, s2o, s1o, sin, mask, amax, W2, M, kchunk, ws2, ws1, dz2_out, dz1_out, st);
 }
 
 // ---- 블록 안 고정 나무 합 ----
@@ -243,7 +268,7 @@ __global__ void __launch_bounds__(LOSS_NT) ppo_loss_k(LossIn in, int M, const Tr
       const float ls = in.logstd[k];
       inv[k] = expf(-ls);
       z[k] = (in.act[(long long)r * N_ACT + k] - in.mean[(long long)r * N_ACT + k]) * inv[k];
-      if (k < h.act_dims) logp = logp + (-0.5f * z[k] * z[k] - ls - 0.5f * kLog2Pi);
+      if ((ts->act_mask >> k) & 1u) logp = logp + (-0.5f * z[k] * z[k] - ls - 0.5f * kLog2Pi);
     }
     const float lr_ = logp - in.oldlogp[r];
     const float ratio = expf(lr_);
@@ -252,7 +277,7 @@ __global__ void __launch_bounds__(LOSS_NT) ppo_loss_k(LossIn in, int M, const Tr
     const float g = (s1 <= s2) ? -ratio * A : 0.f;   // d pg / d logp
     float bl = 0.f;
     for (int k = 0; k < N_ACT; ++k) {
-      const bool on = k < h.act_dims;
+      const bool on = (ts->act_mask >> k) & 1u;
       // 자르기 밖 평균 벌(bound loss): 환경이 행동을 ±1 로 자르므로 |μ| > 1 이면 표본이 모두 같은 행동이 되어 PPO 기울기가 μ 를 되돌리지 못함
       const float mu = in.mean[(long long)r * N_ACT + k], ex = fabsf(mu) - 1.f;
       const float db = (on && h.bound_coef != 0.f && ex > 0.f) ? h.bound_coef * 2.f * ex * (mu > 0.f ? 1.f : -1.f) : 0.f;
@@ -304,7 +329,7 @@ __global__ void __launch_bounds__(256) ppo_loss_reduce_k(const float* partial, i
   if (threadIdx.x != 0) return;
   float ent = 0.f;
   for (int k = 0; k < N_ACT; ++k) {
-    const bool on = k < h.act_dims;
+    const bool on = (ts->act_mask >> k) & 1u;
     g_logstd[k] = on ? q[k] - h.ent_coef : 0.f;   // 엔트로피 = Σ (log σ + ½ + ½ log 2π) → d(−c·H)/d log σ = −c
     if (on) ent = ent + logstd[k] + 0.5f + 0.5f * kLog2Pi;
   }

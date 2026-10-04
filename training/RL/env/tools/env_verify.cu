@@ -1,5 +1,7 @@
 // V1 검증: 같은 씨앗·같은 행동 열로 GPU 커널과 CPU 참조판을 돌려 **매 스텝 모든 상태·관측·보상·끝 판정**을 비트 단위로 비교한다.
-//   env_verify [N=2048] [steps=400] [--negative] [--stage 0|1|2]   (기본 A1; 2 = A2 가구)
+//   env_verify [N=2048] [steps=400] [--negative] [--stage 0|1|2] [--arm | --arm-zero]   (기본 A1; 2 = A2 가구)
+// --arm: GPU·CPU 모두 팔을 풀고(arm_free) 행동 8 을 모두 무작위로(팔·그리퍼 경로, VLA_INPUT 5절).
+// --arm-zero: GPU 는 팔을 풀고 팔·그리퍼 행동 0(학습기의 커리큘럼 가림 = 0 고정), CPU 는 예전처럼 팔 묶음 — 둘이 비트로 같아야 한다(학습기가 늘 팔을 풀어 둬도 예전 결과 그대로)
 // --negative: GPU 쪽에 일부러 버그(회전 부호)를 넣는다. 이 판은 반드시 실패해야 한다(검증이 이빨이 있는지) — 실패해야 종료 코드 0.
 #include <cstdio>
 #include <cstring>
@@ -27,17 +29,19 @@ static const char* field_name(int k) {
 
 int main(int argc, char** argv) {
   int N = 2048, T = 400, stage = 1;
-  bool negative = false;
+  bool negative = false, arm = false, arm_zero = false;
   int pos = 0;
   for (int a = 1; a < argc; ++a) {
     if (!std::strcmp(argv[a], "--negative")) negative = true;
     else if (!std::strcmp(argv[a], "--stage") && a + 1 < argc) stage = std::atoi(argv[++a]);
+    else if (!std::strcmp(argv[a], "--arm")) arm = true;
+    else if (!std::strcmp(argv[a], "--arm-zero")) arm_zero = true;
     else if (pos == 0) { N = std::atoi(argv[a]); ++pos; }
     else if (pos == 1) { T = std::atoi(argv[a]); ++pos; }
   }
   const uint64_t seed = 20261004;
-  DeviceEnv gpu(N, stage, seed);
-  CpuEnv cpu(N, stage, seed);
+  DeviceEnv gpu(N, stage, seed, arm || arm_zero);
+  CpuEnv cpu(N, stage, seed, arm);
   float *d_act, *d_obs, *d_rew; int* d_done;
   cudaMalloc(&d_act, sizeof(float) * N_ACT * N);
   cudaMalloc(&d_obs, sizeof(float) * N_OBS * N);
@@ -59,6 +63,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < N; ++i) { act[0 * N + i] = dm::rand_range(arng, -0.2f, 1.f); act[1 * N + i] = dm::rand_range(arng, -0.6f, 0.6f); }
     // 짝수 판: 목표로 향하는 간단한 제어(직전 관측으로) — 성공 경로(가까움·정면·보임·멈춤 1 s)까지 검증하려고
     if (t > 0) for (int i = 0; i < N; i += 2) { float a[N_ACT]; approach_action(obs_c.data(), N, i, a); act[0 * N + i] = a[0]; act[1 * N + i] = a[1]; }
+    if (!arm) for (int k = 2; k < N_ACT; ++k) for (int i = 0; i < N; ++i) act[(size_t)k * N + i] = 0.f;   // 팔 묶음·0 고정 판: 팔 행동 0(묶인 판은 어차피 안 씀)
     cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
     gpu.step(d_act, d_obs, d_rew, d_done, negative ? 1 : 0);
     cpu.step(act, obs_c, rew_c, done_c);
@@ -81,7 +86,7 @@ int main(int argc, char** argv) {
     mismatches += m;
     if (m && !negative) break;   // 정상 판은 첫 불일치에서 멈춰 자세히 보여 준다
   }
-  std::printf("env_verify: N=%d steps=%d stage A%d  episode ends seen: running %d, success %d, collision %d, timeout %d\n", N, T, stage, ends[0], ends[1], ends[2], ends[3]);
+  std::printf("env_verify: N=%d steps=%d stage A%d arm %s  episode ends seen: running %d, success %d, collision %d, timeout %d\n", N, T, stage, arm ? "free (8 actions)" : arm_zero ? "GPU free with arm actions 0 vs CPU fixed" : "fixed", ends[0], ends[1], ends[2], ends[3]);
   if (negative) {
     std::printf("negative control: %ld mismatches (must be > 0)\n", mismatches);
     return mismatches > 0 ? 0 : 1;
