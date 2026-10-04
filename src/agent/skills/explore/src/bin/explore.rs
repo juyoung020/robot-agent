@@ -88,7 +88,7 @@ fn main() {
     println!("{}", serde_json::to_string_pretty(&s).unwrap());
 }
 
-/// 정답 기준: 바닥 칸 중 출발점에서 몸통 원(0.28 m)이 닿는 곳(벽에서 0.28 m 떨어진 칸으로 이어진 연결 성분)과 그 둘레 0.6 m
+/// 정답 기준: 바닥 칸 중 출발점에서 몸통 원(0.37 m)이 닿는 곳(벽에서 0.37 m 떨어진 칸으로 이어진 연결 성분)과 그 둘레 0.6 m
 /// (카메라로 볼 수 있는 바닥). 값 1 = 기준 칸.
 fn reachable_reference(floor: &move_robot::Grid, start: [f64; 3]) -> move_robot::Grid {
     let mut obst = floor.clone();
