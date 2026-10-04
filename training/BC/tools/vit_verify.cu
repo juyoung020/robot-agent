@@ -246,11 +246,14 @@ static int run_enc(const std::string& dir, bool negative) {
     enc.h16_patch = std::getenv("VIT_F16ACC_PATCH") != nullptr;
     std::printf("FP16-accumulate table %s, patch %d\n", hs, (int)enc.h16_patch);
   }
+  if (const char* k = std::getenv("VIT_KERN")) enc.kern = std::atoi(k);   // 0 = 예전 커널(비교용)
+  std::printf("enc: kernels %s\n", enc.kern ? "v2 (GEMM 128x256 k64, tensor-core attention)" : "legacy");
   enc.init(hw, n_img + 1, half);
   vitref::set_half(half);
   vitref::set_f8(enc.f8);
   vitref::set_h16(enc.h16, enc.h16_patch);
   vitref::set_hpromo(vit::h16_promo());
+  vitref::set_attn_p16(enc.kern != 0);
   std::printf("enc: GEMM operands %s, FP8 table (qkv1 proj2 fc1 4 fc2 8 per layer):", half ? "FP16" : "BF16");
   for (int l = 0; l < vit::LAYERS; ++l) std::printf(" %x", enc.f8[l]);
   std::printf("\n");
@@ -359,8 +362,9 @@ static int run_bench(int n_img) {
     enc.h16_patch = std::getenv("VIT_F16ACC_PATCH") != nullptr;
     std::printf("FP16-accumulate table %s, patch %d\n", hs, (int)enc.h16_patch);
   }
+  if (const char* k = std::getenv("VIT_KERN")) enc.kern = std::atoi(k);
   enc.init(hw, n_img);
-  std::printf("bench: VIT_FP8=%s\n", f8s ? f8s : "(none: FP16)");
+  std::printf("bench: VIT_FP8=%s, kernels %s\n", f8s ? f8s : "(none: FP16)", enc.kern ? "v2" : "legacy");
   uint16_t* tok;
   VCK(cudaMalloc(&tok, (size_t)n_img * vit::NTOK * vit::TOK_LD * 2));
   vit::init_token_buffer(tok, (long long)n_img * vit::NTOK, ST);
@@ -396,6 +400,23 @@ static int run_bench(int n_img) {
   std::printf("encoder %d images (= %d samples x 2 cams): eager %.2f ms, graph %.2f ms -> %.3f ms/image, %.0f images/s, %.1f TFLOPS (%.2f GFLOP/image)\n", n_img, ne, t_eager,
               t_graph, t_graph / n_img, n_img / (t_graph * 1e-3), gflop_img * n_img / (t_graph * 1e-3) / 1e3, gflop_img);
   const float t_block = timeit([&] { enc.block(0, n_img, ST); }, 5);
+  {   // 블록 단계별(사건, 5 번 평균, 층 0)
+    const char* nm[7] = {"LN1", "qkv GEMM", "attention", "proj GEMM+res", "LN2", "fc1 GEMM+GELU", "fc2 GEMM+res"};
+    const double T = (double)n_img * vit::NTOK, gf[7] = {0, 2 * T * vit::D * 3 * vit::D, 4.0 * n_img * vit::HEADS * vit::NTOK * vit::NTOK * vit::HD, 2 * T * vit::D * vit::D, 0,
+                                                       2 * T * vit::D * vit::MLP, 2 * T * vit::MLP * vit::D};
+    float acc[7] = {0}, ms[7];
+    enc.block_stage_ms(0, n_img, ST, ms);
+    for (int r = 0; r < 5; ++r) { enc.block_stage_ms(0, n_img, ST, ms); for (int i = 0; i < 7; ++i) acc[i] += ms[i] / 5; }
+    float sum = 0;
+    for (float v : acc) sum += v;
+    std::printf("  block stages (%d images):", n_img);
+    for (int i = 0; i < 7; ++i) {
+      std::printf(" %s %.3f ms", nm[i], acc[i]);
+      if (gf[i] > 0) std::printf(" (%.1f TFLOPS)", gf[i] / (acc[i] * 1e-3) / 1e12);
+      std::printf(i < 6 ? "," : "");
+    }
+    std::printf(" | sum %.2f ms\n", sum);
+  }
   const float t_patch = timeit([&] { enc.patchify(bcr::rgb(R, 0), bcr::rgb(R, 1), std::min(256, ne), 0, ST); }, 5);
   std::printf("  one block %.2f ms (x12 = %.1f ms), patchify 256 samples %.3f ms, device: weights %.0f MB, work %.2f GB\n", t_block, 12 * t_block, t_patch, enc.W.bytes / 1e6,
               enc.bytes / 1e9);

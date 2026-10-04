@@ -7,6 +7,7 @@
 //   블록 12 개: X += proj(attn(LN1(X))), X += fc2(gelu_tanh(fc1(LN2(X))))  — 어텐션 12 머리 × 64, 마스크 없음
 //   끝 LN → 패치 토큰 bf16 [영상 × 64][784] (768 번 칸 = 1, 나머지 0 — 학생 첫 층의 편향 칸, RL 신경망 규칙)
 // 정밀도: GEMM 피연산자·중간 저장은 FP16(BF16 은 PyTorch FP32 기준 코사인 평균 0.99898 로 기준 0.999 미달 — 잰 값, README), 누산·잔차·LN·softmax FP32.
+//   어텐션(kern 1): QKᵀ·PV 를 mma(16 비트 입력, FP32 누산), softmax FP32, P 는 16 비트로 반올림해 PV 에 넣음(README "인코더 속도판").
 // MAP 풀링 머리(attn_pool)는 쓰지 않는다(패치 토큰만). 가중치는 open_clip safetensors(FP32)를 C++ 로 직접 읽어 bf16 [N][K] 로(편향·LN 은 FP32).
 // 얼림: 앞 계산만, 기울기 없음. 모든 실행은 호출 스트림에 비동기(그래프로 잡을 수 있음 — 작업 공간은 init 에서 다 잡는다).
 #pragma once
@@ -69,6 +70,9 @@ struct Encoder {
   uint8_t* a8 = nullptr;         // [max_img × 64][3072] FP8 GEMM 입력(LN 출력·어텐션 출력·GELU 출력)
   float* srow = nullptr;         // [max_img × 64] 그 행 배율(되돌림)
   int bug = 0;                   // 음성 대조: 1 = 어텐션 배율 1/√64 빠뜨림, 2 = LN 평균 빼기 빠뜨림, 3 = 위치 임베딩 빠뜨림, 4 = FP8 행 배율 빠뜨림
+  // 커널 판(더함, 기본 1): 1 = 속도판 — GEMM v2(src/vit_gemm.cuh: 128 × 256 × k64, 공유 메모리 XOR 섞기, 같은 누산 차례), 텐서 코어 어텐션(P 16 비트),
+  // GELU 빠른 꼴(x·σ(2u)). 0 = 예전 커널(비교·측정용, 결과 비트가 예전과 같음). FP8 GEMM(f8 표)은 판과 무관하게 예전 그대로. run/block 전에 정한다.
+  int kern = 1;
 
   void init(const HostWeights& hw, int max_images, bool fp16 = true);
   void free_all();
@@ -79,6 +83,8 @@ struct Encoder {
   void run(int n_img, uint16_t* out, cudaStream_t st, int layers = LAYERS);
   // 단계 시간 측정용: 블록 하나(같은 버퍼 그대로)
   void block(int b, int n_img, cudaStream_t st);
+  // 단계 시간 측정용(더함): 블록 b 한 번을 사건으로 나눠 잼(동기함) → ms = [LN1, qkv GEMM, 어텐션, proj GEMM + 잔차, LN2, fc1 GEMM + GELU, fc2 GEMM + 잔차]
+  void block_stage_ms(int b, int n_img, cudaStream_t st, float (&ms)[7]);
 };
 
 enum F8Bits : uint8_t { F8_QKV = 1, F8_PROJ = 2, F8_FC1 = 4, F8_FC2 = 8, F8_ALL = 15 };

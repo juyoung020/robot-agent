@@ -1,6 +1,8 @@
 // 얼린 SigLIP 2 B/32-256 영상 탑(패치 토큰) — 설명은 include/vit.h.
-// GEMM 은 training/RL/network/src/gemm.cuh 의 조각(ldmatrix·cp.async·mma.sync bf16, 읽기만 include)으로 짠 3 단 파이프라인 커널에
-// 이 인코더 끝단(편향 FP32, GELU tanh, 위치 임베딩, 잔차 FP32 더하기)을 붙였다. LayerNorm·softmax 는 FP32. 부동소수 원자 연산 없음(결정적).
+// 속도판(Encoder::kern 1, 기본): GEMM = vit_gemm.cuh(128 × 256 × k64, 2 단 cp.async, XOR 섞기, 같은 누산 차례 — FP16 누산 결과 비트가 예전과 같음)
+// + 끝단(편향 FP32, GELU tanh 를 x·σ(2u) 꼴로, 위치 임베딩, 잔차 FP32 더하기), 어텐션 = 텐서 코어(attn_tc_k), LayerNorm FP32.
+// 예전 판(kern 0): training/RL/network/src/gemm.cuh 조각으로 짠 3 단 커널(vgemm_k)·f8::tn_k<TN_F16H>·스칼라 FP32 어텐션(attn_k) — 비교용으로 남김.
+// FP8 GEMM(f8 표)은 두 판 모두 f8::tn_k. 부동소수 원자 연산 없음(결정적).
 #include <dirent.h>
 
 #include <cmath>
@@ -14,6 +16,7 @@
 #include "gemm.cuh"
 #include "gemm_fp8.cuh"
 #include "vit.h"
+#include "vit_gemm.cuh"
 
 namespace vit {
 
@@ -121,9 +124,15 @@ __device__ __forceinline__ void mma16(float (&d)[4], const uint32_t (&a)[4], con
     net::mma_bf16(d, a, b);
 }
 
-__device__ __forceinline__ float gelu_tanh(float x) {
+__device__ __forceinline__ float gelu_tanh(float x) {   // 예전 식(FP8 끝단과 vgemm_k 가 씀)
   const float u = 0.7978845608028654f * (x + 0.044715f * x * x * x);
   return 0.5f * x * (1.f + tanhf(u));
+}
+// 같은 함수의 빠른 꼴: 0.5·x·(1 + tanh u) = x · σ(2u) = x / (1 + e^{−2u}). ex2.approx(상대 2^-22 수준) + 나눗셈 근사 —
+// 결과를 FP16 으로 저장하므로(상대 2^-11) 차이가 묻힌다. 큰 음수 x 에서도 상대 정밀도가 유지된다(1 + tanh 빼기 없음).
+__device__ __forceinline__ float gelu_fast(float x) {
+  const float u = 0.7978845608028654f * (x + 0.044715f * x * x * x);
+  return __fdividef(x, 1.f + __expf(-2.f * u));
 }
 
 template <bool HF, int EPI, int BM, int BN, int WM, int WN>
@@ -329,6 +338,107 @@ __global__ void __launch_bounds__(NTOK) attn_k(const uint16_t* qkv, uint16_t* ou
   }
 }
 
+// 텐서 코어 어텐션(속도판): 블록 하나 = (영상, 머리), 워프 4 개 × 질의 16 행. Q·K·V [64 토큰][64] 를 공유 메모리로(cp.async, 128 B 줄 XOR 섞기).
+//   S = QKᵀ: mma m16n8k16 (16 비트 입력, FP32 누산) → × 1/8 → 행 최대(쿼드 나비) → p = exp(s − max) FP32 → p 를 16 비트로(같은 형식 HF)
+//   → 행 합 = 16 비트로 반올림한 p 의 FP32 합(나비, 차례 고정) → O = P·V (mma, V 는 ldmatrix.trans, FP32 누산) → O / 합 → 16 비트.
+// 토큰 64 개가 한 타일이라 flash 의 온라인 최대 갱신이 필요 없다(한 번에 정확한 최대). 부동소수 원자 없음 → 결정적, 묶음 크기 무관.
+// 예전 스칼라 커널(attn_k)과 다른 점은 P 를 16 비트로 반올림하는 것뿐(상대 2^-11, CPU EMUL 도 같게 — tools/vit_ref.cpp).
+// 역전파(RecallVLA 학습)용: 행 logsumexp = max + log(합) 을 저장하면 FA2 식 dQ·dK·dV 를 같은 타일로 다시 계산할 수 있다(남은 일, 지금은 앞만).
+template <bool HF>
+__global__ void __launch_bounds__(128) attn_tc_k(const uint16_t* __restrict__ qkv, uint16_t* __restrict__ out, int bug) {
+  __shared__ __align__(128) uint8_t sm[2 * NTOK * 128];   // K, V (Q 는 워프마다 자기 16 행만 쓰므로 전역에서 바로 조각으로)
+  const int img = blockIdx.x / HEADS, hh = blockIdx.x % HEADS, tid = threadIdx.x, warp = tid >> 5, lane = tid & 31, g = lane >> 2, t4 = lane & 3;
+  const size_t base = (size_t)img * NTOK;
+  const unsigned s0 = (unsigned)__cvta_generic_to_shared(sm);
+#pragma unroll
+  for (int q = tid; q < 2 * NTOK * 8; q += 128) {
+    const int m = q / (NTOK * 8), row = (q / 8) % NTOK, c = q % 8;
+    hk::cp16(s0 + m * NTOK * 128 + hk::swz<64>(row, c), qkv + (base + row) * 3 * D + (m + 1) * D + hh * HD + c * 8);
+  }
+  hk::commit();
+  uint32_t qf[HD / 16][4];   // m16n8k16 A 조각: (행 g, k 2t4) (행 g+8, k 2t4) (행 g, k 8+2t4) (행 g+8, k 8+2t4)
+  {
+    const uint32_t* q0 = reinterpret_cast<const uint32_t*>(qkv + (base + warp * 16 + g) * 3 * D + hh * HD + 2 * t4);
+    const uint32_t* q1 = q0 + 8 * 3 * D / 2;
+#pragma unroll
+    for (int kk = 0; kk < HD / 16; ++kk) {
+      qf[kk][0] = q0[kk * 8]; qf[kk][1] = q1[kk * 8]; qf[kk][2] = q0[kk * 8 + 4]; qf[kk][3] = q1[kk * 8 + 4];
+    }
+  }
+  hk::wait<0>();
+  __syncthreads();
+  const unsigned sk = s0, sv = s0 + NTOK * 128;
+  const int lr = lane & 7, j0 = (lane >> 3) & 1, j1 = lane >> 4;
+  float S[8][4];
+#pragma unroll
+  for (int a = 0; a < 8; ++a)
+#pragma unroll
+    for (int c = 0; c < 4; ++c) S[a][c] = 0.f;
+#pragma unroll
+  for (int kk = 0; kk < HD / 16; ++kk) {
+#pragma unroll
+    for (int nj = 0; nj < 4; ++nj) {
+      uint32_t r[4];
+      hk::ldsm4(r, sk + hk::swz<64>(nj * 16 + lr + j1 * 8, kk * 2 + j0));
+      hk::mma32<HF ? hk::HK_F16 : hk::HK_BF16>(S[2 * nj], qf[kk], r[0], r[1]);
+      hk::mma32<HF ? hk::HK_F16 : hk::HK_BF16>(S[2 * nj + 1], qf[kk], r[2], r[3]);
+    }
+  }
+  const float scale = bug == 1 ? 1.f : 0.125f;
+  float mx[2] = {-3.0e38f, -3.0e38f};
+#pragma unroll
+  for (int a = 0; a < 8; ++a)
+#pragma unroll
+    for (int c = 0; c < 4; ++c) { S[a][c] = S[a][c] * scale; mx[c >> 1] = fmaxf(mx[c >> 1], S[a][c]); }
+#pragma unroll
+  for (int h = 0; h < 2; ++h) {
+    mx[h] = fmaxf(mx[h], __shfl_xor_sync(0xffffffffu, mx[h], 1));
+    mx[h] = fmaxf(mx[h], __shfl_xor_sync(0xffffffffu, mx[h], 2));
+  }
+  uint32_t P[8][2];   // n 조각마다 (행 g 의 두 값, 행 g+8 의 두 값) 16 비트 쌍
+  float sum[2] = {0.f, 0.f};
+#pragma unroll
+  for (int a = 0; a < 8; ++a)
+#pragma unroll
+    for (int h = 0; h < 2; ++h) {
+      const uint16_t p0 = st16<HF>(expf(S[a][2 * h] - mx[h])), p1 = st16<HF>(expf(S[a][2 * h + 1] - mx[h]));
+      sum[h] = sum[h] + ld16<HF>(p0);
+      sum[h] = sum[h] + ld16<HF>(p1);
+      P[a][h] = (uint32_t)p0 | ((uint32_t)p1 << 16);
+    }
+#pragma unroll
+  for (int h = 0; h < 2; ++h) {
+    sum[h] = sum[h] + __shfl_xor_sync(0xffffffffu, sum[h], 1);
+    sum[h] = sum[h] + __shfl_xor_sync(0xffffffffu, sum[h], 2);
+  }
+  float O[8][4];
+#pragma unroll
+  for (int a = 0; a < 8; ++a)
+#pragma unroll
+    for (int c = 0; c < 4; ++c) O[a][c] = 0.f;
+#pragma unroll
+  for (int j = 0; j < NTOK / 16; ++j) {
+    const uint32_t af[4] = {P[2 * j][0], P[2 * j][1], P[2 * j + 1][0], P[2 * j + 1][1]};
+#pragma unroll
+    for (int nj = 0; nj < 4; ++nj) {
+      uint32_t r[4];
+      const unsigned a = sv + hk::swz<64>(j * 16 + lr + j0 * 8, nj * 2 + j1);
+      asm volatile("ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {%0,%1,%2,%3}, [%4];\n" : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(a));
+      hk::mma32<HF ? hk::HK_F16 : hk::HK_BF16>(O[2 * nj], af, r[0], r[1]);
+      hk::mma32<HF ? hk::HK_F16 : hk::HK_BF16>(O[2 * nj + 1], af, r[2], r[3]);
+    }
+  }
+  const float inv[2] = {1.f / sum[0], 1.f / sum[1]};
+#pragma unroll
+  for (int a = 0; a < 8; ++a)
+#pragma unroll
+    for (int h = 0; h < 2; ++h) {
+      const size_t row = base + warp * 16 + g + h * 8;
+      reinterpret_cast<uint32_t*>(out)[(row * D + hh * HD + a * 8 + 2 * t4) >> 1] =
+          (uint32_t)st16<HF>(O[a][2 * h] * inv[h]) | ((uint32_t)st16<HF>(O[a][2 * h + 1] * inv[h]) << 16);
+    }
+}
+
 // ---- G6 FP8 경로 ---------------------------------------------------------------------------------------------------
 // LayerNorm(FP32 통계, ln_k 와 같은 식) → 행 amax → E4M3 + 행 되돌림 배율. 워프 하나 = 행 하나
 __global__ void __launch_bounds__(256) ln8_k(const float* X, int rows, const float* gm, const float* bt, uint8_t* out, float* srow, int bug) {
@@ -447,6 +557,57 @@ struct VEpiH {
     }
   }
 };
+// GEMM v2(vit_gemm.cuh) 끝단: VEpiH 와 같은 식(x = acc + 편향 → 16 비트 | GELU 16 비트 | FP32 + 위치 | FP32 잔차에 더함), 16 비트 형식 HF, GELU 는 빠른 꼴
+template <bool HF, int EPI>
+struct VEpi2 {
+  void* C; int ldc; const float* bias; const float* pos; int bug;
+  static constexpr bool RMW = EPI == VE_F32_ACC || EPI == VE_F32_POS;
+  __device__ __forceinline__ float2 colv(int c) const { return *reinterpret_cast<const float2*>(bias + c); }
+  __device__ __forceinline__ float2 ld(int r, int c) const {
+    if (EPI == VE_F32_POS) return bug == 3 ? make_float2(0.f, 0.f) : *reinterpret_cast<const float2*>(pos + (size_t)(r % NTOK) * D + c);
+    return *reinterpret_cast<const float2*>(reinterpret_cast<const float*>(C) + (long long)r * ldc + c);
+  }
+  __device__ __forceinline__ void st(int r, int c, float x0, float x1, float2 o) const {
+    if (EPI == VE_BF16 || EPI == VE_GELU) {
+      if (EPI == VE_GELU) { x0 = gelu_fast(x0); x1 = gelu_fast(x1); }
+      reinterpret_cast<uint32_t*>(C)[((long long)r * ldc + c) >> 1] = (uint32_t)st16<HF>(x0) | ((uint32_t)st16<HF>(x1) << 16);
+    } else {   // 잔차: X + (acc + b) / 위치: (acc + b) + pos — 예전 커널과 같은 덧셈 차례
+      const float2 v = EPI == VE_F32_ACC ? make_float2(o.x + x0, o.y + x1) : make_float2(x0 + o.x, x1 + o.y);
+      *reinterpret_cast<float2*>(reinterpret_cast<float*>(C) + (long long)r * ldc + c) = v;
+    }
+  }
+};
+// 타일: 블록 128 × 256 × k64, 워프 8 개 × 64 × 64, 2 단(공유 96 KB), SM 당 블록 1 — 잰 값(README "인코더 속도판"): 영상 2,048 장 블록 GEMM 넷이
+// 끝단 포함 FP16 누산 qkv 135·proj 100·fc1(GELU) 117·fc2 131 TFLOPS(예전 128 × 128 × k32 4 단: 86–96). 128 × 128 SM 당 2 블록·k32 3–4 단은 합이 같거나 느림.
+constexpr int H2BM = 128, H2BN = 256, H2WM = 64, H2WN = 64, H2BK = 64, H2ST = 2;
+template <int KIND, bool HF, int EPI>
+static void hgemm_attr() {
+  VTK(cudaFuncSetAttribute(hk::gemm_k<KIND, f8::HPROMO, H2BM, H2BN, H2WM, H2WN, H2BK, H2ST, 1, VEpi2<HF, EPI>>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+                           hk::smem_bytes<H2BM, H2BN, H2BK>(H2ST)));
+}
+template <int KIND, bool HF, int EPI>
+static void hgemm(const uint16_t* A, const uint16_t* W, int M, int N, int K, const VEpi2<HF, EPI>& e, cudaStream_t st) {
+  if (K % H2BK || N % H2BN || M < 1) { std::fprintf(stderr, "hgemm: bad shape M %d N %d K %d\n", M, N, K); std::abort(); }
+  hk::gemm_k<KIND, f8::HPROMO, H2BM, H2BN, H2WM, H2WN, H2BK, H2ST, 1, VEpi2<HF, EPI>>
+      <<<dim3(N / H2BN, (M + H2BM - 1) / H2BM), (H2BM / H2WM) * (H2BN / H2WN) * 32, hk::smem_bytes<H2BM, H2BN, H2BK>(H2ST), st>>>(A, K, W, K, M, K, e);
+  VTK(cudaGetLastError());
+}
+// 16 비트 GEMM 하나: h16 = FP16 누산(HF 일 때만), 아니면 FP32 누산(HF: FP16, 아니면 BF16 피연산자)
+template <bool HF, int EPI>
+static void gemm16(bool h16, const uint16_t* A, const uint16_t* W, int M, int N, int K, const VEpi2<HF, EPI>& e, cudaStream_t st) {
+  if (HF && h16) hgemm<hk::HK_F16H, HF, EPI>(A, W, M, N, K, e, st);
+  else if (HF) hgemm<hk::HK_F16, HF, EPI>(A, W, M, N, K, e, st);
+  else hgemm<hk::HK_BF16, HF, EPI>(A, W, M, N, K, e, st);
+}
+template <bool HF>
+static void gemm16_attr_all() {
+  if (HF) {
+    hgemm_attr<hk::HK_F16H, HF, VE_BF16>(); hgemm_attr<hk::HK_F16H, HF, VE_GELU>(); hgemm_attr<hk::HK_F16H, HF, VE_F32_ACC>(); hgemm_attr<hk::HK_F16H, HF, VE_F32_POS>();
+    hgemm_attr<hk::HK_F16, HF, VE_BF16>(); hgemm_attr<hk::HK_F16, HF, VE_GELU>(); hgemm_attr<hk::HK_F16, HF, VE_F32_ACC>(); hgemm_attr<hk::HK_F16, HF, VE_F32_POS>();
+  } else {
+    hgemm_attr<hk::HK_BF16, HF, VE_BF16>(); hgemm_attr<hk::HK_BF16, HF, VE_GELU>(); hgemm_attr<hk::HK_BF16, HF, VE_F32_ACC>(); hgemm_attr<hk::HK_BF16, HF, VE_F32_POS>();
+  }
+}
 constexpr int V8BM = 128, V8BN = 128, V8WM = 64, V8WN = 32, V8ST = 4;
 template <int EPI>
 static void vgemmh_attr() {
@@ -609,6 +770,8 @@ void Encoder::init(const HostWeights& hw, int max_images, bool fp16) {
     vgemm8_attr<VE_BF16>(); vgemm8_attr<VE_GELU>(); vgemm8_attr<VE_F32_ACC>();
   }
   if (half) { vgemmh_attr<VE_BF16>(); vgemmh_attr<VE_GELU>(); vgemmh_attr<VE_F32_ACC>(); vgemmh_attr<VE_F32_POS>(); }
+  if (half) gemm16_attr_all<true>();
+  else gemm16_attr_all<false>();
   const size_t T = (size_t)max_img * NTOK;
   auto mk = [&](size_t nb) { void* p = nullptr; VTK(cudaMalloc(&p, nb)); VTK(cudaMemset(p, 0, nb)); this->bytes += nb; return p; };
   X = (float*)mk(T * D * 4);
@@ -650,45 +813,75 @@ void Encoder::patchify(const uint8_t* cam0, const uint8_t* cam1, int n, int row0
 }
 
 template <bool HF>
-static void block_t(Encoder& e, int b, int n_img, cudaStream_t st) {
+static void block_t(Encoder& e, int b, int n_img, cudaStream_t st, cudaEvent_t* ev = nullptr) {
   const int T = n_img * NTOK, bug = e.bug;
+  int ne = 0;
+  auto mark = [&] { if (ev) VTK(cudaEventRecord(ev[ne++], st)); };
+  mark();
   const auto& B = e.W.blk[b];
   const uint8_t m = HF ? e.f8[b] : 0, hm = HF ? (uint8_t)(e.h16[b] & ~m) : 0;
   const unsigned g8 = (T + 7) / 8;
+  const bool k2 = e.kern != 0;
   if (m & F8_QKV) {
     ln8_k<<<g8, 256, 0, st>>>(e.X, T, B.ln1_g, B.ln1_b, e.a8, e.srow, bug);
+    mark();
     vgemm8<VE_BF16>(e.a8, B.qkv_w8, T, 3 * D, D, VEpi8<VE_BF16>{e.qkv, 3 * D, B.qkv_b, e.srow, B.qkv_s}, st);
   } else {
     ln_k<HF><<<g8, 256, 0, st>>>(e.X, T, B.ln1_g, B.ln1_b, e.ln, D, bug);
-    if (hm & F8_QKV) vgemmh<VE_BF16>(e.ln, B.qkv_w, T, 3 * D, D, VEpiH<VE_BF16>{e.qkv, 3 * D, B.qkv_b, nullptr, bug}, st);
+    mark();
+    if (k2) gemm16<HF, VE_BF16>(hm & F8_QKV, e.ln, B.qkv_w, T, 3 * D, D, VEpi2<HF, VE_BF16>{e.qkv, 3 * D, B.qkv_b, nullptr, bug}, st);
+    else if (hm & F8_QKV) vgemmh<VE_BF16>(e.ln, B.qkv_w, T, 3 * D, D, VEpiH<VE_BF16>{e.qkv, 3 * D, B.qkv_b, nullptr, bug}, st);
     else vgemm<HF, VE_BF16>(VG{e.ln, B.qkv_w, e.qkv, B.qkv_b, nullptr, T, 3 * D, D, D, D, 3 * D, bug}, st);
   }
-  attn_k<HF><<<n_img * HEADS, NTOK, 0, st>>>(e.qkv, e.ln, bug);
+  mark();
+  if (k2) attn_tc_k<HF><<<n_img * HEADS, 128, 0, st>>>(e.qkv, e.ln, bug);
+  else attn_k<HF><<<n_img * HEADS, NTOK, 0, st>>>(e.qkv, e.ln, bug);
+  mark();
   if (m & F8_PROJ) {
     rowq_k<D><<<g8, 256, 0, st>>>(e.ln, T, e.a8, e.srow, bug);
     vgemm8<VE_F32_ACC>(e.a8, B.proj_w8, T, D, D, VEpi8<VE_F32_ACC>{e.X, D, B.proj_b, e.srow, B.proj_s}, st);
+  } else if (k2) {
+    gemm16<HF, VE_F32_ACC>(hm & F8_PROJ, e.ln, B.proj_w, T, D, D, VEpi2<HF, VE_F32_ACC>{e.X, D, B.proj_b, nullptr, bug}, st);
   } else if (hm & F8_PROJ) {
     vgemmh<VE_F32_ACC>(e.ln, B.proj_w, T, D, D, VEpiH<VE_F32_ACC>{e.X, D, B.proj_b, nullptr, bug}, st);
   } else {
     vgemm<HF, VE_F32_ACC>(VG{e.ln, B.proj_w, e.X, B.proj_b, nullptr, T, D, D, D, D, D, bug}, st);
   }
+  mark();
   if (m & F8_FC1) {
     ln8_k<<<g8, 256, 0, st>>>(e.X, T, B.ln2_g, B.ln2_b, e.a8, e.srow, bug);
+    mark();
     vgemm8<VE_GELU>(e.a8, B.fc1_w8, T, MLP, D, VEpi8<VE_GELU>{e.h, MLP, B.fc1_b, e.srow, B.fc1_s}, st);
   } else {
     ln_k<HF><<<g8, 256, 0, st>>>(e.X, T, B.ln2_g, B.ln2_b, e.ln, D, bug);
-    if (hm & F8_FC1) vgemmh<VE_GELU>(e.ln, B.fc1_w, T, MLP, D, VEpiH<VE_GELU>{e.h, MLP, B.fc1_b, nullptr, bug}, st);
+    mark();
+    if (k2) gemm16<HF, VE_GELU>(hm & F8_FC1, e.ln, B.fc1_w, T, MLP, D, VEpi2<HF, VE_GELU>{e.h, MLP, B.fc1_b, nullptr, bug}, st);
+    else if (hm & F8_FC1) vgemmh<VE_GELU>(e.ln, B.fc1_w, T, MLP, D, VEpiH<VE_GELU>{e.h, MLP, B.fc1_b, nullptr, bug}, st);
     else vgemm<HF, VE_GELU>(VG{e.ln, B.fc1_w, e.h, B.fc1_b, nullptr, T, MLP, D, D, D, MLP, bug}, st);
   }
+  mark();
   if (m & F8_FC2) {
     rowq_k<MLP><<<g8, 256, 0, st>>>(e.h, T, e.a8, e.srow, bug);
     vgemm8<VE_F32_ACC>(e.a8, B.fc2_w8, T, D, MLP, VEpi8<VE_F32_ACC>{e.X, D, B.fc2_b, e.srow, B.fc2_s}, st);
+  } else if (k2) {
+    gemm16<HF, VE_F32_ACC>(hm & F8_FC2, e.h, B.fc2_w, T, D, MLP, VEpi2<HF, VE_F32_ACC>{e.X, D, B.fc2_b, nullptr, bug}, st);
   } else if (hm & F8_FC2) {
     vgemmh<VE_F32_ACC>(e.h, B.fc2_w, T, D, MLP, VEpiH<VE_F32_ACC>{e.X, D, B.fc2_b, nullptr, bug}, st);
   } else {
     vgemm<HF, VE_F32_ACC>(VG{e.h, B.fc2_w, e.X, B.fc2_b, nullptr, T, D, MLP, MLP, MLP, D, bug}, st);
   }
+  mark();
   VTK(cudaGetLastError());
+}
+void Encoder::block_stage_ms(int b, int n_img, cudaStream_t st, float (&ms)[7]) {
+  // FP8 이 켜진 층은 LN 이 GEMM 앞 양자화와 합쳐져(ln8_k) 단계 경계가 조금 다르다(LN1 칸 = LN1 + FP8 양자화)
+  cudaEvent_t ev[10];
+  for (auto& x : ev) VTK(cudaEventCreate(&x));
+  if (half) block_t<true>(*this, b, n_img, st, ev);
+  else block_t<false>(*this, b, n_img, st, ev);
+  VTK(cudaEventSynchronize(ev[7]));
+  for (int i = 0; i < 7; ++i) VTK(cudaEventElapsedTime(&ms[i], ev[i], ev[i + 1]));
+  for (auto& x : ev) VTK(cudaEventDestroy(x));
 }
 void Encoder::block(int b, int n_img, cudaStream_t st) {
   if (half) block_t<true>(*this, b, n_img, st);
@@ -699,7 +892,9 @@ void Encoder::run(int n_img, uint16_t* out, cudaStream_t st, int layers) {
   if (n_img > max_img) { std::fprintf(stderr, "vit: %d images > max %d\n", n_img, max_img); std::abort(); }
   const int T = n_img * NTOK;
   const VG pg{patches, W.patch_w, X, W.patch_b, W.pos, T, D, KP, KP, KP, D, bug};
-  if (half && h16_patch) vgemmh<VE_F32_POS>(patches, W.patch_w, T, D, KP, VEpiH<VE_F32_POS>{X, D, W.patch_b, W.pos, bug}, st);
+  if (kern && half) gemm16<true, VE_F32_POS>(h16_patch, patches, W.patch_w, T, D, KP, VEpi2<true, VE_F32_POS>{X, D, W.patch_b, W.pos, bug}, st);
+  else if (kern) gemm16<false, VE_F32_POS>(false, patches, W.patch_w, T, D, KP, VEpi2<false, VE_F32_POS>{X, D, W.patch_b, W.pos, bug}, st);
+  else if (half && h16_patch) vgemmh<VE_F32_POS>(patches, W.patch_w, T, D, KP, VEpiH<VE_F32_POS>{X, D, W.patch_b, W.pos, bug}, st);
   else if (half) vgemm<true, VE_F32_POS>(pg, st);
   else vgemm<false, VE_F32_POS>(pg, st);
   for (int b = 0; b < layers; ++b) block(b, n_img, st);

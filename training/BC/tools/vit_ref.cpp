@@ -40,6 +40,8 @@ static uint8_t g_h16[LAYERS] = {};
 static bool g_h16p = false;
 void set_h16(const uint8_t* h, bool patch) { for (int l = 0; l < LAYERS; ++l) g_h16[l] = h ? h[l] : 0; g_h16p = patch; }
 static bool g_hacc = false;
+static bool g_p16 = true;   // EMUL: 어텐션 P 를 16 비트로(GPU Encoder::kern 1)
+void set_attn_p16(bool on) { g_p16 = on; }
 static int g_hpromo = 1;   // FP16 부분합을 FP32 로 옮기는 간격(k 32 단위) — GPU TN_HPROMO 와 같게
 void set_hpromo(int p) { g_hpromo = p; }   // 다음 gemm 부름이 FP16 누산 흉내인가(forward 가 부르기 전에 정함)
 void set_f8(const uint8_t* f8) { for (int l = 0; l < LAYERS; ++l) g_f8[l] = f8 ? f8[l] : 0; }
@@ -162,7 +164,11 @@ void forward(int md, const HostWeights& hw, const std::vector<const uint8_t*>& i
           mx = std::fmax(mx, s[j]);
         }
         double sum = 0;
-        for (int j = 0; j < NTOK; ++j) { s[j] = std::exp(s[j] - mx); sum += s[j]; }
+        for (int j = 0; j < NTOK; ++j) {
+          s[j] = std::exp(s[j] - mx);
+          if (md == EMUL && g_p16) s[j] = r16((float)s[j]);   // GPU 텐서 코어 어텐션: P 를 16 비트로, 합은 반올림한 값의 합
+          sum += s[j];
+        }
         for (int e = 0; e < HD; ++e) {
           double o = 0;
           for (int j = 0; j < NTOK; ++j) o += s[j] * QKV[((size_t)i * NTOK + j) * 3 * D + 2 * D + h * HD + e];
