@@ -8,6 +8,7 @@
 | [model_selection.md](model_selection.md) | 모델 선택: 부품마다 무엇을 골랐고 왜 골랐나 |
 | [perception_model_candidates.md](perception_model_candidates.md) | 물체 인식 모델 후보 (① 물체 기억, 추천만) |
 | [clip_candidates.md](clip_candidates.md) | CLIP 류 임베딩 모델 후보·측정 (FastSAM-s 마스크 → 이름·임베딩) |
+| [terms.md](terms.md) | 용어 정리: stuff·things, 확률론적 물체 수준 매핑, DA·과분할 병합·라벨 융합, PCA 와 랜색(RANSAC) — 우리 코드 위치와 함께 |
 | [known_bugs.md](known_bugs.md) | 알려진 버그(코드): 옛 경로 import, `/mnt/c/behavior-2026` 박아 둔 스크립트 등 |
 | [map_vla/](map_vla/README.md) | Map_Vla(리모 + 매니퓰레이터 VLA) 조사·설계 문서 |
 | [assets/](assets/) | README 아이콘·뷰어·시뮬·로봇 그림 |
