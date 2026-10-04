@@ -46,7 +46,7 @@
 | FP32 (텐서 아님) | 43.9 TFLOPS |
 | 메모리 | 16 GB GDDR7, 256-bit, 896 GB/s |
 | L2 | 48 MB (49,152 KB) |
-| L1/공유 메모리 | GPU 전체 8,960 KB (SM 당 128 KB) |
+| L1/공유 메모리 | GPU 전체 8,960 KB (SM 당 128 KB). 그중 공유 메모리 최대 SM 당 100 KB, 블록당 99 KB(잰 값, 12절) |
 | 레지스터 | GPU 전체 17,920 KB |
 | NVDEC | **1 개** (6세대) |
 
@@ -74,8 +74,8 @@
 
 - 정리: **우리 FP8 은 `mma.sync` + `ldmatrix`/`cp.async`(또는 TMA) 손 GEMM** 이다. 팀 손 GEMM 틀에 FP8 경로를 더한다.
 - `sm_120a` 큐빈은 정확히 cc 12.0 에서만 돈다. 이 PC 하나만 쓰므로 괜찮다. 팀 빌드 기본값은 `sm_120` 이므로 FP8 커널은 `-gencode arch=compute_120a,code=sm_120a` 로 따로 만든다.
-- FP8 피연산자 A·B 를 서로 다른 형식(e5m2 × e4m3)으로 줄 수 있는지는 PTX 형식상 `.atype`·`.btype` 가 따로 있다. 실제 컴파일로 확인할 것(12절).
-- 8 비트 `ldmatrix` 전치 모양(`CUTE_ARCH_LDSM_SM100A_ENABLED` 가 SM120A 에도 켜짐)이 있는지도 컴파일로 확인한다. 없으면 전치는 양자화 커널이 FP8 사본을 따로 써서 해결한다(7.3).
+- FP8 피연산자 A·B 를 서로 다른 형식(e5m2 × e4m3)으로 한 명령에 줄 수 **있다**(G6 에서 컴파일·수치로 확인, 12절).
+- 8 비트 `ldmatrix` 전치 모양(`m16n16.trans.b8`)은 sm_120a 에 **있다**(G6 에서 확인, 조각 배치는 12절). 전치 FP8 사본은 필요 없다(7.3).
 
 ## 3. 무엇을 학습하나
 
@@ -302,7 +302,7 @@ keyframe 마다(스텝마다가 아님, slam2d 의 움직임 거르기처럼 움
 - `mma.sync` 8 비트 피연산자는 K 연속 배치가 기본이다. cuBLASLt 도 Blackwell GeForce 에서 FP8 을 TN 배치만 받는다(2.2).
 - 팀 `tgemm.cuh` 는 bf16 에서 `ldmatrix.trans` 로 네 배치를 다 처리한다. FP8 에서는 다음 둘 중 하나.
   - 양자화 커널(K6·K7)이 FP8 값과 **전치한 FP8 사본**을 같이 쓴다. 메모리는 늘지만 단순하다.
-  - sm_120a 의 8 비트 `ldmatrix` 전치 모양을 쓴다(있는지 컴파일로 확인, 2.2).
+  - sm_120a 의 8 비트 `ldmatrix` 전치 모양을 쓴다 — **있다**(G6, 12절). G6 학습 경로 `gemm8_k` 가 이 길이다(dgrad 의 W, wgrad 의 dZᵀ·X).
 
 ## 8. 메모리 (16 GB)
 
@@ -419,9 +419,9 @@ JSBSim 포팅의 방법: **정답의 한가운데 상태를 통째로 심고 한
 
 ## 12. 열린 문제
 
-- **FP8 혼합 형식**: `kind::f8f6f4` 에서 e5m2 × e4m3 를 한 명령에 줄 수 있는지 컴파일로 확인한다. 안 되면 dgrad 의 dy 도 E4M3 + 배율로 한다.
-- **8 비트 `ldmatrix` 전치**: sm_120a 에 있는지 확인. 없으면 전치 사본(7.3).
-- **블록당 공유 메모리 한도**: SM 당 128 KB 는 백서 값이다. 블록 하나가 쓸 수 있는 최대값은 `cudaDevAttrMaxSharedMemoryPerBlockOptin` 으로 잰다. 격자 창 크기가 여기에 달렸다.
+- ~~FP8 혼합 형식~~ **(G6 에서 잼, 답)**: `mma.sync.aligned.kind::f8f6f4.m16n8k32.row.col.f32.e5m2.e4m3.f32` 가 **한 명령으로 된다**(CUDA 12.8, `sm_120a`). 무작위 16×8 출력이 CPU 정확값과 상대 7.3e-7 안(FP32 누산 수준)이고, dgrad(E5M2 dZ × E4M3 W)·wgrad 모양 V3 도 통과(`training/RL/network/tools/fp8_verify probe`·`gemm`). 같은 명령을 `sm_120`(접미사 없음)으로 빌드하면 ptxas 가 `Feature '.kind::f8f6f4' not supported on .target 'sm_120'` 로 거부한다.
+- ~~8 비트 `ldmatrix` 전치~~ **(답)**: `ldmatrix.sync.aligned.m16n16.{x1,x2}.trans.shared.b8` 가 **sm_120a 에 있다**(SASS `LDSM.8.MT1616`). `sm_120` 은 ptxas 가 `.m16n16`·`ldmatrix.b8` 를 거부. 잰 조각 배치: 메모리 [k][행] 16×16 바이트에서 레인 (g = lane/4, t = lane%4) 의 r0 = (행 g, k 4t..4t+3), r1 = (행 g+8, 같은 k) — m16n8k32 A 조각 a0·a1 과 같고 x2 의 둘째 행렬(k 16–31)이 a2·a3(512 바이트 모두 일치). 그래서 M 연속(전치) 피연산자도 **전치 사본 없이** 읽는다(7.3 의 둘째 길). K 연속 FP8 피연산자는 값 둘을 16 비트로 보면 bf16 과 같은 `ldmatrix.b16` 로 조각이 맞는다.
+- ~~블록당 공유 메모리 한도~~ **(답)**: `cudaDevAttrMaxSharedMemoryPerBlockOptin` = **101,376 B (99 KB)**, `MaxSharedMemoryPerMultiprocessor` = **102,400 B (100 KB)**, 기본 블록 한도 49,152 B (cc 12.0, 드라이버 13.0, 런타임 12.8). 백서의 SM 당 128 KB 는 L1 + 공유 메모리 합이고 공유 메모리로 쓸 수 있는 것은 100 KB 다. 격자 창은 블록당 99 KB 안에서 정한다.
 - **CUDA 12.8 고정**: `sm_120f` 와 mxf4nvf4 4X UE8M0 는 12.9·13.1 이 필요하다. 저장소 기준(12.8)을 바꿀지는 사용자 결정이다.
 - **검출 실수·slam 오차 모델**: 실제 기록에서 맞출 값이 아직 없다.
 - **224² 렌더 속도**: 안 쟀다. BC 를 온라인 렌더로 할지 저장 영상으로 할지가 이것에 달렸다.

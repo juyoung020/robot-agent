@@ -59,6 +59,14 @@ add_executable(vit_verify tools/vit_verify.cu)
 target_include_directories(vit_verify PRIVATE tools)
 target_link_libraries(vit_verify bc vitref)
 
+# G6 FP8: sm_120a 전용 명령(mma.sync kind::f8f6f4, 8 비트 ldmatrix 전치)을 쓰는 대상은 아키텍처를 따로(compute_120a/sm_120a — 이 PC 의 cc 12.0 에서만 돎).
+# 나머지 대상은 그대로 sm_120 이라 결과 비트가 바뀌지 않는다.
+set(SM120A -gencode=arch=compute_120a,code=sm_120a)
+add_executable(fp8_verify ${RL}/network/tools/fp8_verify.cu)
+set_target_properties(fp8_verify PROPERTIES CUDA_ARCHITECTURES OFF)
+target_compile_options(fp8_verify PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:${SM120A}> $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fopenmp>)
+target_link_libraries(fp8_verify bc OpenMP::OpenMP_CXX)
+
 enable_testing()
 # 영상 학생(기본: 영상 + 글 + flow 청크) / student-lite(--lite)
 add_test(NAME v5_bc_step COMMAND bc_verify v5)
