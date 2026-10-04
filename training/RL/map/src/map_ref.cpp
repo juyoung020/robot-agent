@@ -27,7 +27,7 @@ void CpuMap::step(const env::Soa& s, int force_kf, const MapCurr& cu) {
     const MapGrid g{h.L.data() + (size_t)i * NCELL, h.seen.data() + (size_t)i * NWORD, h.occ.data() + (size_t)i * NWORD, h.segs.data() + (size_t)i * SEGW};
     map_block(h.core[i], u, e, g, h.met.data(), N, i, 0, 1, 0, force_kf, cu, NoSync{});
     TokScratch ts;
-    make_tokens(h.core[i], g.occ, g.segs, h.tprev.data() + (size_t)i * KSLOT, ts, 0, 1, true, NoSync{});
+    make_tokens(h.core[i], g.occ, g.seen, g.segs, h.tprev.data() + (size_t)i * KSLOT, ts, 0, 1, true, NoSync{});
     h.tok[i] = ts.out;
   }
 }

@@ -14,6 +14,7 @@ constexpr int TOK_SLOT_VALS = 33;
 constexpr int N_WALL = 56;   // walls.hpp kStateLen = 16 + 8·5
 constexpr int N_ROOMTOK = 10;
 constexpr int N_COMP = 4;
+constexpr int N_FRONT = 8;   // 안 본 곳 광선 8(45° 간격) — VLA_INPUT 에 없는 값을 더함(가정)
 // 칸 숫자 33 의 자리(VLA_INPUT 3절 표 순서)
 enum TokSlot {
   T_POS = 0,        // 3 위치 xyz (base_link)
@@ -46,7 +47,7 @@ struct alignas(16) MapTok {
   uint16_t comp[N_COMP];                 // FP16: 과제 물체 확정, 장면 물체 확정 비율, 방 칸 본 비율, 드러난 방 비율
   int16_t n_slot;                        // 채운 칸 수
   int16_t flags;                         // 비트 0 = 이번 스텝 keyframe
-  uint16_t pad[8];
+  uint16_t front[N_FRONT];               // FP16: 안 본 곳 광선(로봇 앞부터 반시계 45°), 첫 안 본 칸까지 /4 m. 점유 칸에 먼저 막히거나 4 m 안에 없으면 1 (예전 pad 자리, 1,280 B 그대로)
 };
 static_assert(sizeof(MapTok) == 1280, "map token = 1280 B per env-step");
 struct TPrev { float p[3]; int tag; };   // 칸마다 지난 스텝 지도 자리, tag = 물체 번호 << 16 | 스텝 & 0xffff (물체 속도용, 확정 칸만 씀)
@@ -140,6 +141,31 @@ DEV float wall_ray(const uint32_t* so, int row0, int col0, float x, float y, flo
   }
   return MP::wall_range;
 }
+// 안 본 곳 광선(가정, VLA_INPUT 에 없음 — "어디를 아직 안 봤나"): wall_ray 와 같은 DDA 로 점유 비트 so·본 칸 비트 ss 를 같이 읽어,
+// 점유 칸을 만나면 wall_range(그 방향 4 m 안에 이어진 안 본 곳 없음), 본 적 없는 칸을 만나면 그 칸에 들어간 거리. 로봇 몸통 자리(front_r0 안)의
+// 안 본 칸은 건너뛴다(깊이 카메라가 몸 아래·바로 옆을 못 봄). 창 밖 칸(격자 밖)은 안 본 칸이다
+constexpr float kFrontR0 = 0.2f;   // (가정) 몸통 외접원 0.194 m
+DEV float front_ray(const uint32_t* so, const uint32_t* ss, int row0, int col0, float x, float y, float th) {
+  constexpr float OX = (float)GX0 * RES;
+  float s, c;
+  sincosf_d(th, &s, &c);
+  const float fx = (x - OX) / RES, fy = (y - OX) / RES;
+  int cx = (int)floorf(fx), cy = (int)floorf(fy);
+  const int sx = c > 0.f ? 1 : -1, sy = s > 0.f ? 1 : -1;
+  const float tdx = c != 0.f ? absf(RES / c) : kInf, tdy = s != 0.f ? absf(RES / s) : kInf;
+  float tx = c != 0.f ? ((sx > 0 ? (float)(cx + 1) - fx : fx - (float)cx) * RES) / absf(c) : kInf;
+  float ty = s != 0.f ? ((sy > 0 ? (float)(cy + 1) - fy : fy - (float)cy) * RES) / absf(s) : kInf;
+  float t = 0.f;
+  while (t <= MP::wall_range) {
+    const unsigned lx = (unsigned)(cx - col0), ly = (unsigned)(cy - row0);
+    const bool in = (unsigned)cx < (unsigned)GW && ly < (unsigned)TOK_SROWS && lx < 32u * TOK_SWORDS;
+    const int wi = in ? (int)(ly * TOK_SWORDS + (lx >> 5)) : 0;
+    if (in && ((so[wi] >> (lx & 31)) & 1u)) return MP::wall_range;
+    if (t >= kFrontR0 && !(in && ((ss[wi] >> (lx & 31)) & 1u))) return t;
+    if (tx < ty) { t = tx; tx = tx + tdx; cx += sx; } else { t = ty; ty = ty + tdy; cy += sy; }
+  }
+  return MP::wall_range;
+}
 // 선분 하나를 로봇 기준으로(segmentsRobotFrame): a·b 끝(m) 과 로봇에서 선분까지 거리
 DEV float wall_seg_robot(const int16_t* q, float px, float py, float c, float s, float r[4]) {
   float w[4];
@@ -161,7 +187,10 @@ struct TokScratch {   // 판 하나의 작업 공간(GPU 공유 메모리). 광�
   float sk[KSLOT];        // 칸 순서 열쇠(수평 거리), 안 넣는 칸 −1
   float tk[KSLOT];        // 목표 후보 열쇠, 아님 −1
   union {
-    uint32_t so[TOK_SROWS * TOK_SWORDS];   // 로봇 둘레 창의 점유 비트(광선이 읽음). 광선 뒤에는 out 이 덮어씀
+    struct {
+      uint32_t so[TOK_SROWS * TOK_SWORDS];   // 로봇 둘레 창의 점유 비트(광선이 읽음). 광선 뒤에는 out 이 덮어씀
+      uint32_t ss[TOK_SROWS * TOK_SWORDS];   // 같은 창의 본 칸 비트(안 본 곳 광선)
+    };
     MapTok out;
   };
 };
@@ -170,12 +199,12 @@ struct TokScratch {   // 판 하나의 작업 공간(GPU 공유 메모리). 광�
 // occ: 판의 점유 비트 전체. 로봇 둘레 행을 ts.so 로 옮긴 뒤 광선을 쏘고, out 은 그다음 동기부터 쓴다(so 와 같은 자리)
 // NLC: nl 의 최솟값(컴파일 때). 레인마다 맡는 칸·광선 수가 (16 + NLC − 1) / NLC 이하라 지난 자리·광선 거리를 레지스터 배열에 둔다(GPU NLC = 16 → 하나씩)
 template <int NLC, class Sync>
-DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
+DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* seen, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
                        bool write, const Sync& sync) {
   constexpr int PER = (KSLOT + NLC - 1) / NLC;
   static_assert(KSLOT == 16, "rays and slots share the per-lane count");
   TPrev tpl[PER];
-  float ray[PER];
+  float ray[PER], fr[PER];
   MapTok& o = ts.out;
   float s, c;
   sincosf_d(m.eyaw, &s, &c);
@@ -216,6 +245,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const int16_t* seg
   }
   const int row0 = tok_row0(py), col0 = tok_col0(px);
   tok_stage(occ, row0, col0, ts.so, lane, nl);
+  tok_stage(seen, row0, col0, ts.ss, lane, nl);
   sync();
   PROF_MARK(TK_STAGE);
   // 2) 광선 16(레인마다 레지스터에)
@@ -223,6 +253,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const int16_t* seg
   for (int q = 0; q < PER; ++q) {
     const int i = lane + q * nl;
     if (i < 16) ray[q] = wall_ray(ts.so, row0, col0, px, py, m.eyaw + kTwoPi * (float)i * (1.0f / 16.f));
+    if (i < N_FRONT) fr[q] = front_ray(ts.so, ts.ss, row0, col0, px, py, m.eyaw + kTwoPi * (float)i * (1.0f / (float)N_FRONT));
   }
   sync();
   PROF_MARK(TK_A);
@@ -230,6 +261,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const int16_t* seg
   for (int q = 0; q < PER; ++q) {
     const int i = lane + q * nl;
     if (i < 16) o.wall[i] = f2h(ray[q] / MP::wall_range);
+    if (i < N_FRONT) o.front[i] = f2h(fr[q] / MP::wall_range);
   }
   int tgt = -1, nslot = 0;
   for (int b = 0; b < KSLOT; ++b) {
@@ -357,15 +389,14 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const int16_t* seg
     o.comp[3] = f2h((float)popc32((uint32_t)m.rrev) / (float)m.n_room);
     o.n_slot = (int16_t)nslot;
     o.flags = (int16_t)(m.kf_flag ? 1 : 0);
-    for (int q = 0; q < 8; ++q) o.pad[q] = 0;
   }
 }
 
 // 예전 꼴(레인 수를 실행 때만 앎): 아무 nl ≥ 1 에서 같은 결과
 template <class Sync>
-DEV void make_tokens(const MapCore& m, const uint32_t* occ, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
+DEV void make_tokens(const MapCore& m, const uint32_t* occ, const uint32_t* seen, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
                      bool write, const Sync& sync) {
-  make_tokens_n<1>(m, occ, segs, tprev, ts, lane, nl, write, sync);
+  make_tokens_n<1>(m, occ, seen, segs, tprev, ts, lane, nl, write, sync);
 }
 
 }  // namespace gmap

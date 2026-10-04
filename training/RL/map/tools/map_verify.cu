@@ -81,6 +81,8 @@ int main(int argc, char** argv) {
   char first_what[128] = "";
   double sum_task_end = 0, sum_obj_end = 0, sum_seen_end = 0, max_err = 0, max_err_yaw = 0;
   long n_end = 0, n_confirmed = 0, n_gone = 0, n_moved = 0, n_cand = 0;
+  double tok_front = 0;
+  long tok_front_open = 0;
   long held_steps = 0, tok_slots = 0, tok_target = 0, tok_walls = 0, tok_door = 0, room_rev = 0, n_wallseg = 0, maxseg_h = 0, maxseg_v = 0;
   double sum_room_end = 0;
   std::vector<float> last_met((size_t)gmap::N_MET * N, 0.f);
@@ -186,6 +188,7 @@ int main(int argc, char** argv) {
       for (int b = 0; b < tk.n_slot; ++b) tok_target += gmap::h2f(tk.slot[b][gmap::T_TARGET]) > 0.5f;
       for (int j = 0; j < 8; ++j) tok_walls += gmap::h2f(tk.wall[16 + 5 * j + 4]) > 0.5f;
       tok_door += gmap::h2f(tk.room[9]) > 0.5f;
+      for (int j = 0; j < gmap::N_FRONT; ++j) { const float fv = gmap::h2f(tk.front[j]); tok_front += fv; tok_front_open += fv < 0.999f; }
     }
     last_met = ch.met;
   }
@@ -217,8 +220,8 @@ int main(int argc, char** argv) {
   std::printf("  grasps %ld, env-steps holding %ld;  rooms revealed at episode end %.3f;  wall segments per env-step %.2f (max h %ld v %ld, overflow %ld)\n",
               grasps, held_steps, n_end ? sum_room_end / n_end : 0.0, n_wallseg / ES, maxseg_h, maxseg_v, wovf);
   std::printf("  wall segment recomputes %ld (%.1f %% of keyframes; the rest had no occupied-bit or ignore-box change)\n", wruns, 100.0 * wruns / std::max(1L, kf_tot));
-  std::printf("  tokens per env-step: slots %.2f, target slot %.3f, valid wall segments %.2f, door known %.3f, revealed rooms %.2f\n",
-              tok_slots / ES, tok_target / ES, tok_walls / ES, tok_door / ES, room_rev / ES);
+  std::printf("  tokens per env-step: slots %.2f, target slot %.3f, valid wall segments %.2f, door known %.3f, revealed rooms %.2f; unseen-ray mean %.3f m, rays with unseen cell < 4 m %.3f\n",
+              tok_slots / ES, tok_target / ES, tok_walls / ES, tok_door / ES, room_rev / ES, 4.0 * tok_front / (ES * gmap::N_FRONT), tok_front_open / (ES * gmap::N_FRONT));
   {  // 마지막 CPU 지도 전체의 FNV-1a 해시: 최적화 전후 의미가 같은지(같은 씨앗·같은 스텝) 비교용
     uint64_t hsh = 1469598103934665603ull;
     auto mix = [&](const void* p, size_t n) { const unsigned char* c = (const unsigned char*)p; for (size_t k = 0; k < n; ++k) { hsh ^= c[k]; hsh *= 1099511628211ull; } };

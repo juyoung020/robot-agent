@@ -1,6 +1,6 @@
 // 지도 토큰 기록(계획서 5.3): G1 환경 + 접근 제어(+ 선택: 팔 행동)로 T 스텝 몰면서 스텝마다 지도 토큰을 장치 기록 버퍼 [T][N] 에
 // 바로 쓰고(호스트 동기 없음), 끝에 한 번 내려받아 파일로 쓴다. 롤아웃 버퍼에 넣는 경로와 같다(map.step(..., rec.at(t))).
-//   map_tokrec [N=256] [T=300] [out=map_tokens.bin] [--arm]
+//   map_tokrec [N=256] [T=300] [out=map_tokens.bin] [--arm] [--legacy]   (--legacy: 안 본 곳 광선 8 을 0 으로 = 그 전 배치와 바이트 비교)
 // 파일: 머리 32 B("MTOK", 판 1, N, T, sizeof(MapTok), KSLOT, TOK_SLOT_VALS, N_WALL) + MapTok[T][N] (리틀 엔디언, FP16 은 IEEE 반정밀도)
 #include <cstdio>
 #include <cstdlib>
@@ -27,10 +27,11 @@ __global__ void tokrec_policy(const float* obs, float* act, int N, int t, int ar
 }
 
 int main(int argc, char** argv) {
-  int N = 256, T = 300, arm = 0, pos = 0;
+  int N = 256, T = 300, arm = 0, pos = 0, legacy = 0;
   const char* out = "map_tokens.bin";
   for (int a = 1; a < argc; ++a) {
     if (!std::strcmp(argv[a], "--arm")) arm = 1;
+    else if (!std::strcmp(argv[a], "--legacy")) legacy = 1;   // 안 본 곳 광선(front, 예전 pad 자리)을 0 으로 — 그 전 빌드의 기록과 바이트 비교용
     else if (pos == 0) { N = std::atoi(argv[a]); ++pos; }
     else if (pos == 1) { T = std::atoi(argv[a]); ++pos; }
     else if (pos == 2) { out = argv[a]; ++pos; }
@@ -51,6 +52,7 @@ int main(int argc, char** argv) {
   }
   std::vector<gmap::MapTok> tok;
   rec.download(tok);   // 동기는 여기 한 번
+  if (legacy) for (gmap::MapTok& k : tok) for (int q = 0; q < gmap::N_FRONT; ++q) k.front[q] = 0;
   FILE* f = std::fopen(out, "wb");
   if (!f) { std::perror(out); return 1; }
   const int32_t head[8] = {0x4b4f544d /*"MTOK"*/, 1, N, T, (int32_t)sizeof(gmap::MapTok), gmap::KSLOT, gmap::TOK_SLOT_VALS, gmap::N_WALL};

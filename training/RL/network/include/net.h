@@ -33,7 +33,10 @@ constexpr int POOL_W = 2 * S_H;   // 128
 constexpr int OBS_W = N_OBS_G1 + 56 + 10 + 4;   // 150: G1 관측 + 벽 + 방 + 완성도
 constexpr int X0_OBS = POOL_W;    // X0 안 관측 시작 칸(집합이 16 정렬 자리 0 에 오도록 앞에 둠)
 constexpr int X0_BIAS = POOL_W + OBS_W;   // 278
+constexpr int N_FRONT = 8;       // 안 본 곳 광선(gmap::N_FRONT) — 편향 칸 뒤 0 칸 자리에(use_map 2 일 때만 0 아님)
+constexpr int X0_FRONT = X0_BIAS + 1;   // 279..286
 constexpr int X0_W = 288;
+static_assert(X0_FRONT + N_FRONT <= X0_W, "front rays fit in the zero tail of X0");
 
 enum LayerId { L_S1, L_S2, L_A1, L_A2, L_A3, L_A4, L_C1, L_C2, L_C3, L_C4, N_LAYER };
 enum Act { ACT_LIN = 0, ACT_ELU = 1 };

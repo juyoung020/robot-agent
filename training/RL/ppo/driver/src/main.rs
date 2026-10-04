@@ -257,7 +257,7 @@ fn writer(rx: mpsc::Receiver<Msg>, out: PathBuf, n_per_iter: f64, print_every: i
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("usage: ppo_run <config.json> [--out DIR] [--minutes M] [--resume CKPT]");
+        eprintln!("usage: ppo_run <config.json> [--out DIR] [--minutes M] [--resume CKPT] [--seed S]");
         std::process::exit(2);
     }
     let text = fs::read_to_string(&args[1]).expect("config");
@@ -265,12 +265,14 @@ fn main() {
     let mut out = PathBuf::from(v.get("out").and_then(|x| x.as_str()).unwrap_or("runs/ppo"));
     let mut minutes = gf(&v, "budget_minutes", 60.0);
     let mut resume: Option<String> = None;
+    let mut seed: Option<u64> = None;   // 설정의 seed 를 덮어씀(같은 설정으로 씨앗 여럿)
     let mut a = 2;
     while a < args.len() {
         match args[a].as_str() {
             "--out" => { out = PathBuf::from(&args[a + 1]); a += 1; }
             "--minutes" => { minutes = args[a + 1].parse().unwrap(); a += 1; }
             "--resume" => { resume = Some(args[a + 1].clone()); a += 1; }
+            "--seed" => { seed = Some(args[a + 1].parse().unwrap()); a += 1; }
             _ => {}
         }
         a += 1;
@@ -288,6 +290,7 @@ fn main() {
     let depth = gi(&v, "inflight", 3) as i32;
 
     let mut c = cfg;
+    if let Some(s) = seed { c.seed = s; }
     c.stage = stages[0].env;
     c.map_p0 = stages[0].p0;
     c.map_p1 = stages[0].p1;

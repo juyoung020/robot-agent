@@ -3,7 +3,8 @@
 // 같은 (스텝, 판)이면 같은 입력 비트가 된다.
 //
 //  X0 줄(288, bf16): [0,128) 집합(여기서 안 씀, 칸 MLP 뒤 집합 커널이 씀) | [128,208) G1 관측 80 | [208,264) 벽 56 |
-//                    [264,274) 방 10 | [274,278) 완성도 4 | 278 = 1 | 나머지 0
+//                    [264,274) 방 10 | [274,278) 완성도 4 | 278 = 1 | [279,287) 안 본 곳 광선 8(use_map 2 만, 아니면 0) | 287 = 0
+//  use_map: 0 = 지도 입력 모두 0, 1 = G3/G4 지도 토큰(안 본 곳 광선 칸은 0 — 예전 체크포인트와 같은 입력), 2 = + 안 본 곳 광선
 //  칸 줄 16 × 48(bf16): 숫자 33(정규화) | 이름 번호 원-핫 7 | 생김새 번호 원-핫 7 | 47 = 1.  빈 칸은 모두 0
 //  돌려주는 값: 채운 칸 비트(집합 평균·최댓값의 가림)
 //
@@ -30,6 +31,7 @@ static_assert(net::KSLOT == gmap::KSLOT, "slot count");
 static_assert(net::SLOT_VALS == gmap::TOK_SLOT_VALS, "slot values");
 static_assert(net::N_OBS_G1 == env::N_OBS, "G1 obs");
 static_assert(net::OBS_W == env::N_OBS + gmap::N_WALL + gmap::N_ROOMTOK + gmap::N_COMP, "obs width");
+static_assert(net::N_FRONT == gmap::N_FRONT, "unseen rays");
 constexpr int G_EE_TGT = env::N_BODY - 3;               // 53: 손끝 → 목표 3
 constexpr int G_TGT = env::N_BODY + env::N_RAYS;        // 72: 목표 칸 8 (79 = 표시)
 static_assert(G_TGT + env::N_TGT == env::N_OBS, "target cell is the tail of the G1 obs");
@@ -52,6 +54,7 @@ NDEV uint32_t assemble(const float* obs, int stride, int i, const gmap::MapTok& 
       v = clamp10(net::h2f(tok.room[k]) * room_scale(k));
     } else if (use_map && c < net::OBS_W) v = clamp10(net::h2f(tok.comp[c - net::N_OBS_G1 - gmap::N_WALL - gmap::N_ROOMTOK]));
     else if (col == net::X0_BIAS) v = 1.f;
+    else if (use_map >= 2 && col >= net::X0_FRONT && col < net::X0_FRONT + net::N_FRONT) v = clamp10(net::h2f(tok.front[col - net::X0_FRONT]));
     x0[col] = f2bf(v);
   }
   const int ns = use_map ? (tok.n_slot < 0 ? 0 : (tok.n_slot > net::KSLOT ? net::KSLOT : tok.n_slot)) : 0;

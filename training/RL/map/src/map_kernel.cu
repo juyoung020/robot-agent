@@ -82,7 +82,7 @@ __global__ void __launch_bounds__(NT, 10) map_kf_kernel(env::Soa s, MapCore* cor
 // 3 단계(판마다 레인 16, 블록 = 판 8): 지도 토큰. 지도 갱신이 끝난 뒤 모든 판. 레인이 광선·선분·칸을 나눠 하고 반 워프 동기
 constexpr int TOK_NL = 16, TOK_EPB = 8;
 struct HalfSync { unsigned mask; __device__ void operator()() const { __syncwarp(mask); } };
-__global__ void __launch_bounds__(TOK_NL * TOK_EPB) map_tok_kernel(int N, const MapCore* core, const uint32_t* occ, const int16_t* segs,
+__global__ void __launch_bounds__(TOK_NL * TOK_EPB) map_tok_kernel(int N, const MapCore* core, const uint32_t* occ, const uint32_t* seen, const int16_t* segs,
                                                                    TPrev* tprev, MapTok* out) {
   __shared__ TokScratch ts[TOK_EPB];
   const int sub = threadIdx.x / TOK_NL, lane = threadIdx.x % TOK_NL;
@@ -91,7 +91,7 @@ __global__ void __launch_bounds__(TOK_NL * TOK_EPB) map_tok_kernel(int N, const 
   const int i = live ? i0 : N - 1;   // 남는 레인도 같은 동기를 지나도록 마지막 판을 읽기만 함
   const HalfSync hs{0xffffu << (16 * (sub & 1))};
   PROF_START();
-  make_tokens_n<TOK_NL>(core[i], occ + (size_t)i * NWORD, segs + (size_t)i * SEGW, tprev + (size_t)i * KSLOT, ts[sub], lane, TOK_NL, live, hs);
+  make_tokens_n<TOK_NL>(core[i], occ + (size_t)i * NWORD, seen + (size_t)i * NWORD, segs + (size_t)i * SEGW, tprev + (size_t)i * KSLOT, ts[sub], lane, TOK_NL, live, hs);
   hs();
   PROF_MARK(TK_ROOM);
   if (!live) return;
@@ -138,7 +138,7 @@ void DeviceMap::step(const env::Soa& s, int force_kf, int bug, cudaStream_t st, 
   CK(cudaMemsetAsync(count_, 0, sizeof(int), st));
   map_begin_kernel<<<(N_ + BEGIN_NT - 1) / BEGIN_NT, BEGIN_NT, 0, st>>>(s, core_, met_, list_, count_, force_kf);
   map_kf_kernel<<<N_, NT, 0, st>>>(s, core_, L_, seen_, occ_, segs_, met_, list_, count_, bug, curr ? curr : curr_);
-  if (tok_on_) map_tok_kernel<<<(N_ + TOK_EPB - 1) / TOK_EPB, TOK_NL * TOK_EPB, 0, st>>>(N_, core_, occ_, segs_, tprev_, tok ? tok : tok_);
+  if (tok_on_) map_tok_kernel<<<(N_ + TOK_EPB - 1) / TOK_EPB, TOK_NL * TOK_EPB, 0, st>>>(N_, core_, occ_, seen_, segs_, tprev_, tok ? tok : tok_);
 }
 
 void prof_reset() {

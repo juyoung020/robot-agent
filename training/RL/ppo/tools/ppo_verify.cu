@@ -38,6 +38,7 @@ static std::vector<double> bfv(const std::vector<uint16_t>& v) {
 static std::vector<double> fv(const std::vector<float>& v) { return std::vector<double>(v.begin(), v.end()); }
 
 static bool g_g4data = false;   // v4/v5 --g4data: G4 자료(목표는 지도에서, 처음 지도 섞음)로. v6/v7 은 늘 G4 자료
+static bool g_a2 = false;       // --a2: A2 환경(가구) + 지도 토큰에 안 본 곳 광선(use_map 2). v4/v5 는 --g4data 와 같이
 static PpoConfig small_cfg(uint64_t seed, int graphs, bool g4 = true) {
   PpoConfig c{};
   c.n_env = 512; c.horizon = 16; c.epochs = 2; c.minibatches = 4; c.stage = 1; c.use_map = 1; c.adaptive_lr = 0; c.use_graphs = graphs;
@@ -50,6 +51,7 @@ static PpoConfig small_cfg(uint64_t seed, int graphs, bool g4 = true) {
   c.goal_from_map = 1; c.map_p0 = 0.3f; c.map_p1 = 0.4f; c.map_kmin = 3; c.map_kmax = 6; c.map_reveal_r = 1.5f;
   c.bound_coef = 0.5f;   // 자르기 밖 평균 벌(G4)도 검사에 넣음 — V4/V5 의 흔든 미니배치에서 |μ| > 1 인 행이 있게 아래에서 평균 출력을 키움
   if (!g4) { c.goal_from_map = 0; c.map_p0 = 0.f; c.map_p1 = 0.f; }   // G3 설정(특권 목표, 빈 지도) — V4/V5 기준 자료
+  else if (g_a2) { c.stage = 2; c.use_map = 2; }
   return c;
 }
 
@@ -321,15 +323,21 @@ static int run_v5(int bug) {
           const int nout = l == L_C4 ? 1 : L.N;
           j = lay.off[l] + (long long)(dm::rand01(rs) * nout) * L.K + (long long)(dm::rand01(rs) * (L.bias + 1));
         }
-        const double h = 1e-5 * std::fmax(1.0, std::fabs(Pd[j]));
-        const double p = Pd[j];
-        Pd[j] = p + h;
-        const double lp = netref::loss_only(Pd, sb, hy);
-        Pd[j] = p - h;
-        const double lm = netref::loss_only(Pd, sb, hy);
-        Pd[j] = p;
-        const double fd = (lp - lm) / (2 * h), g = st.grad[j];
-        const double err = std::fabs(fd - g) / std::fmax(std::fabs(g), 1e-7);
+        // 중심 차분. 어긋나면 h 를 1/10, 1/100 로 다시(손실의 꺾인 곳 — 집합 최댓값이 바뀌는 자리, PPO·가치 자르기 — 을 ±h 가 건너면
+        // 차분이 틀림. 진짜 기울기 버그는 h 를 줄여도 남는다). 가장 작은 오차를 씀
+        const double g = st.grad[j], p = Pd[j];
+        double err = 1e30, fd = 0;
+        for (int r = 0; r < 3 && err > 1e-4; ++r) {
+          const double h = 1e-5 * std::fmax(1.0, std::fabs(p)) * (r == 0 ? 1.0 : r == 1 ? 0.1 : 0.01);
+          Pd[j] = p + h;
+          const double lp = netref::loss_only(Pd, sb, hy);
+          Pd[j] = p - h;
+          const double lm = netref::loss_only(Pd, sb, hy);
+          Pd[j] = p;
+          const double f = (lp - lm) / (2 * h), e = std::fabs(f - g) / std::fmax(std::fabs(g), 1e-7);
+          if (e < err) { err = e; fd = f; }
+          if (r > 0 && e <= 1e-4) std::printf("    FD param %lld (layer %d): ok at h/%d, rel err %.2e (at h the difference crossed a kink)\n", j, l, r == 1 ? 10 : 100, e);
+        }
         worst = std::fmax(worst, err);
         ++n;
         if (err > 1e-4) { ++fd_fail; std::printf("    FD mismatch param %lld (layer %d): analytic %.6e fd %.6e\n", j, l, g, fd); }
@@ -592,6 +600,7 @@ int main(int argc, char** argv) {
   bool neg = false;
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--negative")) neg = true;
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--g4data")) g_g4data = true;
+  for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--a2")) g_a2 = true;
   if (m == "bench") return run_bench(argc > 2 ? std::atoi(argv[2]) : 4096, argc > 3 ? std::atoi(argv[3]) : 64, argc > 4 ? std::atoi(argv[4]) : 20,
                                      argc > 5 ? std::atoi(argv[5]) : 4, argc > 6 ? std::atoi(argv[6]) : 1);
   if (m == "v4" || m == "v5") {
