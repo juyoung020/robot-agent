@@ -133,3 +133,15 @@ cd robot-agent
 bash refs/download.sh   # 참고 논문 PDF·코드를 refs/ 에 받기 (깃에는 안 올라감)
 python3 -m pytest tests/  # 테스트 실행
 ```
+
+## 라이선스
+
+우리 코드는 [Apache-2.0](LICENSE) 이다. 제3자 구성 요소는 각자 라이선스를 따른다.
+- Qwen3.5(0.8B·2B 가중치) — Apache-2.0
+- SigLIP 2(open_clip / timm 가중치) — Apache-2.0
+- PE-Core(이름·생김새 벡터 공간) — Apache-2.0
+- BEHAVIOR-1K / OmniGibson 코드 — MIT, **BEHAVIOR 데이터 묶음(장면·물체 자산)은 자체 약관**(비상업 학술 연구만, 재배포 금지). 이 저장소는 BEHAVIOR 자산을 담지 않으며, 쓰려면 각자 약관에 동의하고 받는다.
+- spark_dsg — MIT 저작권 문구(`src/scene_graph/spark_dsg/LICENSE`)
+- 서브모듈 `src/behavior-2026` 은 그 저장소의 라이선스를 따른다.
+
+LOCI(지도 + VLA 파운데이션 모델, [사양](docs/map_vla/MAPVLA_SPEC.md))를 BEHAVIOR 자산으로 학습한 가중치는 비상업 연구용으로 공개한다.
