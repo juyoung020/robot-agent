@@ -11,6 +11,7 @@ G1 환경(`../env`)과 같은 방식: CPU 참조판과 GPU 커널이 **같은 �
 - `map_verify` 는 끝에 CPU 지도 전체의 해시를 찍는다. 같은 씨앗·스텝이면 최적화 전후 의미가 같은지 이 값으로 본다
 - `include/map_tok.h`: 지도 토큰(5.3, VLA_INPUT 3·4절) `MapTok` 1,280 B 와 `make_tokens`(CPU·GPU 공용), FP16 변환
 - `tools/map_tokrec.cu`: 지도 토큰 기록(스텝마다 장치 기록 버퍼 [T][N] 에 바로, 끝에 파일로)
+- `include/sm_tok.h`: **진짜 scenemap 지도 → 같은 `MapTok`**(CPU). 스냅숏(`sm_tok_from_snapshot`) 또는 물체 표(`make_sm_tokens`)에서 칸 순서·자리·FP16 반올림을 `make_tokens` 와 같게 채운다. scenemap 에 출처가 없는 값(T_UNC, comp, front, app_id 기본 NCLS)은 0/기본값 — 머리말 표. `tools/sm_tok_test.cpp`(ctest `sm_tok`): 강체 불변(회전에서는 map 축 상자인 T_EEF_S 제외)·로봇 회전·평행 이동·칸 순서·빈 칸·속도
 - `tools/map_realcheck.cpp`(선택 빌드 `-DMAP_REALCHECK=ON`): 같은 입력으로 **진짜 scenemap 코드**(서브모듈 소스를 읽기만 해 빌드)와 점유 문턱·격자·벽 선분·벽 벡터·들기 규칙·팔 끝 순기구학을 맞춘다
 - `tools/map_drift.cpp`: 정해진 궤적(탐색 비슷 / gt_move 대본)을 G1 운동학으로 만들어 지도 단계에 넣고 slam 자세 오차 rms·max 와 가짜 검출·확정 물체 통계를 낸다(보정용). `-DDRIFT_CPU_ONLY` 로 g++ 빌드하면 같은 코드의 CPU 참조판으로 돌고, `-DKF_CORR_XY_V=…` 등으로 맞춤 값을 바꿔 볼 수 있다
 

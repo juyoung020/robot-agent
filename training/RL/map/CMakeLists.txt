@@ -44,6 +44,13 @@ target_link_libraries(gmap_prof PUBLIC env_core CUDA::cudart OpenMP::OpenMP_CXX)
 add_executable(map_prof tools/map_bench.cu)
 target_link_libraries(map_prof gmap_prof)
 
+# scenemap 지도 → 지도 토큰(MapTok) 변환기 단위 시험(CPU, MAP_STATE_PLAN.md 4단계): 강체 불변·회전·평행 이동·칸 순서
+add_executable(sm_tok_test tools/sm_tok_test.cpp)
+target_include_directories(sm_tok_test PRIVATE include ${ENV_DIR}/include ${CUDAToolkit_INCLUDE_DIRS}
+                           ${CMAKE_CURRENT_LIST_DIR}/../../../src/scene_graph/scenemap/include)
+target_compile_options(sm_tok_test PRIVATE -Wno-unknown-pragmas)
+add_test(NAME sm_tok COMMAND sm_tok_test)
+
 # 보정용: 정해진 궤적에서 slam 자세 오차·가짜 검출 통계(GPU 지도). 학습 경로 아님
 add_executable(map_drift tools/map_drift.cpp)
 target_link_libraries(map_drift gmap)
