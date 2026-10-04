@@ -477,25 +477,14 @@ function drawGraph() {
 }
 
 // ---------------- robot, walls ----------------
+// File mode: the robot group is built once (buildRobot) and only moved here. It used to be torn down and rebuilt on every
+// pose change, which also briefly put the box/cone stand-in back instead of the LIMO + OMX URDF model.
 function drawRobot() {
   invalidate();
-  if (robotModel && robotModel.root.parent) robotModel.root.parent.remove(robotModel.root);   // the loaded model outlives each redraw
-  disposeGroup(gRobot);
-  if (!view || !view.pose) return;
+  if (!view || !view.pose) return;   // keep the robot where it was; never drop the model for a view without a pose
+  if (!robotGrp) buildRobot();
   const [x, y, yaw] = view.pose;
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.22, 0.1), new THREE.MeshBasicMaterial({ color:0x2a2a30 }));
-  body.position.set(0, 0, 0.07);
-  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 16), new THREE.MeshBasicMaterial({ color:0xe03030 }));
-  nose.rotation.z = -Math.PI / 2; nose.position.set(0.24, 0, 0.07);
-  // camera field of view on the floor (60° wedge, 1.6 m)
-  const fov = new THREE.Shape(); fov.moveTo(0, 0); const a0 = -Math.PI / 6, a1 = Math.PI / 6;
-  for (let i = 0; i <= 12; i++) { const a = a0 + (a1 - a0) * i / 12; fov.lineTo(1.6 * Math.cos(a), 1.6 * Math.sin(a)); }
-  const wedge = new THREE.Mesh(new THREE.ShapeGeometry(fov), new THREE.MeshBasicMaterial({ color:0xe03030, transparent:true, opacity:0.14, side:THREE.DoubleSide, depthWrite:false }));
-  wedge.position.z = 0.04;
-  body.userData.fallback = nose.userData.fallback = true;
-  const grp = new THREE.Group(); grp.add(body, nose, wedge); grp.position.set(x, y, 0); grp.rotation.z = yaw;
-  gRobot.add(grp); robotGrp = grp; attachRobotModel();
-  gRobot.visible = opt("c_robot");
+  robotGrp.position.set(x, y, 0); robotGrp.rotation.z = yaw;
 }
 
 let wallKey = "", lastWalls = null, wallSegKey = "", wallTextT = 0;
@@ -1056,6 +1045,9 @@ async function startLive() {
     dropAligned(); alignTheta = 0;
     trailN = 0; trailLast = null; if (trail) trail.geometry.setDrawRange(0, 0);
     view = null; objs.clear(); selected = null; poseCur.init = false; poseTgt.has = false; robotGrp = null; liveGrid = null;
+    // Detach the LIMO + OMX URDF model before clearing: disposing gRobot with the model inside freed its meshes, and after a
+    // stream reset (e.g. a looping replay) the robot came back as the box stand-in or not at all.
+    if (robotModel && robotModel.root.parent) robotModel.root.parent.remove(robotModel.root);
     for (const g of [gObjs, gGraph, gWalls, gRobot]) disposeGroup(g);
     for (const k of Object.keys(prev)) delete prev[k];
     autoFit = true; firstFit = false; camGoal = null;
