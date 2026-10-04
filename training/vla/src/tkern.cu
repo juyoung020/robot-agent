@@ -897,18 +897,5 @@ void gnorm_bwd(const float* O, const float* Z, int ldz, int R, int lh, int dv, c
   KCK();
 }
 
-__global__ void swiglu_bwd_k(const float* T0, const float* dH, int R, int I, uint16_t* dGU, int bug) {
-  const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-  if (q >= (long long)R * I) return;
-  const int r = (int)(q / I), i = (int)(q % I);
-  const float g = T0[(long long)r * 2 * I + i], u = T0[(long long)r * 2 * I + I + i], dh = dH[q];
-  dGU[(long long)r * 2 * I + i] = net::f2bf(dh * u * (bug == 1 ? 1.f : dsilu(g)));
-  dGU[(long long)r * 2 * I + I + i] = net::f2bf(dh * silu(g));
-}
-void swiglu_bwd(const float* T0, const float* dH, int R, int I, uint16_t* dGU, int bug, cudaStream_t st) {
-  swiglu_bwd_k<<<nb((long long)R * I), 256, 0, st>>>(T0, dH, R, I, dGU, bug);
-  KCK();
-}
-
 }  // namespace tk
 }  // namespace rvla

@@ -25,6 +25,18 @@ static void mm_res(const uint16_t* A, int lda, int M, const uint16_t* W, int N, 
   e.kind = tk::EK_RES; e.C = out; e.ldc = ld; e.R = Rin; e.ldr = ld; e.bias = bias;
   tk::mme(A, lda, M, W, N, K, e, st);
 }
+// SwiGLU 끝단(A1): GU 는 짝 끼운 꼴 [R][2I](g_j, u_j 나란히), Hh = bf16(silu(g)·u). GU(F32)는 뒤가 쓸 때만(gu = nullptr 이면 안 씀)
+static void mm_swiglu(const uint16_t* A, int lda, int M, const uint16_t* W, int I, int K, float* gu, uint16_t* hh, cudaStream_t st) {
+  tk::Epi e;
+  e.kind = tk::EK_SWI; e.C = gu; e.ldc = 2 * I; e.Cb = hh; e.ldcb = I; e.I = I;
+  tk::mme(A, lda, M, W, 2 * I, K, e, st);
+}
+// SwiGLU 뒤를 down dX 끝단으로(C): dHh = dZ·W_dn (F32 로 안 남김) → dGU bf16 원래 꼴 [R][2I]
+static void mm_dswiglu(const uint16_t* dZ, int ldz, int M, const uint16_t* Wdn, int N, int I, const float* gu, uint16_t* dgu, int bug, cudaStream_t st) {
+  tk::Epi e;
+  e.kind = tk::EK_DSWI; e.GU = gu; e.ldgu = 2 * I; e.Cb = dgu; e.ldcb = 2 * I; e.I = I; e.bug = bug;
+  tk::mme_dx(dZ, ldz, M, Wdn, N, I, e, st);
+}
 // 치우침(+ GELU bf16) 끝단: out = A·Wᵀ + b, outb = bf16(gelu(out)) (A4)
 static void mm_bias(const uint16_t* A, int lda, int M, const uint16_t* W, int N, int K, float* out, int ld, const float* bias, uint16_t* outb, bool gelu,
                     cudaStream_t st) {
@@ -295,7 +307,7 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
   s.Gb = alloc<float>((size_t)R * Q.lh); s.Bb = alloc<float>((size_t)R * Q.lh);
   s.Xmid = alloc<float>((size_t)R * H); s.GU = alloc<float>((size_t)R * 2 * Q.I);
   s.A1 = alloc<uint16_t>((size_t)R * H); s.A2 = alloc<uint16_t>((size_t)R * H); s.Ag = alloc<uint16_t>((size_t)R * s.OW); s.Hh = alloc<uint16_t>((size_t)R * Q.I);
-  s.dR = alloc<float>((size_t)R * H); s.dA = alloc<float>((size_t)R * H); s.dHh = alloc<float>((size_t)R * Q.I); s.dAg = alloc<float>((size_t)R * s.OW);
+  s.dR = alloc<float>((size_t)R * H); s.dA = alloc<float>((size_t)R * H); s.dHh = nullptr; s.dAg = alloc<float>((size_t)R * s.OW);
   s.dO = alloc<float>((size_t)R * s.OW); s.dT0 = nullptr; s.dT1 = alloc<float>((size_t)R * Q.lin_in()); s.dp = nullptr;   // 융합 B·E 뒤 안 씀(bf16 dT0b 로 바로)
   s.dQK = alloc<float>((size_t)R * s.QKW); s.dK = alloc<float>((size_t)R * Q.kvw()); s.dV = alloc<float>((size_t)R * Q.kvw());
   s.Dd = alloc<float>((size_t)R * Q.nq); s.dG = alloc<float>((size_t)R * Q.lh); s.dBt = alloc<float>((size_t)R * Q.lh);
@@ -365,7 +377,7 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
     s.mI = alloc<float>((size_t)c.Bmax * H); s.nullb = alloc<float>((size_t)c.Bmax * 2 * H);
     s.drl = alloc<float>((size_t)c.Bmax * 2 * (c.mem_nmax + 1)); s.rpart = alloc<float>((size_t)c.Bmax * 2 + 8);
     s.mdz = alloc<float>((size_t)Rl * H); s.mda = alloc<float>((size_t)Rl * H); s.mdO = alloc<float>((size_t)Rl * H); s.mdQKV = alloc<float>((size_t)Rl * 3 * H);
-    s.mdQ = alloc<float>((size_t)Rl * H); s.mDd = alloc<float>((size_t)Rl * nh); s.mdHh = alloc<float>((size_t)Rl * I);
+    s.mdQ = alloc<float>((size_t)Rl * H); s.mDd = alloc<float>((size_t)Rl * nh); s.mdHh = nullptr;
     s.mdKV = alloc<float>((size_t)Rm * 2 * H); s.mdmk = alloc<float>((size_t)Rm * H); s.mdnull = alloc<float>((size_t)c.Bmax * 2 * H);
     s.mdI = alloc<float>((size_t)c.Bmax * H); s.mwt = alloc<float>((size_t)std::max(Rm, Rl) * H);
     const long long cs = 256;
@@ -388,7 +400,7 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
   s.eHh = alloc<uint16_t>((size_t)RA * c.Ie); s.Ao = alloc<uint16_t>((size_t)RA * c.De); s.dz = alloc<uint16_t>((size_t)RA * c.A);
   s.eT = alloc<float>((size_t)RA * eW0); s.eQ = alloc<float>((size_t)RA * Q.nq * Q.hd); s.eK = alloc<float>((size_t)RA * Q.kvw()); s.eV = alloc<float>((size_t)RA * Q.kvw());
   s.eO = alloc<float>((size_t)RA * Q.nq * Q.hd); s.else_ = alloc<float>((size_t)RA * Q.nq); s.eXm = alloc<float>((size_t)RA * c.De); s.eGU = alloc<float>((size_t)RA * 2 * c.Ie);
-  s.edR = alloc<float>((size_t)RA * c.De); s.edA = alloc<float>((size_t)RA * c.De); s.edHh = alloc<float>((size_t)RA * c.Ie); s.edAg = alloc<float>((size_t)RA * Q.nq * Q.hd);
+  s.edR = alloc<float>((size_t)RA * c.De); s.edA = alloc<float>((size_t)RA * c.De); s.edHh = nullptr; s.edAg = alloc<float>((size_t)RA * Q.nq * Q.hd);
   s.edO = alloc<float>((size_t)RA * Q.nq * Q.hd); s.edT0 = nullptr; s.edQ = alloc<float>((size_t)RA * Q.nq * Q.hd);
   s.edK = alloc<float>((size_t)RA * Q.kvw()); s.edV = alloc<float>((size_t)RA * Q.kvw()); s.eDd = alloc<float>((size_t)RA * Q.nq);
   s.edRb = alloc<uint16_t>((size_t)RA * c.De); s.edGU = alloc<uint16_t>((size_t)RA * 2 * c.Ie); s.edT0b = alloc<uint16_t>((size_t)RA * eW0);
@@ -784,8 +796,7 @@ static void q_layer_fwd(Model& m, int l, int B, int L, const float* Xin, float* 
     mm_res(s.Ag, c.lh * c.dv, R, W + Ly.wout.off, H, c.lh * c.dv, Xin, s.Xmid, H, nullptr, st);
   }
   qk::rmsnorm(s.Xmid, R, H, P + Ly.ln2, true, c.eps, s.A2, nullptr, nullptr, st);
-  tk::mm(s.A2, H, R, W + Ly.wgu.off, 2 * c.I, H, s.GU, 2 * c.I, false, st);
-  qk::swiglu(s.GU, R, c.I, s.Hh, st);
+  mm_swiglu(s.A2, H, R, W + Ly.wgu.off, c.I, H, ck ? s.GU : nullptr, s.Hh, st);
   mm_res(s.Hh, c.I, R, W + Ly.wdn.off, H, c.I, s.Xmid, Xout, H, nullptr, st);
 }
 // 뒤: s.dR = 층 출력 기울기 → 층 입력 기울기(제자리). 앞 중간값은 q_layer_fwd 를 다시 불러 만든다
@@ -802,8 +813,7 @@ static void q_layer_bwd(Model& m, int l, int B, int L, cudaStream_t st) {
   q_layer_fwd(m, l, B, L, s.Xs[l], s.dA, st, true);   // 검문점도 씀
   // MLP(dRb = 위 층 ln1 / 끝 RMSN 의 뒤가 함께 씀 — 융합 B)
   tk::mm_dw(s.dRb, H, s.Hh, c.I, R, H, c.I, s.ws, DWCH, GW + Ly.wdn.off, nullptr, st);
-  tk::mm_dx(s.dRb, H, R, W + Ly.wdn.off, H, c.I, s.dHh, c.I, false, st);
-  tk::swiglu_bwd(s.GU, s.dHh, R, c.I, s.dGU, m.bug == 1 ? 1 : 0, st);
+  mm_dswiglu(s.dRb, H, R, W + Ly.wdn.off, H, c.I, s.GU, s.dGU, m.bug == 1 ? 1 : 0, st);
   tk::mm_dw(s.dGU, 2 * c.I, s.A2, H, R, 2 * c.I, H, s.ws, DWCH, GW + Ly.wgu.off, nullptr, st);
   tk::mm_dx(s.dGU, 2 * c.I, R, W + Ly.wgu.off, 2 * c.I, H, s.dA, H, false, st);
   tk::rms_bwd(s.dA, H, s.Xmid, H, R, 1, H, P + Ly.ln2, true, c.eps, s.dR, H, true, s.npart, GV + Ly.ln2, 0, st, s.dRb);
@@ -913,7 +923,7 @@ static void v_block_bwd(Model& m, int l, int Rv, cudaStream_t st) {
 }
 
 // ---- 전문가 블록 ----
-static void e_block_fwd(Model& m, int f, const VBatch& bt, const float* Xin, float* Xout, cudaStream_t st) {
+static void e_block_fwd(Model& m, int f, const VBatch& bt, const float* Xin, float* Xout, cudaStream_t st, bool ck = false) {
   Model::WS& s = *m.w;
   const VCfg& c = m.c;
   const QCfg& Q = m.q.c;
@@ -932,8 +942,7 @@ static void e_block_fwd(Model& m, int f, const VBatch& bt, const float* Xin, flo
   qk::gate(s.eO, s.eT, ldT, RA, Q.nq, Q.hd, s.eAg, st);
   mm_res(s.eAg, QW, RA, W + e.o.off, De, QW, Xin, s.eXm, De, nullptr, st);
   qk::rmsnorm(s.eXm, RA, De, P + e.ln2, true, Q.eps, s.eA2, nullptr, nullptr, st);
-  tk::mm(s.eA2, De, RA, W + e.gu.off, 2 * c.Ie, De, s.eGU, 2 * c.Ie, false, st);
-  qk::swiglu(s.eGU, RA, c.Ie, s.eHh, st);
+  mm_swiglu(s.eA2, De, RA, W + e.gu.off, c.Ie, De, ck ? s.eGU : nullptr, s.eHh, st);
   mm_res(s.eHh, c.Ie, RA, W + e.dn.off, De, c.Ie, s.eXm, Xout, De, nullptr, st);
 }
 static void e_block_bwd(Model& m, int f, const VBatch& bt, cudaStream_t st) {
@@ -946,10 +955,9 @@ static void e_block_bwd(Model& m, int f, const VBatch& bt, cudaStream_t st) {
   uint16_t* GW = m.ap.GW;
   float* GV = m.ap.GV;
   const int B = bt.B, RA = B * c.Hc, De = c.De, ldT = e.qkv.N, QW = Q.nq * Q.hd;
-  e_block_fwd(m, f, bt, s.eX[f], s.edA, st);   // edRb = 위 블록 ln1 / 끝 RMSN 의 뒤가 씀(B)
+  e_block_fwd(m, f, bt, s.eX[f], s.edA, st, true);   // edRb = 위 블록 ln1 / 끝 RMSN 의 뒤가 씀(B)
   tk::mm_dw(s.edRb, De, s.eHh, c.Ie, RA, De, c.Ie, s.ws, DWCH, GW + e.dn.off, nullptr, st);
-  tk::mm_dx(s.edRb, De, RA, W + e.dn.off, De, c.Ie, s.edHh, c.Ie, false, st);
-  tk::swiglu_bwd(s.eGU, s.edHh, RA, c.Ie, s.edGU, m.bug == 1 ? 1 : 0, st);
+  mm_dswiglu(s.edRb, De, RA, W + e.dn.off, De, c.Ie, s.eGU, s.edGU, m.bug == 1 ? 1 : 0, st);
   tk::mm_dw(s.edGU, 2 * c.Ie, s.eA2, De, RA, 2 * c.Ie, De, s.ws, DWCH, GW + e.gu.off, nullptr, st);
   tk::mm_dx(s.edGU, 2 * c.Ie, RA, W + e.gu.off, 2 * c.Ie, De, s.edA, De, false, st);
   tk::rms_bwd(s.edA, De, s.eXm, De, RA, 1, De, P + e.ln2, true, Q.eps, s.edR, De, true, s.npart, GV + e.ln2, 0, st, s.edRb);
@@ -1048,8 +1056,7 @@ static void mem_fwd(Model& m, const VBatch& bt, cudaStream_t st) {
     tk::f2bf(b.Os, Rl * H, b.Osb, st);
     mm_res(b.Osb, H, (int)Rl, W + e.so.off, H, H, b.zx, b.zs, H, nullptr, st);
     qk::rmsnorm(b.zs, (int)Rl, H, P + e.lnm, true, Q.eps, b.am, nullptr, nullptr, st);
-    tk::mm(b.am, H, (int)Rl, W + e.gu.off, 2 * I, H, b.GU, 2 * I, false, st);
-    qk::swiglu(b.GU, (int)Rl, I, b.Hh, st);
+    mm_swiglu(b.am, H, (int)Rl, W + e.gu.off, I, H, b.GU, b.Hh, st);
     mm_res(b.Hh, I, (int)Rl, W + e.dn.off, H, I, b.zs, s.mz[k + 1], H, nullptr, st);
   }
   qk::rmsnorm(s.mz[c.mem_blk], (int)Rl, H, P + m.m_lnout, true, Q.eps, nullptr, s.gOut[VG_MEM], nullptr, st);
@@ -1087,8 +1094,7 @@ static void mem_bwd(Model& m, const VBatch& bt, cudaStream_t st) {
     auto& b = s.mbk[k];
     // MLP(mdzb = 앞 RMSN 뒤가 씀)
     tk::mm_dw(s.mdzb, H, b.Hh, I, (int)Rl, H, I, s.ws, DWCH, GW + e.dn.off, nullptr, st);
-    tk::mm_dx(s.mdzb, H, (int)Rl, W + e.dn.off, H, I, s.mdHh, I, false, st);
-    tk::swiglu_bwd(b.GU, s.mdHh, (int)Rl, I, s.mdGU, m.bug == 1 ? 1 : 0, st);
+    mm_dswiglu(s.mdzb, H, (int)Rl, W + e.dn.off, H, I, b.GU, s.mdGU, m.bug == 1 ? 1 : 0, st);
     tk::mm_dw(s.mdGU, 2 * I, b.am, H, (int)Rl, 2 * I, H, s.ws, DWCH, GW + e.gu.off, nullptr, st);
     tk::mm_dx(s.mdGU, 2 * I, (int)Rl, W + e.gu.off, 2 * I, H, s.mda, H, false, st);
     tk::rms_bwd(s.mda, H, b.zs, H, (int)Rl, 1, H, P + e.lnm, true, Q.eps, s.mdz, H, true, s.npart, GV + e.lnm, 0, st, s.mdzb);

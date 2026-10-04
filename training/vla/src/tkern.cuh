@@ -124,8 +124,6 @@ void deltanet_bwd(const float* Qn, const float* Kn, const float* V, int ldv, con
                   int dv, bool nodecay, bool hasck, float* ws, float* dQn, float* dKn, float* dV, int lddv, float* dG, float* dBeta, int bug, cudaStream_t st);
 void gnorm_bwd(const float* O, const float* Z, int ldz, int R, int lh, int dv, const float* w, float eps, const float* dY, float* dO, float* dZ, int lddz,
                float* npart, float* gw, cudaStream_t st, uint16_t* dZb = nullptr);
-// SwiGLU 뒤: dH [R][I] F32 → dGU bf16 [R][2I]. bug 1: silu' 빠뜨림
-void swiglu_bwd(const float* T0, const float* dH, int R, int I, uint16_t* dGU, int bug, cudaStream_t st);
 
 }  // namespace tk
 }  // namespace rvla
