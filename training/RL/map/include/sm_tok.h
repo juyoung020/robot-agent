@@ -82,11 +82,6 @@ inline void make_sm_tokens(const SmTokIn& in, MapTok* o, SmTokPrev* prev = nullp
     return ka < kb;
   });
   const int nslot = n < KSLOT ? n : KSLOT;
-  // omx_joint1 원점(base_link) — make_tokens 와 같은 식
-  const limo_omx::JointConst& Jm = limo_omx::joint(limo_omx::J_OMX_MOUNT_JOINT);
-  const limo_omx::JointConst& J1 = limo_omx::joint(limo_omx::J_OMX_JOINT1);
-  float j1[3];
-  env::mat_vec(Jm.R, J1.t, j1);
   for (int r = 0; r < KSLOT; ++r) {
     o->name_id[r] = -1;
     o->app_id[r] = -1;
@@ -110,9 +105,8 @@ inline void make_sm_tokens(const SmTokIn& in, MapTok* o, SmTokPrev* prev = nullp
       g2 += gk * gk;
     }
     v[T_EEF_S] = f2h_soft(std::sqrt(g2));
-    {
-      const float d0 = pr0 - (Jm.t[0] + j1[0]), d1 = pr1 - (Jm.t[1] + j1[1]), d2 = pr2 - (Jm.t[2] + j1[2]);
-      v[T_REACH] = f2h_soft(std::sqrt(d0 * d0 + d1 * d1 + d2 * d2) <= MP::arm_reach ? 1.f : 0.f);
+    {  // 학습 쪽과 같은 OMX 작업 공간 표(omx_workspace.h, map_tok.h omx_reach_box)
+      v[T_REACH] = omx_reach_box(S.pos, S.ext, px, py, c, s) ? (uint16_t)0x3c00u : (uint16_t)0u;
     }
     const float fdx = S.pos[0] - S.first_pos[0], fdy = S.pos[1] - S.first_pos[1];
     v[T_DISP] = f2h_soft(c * fdx + s * fdy);

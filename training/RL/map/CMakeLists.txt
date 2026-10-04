@@ -72,3 +72,8 @@ if(MAP_REALCHECK)
   set_target_properties(map_realcheck PROPERTIES CXX_STANDARD 20)
   target_link_libraries(map_realcheck gmap sm_real)
 endif()
+
+# 지도 토큰 정규화 통계(VLA_INPUT 4절) → observation/include/tok_norm.h 생성
+add_executable(tok_stats ../observation/tools/tok_stats.cu)
+target_include_directories(tok_stats PRIVATE ../observation/include ../network/include)
+target_link_libraries(tok_stats gmap)

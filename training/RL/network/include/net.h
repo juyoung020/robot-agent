@@ -1,9 +1,10 @@
 // RL 교사 정책·가치 신경망의 모양과 CPU·GPU 공용 수치 함수(계획서 GPU_TRAINING.md 3·6·7절).
 //
 // 구조(3절 "물체 칸 16 개를 같은 MLP 로 토큰화 → 작은 집합 인코더 → 정책·가치 머리"):
-//   칸 MLP  S1: 칸 입력 48 → 64 ELU, S2: 64 → 64 ELU (16 칸 모두 같은 가중치)
+//   칸 MLP  S1: 칸 입력 304 → 64 ELU, S2: 64 → 64 ELU (16 칸 모두 같은 가중치)
+//           칸 입력 = 숫자 33(정규화, obs.h) + 이름 뜻 128 + 생김새 128(얼린 128-d 표 — training/data/vla_v1, VLA_INPUT 3절) + 1 + 0 × 14
 //   집합    빈 칸을 가린 평균 64 + 최댓값 64 = 128
-//   몸통 입력 X0(288) = [집합 128 | G1 관측 80 | 벽 56 | 방 10 | 완성도 4 | 1(편향) | 0 × 9]
+//   몸통 입력 X0(304) = [집합 128 | G1 관측 80 | 벽 56 | 방 10 | 완성도 4 | 1(편향) | 안 본 곳 광선 8 | 다음 경유 지점 4 | 0 × 13]
 //   정책    A1 288 → 256, A2 → 256, A3 → 128 (ELU), A4 → 8 (평균, 선형). 표준편차는 상태와 무관한 변수 log σ 8 개
 //   가치    C1..C3 같은 모양, C4 → 1 (모양은 8 칸, 0 번만 씀)
 // 편향은 따로 두지 않는다: 각 층 입력의 "1 칸"에 대응하는 가중치 열이 편향이다(입력 버퍼의 그 칸은 늘 1).
@@ -25,18 +26,23 @@ constexpr int N_ACT = 8;          // G1 행동 (env::N_ACT)
 constexpr int N_OBS_G1 = 80;      // G1 관측 (env::N_OBS)
 constexpr int KSLOT = 16;         // 지도 물체 칸 (gmap::KSLOT)
 constexpr int SLOT_VALS = 33;     // 칸 숫자 (gmap::TOK_SLOT_VALS)
-constexpr int N_ID = 7;           // 이름·생김새 번호 0..6 (gmap::NCLS + 유령 1) — 원-핫(4.4 의 표 대신, 가정: SigLIP 표가 아직 없음)
-constexpr int SLOT_IN = 48;       // 33 + 7 + 7 + 1(편향)
-constexpr int SLOT_BIAS = 47;
+constexpr int VEC_D = 128;        // 이름 뜻·생김새 벡터(training/embed 의 얼린 128-d 투영 공간, vlav::DIM)
+constexpr int SLOT_NAME = SLOT_VALS;            // 33: 이름 뜻 128 시작 칸
+constexpr int SLOT_APP = SLOT_NAME + VEC_D;     // 161: 생김새 128 시작 칸
+constexpr int SLOT_BIAS = SLOT_APP + VEC_D;     // 289
+constexpr int SLOT_IN = 304;      // 33 + 128 + 128 + 1(편향) + 0 × 14 (16 의 배수). v1(원-핫 7 + 7, 48 칸)은 VLA_INPUT 구현 전 — 체크포인트 호환 없음
+constexpr bool kSlotFused = SLOT_IN <= 64;      // 칸 MLP 묶음 커널(slot_fused.cuh)은 칸 입력 ≤ 64 전용 → v2(304)는 따로 커널(gemm·pool) 길
 constexpr int S_H = 64;
 constexpr int POOL_W = 2 * S_H;   // 128
 constexpr int OBS_W = N_OBS_G1 + 56 + 10 + 4;   // 150: G1 관측 + 벽 + 방 + 완성도
 constexpr int X0_OBS = POOL_W;    // X0 안 관측 시작 칸(집합이 16 정렬 자리 0 에 오도록 앞에 둠)
 constexpr int X0_BIAS = POOL_W + OBS_W;   // 278
-constexpr int N_FRONT = 8;       // 안 본 곳 광선(gmap::N_FRONT) — 편향 칸 뒤 0 칸 자리에(use_map 2 일 때만 0 아님)
+constexpr int N_FRONT = 8;       // 안 본 곳 광선(gmap::N_FRONT) — 편향 칸 뒤(use_map 2 일 때만 0 아님)
 constexpr int X0_FRONT = X0_BIAS + 1;   // 279..286
-constexpr int X0_W = 288;
-static_assert(X0_FRONT + N_FRONT <= X0_W, "front rays fit in the zero tail of X0");
+constexpr int N_WAY = 4;         // 다음 경유 지점(gmap::N_WAY): x, y, 경로 길이, 있음 (use_map 2 일 때만)
+constexpr int X0_WAY = X0_FRONT + N_FRONT;   // 287..290
+constexpr int X0_W = 304;
+static_assert(X0_WAY + N_WAY <= X0_W && X0_W % 16 == 0, "front rays and waypoint fit in the tail of X0");
 
 enum LayerId { L_S1, L_S2, L_A1, L_A2, L_A3, L_A4, L_C1, L_C2, L_C3, L_C4, N_LAYER };
 enum Act { ACT_LIN = 0, ACT_ELU = 1 };

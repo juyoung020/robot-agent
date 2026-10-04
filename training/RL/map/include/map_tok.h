@@ -1,12 +1,14 @@
-// 지도 토큰(계획서 GPU_TRAINING.md 5.3·4.4, VLA_INPUT.md 3·4절) — 스텝마다 판마다 1,280 B. map.h 끝에서 include 된다.
+// 지도 토큰(계획서 GPU_TRAINING.md 5.3·4.4, VLA_INPUT.md 3·4절) — 스텝마다 판마다 1,296 B(v2: v1 1,280 B + 다음 경유 지점). map.h 끝에서 include 된다.
 // CPU 참조판과 GPU 커널이 같은 make_tokens 를 쓴다(GPU 는 판 하나 = 레인 16, CPU 는 레인 1). 모든 값은 믿는(slam) 자세의 base_link 기준이다.
 //   물체 칸 16 × 숫자 33 (FP16) + 이름 표 번호·생김새 표 번호(int16, 4.4: 벡터는 장치 표에, 관측에는 번호만) + 벽 56 (FP16) + 방 10 (FP16)
-//   + 완성도 4 (FP16) + 칸 수·표시.
+//   + 완성도 4 (FP16) + 칸 수·표시 + 안 본 곳 광선 8 + 다음 경유 지점 4 (FP16). 값은 m·rad 그대로이고 정규화(5 m 자르기·로그·자료 통계)는 관측 쪽(obs.h)이 한다.
 // 칸 고르기: 확정 물체(scenemap 스냅숏처럼), 목표 물체가 맨 앞, 나머지는 로봇에서 가까운 순(VLA_INPUT 3절). 빈 칸 = 0, 번호 −1.
 #pragma once
 #ifdef __CUDACC__
 #include <cuda_fp16.h>
 #endif
+#include "omx_workspace.h"   // 팔이 닿는지: URDF 로 미리 계산한 OMX 작업 공간(tools/omx_ws)
+#include "vla_vocab.h"       // 이름 표 행·상위어·이름 확신도(training/data/vla_v1 에서 생성)
 
 namespace gmap {
 
@@ -15,6 +17,7 @@ constexpr int N_WALL = 56;   // walls.hpp kStateLen = 16 + 8·5
 constexpr int N_ROOMTOK = 10;
 constexpr int N_COMP = 4;
 constexpr int N_FRONT = 8;   // 안 본 곳 광선 8(45° 간격) — VLA_INPUT 에 없는 값을 더함(가정)
+constexpr int N_WAY = 4;     // 다음 경유 지점: x, y, 경로 길이, 있음
 // 칸 숫자 33 의 자리(VLA_INPUT 3절 표 순서)
 enum TokSlot {
   T_POS = 0,        // 3 위치 xyz (base_link)
@@ -24,32 +27,34 @@ enum TokSlot {
   T_EXT = 8,        // 3 크기
   T_EEF_C = 11,     // 팔 끝 ↔ 중심 거리
   T_EEF_S = 12,     // 팔 끝 ↔ 상자 겉면 거리(안이면 0)
-  T_REACH = 13,     // 팔이 닿는지(0/1)
+  T_REACH = 13,     // 팔이 닿는지(0/1): 물체 상자의 (r, z) 범위가 OMX 작업 공간과 겹치나(omx_workspace.h)
   T_DISP = 14,      // 3 처음 자리에서 옮겨진 양(base_link 축)
   T_VEL = 17,       // 3 물체 속도 m/s (지난 스텝 지도 자리와의 차, base_link 축)
   T_STATE = 20,     // 4 보임·사라짐·옮겨짐·들고 있음
   T_AGE = 24,       // 마지막 본 뒤 s
   T_SCORE = 25,     // 검출 점수
   T_NOBS = 26,      // 본 횟수
-  T_SRC = 27,       // 1 = 지금 보는 중(마지막 keyframe 에서 봄), 0 = 기억
+  T_SRC = 27,       // 1 = 지금 보는 중(마지막 keyframe 에서 봄 — 위치 = 그 관측 그대로 Slot::meas), 0 = 기억(지도 pos)
   T_UNC = 28,       // 위치 불확실도 m
   T_SAMEROOM = 29,  // 로봇과 같은 (드러난) 방
   T_TARGET = 30,    // 목표 물체
-  T_CONF1 = 31,     // 이름 확신도: 1위 점수
-  T_CONF2 = 32,     // 1위 − 2위
+  T_CONF1 = 31,     // 이름 확신도: 라벨 표 1위 점수 = cos(생김새 128, 이름 128) (vla_vocab.h, 생김새 행 × 이름 종류)
+  T_CONF2 = 32,     // 1위 − 2위(이름 어휘 안 다른 이름 최댓값과의 차). 이 값이 kConfLow 아래면 이름 행 = 상위어
 };
 struct alignas(16) MapTok {
   uint16_t slot[KSLOT][TOK_SLOT_VALS];   // FP16
-  int16_t name_id[KSLOT];                // 이름 뜻 표 번호 = 지도의 이름 번호(틀린 이름 그대로), −1 빈 칸
-  int16_t app_id[KSLOT];                 // 생김새 표 번호 = 출처 참 물체의 종류, 유령 = NCLS(배경·잡동사니), −1 빈 칸
+  int16_t name_id[KSLOT];                // 이름 뜻 표 행(training/data/vla_v1 names) = 지도 이름(틀린 이름 그대로)의 라벨 행, 확신 낮으면 상위어 행. −1 빈 칸
+  int16_t app_id[KSLOT];                 // 생김새 표 행 = 출처 참 물체의 종류(0..5), 유령 = NCLS(배경·잡동사니). −1 빈 칸
   uint16_t wall[N_WALL];                 // FP16, walls.hpp wallStateVector 와 같은 배치
   uint16_t room[N_ROOMTOK];              // FP16: 방 종류 6(kitchen·bathroom·bedroom·living room·office·모름), 가까운 문 x·y·거리 m, 문 있음
   uint16_t comp[N_COMP];                 // FP16: 과제 물체 확정, 장면 물체 확정 비율, 방 칸 본 비율, 드러난 방 비율
   int16_t n_slot;                        // 채운 칸 수
   int16_t flags;                         // 비트 0 = 이번 스텝 keyframe
-  uint16_t front[N_FRONT];               // FP16: 안 본 곳 광선(로봇 앞부터 반시계 45°), 첫 안 본 칸까지 /4 m. 점유 칸에 먼저 막히거나 4 m 안에 없으면 1 (예전 pad 자리, 1,280 B 그대로)
+  uint16_t front[N_FRONT];               // FP16: 안 본 곳 광선(로봇 앞부터 반시계 45°), 첫 안 본 칸까지 /4 m. 점유 칸에 먼저 막히거나 4 m 안에 없으면 1 (예전 pad 자리)
+  uint16_t way[N_WAY];                   // FP16: 다음 경유 지점(VLA_INPUT 4절 목표 토큰) base_link x·y m, 목표까지 경로 길이 m, 있음(1/0). 목표 칸이 없거나 길이 없으면 0
+  uint16_t pad2[4];                      // 0
 };
-static_assert(sizeof(MapTok) == 1280, "map token = 1280 B per env-step");
+static_assert(sizeof(MapTok) == 1296, "map token v2 = 1296 B per env-step (v1 1280 B + way 4 + pad)");
 struct TPrev { float p[3]; int tag; };   // 칸마다 지난 스텝 지도 자리, tag = 물체 번호 << 16 | 스텝 & 0xffff (물체 속도용, 확정 칸만 씀)
 
 // float → FP16 (가장 가까운 짝수로 반올림, NaN 은 0x7fff). CPU 는 정수 연산(f2h_soft), GPU 는 하드웨어 __float2half_rn —
@@ -182,11 +187,20 @@ DEV const int16_t* seg_at(const int16_t* segs, const MapCore& m, int k) {   // �
   return k < m.nseg_h ? segs + 4 * k : segs + 4 * (MAXSEG + k - m.nseg_h);
 }
 
+constexpr int WG = GW / 2;   // 경유 지점 거친 격자 한 변(0.2 m 칸 64 개)
+static_assert(WG == 64 && MP::way_res == 2.f * RES, "waypoint grid = 2x2 fine cells, one uint64 per row");
+struct WayScratch {   // 경유 지점 BFS(거친 격자 행마다 64 비트)
+  uint64_t blk[WG];     // 막힌 칸(점유 2×2 → 1 칸 부풀림)
+  uint64_t fr[WG];      // 이번 단계 새로 닿은 칸
+  uint64_t l0[WG], l1[WG];   // BFS 단계 mod 3 (두 비트, 3 = 안 닿음)
+};
 struct TokScratch {   // 판 하나의 작업 공간(GPU 공유 메모리). 광선 거리·칸의 지난 자리는 그 일을 맡은 레인의 레지스터(make_tokens)
   float sd[2 * MAXSEG];   // 선분 거리
   float sk[KSLOT];        // 칸 순서 열쇠(수평 거리), 안 넣는 칸 −1
   float tk[KSLOT];        // 목표 후보 열쇠, 아님 −1
+  float wy[N_WAY];        // 경유 지점 결과(레인 0 이 씀, 끝에 out 으로)
   union {
+    WayScratch w;                            // 1) 경유 지점 BFS(창 옮기기 전)
     struct {
       uint32_t so[TOK_SROWS * TOK_SWORDS];   // 로봇 둘레 창의 점유 비트(광선이 읽음). 광선 뒤에는 out 이 덮어씀
       uint32_t ss[TOK_SROWS * TOK_SWORDS];   // 같은 창의 본 칸 비트(안 본 곳 광선)
@@ -195,12 +209,159 @@ struct TokScratch {   // 판 하나의 작업 공간(GPU 공유 메모리). 광�
   };
 };
 
+// ---- 팔이 닿는지(VLA_INPUT 3절): 물체를 joint1 축 기준 (r, z) 범위로 바꿔 작업 공간 표와 겹치는지 ------------------------------------
+// r 범위 = joint1 축(믿는 자세의 base_link 에서 (AX, AY))에서 물체 중심까지 수평 거리 ∓ 바닥 자국 외접원 반지름(map 축 정렬 상자라도 회전에 불변이게 —
+// 강체 불변 시험 sm_tok_test), z 범위 = 상자 높이(base_link). 표는 joint1 이 360° 를 돌 수 있어 방위와 무관하다. 범위 안 칸 중 하나라도 작업 공간이면 1
+DEV bool omx_reach_box(const float ctr[3], const float ext[3], float px, float py, float c, float s) {
+  const float axw = px + (c * omxws::AX - s * omxws::AY), ayw = py + (s * omxws::AX + c * omxws::AY);
+  const float dx = ctr[0] - axw, dy = ctr[1] - ayw, d = sqrtf(dx * dx + dy * dy);
+  const float rho = 0.5f * sqrtf(ext[0] * ext[0] + ext[1] * ext[1]);
+  const float rmin = maxf(0.f, d - rho), rmax = d + rho;
+  const float zlo = ctr[2] - 0.5f * ext[2] - MP::base_z, zhi = ctr[2] + 0.5f * ext[2] - MP::base_z;
+  int r0 = (int)floorf(rmin / omxws::RES), r1 = (int)floorf(rmax / omxws::RES);
+  int z0 = (int)floorf((zlo - omxws::Z_LO) / omxws::RES), z1 = (int)floorf((zhi - omxws::Z_LO) / omxws::RES);
+  if (r0 >= omxws::NR || z1 < 0 || z0 >= omxws::NZ) return false;
+  r1 = r1 >= omxws::NR ? omxws::NR - 1 : r1;
+  z0 = z0 < 0 ? 0 : z0;
+  z1 = z1 >= omxws::NZ ? omxws::NZ - 1 : z1;
+  const uint64_t hiw = r1 >= 63 ? ~0ull : ((1ull << (r1 + 1)) - 1ull), mask = hiw & ~((1ull << r0) - 1ull);
+  for (int z = z0; z <= z1; ++z)
+    if (omxws::row(z) & mask) return true;
+  return false;
+}
+
+// ---- 다음 경유 지점(VLA_INPUT 4절, sm_snap_place_path 대신 — 계획서 4.4 "거친 격자 파면 BFS") ---------------------------------------
+// 믿는 점유 비트(occ, 0.1 m) → 0.2 m 거친 격자(2×2 중 하나라도 점유) → 1 칸 부풀림(8 이웃) = 막힘. 안 본 칸은 지나갈 수 있다(가정).
+// 목표 칸(지도의 목표 칸 자리) 둘레 1 칸을 씨앗(단계 0)으로 8 이웃 BFS — 단계는 mod 3 두 비트로만 둔다(이웃 칸의 단계 차는 1 이하라 내리막에 충분).
+// 로봇 칸에 닿으면 멈춘다. 로봇 칸 둘레 1 칸과 씨앗은 막힘에서 뺀다(벽 옆에서 시작·목표 물체 자체가 점유). 레인이 행을 나누고 단계마다 동기 2 번.
+// 레인 0 이 로봇 칸에서 내리막(단계 −1 이웃 중 목표 칸에 가장 가까운 것, 같으면 고정 차례)으로 끝까지 가며 경로 길이를 더하고, way_look 칸 간 자리를
+// 경유 지점으로. 경로가 way_look 보다 짧으면 목표 자리. 결과 ts.wy = {x, y (base_link), 경로 길이 m, 있음}
+DEV uint32_t compact16(uint32_t w) {   // 32 칸 → 짝지은 OR 16 칸
+  uint32_t t = (w | (w >> 1)) & 0x55555555u;
+  t = (t | (t >> 1)) & 0x33333333u;
+  t = (t | (t >> 2)) & 0x0f0f0f0fu;
+  t = (t | (t >> 4)) & 0x00ff00ffu;
+  t = (t | (t >> 8)) & 0x0000ffffu;
+  return t;
+}
+DEV uint64_t dil_row(uint64_t x) { return x | (x << 1) | (x >> 1); }
+template <int NLC, class Sync>
+DEV void waypoint(const uint32_t* occ, float gx, float gy, float px, float py, float c, float s, WayScratch& w, float* wy, int lane, int nl,
+                  const Sync& sync, int tbug = 0) {
+  constexpr float OX = (float)GX0 * RES;
+  const int gfx = (int)floorf((gx - OX) / RES), gfy = (int)floorf((gy - OX) / RES);
+  const int rfx = (int)floorf((px - OX) / RES), rfy = (int)floorf((py - OX) / RES);
+  const bool inside = gfx >= 0 && gfx < GW && gfy >= 0 && gfy < GW && rfx >= 0 && rfx < GW && rfy >= 0 && rfy < GW;
+  const int gcx = gfx >> 1, gcy = gfy >> 1, rcx = rfx >> 1, rcy = rfy >> 1;   // inside 일 때만 씀(같은 값을 모든 레인이 앎)
+  if (!inside) {
+    if (lane == 0) for (int q = 0; q < N_WAY; ++q) wy[q] = 0.f;
+    sync();
+    return;
+  }
+  // 거친 점유
+  for (int r = lane; r < WG; r += nl) {
+    uint64_t row = 0;
+    for (int q = 0; q < 4; ++q) {
+      const uint32_t a = occ[(2 * r) * 4 + q] | occ[(2 * r + 1) * 4 + q];
+      row |= (uint64_t)compact16(a) << (16 * q);
+    }
+    w.fr[r] = row;
+  }
+  sync();
+  auto near1 = [](int r, int cx, int cy) -> uint64_t { return (r < cy - 1 || r > cy + 1) ? 0ull : dil_row(1ull << cx); };   // 행 r 에서 (cx, cy) 둘레 1 칸
+  for (int r = lane; r < WG; r += nl) {
+    uint64_t d = dil_row(w.fr[r]);
+    if (r > 0) d |= dil_row(w.fr[r - 1]);
+    if (r < WG - 1) d |= dil_row(w.fr[r + 1]);
+    d &= ~near1(r, rcx, rcy);
+    d &= ~near1(r, gcx, gcy);
+    w.blk[r] = d;
+    const uint64_t seed = near1(r, gcx, gcy);
+    w.l0[r] = ~seed;   // 씨앗 = 단계 0(두 비트 0), 나머지 = 3(안 닿음)
+    w.l1[r] = ~seed;
+  }
+  sync();
+  for (int r = lane; r < WG; r += nl) w.fr[r] = near1(r, gcx, gcy);
+  sync();
+  int L = -1;
+  if (rcy >= gcy - 1 && rcy <= gcy + 1 && rcx >= gcx - 1 && rcx <= gcx + 1) L = 0;
+  constexpr int PER = (WG + NLC - 1) / NLC;   // 레인마다 맡는 행 수의 최댓값(nl ≥ NLC)
+  for (int lev = 1; L < 0 && lev <= MP::way_iter; ++lev) {
+    uint64_t nw[PER];
+    bool any = false, hit = false;
+    int k = 0;
+    for (int r = lane; r < WG; r += nl, ++k) {
+      uint64_t x = w.fr[r];
+      if (r > 0) x |= w.fr[r - 1];
+      if (r < WG - 1) x |= w.fr[r + 1];
+      x = dil_row(x) & ~w.blk[r] & (w.l0[r] & w.l1[r]);
+      nw[k] = x;
+      any = any || x != 0ull;
+      hit = hit || (r == rcy && ((x >> rcx) & 1ull));
+    }
+    sync();
+    const int cd = lev % 3;
+    k = 0;
+    for (int r = lane; r < WG; r += nl, ++k) {
+      const uint64_t x = nw[k];
+      w.fr[r] = x;
+      w.l0[r] = (w.l0[r] & ~x) | ((cd & 1) ? x : 0ull);
+      w.l1[r] = (w.l1[r] & ~x) | ((cd & 2) ? x : 0ull);
+    }
+    any = sync.any(any);
+    hit = sync.any(hit);
+    if (hit) L = lev;
+    else if (!any) break;
+  }
+  if (lane == 0) {
+    if (L < 0) {
+      for (int q = 0; q < N_WAY; ++q) wy[q] = 0.f;
+    } else {
+      auto code = [&](int x, int y) -> int { return (int)((w.l0[y] >> x) & 1ull) | ((int)((w.l1[y] >> x) & 1ull) << 1); };
+      int cx = rcx, cy = rcy, cd = L % 3;
+      float len = 0.f;
+      int wx = -1, wyc = -1;
+      bool ok = true;
+      const int dxs[8] = {1, 0, -1, 0, 1, -1, -1, 1}, dys[8] = {0, 1, 0, -1, 1, 1, -1, -1};
+      for (int st = 1; st <= L; ++st) {
+        const int want = (cd + 2) % 3;
+        int bx = -1, by = -1, bd = 0, bk = -1;
+        for (int k2 = 0; k2 < 8; ++k2) {
+          const int nx = cx + dxs[k2], ny = cy + dys[k2];
+          if (nx < 0 || nx >= WG || ny < 0 || ny >= WG || code(nx, ny) != want) continue;
+          const int ddx = nx - gcx, ddy = ny - gcy, dd = ddx * ddx + ddy * ddy;
+          if (bk < 0 || dd < bd || (tbug == 2 && dd == bd)) { bx = nx; by = ny; bd = dd; bk = k2; }   // tbug 2(음성 대조): 같으면 뒤 차례
+        }
+        if (bk < 0) { ok = false; break; }
+        len = len + (bk >= 4 ? 1.41421356f : 1.f) * MP::way_res;
+        cx = bx; cy = by; cd = want;
+        if (st == MP::way_look) { wx = cx; wyc = cy; }
+      }
+      if (!ok) {
+        for (int q = 0; q < N_WAY; ++q) wy[q] = 0.f;
+      } else {
+        const float ccx = OX + ((float)cx + 0.5f) * MP::way_res, ccy = OX + ((float)cy + 0.5f) * MP::way_res;
+        len = len + sqrtf((gx - ccx) * (gx - ccx) + (gy - ccy) * (gy - ccy));
+        if (L == 0) len = sqrtf((gx - px) * (gx - px) + (gy - py) * (gy - py));
+        const float tx = wx >= 0 ? OX + ((float)wx + 0.5f) * MP::way_res : gx, ty = wyc >= 0 ? OX + ((float)wyc + 0.5f) * MP::way_res : gy;
+        const float dx = tx - px, dy = ty - py;
+        wy[0] = c * dx + s * dy;
+        wy[1] = -s * dx + c * dy;
+        wy[2] = len;
+        wy[3] = 1.f;
+      }
+    }
+  }
+  sync();
+}
+
 // 판 하나의 토큰. 레인 lane / nl 개가 나눠 하고 sync 로 맞춘다(CPU: lane 0, nl 1). write = false 면 tprev 를 쓰지 않음(GPU 남는 레인)
 // occ: 판의 점유 비트 전체. 로봇 둘레 행을 ts.so 로 옮긴 뒤 광선을 쏘고, out 은 그다음 동기부터 쓴다(so 와 같은 자리)
 // NLC: nl 의 최솟값(컴파일 때). 레인마다 맡는 칸·광선 수가 (16 + NLC − 1) / NLC 이하라 지난 자리·광선 거리를 레지스터 배열에 둔다(GPU NLC = 16 → 하나씩)
+// tbug(음성 대조, 검증용): 2 = 경유 지점 내리막의 같은 거리 이웃을 뒤 차례로, 3 = 지금 보는 중 칸도 지도 자리(관측 자리 무시)
 template <int NLC, class Sync>
 DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* seen, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
-                       bool write, const Sync& sync) {
+                       bool write, const Sync& sync, int tbug = 0) {
   constexpr int PER = (KSLOT + NLC - 1) / NLC;
   static_assert(KSLOT == 16, "rays and slots share the per-lane count");
   TPrev tpl[PER];
@@ -243,6 +404,18 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
     float r[4];
     ts.sd[k] = wall_seg_robot(seg_at(segs, m, k), px, py, c, s, r);
   }
+  sync();
+  // 1b) 목표 칸(모든 레인이 같은 값) → 다음 경유 지점(목표 칸이 있을 때만 BFS). 작업 공간은 창 옮기기 전의 union 자리
+  int tgt = -1, nslot = 0;
+  for (int b = 0; b < KSLOT; ++b) {
+    nslot += ts.sk[b] >= 0.f;
+    if (ts.tk[b] >= 0.f && (tgt < 0 || ts.tk[b] < ts.tk[tgt])) tgt = b;
+  }
+  if (tgt >= 0) {
+    waypoint<NLC>(occ, m.slot[tgt].pos[0], m.slot[tgt].pos[1], px, py, c, s, ts.w, ts.wy, lane, nl, sync, tbug);
+  } else if (lane == 0) {
+    for (int q = 0; q < N_WAY; ++q) ts.wy[q] = 0.f;
+  }
   const int row0 = tok_row0(py), col0 = tok_col0(px);
   tok_stage(occ, row0, col0, ts.so, lane, nl);
   tok_stage(seen, row0, col0, ts.ss, lane, nl);
@@ -262,11 +435,6 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
     const int i = lane + q * nl;
     if (i < 16) o.wall[i] = f2h(ray[q] / MP::wall_range);
     if (i < N_FRONT) o.front[i] = f2h(fr[q] / MP::wall_range);
-  }
-  int tgt = -1, nslot = 0;
-  for (int b = 0; b < KSLOT; ++b) {
-    nslot += ts.sk[b] >= 0.f;
-    if (ts.tk[b] >= 0.f && (tgt < 0 || ts.tk[b] < ts.tk[tgt])) tgt = b;
   }
   PROF_MARK(TK_SEG);
   // 3) 가까운 선분 8(거리 순, 같으면 앞 번호)
@@ -302,8 +470,11 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
         rank += kj < kb || (kj == kb && j < b);
       }
       uint16_t* v = o.slot[rank];   // 바로 FP16 으로(지역 배열 없이)
-      const float dx = S.pos[0] - px, dy = S.pos[1] - py;
-      const float pr0 = c * dx + s * dy, pr1 = -s * dx + c * dy, pr2 = S.pos[2] - MP::base_z;
+      // 지금 보는 중이면 그 keyframe 의 관측 자리(Slot::meas — 이번 프레임 깊이 → 카메라 → 몸에 해당), 아니면 지도 자리 − slam 자세(VLA_INPUT 3절)
+      const bool live = !S.held && S.last_seen == t_kf;
+      const float* P = (live && tbug != 3) ? S.meas : S.pos;
+      const float dx = P[0] - px, dy = P[1] - py;
+      const float pr0 = c * dx + s * dy, pr1 = -s * dx + c * dy, pr2 = P[2] - MP::base_z;
       const float pe0 = pr0 - m.eef_b[0], pe1 = pr1 - m.eef_b[1], pe2 = pr2 - m.eef_b[2];
       const float dist = sqrtf(pr0 * pr0 + pr1 * pr1);
       v[T_POS] = f2h(pr0); v[T_POS + 1] = f2h(pr1); v[T_POS + 2] = f2h(pr2);
@@ -312,20 +483,15 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
       v[T_BEAR] = f2h(atan2f_d(pr1, pr0));
       for (int a = 0; a < 3; ++a) v[T_EXT + a] = f2h(S.ext[a]);
       v[T_EEF_C] = f2h(sqrtf(pe0 * pe0 + pe1 * pe1 + pe2 * pe2));
-      float g2 = 0.f;
+      float g2 = 0.f, blo[3], bhi[3];
       for (int a = 0; a < 3; ++a) {
-        const float gk = maxf(0.f, maxf((S.pos[a] - 0.5f * S.ext[a]) - m.eef_m[a], m.eef_m[a] - (S.pos[a] + 0.5f * S.ext[a])));
+        blo[a] = P[a] - 0.5f * S.ext[a];
+        bhi[a] = P[a] + 0.5f * S.ext[a];
+        const float gk = maxf(0.f, maxf(blo[a] - m.eef_m[a], m.eef_m[a] - bhi[a]));
         g2 = g2 + gk * gk;
       }
       v[T_EEF_S] = f2h(sqrtf(g2));
-      {  // omx_joint1 원점(base_link, 관절각과 무관) — 구 반경 arm_reach (가정)
-        const limo_omx::JointConst& Jm = limo_omx::joint(limo_omx::J_OMX_MOUNT_JOINT);
-        const limo_omx::JointConst& J1 = limo_omx::joint(limo_omx::J_OMX_JOINT1);
-        float j1[3];
-        env::mat_vec(Jm.R, J1.t, j1);
-        const float d0 = pr0 - (Jm.t[0] + j1[0]), d1 = pr1 - (Jm.t[1] + j1[1]), d2 = pr2 - (Jm.t[2] + j1[2]);
-        v[T_REACH] = f2h(sqrtf(d0 * d0 + d1 * d1 + d2 * d2) <= MP::arm_reach ? 1.f : 0.f);
-      }
+      v[T_REACH] = omx_reach_box(P, S.ext, px, py, c, s) ? (uint16_t)0x3c00u : (uint16_t)0u;
       const float fdx = S.pos[0] - S.first_pos[0], fdy = S.pos[1] - S.first_pos[1];
       v[T_DISP] = f2h(c * fdx + s * fdy);
       v[T_DISP + 1] = f2h(-s * fdx + c * fdy);
@@ -342,7 +508,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
       v[T_AGE] = f2h((float)(m.t - S.last_seen) * MP::tok_dt);
       v[T_SCORE] = f2h(S.score);
       v[T_NOBS] = f2h((float)S.n_obs);
-      v[T_SRC] = (!S.held && S.last_seen == t_kf) ? (uint16_t)0x3c00u : (uint16_t)0u;
+      v[T_SRC] = live ? (uint16_t)0x3c00u : (uint16_t)0u;
       {  // 마지막 본 뒤 믿는 오도메트리 이동·회전에 오도메트리 잡음 규칙을 곱함(가정: σ = odo_t·Δs + (odo_rr·Δθ + odo_rt·Δs)·거리)
         const float dl = m.plen - S.seen_len, dr = m.prot - S.seen_rot;
         v[T_UNC] = f2h(S.held ? 0.f : MP::odo_t * dl + (MP::odo_rr * dr + MP::odo_rt * dl) * dist);
@@ -350,10 +516,14 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
       const int ok = room_of(m, S.pos[0], S.pos[1]);
       v[T_SAMEROOM] = (rrk >= 0 && ok == rrk) ? (uint16_t)0x3c00u : (uint16_t)0u;
       v[T_TARGET] = b == tgt ? (uint16_t)0x3c00u : (uint16_t)0u;
-      v[T_CONF1] = f2h(S.score);                                   // 라벨 표가 없어 검출 점수로(가정)
-      v[T_CONF2] = f2h(maxf(0.f, 2.f * S.score - 1.f));            // 1위 − 2위(가정: 나머지 점수가 2위)
-      o.name_id[rank] = (int16_t)S.cls;
-      o.app_id[rank] = (int16_t)(S.src >= 0 ? m.prim[S.src].cls : NCLS);
+      // 이름: 라벨 표 1위(지도 이름 = 틀린 이름 그대로)의 확신도 = 생김새(출처 참 물체 종류, 유령 = NCLS)와 이름 벡터의 코사인·1위 − 2위(vla_vocab.h).
+      // 1위 − 2위가 낮으면 상위어 행(VLA_INPUT 3절 "확신 낮으면 상위어")
+      const int app = S.src >= 0 ? m.prim[S.src].cls : NCLS;
+      const float cf1 = vlav::conf1(app, S.cls), cf2 = vlav::conf2(app, S.cls);
+      v[T_CONF1] = f2h(cf1);
+      v[T_CONF2] = f2h(cf2);
+      o.name_id[rank] = cf2 < vlav::kConfLow ? vlav::sim_hyper(S.cls) : vlav::sim_name(S.cls);
+      o.app_id[rank] = (int16_t)app;
     }
     if (write) tprev[b] = TPrev{{S.pos[0], S.pos[1], S.pos[2]}, (S.id << 16) | tag_now};
   }
@@ -389,6 +559,8 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
     o.comp[3] = f2h((float)popc32((uint32_t)m.rrev) / (float)m.n_room);
     o.n_slot = (int16_t)nslot;
     o.flags = (int16_t)(m.kf_flag ? 1 : 0);
+    for (int q = 0; q < N_WAY; ++q) o.way[q] = f2h(ts.wy[q]);
+    for (int q = 0; q < 4; ++q) o.pad2[q] = 0;
   }
 }
 

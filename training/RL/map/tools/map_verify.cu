@@ -3,6 +3,7 @@
 //   map_verify [N=2048] [steps=600] [--negative] [--force-kf] [--arm] [--stage 0|1|2] [--curr p0,p1[,kmin,kmax[,reveal_r]]]
 // --curr: 커리큘럼 처음 지도(5.5) 비율. 예 --curr 1,0 = 모두 C0(전체), --curr 0,1 = 모두 C1(부분), --curr 0.34,0.33 = 섞음. 기본 0,0 = 모두 C2(예전 그대로)
 // --negative: GPU 쪽만 확정 규칙을 끈다(confirm 1, 계획서 5.2 의 음성 대조). 반드시 실패해야 한다 — 실패하면 종료 코드 0.
+// --negative-way / --negative-live: GPU 토큰 커널만 경유 지점 내리막 차례를 뒤집음 / 지금 보는 중 칸 위치를 지도 자리로(v2 토큰 음성 대조)
 // --arm: 팔을 푼 G1 환경(arm_free)에 팔·그리퍼 행동을 넣어 들기·놓기 규칙을 지나게 한다.
 // --stage 2: A2(가구가 몸통과 부딪힘, 지도는 환경의 가구 상자를 그대로 씀). 기본 1(A1)
 // 비교: 환경 상태, MapCore, 격자 로그 오즈·본 칸·점유 비트, 벽 선분, 토큰 물체 속도 상태, 지도 토큰(1,280 B), 완성도. 시작 때 FP16 변환을
@@ -29,6 +30,7 @@ __global__ void f2h_check_kernel(uint32_t hi, unsigned long long* bad) {   // �
 int main(int argc, char** argv) {
   int N = 2048, T = 600, force_kf = 0, stage = 1;
   bool negative = false, arm = false;
+  int neg_bug = 1;   // 1 확정 규칙 끔(지도), 2 경유 지점 내리막 차례(토큰), 3 지금 보는 중 칸을 지도 자리로(토큰)
   gmap::MapCurr cu = gmap::kCurrEmpty;
   int pos = 0;
   for (int a = 1; a < argc; ++a) {
@@ -38,6 +40,8 @@ int main(int argc, char** argv) {
       cu.p0 = v[0]; cu.p1 = v[1]; cu.kmin = (int)v[2]; cu.kmax = (int)v[3]; cu.reveal_r = v[4];
     }
     else if (!std::strcmp(argv[a], "--negative")) negative = true;
+    else if (!std::strcmp(argv[a], "--negative-way")) { negative = true; neg_bug = 2; }
+    else if (!std::strcmp(argv[a], "--negative-live")) { negative = true; neg_bug = 3; }
     else if (!std::strcmp(argv[a], "--force-kf")) force_kf = 1;
     else if (!std::strcmp(argv[a], "--arm")) arm = true;
     else if (!std::strcmp(argv[a], "--stage") && a + 1 < argc) stage = std::atoi(argv[++a]);
@@ -83,6 +87,8 @@ int main(int argc, char** argv) {
   long n_end = 0, n_confirmed = 0, n_gone = 0, n_moved = 0, n_cand = 0;
   double tok_front = 0;
   long tok_front_open = 0;
+  long tok_live = 0, tok_reach = 0, tok_hyper = 0, way_valid = 0, way_tgt = 0, way_far = 0;   // v2 칸·경유 지점 통계
+  double way_len = 0, way_ratio = 0;
   long held_steps = 0, tok_slots = 0, tok_target = 0, tok_walls = 0, tok_door = 0, room_rev = 0, n_wallseg = 0, maxseg_h = 0, maxseg_v = 0;
   double sum_room_end = 0;
   std::vector<float> last_met((size_t)gmap::N_MET * N, 0.f);
@@ -105,7 +111,7 @@ int main(int argc, char** argv) {
     if (t > 0) for (int i = 0; i < N; i += 2) { float a[N_ACT]; approach_action(obs_c.data(), N, i, a); act[0 * N + i] = a[0]; act[1 * N + i] = a[1]; }
     cudaMemcpy(d_act, act.data(), sizeof(float) * act.size(), cudaMemcpyHostToDevice);
     genv.step(d_act, d_obs, d_rew, d_done);
-    gmapd.step(genv.soa(), force_kf, negative ? 1 : 0, 0, rec.at(t));
+    gmapd.step(genv.soa(), force_kf, negative ? neg_bug : 0, 0, rec.at(t));
     cenv.step(act, obs_c, rew_c, done_c);
     Soa cs{cenv.f.data(), cenv.iv.data(), cenv.rng.data(), N};
     cmap.step(cs, force_kf, cu);
@@ -189,6 +195,21 @@ int main(int argc, char** argv) {
       for (int j = 0; j < 8; ++j) tok_walls += gmap::h2f(tk.wall[16 + 5 * j + 4]) > 0.5f;
       tok_door += gmap::h2f(tk.room[9]) > 0.5f;
       for (int j = 0; j < gmap::N_FRONT; ++j) { const float fv = gmap::h2f(tk.front[j]); tok_front += fv; tok_front_open += fv < 0.999f; }
+      for (int b = 0; b < tk.n_slot; ++b) {
+        tok_live += gmap::h2f(tk.slot[b][gmap::T_SRC]) > 0.5f;
+        tok_reach += gmap::h2f(tk.slot[b][gmap::T_REACH]) > 0.5f;
+        tok_hyper += [&] { for (int k = 0; k < 6; ++k) if (tk.name_id[b] == vlav::sim_name(k)) return 0; return 1; }();
+      }
+      if (tk.n_slot > 0 && gmap::h2f(tk.slot[0][gmap::T_TARGET]) > 0.5f) {
+        ++way_tgt;
+        if (gmap::h2f(tk.way[3]) > 0.5f) {
+          ++way_valid;
+          const float L = gmap::h2f(tk.way[2]), d = gmap::h2f(tk.slot[0][gmap::T_DIST]);
+          way_len += L;
+          if (d > 0.3f) way_ratio += L / d;
+          way_far += L > d + 0.5f;
+        }
+      }
     }
     last_met = ch.met;
   }
@@ -222,6 +243,11 @@ int main(int argc, char** argv) {
   std::printf("  wall segment recomputes %ld (%.1f %% of keyframes; the rest had no occupied-bit or ignore-box change)\n", wruns, 100.0 * wruns / std::max(1L, kf_tot));
   std::printf("  tokens per env-step: slots %.2f, target slot %.3f, valid wall segments %.2f, door known %.3f, revealed rooms %.2f; unseen-ray mean %.3f m, rays with unseen cell < 4 m %.3f\n",
               tok_slots / ES, tok_target / ES, tok_walls / ES, tok_door / ES, room_rev / ES, 4.0 * tok_front / (ES * gmap::N_FRONT), tok_front_open / (ES * gmap::N_FRONT));
+  std::printf("  v2 slots: live (seen at last keyframe) %.3f, arm-reachable %.3f, hypernym name %.3f of filled slots;  waypoint: valid %.3f of env-steps with a target slot (%ld),"
+              " mean path %.2f m, path/straight %.3f, path > straight + 0.5 m %.3f\n",
+              tok_live / std::max(1.0, (double)tok_slots), tok_reach / std::max(1.0, (double)tok_slots), tok_hyper / std::max(1.0, (double)tok_slots),
+              way_valid / std::max(1.0, (double)way_tgt), way_tgt, way_len / std::max(1.0, (double)way_valid), way_ratio / std::max(1.0, (double)way_valid),
+              way_far / std::max(1.0, (double)way_valid));
   {  // 마지막 CPU 지도 전체의 FNV-1a 해시: 최적화 전후 의미가 같은지(같은 씨앗·같은 스텝) 비교용
     uint64_t hsh = 1469598103934665603ull;
     auto mix = [&](const void* p, size_t n) { const unsigned char* c = (const unsigned char*)p; for (size_t k = 0; k < n; ++k) { hsh ^= c[k]; hsh *= 1099511628211ull; } };
@@ -236,7 +262,8 @@ int main(int argc, char** argv) {
     std::printf("  final CPU map state hash %016llx\n", (unsigned long long)hsh);
   }
   if (negative) {
-    std::printf("negative control (confirm rule off on GPU): %ld mismatching items (must be > 0)\n", mismatches);
+    std::printf("negative control (%s on GPU): %ld mismatching items (must be > 0)\n",
+                neg_bug == 1 ? "confirm rule off" : neg_bug == 2 ? "waypoint descent tie order flipped" : "live slots use map position", mismatches);
     if (first_step >= 0) std::printf("  first mismatch: step %ld, %s\n", first_step, first_what);
     return mismatches > 0 ? 0 : 1;
   }

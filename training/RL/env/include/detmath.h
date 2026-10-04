@@ -83,6 +83,34 @@ DEV float atan2f_d(float y, float x) {
 
 DEV float cosf_d(float x) { float s, c; sincosf_d(x, &s, &c); return c; }
 
+// 자연로그(양수 정규 float): 지수·가수로 나누고 가수 m ∈ [√½, √2) 에서 ln m = 2·atanh(z), z = (m−1)/(m+1) 급수 9 차(상대 오차 < 1e-7 수준).
+// +, ×, ÷ 만 써서(fma 없음) CPU·GPU 비트가 같다. 지도 토큰 정규화(VLA_INPUT 4절 "로그로 눌러")에 쓴다. 0·음수·비정규·inf 는 쓰지 않는다
+DEV float lnf_d(float y) {
+#ifdef __CUDA_ARCH__
+  uint32_t x = __float_as_uint(y);
+#else
+  uint32_t x;
+  __builtin_memcpy(&x, &y, 4);
+#endif
+  int e = (int)((x >> 23) & 0xffu) - 127;
+  uint32_t mb = (x & 0x7fffffu) | 0x3f800000u;
+  float m;
+#ifdef __CUDA_ARCH__
+  m = __uint_as_float(mb);
+#else
+  __builtin_memcpy(&m, &mb, 4);
+#endif
+  if (m > 1.41421356f) { m = m * 0.5f; e += 1; }
+  const float z = (m - 1.f) / (m + 1.f), z2 = z * z;
+  float p = 0.11111111f;
+  p = p * z2; p = p + 0.14285714f;
+  p = p * z2; p = p + 0.2f;
+  p = p * z2; p = p + 0.33333333f;
+  p = p * z2; p = p + 1.f;
+  const float lm = 2.f * z * p;
+  return (float)e * 0.69314718f + lm;
+}
+
 DEV float wrap_pi(float a) {   // to (-pi, pi]
   const float k = a * kInv2Pi;
   const float n = (float)(int)(k < 0.f ? k - 0.5f : k + 0.5f);

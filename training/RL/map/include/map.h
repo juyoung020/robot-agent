@@ -173,8 +173,12 @@ struct MP {
   static constexpr float room_l2 = 4.5f, room_l3 = 6.0f;         // 긴 변이 이 이상이면 방 2·3 개 (가정)
   static constexpr float room_wmin = 1.2f;                       // 방 최소 폭 (가정)
   // ---- 지도 토큰(VLA_INPUT 3절) ----
-  static constexpr float arm_reach = 0.40f;                      // 팔이 닿는지: omx_joint1 원점에서 구 (가정: ROBOTIS 도달 400 mm)
+  // 팔이 닿는지: omx_workspace.h (URDF 순기구학 + 관절 한계로 미리 계산한 (r, z) 작업 공간, tools/omx_ws) — 예전 0.40 m 구는 뺐다
   static constexpr float tok_dt = 0.1f;                          // 제어 스텝 s(물체 속도·마지막 본 뒤 시간)
+  // 다음 경유 지점(VLA_INPUT 4절, sm_snap_place_path 대신): 믿는 점유 격자를 2×2 로 묶은 0.2 m 거친 격자(점유 = 2×2 중 하나라도 점유,
+  // 1 칸 부풀림 — 몸통 외접원 0.194 m), 안 본 칸은 지나갈 수 있음. 목표 칸에서 8 이웃 BFS → 로봇 칸에서 내리막으로 way_look 칸 간 자리 (가정: 칸·앞보기)
+  static constexpr float way_res = 0.2f;
+  static constexpr int way_look = 5, way_iter = 160;
   // ---- 커리큘럼 처음 지도(계획서 5.5) ----
   // 공개한 격자 칸의 로그 오즈: 맞음·빈칸 3 번 본 값 (가정: "예전에 몇 번 본 지도")
   static constexpr int curr_occ = 3 * q_hit, curr_free = 3 * q_miss;
@@ -205,6 +209,7 @@ struct Slot {   // 물체 기억 한 칸 (scenemap.h sm_object / objmap.hpp MapO
   int src;                 // 마지막 관측의 출처: 참 물체 prim 번호, 유령 g 는 −1−g (토큰의 생김새 표 번호)
   float pos[3], ext[3], first_pos[3], score;
   float seen_len, seen_rot;   // 마지막으로 본 때의 믿는 오도메트리 누적 이동·회전(토큰의 위치 불확실도)
+  float meas[3];              // 마지막 관측 자리(그 keyframe 의 검출 그대로, map 좌표) — 토큰의 "지금 보는 중" 칸 위치(VLA_INPUT 3절: 보이면 이번 프레임 깊이)
 };
 struct Ghost {  // 판마다 정해진 가짜 물체 자리(유령): 시야에 들면 keyframe 마다 p_ghost 로 검출된다
   int cls;
@@ -1122,6 +1127,7 @@ DEV void obj_update_matched(MapCore& m, Scratch& sh, int tid, int nt, int bug) {
     S.last_seen = t;
     S.src = D.src;
     S.seen_len = m.plen; S.seen_rot = m.prot;
+    for (int q = 0; q < 3; ++q) S.meas[q] = bigo ? D.bc[q] : D.pos[q];
     S.misses = 0;
     if (S.state == S_GONE) S.state = S.moved ? S_MOVED : S_SEEN;
     if (!S.confirmed && S.n_obs >= confirm_n) S.confirmed = 1;
@@ -1147,7 +1153,7 @@ DEV void obj_update_new(MapCore& m, Scratch& sh, int bug) {
     if (mf >= 0) {
       Slot& S = m.slot[mf];
       const bool bigd = is_static(D.cls) || maxf(D.ext[0], D.ext[1]) > MP::big;   // 큰 것: 자리 = 상자 중심(근사판 칸은 상자를 자리 ± 크기/2 로 둠)
-      for (int q = 0; q < 3; ++q) { S.pos[q] = bigd ? D.bc[q] : D.pos[q]; S.ext[q] = D.ext[q]; }
+      for (int q = 0; q < 3; ++q) { S.pos[q] = bigd ? D.bc[q] : D.pos[q]; S.meas[q] = S.pos[q]; S.ext[q] = D.ext[q]; }
       S.moved = best > MP::moved_d * MP::moved_d ? 1 : S.moved;   // 짝 문턱(≥ 0.30 m) 밖이라 사실상 항상 옮겨짐
       S.state = S.moved ? S_MOVED : S_SEEN;
       S.misses = 0;
@@ -1165,7 +1171,7 @@ DEV void obj_update_new(MapCore& m, Scratch& sh, int bug) {
     Slot& S = m.slot[fs];
     S.valid = 1; S.id = m.next_id++; S.cls = D.cls;
     const bool bigd = is_static(D.cls) || maxf(D.ext[0], D.ext[1]) > MP::big;   // 큰 것: 자리 = 백분위 상자 중심(다음 합집합과 같은 상자)
-    for (int q = 0; q < 3; ++q) { S.pos[q] = bigd ? D.bc[q] : D.pos[q]; S.first_pos[q] = S.pos[q]; S.ext[q] = D.ext[q]; }
+    for (int q = 0; q < 3; ++q) { S.pos[q] = bigd ? D.bc[q] : D.pos[q]; S.first_pos[q] = S.pos[q]; S.meas[q] = S.pos[q]; S.ext[q] = D.ext[q]; }
     S.n_obs = 1; S.last_seen = t; S.last_kf = t; S.score = D.score;
     S.held = 0; S.src = D.src; S.seen_len = m.plen; S.seen_rot = m.prot;
     S.confirmed = confirm_n <= 1 ? 1 : 0;
@@ -1849,7 +1855,7 @@ DEV void curr_slots(MapCore& m, const MapCurr& cu) {
     const Prim& P = m.prim[p];
     Slot& S = m.slot[b++];
     S.valid = 1; S.id = m.next_id++; S.cls = P.cls;
-    for (int a = 0; a < 3; ++a) { S.pos[a] = 0.5f * (P.lo[a] + P.hi[a]); S.ext[a] = P.hi[a] - P.lo[a]; S.first_pos[a] = S.pos[a]; }
+    for (int a = 0; a < 3; ++a) { S.pos[a] = 0.5f * (P.lo[a] + P.hi[a]); S.ext[a] = P.hi[a] - P.lo[a]; S.first_pos[a] = S.pos[a]; S.meas[a] = S.pos[a]; }
     S.n_obs = MP::confirm; S.last_seen = 0; S.last_kf = -1; S.score = 0.9f;
     S.state = S_SEEN; S.confirmed = 1; S.moved = 0; S.misses = 0; S.first_miss = 0; S.held = 0; S.src = p;
     S.seen_len = 0.f; S.seen_rot = 0.f;

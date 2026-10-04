@@ -5,7 +5,7 @@
 
 namespace gmap {
 
-struct NoSync { void operator()() const {} };
+struct NoSync { void operator()() const {} bool any(bool v) const { return v; } };
 
 CpuMap::CpuMap(int N_, uint64_t seed) : N(N_) {
   h.core.resize(N);
