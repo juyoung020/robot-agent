@@ -11,6 +11,7 @@ Rust 실행기(`../ppo/driver`)가 읽는 JSON. 빠진 키는 실행기 기본�
 | `ppo_g4_notok.json` | G4 와 같고 지도 토큰만 끔(`use_map` 0) — 토큰 켬/끔 비교 |
 | `ppo_a2.json` | A2(가구, `../env/README.md`): A0C0 → A1C0 → A2C0(≥ 0.85, CURRICULUM A2) → A2C1 → A2C2, 충돌 추가 벌 −20, 지도 토큰 + 안 본 곳 광선(`use_map` 2), 20 분 |
 | `ppo_a2_notok.json` · `ppo_a2_nofront.json` | 같고 `use_map` 0(토큰 끔) · 1(안 본 곳 광선만 뺌) |
+| `ppo_a2_ft40.json` · `ppo_a2_ft20.json` | A2 켬 씨앗 1 체크포인트를 `--resume` 으로 A2C2 단계만 10 분 더(충돌 추가 벌 −40 · −20 대조). `../ppo/README.md` "A2 충돌 빠른 시험" |
 
 `use_map`: 0 = 지도 입력 끔, 1 = G3/G4 지도 토큰, 2 = + 안 본 곳 광선 8(`../observation/README.md`). `ppo_run --seed S` 가 설정의 씨앗을 덮어쓴다.
 
