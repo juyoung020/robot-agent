@@ -119,8 +119,9 @@ sgrt 쪽 `SGRT_*` 변수는 [../runtime/README.md](../runtime/README.md).
 | `walls` | 합성 격자 속도, 증분 = 처음부터 계산, 물체 자리(소파) 빼기, 49.2° 기울어진 방(축 추출 0 개 → 돌려 뽑기 4 벽, θ 오차 < 0.3°, 양끝이 벽 가운데선 1 cm 안·벽 밖으로 안 나감), 축에 맞는 격자에서 돌려 뽑기 = 그대로. 인자로 파이썬 기준(`<cells.bin> <ref.json>`)을 주면 값 비교(ctest 는 인자 없이 돔) |
 | `da_merge` | `../da/tests/test_merge.cpp` |
 | `stream` | 루프백 TCP 로 프레임 내용, 다시 붙을 때 전체 상태 재전송, 스텝 스레드 비용 |
-| `limo_fk` | LIMO 순기구학(깊이·손목 카메라 광학, 팔 끝)이 URDF 독립 계산(`tests/gen_limo_fk_ref.py`, 15 자세)과 위치 1e-5 m·회전 원소 1e-6 안, C ABI `sm_robot_fk` = 내부 값, R1 `sm_robot_fk` 머리 = `T_head` |
-| `limo_e2e` | C ABI 만으로 LIMO proprio(odom 원점 ≠ map) + 합성 깊이(벽 둘·바닥·컵) + 컵 마스크: 벽 칸 점유·앞 빈칸·뒤 모름·몸 위 점유 없음, 컵 자리, 0.5 m·14° 주행 뒤 자세(twist 를 일부러 틀려도 오도메트리 자세 차로), 그리퍼 닫기 → 듦 → 따라감 → 놓기(옮겨짐) |
+| `limo_fk` | LIMO 순기구학(깊이·손목 카메라 광학, 잡는 점, 팔 끝)이 URDF 독립 계산(`tests/gen_limo_fk_ref.py`, 15 자세)과 위치 1e-5 m·회전 원소 1e-6 안, 잡는 점이 E0 OmniGibson `get_eef_position`(omx_link5 기준 0.08003)과 1e-4 m 안, C ABI `sm_robot_fk` = 내부 값, R1 `sm_robot_fk` 머리 = `T_head` |
+| `limo_e2e` | C ABI 만으로 LIMO proprio(odom 원점 ≠ map) + 합성 깊이(벽 둘·바닥·컵) + 컵 마스크: 벽 칸 점유·앞 빈칸·뒤 모름·몸 위 점유 없음, 컵 자리, 0.5 m·14° 주행 뒤 자세(twist 를 일부러 틀려도 오도메트리 자세 차로), 그리퍼를 4 cm 컵 폭(0.41 rad)에서 닫아 멈춤 → 듦 → 따라감 → 놓기(옮겨짐) |
+| `limo_held` | LIMO 잡기 규칙·팔 가림(합성 깊이에 순기구학 팔 캡슐을 광선 추적, 검출기가 가린 팔 화소를 탁자 마스크에 넣음): 탁자 앞을 팔이 가리고 빈손으로 닫힘 → 탁자 held·옮겨짐·사라짐 아님, 자리·상자 그대로(대조: 옛 규칙 `SM_OBJ_PARAMS=grasp_check=0,self_mask=0` 이면 held). 4 cm 컵: 열린 채 → 아님, 0 rad(빈손) → 아님, 0.41 rad 멈춤 → held, 열면 놓음. 8 cm 컵 → 아님 |
 
 ## 물체 바뀜 규칙 (10-04, dynamic-object-mapping-benchmark 로 고침)
 
@@ -175,14 +176,14 @@ R1 Pro 가 기본이고(옛 동작 그대로 — 아래 회귀 확인), 로봇�
 
 ```c
 sm_ctx* c = sm_create("{\"robot\": \"limo_omx\"}");   // 또는 sm_create(NULL) 뒤 sm_set_robot(c, SM_ROBOT_LIMO_OMX)
-// 선택 키: "odom": "pose"(기본) | "twist", "grip_closed": 0.35
+// 선택 키: "odom": "pose"(기본) | "twist", "grip_closed": 0.6
 ```
 
 | 함수 | 뜻 |
 |---|---|
 | `sm_set_robot(c, SM_ROBOT_R1PRO \| SM_ROBOT_LIMO_OMX)` | 그 로봇 기본 매개변수로 다시 놓고 `sm_reset`(labels·자세 모드·넣기 정책·구름 설정은 그대로) |
 | `sm_get_robot(c)` · `sm_proprio_dim(robot)` | 지금 로봇, 최소 `n_proprio`(61 / 12) |
-| `sm_robot_fk(robot, proprio, n, &out)` | ctx 없이 순기구학만: 카메라 광학 자세 `T_cam[k]`, 팔 끝 `T_eef[h]`, 그리퍼 값(GPU 근사판 맞추기·시험용) |
+| `sm_robot_fk(robot, proprio, n, &out)` | ctx 없이 순기구학만: 카메라 광학 자세 `T_cam[k]`, 잡는 점 `T_eef[h]`(LIMO `grasp_point`), 그리퍼 값(GPU 근사판 맞추기·시험용) |
 
 **proprio (f32, 12 개 — `SM_LIMO_*`)**
 
@@ -191,7 +192,7 @@ sm_ctx* c = sm_create("{\"robot\": \"limo_omx\"}");   // 또는 sm_create(NULL) 
 | 0, 1, 2 | 바퀴 오도메트리 자세 x, y, yaw(odom 프레임, base_footprint) | 적분(기본): 지난 proprio 와의 자세 차를 지난 베이스 기준으로 → 그 구간 속도. 원점은 상관없음(차만 씀) |
 | 3, 4, 5 | 베이스 속도 vx, vy, wz(base_footprint 기준) | `"odom": "twist"` 이거나 첫 표본·간격 이상일 때 적분 |
 | 6..10 | omx_joint1..5 | 순기구학(손목 카메라, 팔 끝, 팔 뼈대 — 스캔에서 팔 빼기) |
-| 11 | omx_gripper_joint_1(0 닫힘 .. 1.745 다 열림, joint_2 = −이 값) | 잡기 규칙: `grip_closed`(기본 0.35 rad, 손끝 틈 ≈ 5 cm) 아래로 내려가는 순간 팔 끝 0.12 m 안 확정 물체를 듦, 올라가면 놓음 |
+| 11 | omx_gripper_joint_1(0 닫힘 .. 1.745 다 열림, joint_2 = −이 값) | 잡기 규칙(아래 "잡기 확인"): `grip_closed`(기본 0.6 rad) 아래에서 멈추면 잡는 점 0.12 m 안 들 수 있는 확정 물체를 듦, 올라가면 놓음 |
 | (12..15) | 바퀴 각 fl, fr, rl, rr — 선택 | 뷰어 스트림만 |
 
 - 스트림(sgview `joints`): LIMO 는 뷰어 `robot.json` 의 `joint_order` 순서(omx_joint1..5, gripper_1, gripper_2 = −gripper_1, (바퀴 넷))로 바꿔 보낸다. R1 은 받은 벡터 그대로.
@@ -209,7 +210,8 @@ python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py ~/ra_ws/map_vla.urdf   
 | 베이스 | `base_footprint` | 바닥(z = 0), x 앞, y 왼쪽. 스캔 높이 띠·물체 z 가 이 기준 |
 | cam 0 | `depth_camera_lens_optical_frame`(`depth_camera_link` +x 0.010 m 렌즈 + 광학 회전) | 몸통 앞 Orbbec Dabai 렌즈: base_footprint 에서 (0.094, 0, 0.18) m, 수평 앞(OmniGibson `eyes` 와 같은 자리, robot-agent 391c04b). `depth_link` 는 센서 몸체 중심(0.084)이라 쓰지 않는다. 지도(slam2d·objmap)에 쓰는 유일한 깊이 |
 | cam 1 | `wrist_cam_optical_frame` | OMX-F link5 메시 안 RGB 카메라(37.9° 아래), 깊이 없음 → 지도에 안 씀(`sm_push_image` 가 cam ≠ 0 은 지나감) |
-| 팔 끝 | `omx_end_effector_link` | 잡기 점(손가락 끝 근처). 팔 뼈대 = omx_link0, joint1..5 원점, 팔 끝 |
+| 잡는 점 | `grasp_point`(omx_link5 x 0.08003) | `T_eef`·잡기 규칙. E0 실측(robot-agent 66fe1ee, `docs/map_vla/CURRICULUM_BEHAVIOR2026.md` 5.3): 물체가 실제로 쥐이는 자리 = OmniGibson `get_eef_position`, `omx_end_effector_link` 에서 손가락 축으로 0.0119 m 뒤. URDF(map_vla_description xacro)에 프레임으로 넣음 |
+| 팔 끝 | `omx_end_effector_link` | `T_tip`(내부). 팔 뼈대 = omx_link0, joint1..5 원점, 팔 끝 — 스캔·objmap 팔 가리기 캡슐 |
 
 검증: URDF 독립 계산(xml.etree + numpy 4×4, 15 자세, cam 0 = 렌즈 광학 프레임 — 0·홈·관절 한계 양끝·임의 10)과 최대 차 위치 1.1e-16 m, 회전 원소 3.3e-16(`limo_fk`). RL 환경의 `limo_omx_model.h`(urdf2hdr, f32 상수)와도 위치 1e-16 m·회전 5e-8(f32 반올림) 안.
 
@@ -224,7 +226,20 @@ python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py ~/ra_ws/map_vla.urdf   
 | 붙은 것 거르기 반경 | 1.3 | 0.6 | 팔 닿는 거리 ≈ 0.4 m |
 | objmap `hand_r` / `grasp_r` / `cloud_hand_r` / `body_r` | 0.40 / 0.25 / 0.10 / 0.30 | 0.10 / 0.12 / 0.05 / 0.22 | 작은 그리퍼·몸 |
 | 손 수(`n_hands`) | 2 | 1 | |
-| 그리퍼 닫힘 문턱 | 손가락 합 < 0.09 m | gripper_1 < 0.35 rad | 홈 자세는 0(닫힘) — 열었다 닫을 때만 잡기 |
+| 그리퍼 닫힘 문턱 | 손가락 합 < 0.09 m | gripper_1 < 0.6 rad(틈 ≈ 6.6 cm) | 홈 자세는 0(닫힘) — 열었다 닫을 때만 잡기 |
+| 잡기 확인(`grasp_check`) · objmap 팔 거르기 | 끔 | 켬 | 아래 |
+
+**잡기 확인·팔 가림(10-04, LIMO 만 — R1 은 옛 규칙 그대로)**
+
+원인: 시뮬 한 판(turning_on_radio, 대역 정책이 탁자를 "집기")에서 팔이 몸통 카메라 앞을 가리자 검출기(yolo26s-seg)가 가린 팔 화소를 탁자 마스크에
+넣어 탁자(1.2 m, 고정 종류) 상자가 팔 쪽으로 자랐고(큰 물체 위치 = 상자 중심), 그리퍼가 빈손으로 끝까지(0 rad) 닫히는 순간 옛 잡기 규칙 —
+"닫히는 순간 팔 끝 `grasp_r` 안 가장 가까운 확정 물체" — 이 크기·종류·그리퍼 벌림을 안 보고 탁자를 `held` 로 들어 0.49 m 옮겼다.
+
+- 팔 거르기: 물체 관측 점 중 순기구학 팔 캡슐(스캔 몸 가리기와 같은 것, map 으로 옮김) 반경 + `self_pad` 0.01 m 안 점은 검출 마스크 안이어도 버린다.
+  팔 화소가 물체 상자·자리·구름을 바꾸지 않는다(옮겨짐·사라짐 근거도 안 됨 — 가린 자리는 깊이가 더 가까워 '가림'으로 셈).
+- 잡기: 그리퍼가 `grip_closed` 아래에서 0.2 s 동안 0.01 rad 안으로 멈춘 뒤 한 번 고른다. 큰 것(한 변 > 0.5 m)·고정 종류·지도 상자 가운데 변 > 0.06 m
+  는 못 든다. 손끝 틈(그리퍼 각 → 틈 표: E0 쥔 각도 1·2·3·4 cm = 0.095·0.231·0.347·0.408 rad, 그 위 `finger_gap_hull` link5 x 0.08 틈)이
+  5 mm 넘고(끝까지 닫힘 = 빈손), 가장 좁은 변 − 2.5 cm ≤ 틈 ≤ 가장 넓은 변 + 2.5 cm 이어야 든다. 든 뒤 끝까지 닫히면 놓친 것으로 놓는다.
 
 이 값들은 실측 전 추정이다(실제 로봇 기록으로 맞출 것). 나머지(격자·objmap 확정/사라짐 규칙)는 R1 과 같고, slam2d 맞추기 가중·받기 문턱만 아래처럼 다르다.
 

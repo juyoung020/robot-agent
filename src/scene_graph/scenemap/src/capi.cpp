@@ -221,7 +221,7 @@ void handsOf(const float* q, float eef[2][3], float grip[2]) {
   grip[1] = q[49] + q[50];
 }
 
-// 로봇별 팔 끝(베이스 기준)·그리퍼 값. R1 = proprio 그대로, LIMO = 순기구학 omx_end_effector_link + omx_gripper_joint_1(두 칸 같은 값)
+// 로봇별 팔 끝(베이스 기준)·그리퍼 값. R1 = proprio 그대로, LIMO = 순기구학 grasp_point(E0 잡는 점) + omx_gripper_joint_1(두 칸 같은 값)
 void robotHands(int robot, const float* q, float eef[2][3], float grip[2]) {
   if (robot != kRobotLimoOmx) { handsOf(q, eef, grip); return; }
   LimoFk f;
@@ -259,8 +259,16 @@ void robotParams(int robot, SlamParams* sp, ObjParams* op) {
   op->grasp_r = 0.12f;         // 그리퍼가 닫힐 때 이 안 물체를 듦(R1 0.25)
   op->cloud_hand_r = 0.05;
   op->body_r = 0.22;
-  op->grip_closed = 0.35f;     // omx_gripper_joint_1 < 0.35 rad(손끝 틈 ≈ 5 cm 아래)면 닫힘. 0 = 완전히 닫힘, 1.745 = 다 열림
   op->n_hands = 1;
+  // 잡기 확인(10-04): 시뮬 한 판에서 팔이 탁자 앞을 가린 채 그리퍼가 빈손으로 끝까지 닫히자 탁자(1.2 m, 고정 종류)를 'held' 로 들고
+  // 0.49 m 옮겼다 — 옛 규칙은 '닫히는 순간 팔 끝 grasp_r 안 가장 가까운 확정 물체' 뿐이었다. 이제 닫힌 채 멈춘 뒤(0.2 s) 한 번 고르고,
+  // 큰 것·고정 종류·가장 좁은 변 > 0.06 m 는 못 들고, 손끝 틈이 비지 않았고(≥ 5 mm) 물체 폭과 맞아야(± 2.5 cm) 든다.
+  // 틈 표(omx_gripper_joint_1 rad → 잡는 점 손끝 틈 m): E0(robot-agent src/robot/og/e0/results) 쥔 각도 width_height_kp1e6·verify_eef_kp1e6
+  // (폭 1·2·3·4 cm 를 쥐면 0.095·0.231·0.347·0.408 rad), 그 위는 finger_gap_hull 의 link5 x 0.08 틈(30° 55 mm, 45° 93 mm).
+  // 닫힘 문턱 0.6 rad(틈 ≈ 6.6 cm): 6 cm 물체를 쥐어도 '닫힘'(옛 0.35 rad 는 4 cm 를 쥔 0.41 rad 를 닫힘으로 못 봄)
+  op->grip_closed = 0.6f;      // 0 = 완전히 닫힘, 1.745 = 다 열림
+  op->grasp_check = true;
+  op->grip_gap = {{0.0, 0.0}, {0.095, 0.01}, {0.231, 0.02}, {0.347, 0.03}, {0.408, 0.04}, {0.5236, 0.0551}, {0.7854, 0.0933}};
   // 스캔 맞추기(10-04, LIMO 만): 오도메트리가 정확하다(이동 0.8 %/m, 회전 치우침 1.2 %). 원래 값(점 σ 1 cm, 사전항 2 cm + 10 %)이면
   // 스캔 점 수백 개의 정보가 사전항을 수천 배 눌러 예측은 사실상 무시되고, 좁은 시야(67.9°)로 벽 하나·복도만 보이는 keyframe 에서
   // 맞추기가 벽을 따라 미끄러지거나(복도 퇴화) 덜 찬 지도에 끌려 keyframe 하나에 4–10 cm 씩 튀고(gate 8 cm 안이라 받아짐), 그 자세로 넣은
@@ -873,6 +881,19 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   F.base_yaw = P.th;
   F.base_xy[0] = P.x;
   F.base_xy[1] = P.y;
+  // LIMO: 팔 캡슐(순기구학, 스캔 몸 가리기와 같은 것)을 map 으로 — 팔이 몸통 카메라 앞을 가릴 때 그 화소가 물체 점이 안 되게. R1 은 안 씀
+  std::vector<Capsule> self_caps;
+  if (c->robot == kRobotLimoOmx) {
+    self_caps.reserve(body.caps.size());
+    for (const Capsule& k : body.caps) {
+      Capsule m = k;
+      m.a[0] = float(P.x + cs * k.a[0] - sn * k.a[1]); m.a[1] = float(P.y + sn * k.a[0] + cs * k.a[1]);
+      m.b[0] = float(P.x + cs * k.b[0] - sn * k.b[1]); m.b[1] = float(P.y + sn * k.b[0] + cs * k.b[1]);
+      self_caps.push_back(m);
+    }
+    F.self_caps = self_caps.data();
+    F.n_self_caps = int(self_caps.size());
+  }
   const auto to = TClock::now();
   c->om.update(F);
   const auto tv = TClock::now();

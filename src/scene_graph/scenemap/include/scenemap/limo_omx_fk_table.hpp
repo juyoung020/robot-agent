@@ -31,8 +31,21 @@ inline constexpr JointDef k_wrist_cam[] = {
 };
 inline constexpr ChainDef k_wrist_cam_chain = {9, k_wrist_cam, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 1.0}};
 
-// base_footprint → omx_end_effector_link: 팔 끝(잡기 점) — 관절 원점이 팔 뼈대
+// base_footprint → grasp_point: 잡기 점(E0 실측 omx_link5 x 0.08003 = OmniGibson get_eef_position) — 잡기 규칙·T_eef
 inline constexpr JointDef k_eef[] = {
+  {0, {0, 0, 0.14999999999999999}, {0, 0, 0}, {0, 0, 0}, -1, "base_joint"},
+  {0, {-0.040000000000000001, 0, 0}, {0, 0, 0}, {0, 0, 0}, -1, "omx_mount_joint"},
+  {1, {-0.01125, 0, 0.034000000000000002}, {0, 0, 0}, {0, 0, 1}, 6, "omx_joint1"},
+  {1, {0, 0, 0.063500000000000001}, {0, 0, 0}, {0, 1, 0}, 7, "omx_joint2"},
+  {1, {0.041500000000000002, 0, 0.11315}, {0, 0, 0}, {0, 1, 0}, 8, "omx_joint3"},
+  {1, {0.16200000000000001, 0, 0}, {0, 0, 0}, {0, 1, 0}, 9, "omx_joint4"},
+  {1, {0.0287, 0, 0}, {0, 0, 0}, {1, 0, 0}, 10, "omx_joint5"},
+  {0, {0.080030000000000004, -0.0016000000000000001, 0}, {0, 0, 0}, {0, 0, 0}, -1, "grasp_point_joint"},
+};
+inline constexpr ChainDef k_eef_chain = {8, k_eef, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 1.0}};
+
+// base_footprint → omx_end_effector_link: 팔 끝 — 관절 원점 + 이 점이 팔 뼈대(몸 가리기)
+inline constexpr JointDef k_tip[] = {
   {0, {0, 0, 0.14999999999999999}, {0, 0, 0}, {0, 0, 0}, -1, "base_joint"},
   {0, {-0.040000000000000001, 0, 0}, {0, 0, 0}, {0, 0, 0}, -1, "omx_mount_joint"},
   {1, {-0.01125, 0, 0.034000000000000002}, {0, 0, 0}, {0, 0, 1}, 6, "omx_joint1"},
@@ -42,6 +55,6 @@ inline constexpr JointDef k_eef[] = {
   {1, {0.0287, 0, 0}, {0, 0, 0}, {1, 0, 0}, 10, "omx_joint5"},
   {0, {0.091929999999999998, -0.0016000000000000001, 0}, {0, 0, 0}, {0, 0, 0}, -1, "omx_end_effector_joint"},
 };
-inline constexpr ChainDef k_eef_chain = {8, k_eef, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 1.0}};
+inline constexpr ChainDef k_tip_chain = {8, k_tip, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 1.0}};
 
 }  // namespace scenemap::limo

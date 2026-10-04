@@ -78,6 +78,24 @@ void ObjectMap::event(double t, const MapObject& o, int kind) {
                  o.pos[0], o.pos[1], o.pos[2], o.ext[0], o.ext[1], o.ext[2], o.n_obs);
 }
 
+namespace {
+// 점이 로봇 팔 캡슐(map 기준, 반경 + pad) 안인가
+bool inSelfCaps(const Capsule* caps, int n, double pad, double px, double py, double pz) {
+  for (int c = 0; c < n; ++c) {
+    const Capsule& k = caps[c];
+    const double ab[3] = {double(k.b[0]) - k.a[0], double(k.b[1]) - k.a[1], double(k.b[2]) - k.a[2]};
+    const double ap[3] = {px - k.a[0], py - k.a[1], pz - k.a[2]};
+    const double l2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+    double u = l2 > 1e-12 ? (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / l2 : 0.0;
+    u = std::clamp(u, 0.0, 1.0);
+    const double d[3] = {ap[0] - u * ab[0], ap[1] - u * ab[1], ap[2] - u * ab[2]};
+    const double r = k.r + pad;
+    if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < r * r) return true;
+  }
+  return false;
+}
+}  // namespace
+
 void ObjectMap::envOverrides(ObjParams* p) {
   const char* e = std::getenv("SM_OBJ_PARAMS");
   if (!e || !*e) return;
@@ -97,7 +115,9 @@ void ObjectMap::envOverrides(ObjParams* p) {
                     {"view_cell", &p->view_cell, nullptr, nullptr},      {"confirm", nullptr, &p->confirm, nullptr},  {"move_v", &p->move_v, nullptr, nullptr},
                     {"move_n", nullptr, &p->move_n, nullptr},  {"move_min_d", &p->move_min_d, nullptr, nullptr},  {"move_max_cam_w", &p->move_max_cam_w, nullptr, nullptr},
                     {"da_min", &p->da_min, nullptr, nullptr},            {"da_k", &p->da_k, nullptr, nullptr},
-                    {"merge_overlap", &p->merge_overlap, nullptr, nullptr}};
+                    {"merge_overlap", &p->merge_overlap, nullptr, nullptr},
+                    {"grasp_check", nullptr, nullptr, &p->grasp_check},  {"self_pad", &p->self_pad, nullptr, nullptr},
+                    {"self_mask", nullptr, nullptr, &p->self_mask}};
   std::string s(e);
   size_t a = 0;
   while (a < s.size()) {
@@ -328,10 +348,95 @@ void ObjectMap::relink(double t) {
   }
 }
 
+double ObjectMap::gripGap(double g) const {
+  const auto& T = p_.grip_gap;
+  if (T.empty()) return 0;
+  if (g <= T.front().first) return T.front().second;
+  for (size_t i = 1; i < T.size(); ++i)
+    if (g <= T[i].first) {
+      const double a = (g - T[i - 1].first) / std::max(1e-12, T[i].first - T[i - 1].first);
+      return T[i - 1].second + a * (T[i].second - T[i - 1].second);
+    }
+  return T.back().second;
+}
+
+// grasp_check: 틈 gap 으로 쥔 그리퍼 사이에 o 가 있을 수 있나(크기·종류·틈과 폭)
+bool ObjectMap::holdable(const MapObject& o, double gap) const {
+  if (isBig(o)) return false;   // 고정 종류(가구·가전) 또는 한 변 > big
+  double e[3];
+  for (int k = 0; k < 3; ++k) e[k] = std::max(0.0, o.hi[k] - o.lo[k]);
+  std::sort(e, e + 3);
+  // 폭 = 가운데 변: 한 축만 긴 것(펜·병)은 들 수 있고, 한쪽 면만 본 물체는 깊이 쪽 변이 거의 0 이라 가장 좁은 변은 폭이 못 됨
+  const double wmin = e[0], wmid = e[1], wmax = e[2];
+  if (wmid > p_.grasp_max_w) return false;
+  if (gap < p_.grasp_min_gap) return false;   // 끝까지 닫힘: 손가락 사이에 아무것도 없음
+  return gap >= wmin - p_.grasp_w_tol && gap <= wmax + p_.grasp_w_tol;
+}
+
+void ObjectMap::release(double t, MapObject& o) {
+  o.held_by = -1;
+  const bool mv = dist3(o.pos, o.grasp_pos) > p_.moved_d;
+  o.moved = o.moved || mv;
+  o.state = o.moved ? SM_MOVED : SM_SEEN;
+  o.misses = 0;
+  // 놓은 자리가 다른 물체 위·안이면 붙이기(그 물체와 함께 움직임)
+  const MapObject* best = nullptr;
+  double bv = 1e18;
+  for (const auto& p : objs_) {
+    if (&p == &o || !p.confirmed || p.state == SM_GONE) continue;
+    if (o.pos[0] < p.lo[0] - 0.1 || o.pos[0] > p.hi[0] + 0.1 || o.pos[1] < p.lo[1] - 0.1 || o.pos[1] > p.hi[1] + 0.1) continue;
+    if (o.pos[2] < p.lo[2] - 0.05) continue;                  // 받침은 놓은 점 아래에서 시작
+    const double v = o.pos[2] - std::min(p.hi[2], o.pos[2]);   // 떨어질 높이: 가장 높은 받침(바로 아래)
+    if (v < bv) { bv = v; best = &p; }
+  }
+  if (best) {
+    o.parent = best->id;
+    for (int k = 0; k < 3; ++k) o.parent_rel[k] = o.pos[k] - best->pos[k];
+  }
+  event(t, o, 5);
+}
+
 void ObjectMap::updateHands(double t, const double eef[2][3], const float grip[2], double yaw) {
   const double cy = std::cos(yaw), sy = std::sin(yaw);
+  auto grab = [&](MapObject* best, int h) {
+    best->held_by = h;
+    best->parent = 0;
+    const double d[3] = {best->pos[0] - eef[h][0], best->pos[1] - eef[h][1], best->pos[2] - eef[h][2]};
+    best->held_rel[0] = cy * d[0] + sy * d[1];
+    best->held_rel[1] = -sy * d[0] + cy * d[1];
+    best->held_rel[2] = d[2];
+    for (int k = 0; k < 3; ++k) best->grasp_pos[k] = best->pos[k];
+    best->state = SM_HELD;
+    event(t, *best, 4);
+  };
   for (int h = 0; h < p_.n_hands && h < 2; ++h) {
     const bool closed = grip[h] < p_.grip_closed;
+    if (p_.grasp_check) {
+      // 쥠이 끝났나: 그리퍼 값이 grip_settle_s 동안 grip_settle_eps 안
+      if (gref_t_[h] < -1e299 || std::fabs(grip[h] - gref_[h]) > p_.grip_settle_eps) { gref_[h] = grip[h]; gref_t_[h] = t; }
+      const bool settled = t - gref_t_[h] >= p_.grip_settle_s - 1e-9;
+      if (closed && !closed_[h]) tried_[h] = false;   // 새로 닫힘
+      const double gap = gripGap(grip[h]);
+      if (closed && settled && !tried_[h]) {          // 잡기: 닫힌 채 멈춘 뒤 한 번
+        tried_[h] = true;
+        MapObject* best = nullptr;
+        double bd = p_.grasp_r;
+        for (auto& o : objs_) {
+          if (!o.confirmed || o.held_by >= 0 || o.state == SM_GONE) continue;
+          const double d = dist3(o.pos, eef[h]);
+          if (d < bd && holdable(o, gap)) { bd = d; best = &o; }
+        }
+        if (best) grab(best, h);
+      } else if (closed && settled && gap < p_.grasp_min_gap) {   // 든 뒤 끝까지 닫힘: 놓침
+        for (auto& o : objs_)
+          if (o.held_by == h) release(t, o);
+      }
+      if (!closed && closed_[h])
+        for (auto& o : objs_)
+          if (o.held_by == h) release(t, o);
+      closed_[h] = closed;
+      continue;
+    }
     if (closed && !closed_[h]) {   // 잡기
       MapObject* best = nullptr;
       double bd = p_.grasp_r;
@@ -340,41 +445,10 @@ void ObjectMap::updateHands(double t, const double eef[2][3], const float grip[2
         const double d = dist3(o.pos, eef[h]);
         if (d < bd) { bd = d; best = &o; }
       }
-      if (best) {
-        best->held_by = h;
-        best->parent = 0;
-        const double d[3] = {best->pos[0] - eef[h][0], best->pos[1] - eef[h][1], best->pos[2] - eef[h][2]};
-        best->held_rel[0] = cy * d[0] + sy * d[1];
-        best->held_rel[1] = -sy * d[0] + cy * d[1];
-        best->held_rel[2] = d[2];
-        for (int k = 0; k < 3; ++k) best->grasp_pos[k] = best->pos[k];
-        best->state = SM_HELD;
-        event(t, *best, 4);
-      }
+      if (best) grab(best, h);
     } else if (!closed && closed_[h]) {   // 놓기
-      for (auto& o : objs_) {
-        if (o.held_by != h) continue;
-        o.held_by = -1;
-        const bool mv = dist3(o.pos, o.grasp_pos) > p_.moved_d;
-        o.moved = o.moved || mv;
-        o.state = o.moved ? SM_MOVED : SM_SEEN;
-        o.misses = 0;
-        // 놓은 자리가 다른 물체 위·안이면 붙이기(그 물체와 함께 움직임)
-        const MapObject* best = nullptr;
-        double bv = 1e18;
-        for (const auto& p : objs_) {
-          if (&p == &o || !p.confirmed || p.state == SM_GONE) continue;
-          if (o.pos[0] < p.lo[0] - 0.1 || o.pos[0] > p.hi[0] + 0.1 || o.pos[1] < p.lo[1] - 0.1 || o.pos[1] > p.hi[1] + 0.1) continue;
-          if (o.pos[2] < p.lo[2] - 0.05) continue;                  // 받침은 놓은 점 아래에서 시작
-          const double v = o.pos[2] - std::min(p.hi[2], o.pos[2]);   // 떨어질 높이: 가장 높은 받침(바로 아래)
-          if (v < bv) { bv = v; best = &p; }
-        }
-        if (best) {
-          o.parent = best->id;
-          for (int k = 0; k < 3; ++k) o.parent_rel[k] = o.pos[k] - best->pos[k];
-        }
-        event(t, o, 5);
-      }
+      for (auto& o : objs_)
+        if (o.held_by == h) release(t, o);
     }
     closed_[h] = closed;
   }
@@ -436,6 +510,9 @@ void ObjectMap::update(const ObjFrame& f) {
     last_cam_t_ = f.stamp;
   }
   const bool cam_steady = cam_w <= p_.move_max_cam_w;
+  auto inSelf = [&](const ObjFrame& fr, double px, double py, double pz) {
+    return inSelfCaps(fr.self_caps, fr.n_self_caps, p_.self_pad, px, py, pz);
+  };
   // 1. 검출 → 관측
   std::vector<Obs> obs;
   const sm_detections* D = f.dets;
@@ -495,6 +572,7 @@ void ObjectMap::update(const ObjFrame& f) {
           const double px = T[0] * xc + T[1] * yc + T[2] * z + T[3];
           const double py = T[4] * xc + T[5] * yc + T[6] * z + T[7];
           const double pz = T[8] * xc + T[9] * yc + T[10] * z + T[11];
+          if (f.n_self_caps > 0 && p_.self_mask && inSelf(f, px, py, pz)) continue;   // 로봇 팔 화소(카메라 앞을 가림)
           X.push_back(px); Y.push_back(py); Z.push_back(pz); ZC.push_back(z);
           PU.push_back(wcol_[ci + 1]); PV.push_back(int32_t(yi));
         }

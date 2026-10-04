@@ -150,15 +150,17 @@ void computeLimoFk(const float* q, LimoFk* o) {
   put34(R, t, o->T_depth);
   walk(limo::k_wrist_cam_chain, q, [](int, const limo::JointDef&, const M3&, const double*) {}, &R, t);
   put34(R, t, o->T_wrist);
+  walk(limo::k_eef_chain, q, [](int, const limo::JointDef&, const M3&, const double*) {}, &R, t);
+  put34(R, t, o->T_eef);
   int n = 0;
-  walk(limo::k_eef_chain, q, [&](int, const limo::JointDef& j, const M3&, const double* tj) {
+  walk(limo::k_tip_chain, q, [&](int, const limo::JointDef& j, const M3&, const double* tj) {
     // 뼈대 점: omx_link0(마운트 뒤), 관절 1..5 원점
     if ((j.q >= 0 || std::strcmp(j.name, "omx_mount_joint") == 0) && n < LimoFk::kPts - 1) {
       for (int i = 0; i < 3; ++i) o->pts[n][i] = tj[i];
       ++n;
     }
   }, &R, t);
-  put34(R, t, o->T_eef);
+  put34(R, t, o->T_tip);
   for (int i = 0; i < 3; ++i) o->pts[n][i] = t[i];
   for (++n; n < LimoFk::kPts; ++n)
     for (int i = 0; i < 3; ++i) o->pts[n][i] = o->pts[n - 1][i];
@@ -184,7 +186,7 @@ void limoBodyFk(const LimoFk& f, BodyFk* o, float eef[2][3]) {
     for (int i = 0; i < 3; ++i) o->arm[0][k][i] = o->arm[1][k][i] = float(p[i]);
   }
   for (int s = 0; s < 2; ++s)
-    for (int i = 0; i < 3; ++i) eef[s][i] = float(f.T_eef[i * 4 + 3]);
+    for (int i = 0; i < 3; ++i) eef[s][i] = float(f.T_tip[i * 4 + 3]);   // 몸 가리기 구 = 팔 끝(잡기 점 아님)
 }
 
 }  // namespace scenemap

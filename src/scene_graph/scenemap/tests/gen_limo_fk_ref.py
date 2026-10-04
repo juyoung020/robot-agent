@@ -24,7 +24,7 @@ QIDX = {'omx_joint1': 6, 'omx_joint2': 7, 'omx_joint3': 8, 'omx_joint4': 9, 'omx
 # 실제 관절 범위(src/robot/real_limits.json)
 LIM = [(-4.712389, 6.283185), (-2.094395, 1.570796), (-2.094395, 1.570796), (-1.745329, 1.745329), (-4.712389, 4.712389),
        (0.0, 1.745329)]
-TARGETS = ['depth_camera_lens_optical_frame', 'wrist_cam_optical_frame', 'omx_end_effector_link']
+TARGETS = ['depth_camera_lens_optical_frame', 'wrist_cam_optical_frame', 'grasp_point', 'omx_end_effector_link']
 
 
 def rot(axis, a):
@@ -73,7 +73,7 @@ def main():
     for k in range(10):
         cfgs.append((f'rand{k}', [float(rng.uniform(a, b)) for a, b in LIM]))
     L = ['// 자동 생성: tests/gen_limo_fk_ref.py ← map_vla.urdf(독립 순기구학: xml.etree + numpy 4×4). 손으로 고치지 말 것.',
-         '#pragma once', '', 'struct LimoFkRef { const char* name; float q[12]; double T[3][12]; };   // T: depth, wrist, eef(행 우선 3×4)',
+         '#pragma once', '', 'struct LimoFkRef { const char* name; float q[12]; double T[4][12]; };   // T: depth, wrist, 잡는 점(grasp_point), 팔 끝(omx_end_effector_link) (행 우선 3×4)',
          'static const LimoFkRef kLimoFkRef[] = {']
     for name, a in cfgs:
         q = [0.0] * 12

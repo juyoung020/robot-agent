@@ -6,7 +6,8 @@
 // 원 숫자(origin xyz·rpy, axis — URDF 문자열 그대로)와 proprio 번호를 쓴다. 계산은 fk.cpp 의 walk(R1 표와 같은 규칙):
 //   t += R·xyz,  R = R·rpy(r, p, y),  회전 관절이면 R = R·회전(axis, q[번호]).
 // 목표: 몸통 카메라 렌즈 광학(depth_camera_lens_optical_frame = depth_camera_link +x 0.010 m, OmniGibson eyes 와 같은 자리),
-//       손목 카메라 광학(wrist_cam_optical_frame), 팔 끝(omx_end_effector_link).
+//       손목 카메라 광학(wrist_cam_optical_frame), 잡기 점(grasp_point = omx_link5 x 0.08003 — E0 실측, OmniGibson
+//       get_eef_position 과 같은 자리, omx_end_effector_link 에서 손가락 축으로 0.0119 m 뒤), 팔 끝(omx_end_effector_link — 몸 뼈대 끝).
 // 사슬 안의 움직이는 관절은 아래 kQIndex 에만 있어야 한다(없으면 실패). 손으로 고치지 말고 이 도구로 다시 만든다.
 #include <cstdio>
 #include <fstream>
@@ -81,7 +82,8 @@ int main(int argc, char** argv) {
   struct Target { const char* var; const char* link; const char* what; };
   const Target targets[] = {{"depth_cam", "depth_camera_lens_optical_frame", "몸통 카메라 렌즈 광학(cam 0, depth_camera_link +x 0.010 m, z 앞·x 오른쪽·y 아래)"},
                             {"wrist_cam", "wrist_cam_optical_frame", "손목 카메라 광학(cam 1, 깊이 없음)"},
-                            {"eef", "omx_end_effector_link", "팔 끝(잡기 점) — 관절 원점이 팔 뼈대"}};
+                            {"eef", "grasp_point", "잡기 점(E0 실측 omx_link5 x 0.08003 = OmniGibson get_eef_position) — 잡기 규칙·T_eef"},
+                            {"tip", "omx_end_effector_link", "팔 끝 — 관절 원점 + 이 점이 팔 뼈대(몸 가리기)"}};
   std::ostringstream o;
   o << "// 자동 생성: tools/gen_limo_fk_table.cpp ← map_vla.urdf(LIMO + OMX-F). 손으로 고치지 말 것.\n"
     << "// 다시 만들기: gen_limo_fk_table ~/ra_ws/map_vla.urdf include/scenemap/limo_omx_fk_table.hpp\n"

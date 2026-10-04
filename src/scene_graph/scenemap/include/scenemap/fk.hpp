@@ -20,7 +20,7 @@ struct BodyFk {
   float T_head[12];            // 베이스 ← 머리(LIMO: 깊이) 카메라 광학 프레임(행 우선 3×4) — 스캔에 쓰는 T_bc
   float cam_rel[3][7];         // 카메라 prim 자세(xyz + xyzw, 평가기 cam_rel_poses 와 같은 뜻: −z 앞, y 위)
   // 팔 뼈대: R1 = 팔 받침, 관절 1..7 원점, 그리퍼, 손가락 끝(그리퍼에서 마지막 링크 방향으로 0.15 m).
-  //          LIMO = omx_link0, 관절 1..5 원점, omx_end_effector_link(나머지는 마지막 점 되풀이)
+  //          LIMO = omx_link0, 관절 1..5 원점, omx_end_effector_link(T_tip, 나머지는 마지막 점 되풀이)
   static constexpr int kArmPts = 11;
   float arm[2][kArmPts][3];
   float torso[6][3];           // R1: 베이스 원점 위, 몸통 관절 1..4 원점, 머리 카메라. LIMO: 안 씀
@@ -34,12 +34,13 @@ void computeBodyFk(const float* proprio, BodyFk* out);   // R1 Pro
 struct LimoFk {
   double T_depth[12];          // 몸통 카메라 렌즈 광학(depth_camera_lens_optical_frame)
   double T_wrist[12];          // 손목 카메라 광학(wrist_cam_optical_frame)
-  double T_eef[12];            // omx_end_effector_link(잡기 점)
+  double T_eef[12];            // 잡기 점(grasp_point = omx_link5 x 0.08003, E0 실측 — OmniGibson get_eef_position). 잡기 규칙이 봄
+  double T_tip[12];            // 팔 끝(omx_end_effector_link, 잡기 점 + 손가락 축 0.0119 m)
   static constexpr int kPts = 7;
-  double pts[kPts][3];         // 팔 뼈대: omx_link0, 관절 1..5 원점, 팔 끝
+  double pts[kPts][3];         // 팔 뼈대: omx_link0, 관절 1..5 원점, 팔 끝(T_tip)
 };
 void computeLimoFk(const float* proprio, LimoFk* out);
-// LimoFk → BodyFk(스캔 몸 가리기·T_head) + 팔 끝(베이스 기준, 두 칸 다 같은 값)
+// LimoFk → BodyFk(스캔 몸 가리기·T_head) + 팔 끝(베이스 기준 T_tip — 몸 가리기 구, 두 칸 다 같은 값)
 void limoBodyFk(const LimoFk& f, BodyFk* out, float eef[2][3]);
 
 }  // namespace scenemap

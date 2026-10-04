@@ -3,7 +3,7 @@
 //   1) 첫 자리 A 에서: 벽 칸이 점유, 벽 앞 칸이 빈칸, 벽 뒤가 모름 — 격자가 map 의 맞는 자리에
 //   2) 컵이 확정 물체 하나로 정답 자리(3 cm 안)에
 //   3) 오도메트리로 B 까지 0.5 m 가고 0.25 rad 돌면 sm_snap_pose 가 그만큼, 컵은 여전히 하나·같은 자리
-//   4) 팔을 뻗어 손끝을 컵에 대고 그리퍼를 열었다 닫으면 SM_HELD, 베이스가 움직이면 컵이 따라감
+//   4) 팔을 뻗어 잡는 점을 컵에 대고 그리퍼를 열었다 컵 폭(4 cm)에서 닫혀 멈추면 SM_HELD, 베이스가 움직이면 컵이 따라감
 //   5) 같은 벡터를 기본(R1) ctx 에 넣으면 거절(12 < 61), 모르는 로봇 이름은 sm_create NULL
 #include <cmath>
 #include <cstdio>
@@ -138,8 +138,8 @@ int main() {
     const double cs = std::cos(B.th), sn = std::sin(B.th);
     cup_c[0] = B.x + cs * e[3] - sn * e[7];
     cup_c[1] = B.y + sn * e[3] + cs * e[7];
-    // 컵: 바닥 위 8 × 8 × 10 cm, xy 중심 = 손끝(손끝 높이 e[11] 은 컵 높이 안)
-    for (int i = 0; i < 2; ++i) { cup_lo[i] = cup_c[i] - 0.04; cup_hi[i] = cup_c[i] + 0.04; }
+    // 컵: 바닥 위 4 × 4 × 10 cm(그리퍼 한도 0.06 m 안), xy 중심 = 잡는 점(높이 e[11] 은 컵 높이 안)
+    for (int i = 0; i < 2; ++i) { cup_lo[i] = cup_c[i] - 0.02; cup_hi[i] = cup_c[i] + 0.02; }
     cup_lo[2] = 0.0; cup_hi[2] = 0.10;
     cup_c[2] = 0.05;
     std::printf("cup centre (map) %.3f %.3f %.3f (reach eef in base: %.3f %.3f %.3f)\n", cup_c[0], cup_c[1], cup_c[2], e[3], e[7], e[11]);
@@ -241,10 +241,10 @@ int main() {
   }
   sm_snapshot_release(s);
 
-  // 3) 팔 뻗기(그리퍼 열림 1.0) → 닫기(0.2) → 컵을 듦. 그 뒤 베이스 0.3 m 앞으로: 컵이 따라감(그리는 컵도 손과 함께 옮김).
+  // 3) 팔 뻗기(그리퍼 열림 1.0) → 닫기(0.41 rad = 4 cm 를 쥔 각도, E0) → 멈추면(0.2 s) 컵을 듦. 그 뒤 베이스 0.3 m 앞으로: 컵이 따라감(그리는 컵도 손과 함께 옮김).
   //    proprio 는 cam 0 영상 stamp 까지 적분되므로(잡기 규칙도 그때) 매 스텝 영상을 넣는다
   for (int k = 0; k < 3; ++k) step(B, reach, 1.0, zero3, true);
-  for (int k = 0; k < 3; ++k) step(B, reach, 0.2, zero3, true);
+  for (int k = 0; k < 4; ++k) step(B, reach, 0.41, zero3, true);
   double held0[3] = {0, 0, 0};
   sm_snapshot(c, &s);
   cup = findCup(s, &n);
@@ -257,7 +257,7 @@ int main() {
     const double d[2] = {(C.x - B.x) / 10.0, (C.y - B.y) / 10.0};
     for (int i = 0; i < 2; ++i) { cup_lo[i] += d[i]; cup_hi[i] += d[i]; }
     const double tw[3] = {0.3, 0, 0};
-    step(p, reach, 0.2, tw, true);
+    step(p, reach, 0.41, tw, true);
   }
   sm_snapshot(c, &s);
   cup = findCup(s, &n);

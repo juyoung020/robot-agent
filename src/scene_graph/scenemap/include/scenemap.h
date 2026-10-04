@@ -78,7 +78,7 @@ typedef struct {
  * config_json(NULL = 기본값 = R1 Pro, 옛 동작 그대로). 아는 키(작은 읽기, 나머지는 무시):
  *   "robot": "r1pro" | "limo_omx"     — 로봇(sm_set_robot 과 같음). 모르는 이름이면 NULL 을 돌려줌
  *   "odom":  "pose" | "twist"          — LIMO 적분 원천(기본 pose: 오도메트리 자세 차, twist: proprio 의 vx, vy, wz)
- *   "grip_closed": 숫자                 — 그리퍼 닫힘 문턱(R1 손가락 합 m, 기본 0.09 / LIMO omx_gripper_joint_1 rad, 기본 0.35)
+ *   "grip_closed": 숫자                 — 그리퍼 닫힘 문턱(R1 손가락 합 m, 기본 0.09 / LIMO omx_gripper_joint_1 rad, 기본 0.6)
  * 예: sm_create("{\"robot\": \"limo_omx\"}") */
 sm_ctx* sm_create(const char* config_json);
 void    sm_destroy(sm_ctx*);
@@ -146,7 +146,7 @@ int sm_set_robot(sm_ctx*, int32_t robot);
 int sm_get_robot(sm_ctx*);
 int sm_proprio_dim(int32_t robot);       /* 최소 n_proprio, 모르는 로봇 −1 */
 /* 순기구학만(ctx 없음 — GPU 근사판 맞추기·시험용). 자세는 모두 베이스 ← 그 프레임, 행 우선 3×4.
- * T_cam[k] = cam k 광학 프레임(z 앞, x 오른쪽, y 아래). T_eef[h] = 팔 끝(LIMO: omx_end_effector_link 전체 자세,
+ * T_cam[k] = cam k 광학 프레임(z 앞, x 오른쪽, y 아래). T_eef[h] = 잡는 점(LIMO: grasp_point 전체 자세 — omx_link5 x 0.08003, OmniGibson get_eef_position,
  * R1: 위치만 — proprio 팔 끝, 회전 = I, eef_valid 0). grip = 잡기 규칙이 보는 값. 0 성공 */
 typedef struct {
   int32_t n_cams, n_hands;

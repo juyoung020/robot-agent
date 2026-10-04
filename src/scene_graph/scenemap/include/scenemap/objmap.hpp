@@ -5,7 +5,8 @@
 //            고정(가구·가전·붙박이 — 물체 노드지만 movable=false, 사라짐은 큰 것 기준으로 판정). 표는 capi(sm_set_kind_names)가 정함
 //   위치   : 마스크를 1 칸 깎은 안쪽 깊이 점(map)의 축별 중앙값, 크기 = 10~90 백분위 폭.
 //            그 전에 카메라 깊이가 마스크 안 중앙값에서 max(mad_k·1.4826·MAD, mad_floor) 넘게 떨어진 점은 버림(뒤 벽이 비친 것)
-//   거르기 : 점 min_points 미만 버림. 점의 hand_frac 이상이 팔 끝 hand_r 안이면(손에 든 것) 버림. 점의 90 백분위 높이 < floor_h 면
+//   거르기 : 로봇 팔 캡슐(ObjFrame.self_caps — 순기구학, LIMO) 안(반경 + self_pad) 깊이 점은 검출 마스크 안이어도 버림(팔이 카메라 앞을
+//            가릴 때 팔 화소가 물체 상자를 키우거나 옮기지 않게). 점 min_points 미만 버림. 점의 hand_frac 이상이 팔 끝 hand_r 안이면(손에 든 것) 버림. 점의 90 백분위 높이 < floor_h 면
 //            바닥 조각(바닥에 깔리는 이름 — 러그·카펫·매트 — 은 둠)
 //   이름   : 물체마다 이름 표(이름 번호별 점수 합). 이름 = 최댓값(지금 이름보다 name_switch 배 넘어야 바뀜)
 //   같은 것: 이름이 같거나 관측 이름이 물체 이름 표에서 name_share 이상. 중심 거리 < max(da_min, da_k·큰 쪽 크기) 이거나
@@ -24,6 +25,9 @@
 //            link_d0 + link_v·시간 차), n 자리를 처음 검출한 거리 이하에서 link_view_gap_s 넘게 전에 본 적 있음, n 에 더 가까운 같은
 //            이름 물체가 n 이후 아직 안 보였으면 link_wait_s 까지 기다림) 를 가까운 쌍부터 이어 n 을 m 의 id 로(relink)
 //   들기   : 그리퍼가 닫히는 순간 팔 끝 grasp_r 안 가장 가까운 확정 물체를 든 것으로 — 드는 동안 팔 끝을 따라가고,
+//            (grasp_check — LIMO: 그리퍼가 닫힌 채 멈췄을 때(grip_settle_s 동안 grip_settle_eps 안) 한 번만 고르고, 큰 것·고정 종류·지도
+//            상자 가운데 변 > grasp_max_w 는 못 듦, 손끝 틈(grip_gap 표) ≥ grasp_min_gap(빈손이면 끝까지 닫힘)이고 틈이 물체 폭과 맞아야
+//            (가장 좁은 변 − grasp_w_tol ≤ 틈 ≤ 가장 넓은 변 + grasp_w_tol). 든 뒤 끝까지 닫히면(놓침) 놓기)
 //            열리는 순간 그 자리에 놓는다(moved_d 넘게 옮겼으면 옮겨짐). 놓은 점 아래에 xy 가 겹치는(0.1 m 여유) 다른 물체
 //            상자가 있으면 그중 윗면이 가장 높은 것(떨어져 닿을 받침)에 붙인다 — 들고 있는 쓰레기통에 넣은 캔이 통을 따라가게
 #pragma once
@@ -35,6 +39,7 @@
 
 #include "scenemap.h"
 #include "scenemap/cloud.hpp"
+#include "scenemap/scan.hpp"
 
 namespace scenemap {
 
@@ -59,6 +64,15 @@ struct ObjParams {
   double grasp_r = 0.25;
   float grip_closed = 0.09f;      // 손가락 합이 이보다 작으면 닫힘(열림 0.1). LIMO: omx_gripper_joint_1 rad(0 닫힘 .. 1.745 열림)
   int n_hands = 2;                // 잡기 규칙을 보는 손 수(R1 2, LIMO 1 — 둘째 칸은 첫째와 같은 값을 받지만 잡기에는 안 씀)
+  // 잡기 확인(10-04, LIMO 만 — capi robotParams 가 켬. 끄면 옛 규칙 그대로: 닫히는 순간 grasp_r 안 가장 가까운 확정 물체)
+  bool grasp_check = false;
+  double grasp_max_w = 0.06;      // 물체 지도 상자(10~90 백분위)의 가운데 변이 이보다 크면 못 듦(그리퍼 한도. 한 축만 긴 것은 됨)
+  double grasp_min_gap = 0.005;   // 손끝 틈이 이보다 작으면(끝까지 닫힘) 빈손
+  double grasp_w_tol = 0.025;     // 틈과 물체 폭이 맞음: 가장 좁은 변 − tol ≤ 틈 ≤ 가장 넓은 변 + tol(지도 상자는 10~90 백분위·일부만 보임)
+  double grip_settle_s = 0.2, grip_settle_eps = 0.01;   // 그리퍼 값이 이 시간 동안 eps 안이면 쥠이 끝남(멈춤)
+  std::vector<std::pair<double, double>> grip_gap;      // 그리퍼 값 → 잡는 점의 손끝 틈 m(오름차순, 사이는 선형, 밖은 끝값)
+  bool self_mask = true;          // ObjFrame.self_caps 가 있으면 그 안 점을 버림(진단: SM_OBJ_PARAMS self_mask=0 으로 끔)
+  double self_pad = 0.01;         // 팔 캡슐 거르기 여유(m)
   int step = 1;                   // 깊이 화소 간격(최소)
   int max_pts = 6000;             // 검출 하나에서 훑는 화소 수 한도: 큰 상자는 간격을 넓힘(백분위·중앙값에는 충분)
   // 점 구름(모양): 위치·크기에 쓴 점(MAD 띠 안) 중 팔 끝 cloud_hand_r 안·베이스 수평 body_r 안 점은 뺌
@@ -176,6 +190,8 @@ struct ObjFrame {
   float grip[2] = {0.1f, 0.1f};       // 손가락 합
   double base_yaw = 0;                // map 기준 베이스 yaw
   double base_xy[2] = {0, 0};         // map 기준 베이스 위치(몸 점 거르기)
+  const Capsule* self_caps = nullptr; // map 기준 로봇 팔 캡슐(순기구학) — 이 안 깊이 점은 버림. NULL = 안 거름(R1)
+  int n_self_caps = 0;
 };
 
 // 마지막 update 에서 물체에 붙은 관측의 점 구름 후보(관측 안에서 복셀마다 하나, map 좌표). 색은 호출자가 영상에서 골라
@@ -235,6 +251,12 @@ class ObjectMap {
   std::vector<uint8_t> kinds_, floor_cls_;
   uint32_t next_id_ = 1;
   bool closed_[2] = {false, false};
+  // grasp_check: 그리퍼 값 기준·그때 시각(멈춤 판정), 이번 닫힘에서 이미 골랐는지
+  double gref_[2] = {0, 0}, gref_t_[2] = {-1e300, -1e300};
+  bool tried_[2] = {false, false};
+  double gripGap(double g) const;
+  bool holdable(const MapObject& o, double gap) const;
+  void release(double t, MapObject& o);
   // update 작업 버퍼(keyframe 마다 재사용)
   std::vector<double> wx_, wy_, wz_, wzc_, wzs_;
   std::vector<int32_t> wpu_, wpv_, wcol_;
