@@ -115,6 +115,8 @@ struct Obj {
   std::vector<std::pair<float, int>> top;   // m 상위(내림차순)
   std::vector<std::string> attrs;
   std::map<int, float> lext;  // 라벨 → Σ log 우도비(확인)
+  std::map<int, float> lext_map;   // 그중 지도에도 넣은 것(sm_observe_object_name 성공, 기록 "map":"applied")
+  bool ap_external = false;   // A′ 사후에 바깥 관측이 이미 들어 있음(view.json name_post.external)
   std::string rgb, mask;      // best view 사진(상대 경로)
 };
 
@@ -523,7 +525,10 @@ void loadConfirmations(sgs_index* X) {
       if (it == X->by_id.end()) continue;
       bool add = false;
       const int c = labelFor(X, j.value("name", ""), &add);
-      if (c >= 0) X->obj[size_t(it->second)].lext[c] += float(std::log(std::max(1.0, j.value("lr", 1.0))));
+      if (c < 0) continue;
+      const float l = float(std::log(std::max(1.0, j.value("lr", 1.0))));
+      X->obj[size_t(it->second)].lext[c] += l;
+      if (j.value("map", "") == "applied") X->obj[size_t(it->second)].lext_map[c] += l;
     } catch (...) {
     }
   }
@@ -612,7 +617,12 @@ void build(sgs_index* X) {
     o.reg_c = labelFor(X, o.reg, &add);
   }
   for (const json& jo : v.value("objects", json::array())) {
+    // A′ 형식 {"top": [[이름, p] …], "p", "entropy", "rolled", "external"}(scenemap README "A′ 저장 형식"), 옛 형식 [[이름, p] …]
     const json* np = jo.contains("name_post") ? &jo["name_post"] : nullptr;
+    if (np && np->is_object()) {
+      if (np->value("external", false)) X->obj[size_t(X->by_id[jo.value("id", 0u)])].ap_external = true;
+      np = np->contains("top") ? &(*np)["top"] : nullptr;
+    }
     if (!np || !np->is_array()) continue;
     Obj& o = X->obj[size_t(X->by_id[jo.value("id", 0u)])];
     for (const json& e : *np)
@@ -623,6 +633,16 @@ void build(sgs_index* X) {
       }
   }
   loadConfirmations(X);
+  // 지도(A′)가 이미 받은 확인은 name_post 에 들어 있으므로 두 번 세지 않는다(external 이 아니면 아직 저장 전 — 여기서 셈)
+  for (Obj& o : X->obj) {
+    if (!o.ap_external || o.ap_post.empty()) continue;
+    for (auto& [c, l] : o.lext_map) {
+      auto it = o.lext.find(c);
+      if (it == o.lext.end()) continue;
+      it->second -= l;
+      if (std::fabs(it->second) < 1e-6f) o.lext.erase(it);
+    }
+  }
   const auto t3 = std::chrono::steady_clock::now();
   parallel(int(X->obj.size()), X->nthreads, [&](int i) {
     computeApp(X, X->obj[size_t(i)]);
@@ -990,6 +1010,19 @@ int32_t sgs_object_json(const sgs_index* X, uint32_t id, char* out, int32_t cap)
 }
 
 int32_t sgs_confirm(sgs_index* X, uint32_t id, const char* name, const char* source, const char* query, char* out, int32_t cap) {
+  return sgs_confirm_ex(X, id, name, source, query, nullptr, out, cap);
+}
+
+int32_t sgs_label_of(const sgs_index* X, const char* name, char* out, int32_t cap) {
+  if (!X || !name) return -1;
+  const std::string l = lower(name);
+  if (l.empty()) return -1;
+  const int row = sgc_labels_find_name(X->L, l.c_str());
+  return emit(row >= 0 ? X->L->rows[size_t(row)].en : l, out, cap);
+}
+
+int32_t sgs_confirm_ex(sgs_index* X, uint32_t id, const char* name, const char* source, const char* query, const char* extra, char* out,
+                       int32_t cap) {
   if (!X) return -1;
   auto err = [&](const std::string& m) { return emit(json{{"status", "error"}, {"message", m}}.dump(), out, cap); };
   auto it = X->by_id.find(id);
@@ -1005,14 +1038,26 @@ int32_t sgs_confirm(sgs_index* X, uint32_t id, const char* name, const char* sou
   const double before = posterior(X, o).p(c), app = pApp(o, c);
   const NameView nb = nameView(X, o);
   const double lr = src == "user" ? X->cfg.user_lr : X->cfg.look_lr;
+  json ex = json::object();
+  if (extra && *extra) {
+    try {
+      ex = json::parse(extra);
+    } catch (...) {
+      return err("extra is not a JSON object");
+    }
+    if (!ex.is_object()) return err("extra is not a JSON object");
+  }
   o.lext[c] += float(std::log(lr));
+  if (ex.value("map", "") == "applied") o.lext_map[c] += float(std::log(lr));
   const double after = posterior(X, o).p(c);
-  const json rec = {{"t", double(std::time(nullptr))}, {"id", o.id},          {"name", name},
+  json rec = {{"t", double(std::time(nullptr))}, {"id", o.id},          {"name", name},
                     {"label", X->U[size_t(c)].en},     {"synset", X->U[size_t(c)].syn >= 0 ? X->L->syn_names[size_t(X->U[size_t(c)].syn)] : ""},
                     {"source", src},                   {"lr", lr},             {"query", query ? query : ""},
                     {"registered", o.reg},             {"name_before", nb.c >= 0 ? X->U[size_t(nb.c)].en : ""},
                     {"p_before", r3(before)},          {"p_after", r3(after)}, {"p_app", r3(app)},
                     {"vec", o.vsrc},                   {"nv", o.nv},           {"table", sgc_labels_sha(X->L)}};
+  for (auto& [k, val] : ex.items())
+    if (!rec.contains(k)) rec[k] = val;
   const std::string log = X->mem + "/confirmations.jsonl";
   {
     std::ofstream f(log, std::ios::app);

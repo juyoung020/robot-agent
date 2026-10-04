@@ -106,6 +106,10 @@ RecallVLA 실행기는 같은 색인에 자기 질의 벡터(SigLIP 2 글 공간
   이름으로 확실한(p_name ≥ 0.6) 물체가 있으면 영상↔영상 cos 도 `σ(25 (cos − 0.85))`(시뮬 정답: 같은 종류 시점 cos 중앙 0.71, 다른 종류 99 % 0.82).
 - 합친 점수 `match = 1 − (1 − p_name)(1 − p_query)(1 − p_img)`, `match_type` = 이름이 맞으면 name, 아니면 appearance.
 - ③ `sgs_confirm(id, 이름, user|close_look)`: `Λ_ext ×= 우도비` → 다음 찾기는 ① 에서 바로. 이름이 U 밖이면 라벨을 더하고 모든 물체 분포를 다시(≈ 8 ms).
+- (10-05) `sgs_confirm_ex(…, extra)`: 같은 확인 + 기록 한 줄에 덧붙일 JSON(에이전트 실시간 기억이 `{"map":"applied"|"not_aprime"|…,"map_label"}` — 지도 scenemap 에도
+  `sm_observe_object_name` 으로 넣었는지). `"map":"applied"` 확인은 view.json A′ `name_post.external` 이 true 가 되면(지도가 이미 셈) 다시 열 때 그 우도비를 빼서
+  두 번 세지 않는다. `sgs_label_of(이름)` = 라벨 표 영어 이름(지도 라벨과 맞추기).
+- (10-05 고침) A′ `name_post` 는 `{"top":[[이름,p]…],"p","entropy","rolled","external"}` 객체인데 색인이 배열 형식만 읽어 A′ 이름 사후를 통째로 무시했다 — 두 형식 다 읽음.
 
 **결과 JSON**(`sgs_search_json`, 도구가 기억 자리 정보를 붙여 LLM 글로): `{query, resolved{kind, label, ko, senses}, step2, best_name, n_name_hits,
 hits:[{id, name, name_ko, name_p, registered, alt:[[이름, p]…], attrs, vec, nv, match, match_type, p_name, p_query, q_rank, p_registered, p_img?, like?}], n_objects, us}`

@@ -21,7 +21,7 @@ keyframe 인지는 `sgrt_want_image()` 가 알려 준다(`kf_every` 스텝마다
 
 | 파일 | 하는 일 |
 |---|---|
-| `include/sgrt.h` | C ABI: `sgrt_create`·`sgrt_begin`·`sgrt_step`·`sgrt_save`·`sgrt_destroy`, 통계·시간(`sgrt_stats`·`sgrt_get_timing`·`sgrt_get_stage_timing`), 지도 보기(`sgrt_map`·`sgrt_map_snapshot`), 자세 원천(`sgrt_set_pose_mode`·`sgrt_push_pose`·`sgrt_get_pose_diag`), 이름 종류(`sgrt_set_kind_names`), 임베딩·이름 찾기(`sgrt_object_embedding`·`sgrt_query_embedding`·`sgrt_query_label`·`sgrt_object_names`·`sgrt_get_clip_stats`) |
+| `include/sgrt.h` | C ABI: `sgrt_create`·`sgrt_begin`·`sgrt_step`·`sgrt_save`·`sgrt_destroy`, 통계·시간(`sgrt_stats`·`sgrt_get_timing`·`sgrt_get_stage_timing`), 지도 보기(`sgrt_map`·`sgrt_map_snapshot`, scenemap 문맥 `sgrt_scenemap` — 다른 스레드의 읽기 도구가 자기 스냅숏·`sm_observe_object_name` 을 쓰려고, 10-05), 자세 원천(`sgrt_set_pose_mode`·`sgrt_push_pose`·`sgrt_get_pose_diag`), 이름 종류(`sgrt_set_kind_names`), 임베딩·이름 찾기(`sgrt_object_embedding`·`sgrt_query_embedding`·`sgrt_query_label`·`sgrt_object_names`·`sgrt_get_clip_stats`) |
 | `src/sgrt.cpp` | 구현: ovdet + scenemap 연결, 프롬프트 표(`SGRT_PROMPT`), 영상 시각 늦춤(`SGRT_IMAGE_LAG`), 저장 스레드, 스트림 요약 스레드(`SGRT_STREAM`), 입력 기록(`SGRT_RECORD`), 단계 시간(det·step·map·record) |
 | `src/crop.cu` · `crop.hpp` | CUDA 커널 둘: best view 상자 자르기(넓이 평균, 요청 32개씩 한 번에, 자른 것만 고정 메모리로 내려받기)와 점 구름 화소 색 모으기. 식은 `scenemap/src/bestview.cpp` 호스트 판과 같다 |
 | `src/sgrt_clip.cpp` · `.hpp` | sgclip 연결: keyframe 마다 새 물체·best view 품질이 임베딩 때의 1.2배 이상인 물체를 최대 8개 비동기로 임베딩. 저장 때 `objects/O<id>_emb.f16`, `cache/names.json`, scene.json 노드 metadata(`sm_set_object_meta`). 라벨 표는 따로 스레드에서 읽음 |

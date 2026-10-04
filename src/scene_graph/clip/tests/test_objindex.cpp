@@ -143,6 +143,44 @@ int main(int argc, char** argv) {
   sgs_object_json(X, 1, b.data(), int(b.size()));
   std::printf("O1 %s\n", b.data());
   CHECK(json::parse(b.data())["name"] == "radio", "O1 name radio after confirm");
+  // A′ 형식 name_post({"top", "external"}) — 바탕으로 쓰이고, 지도가 받은 확인("map":"applied")은 external 이면 두 번 세지 않음
+  {
+    json v2 = v;
+    v2["objects"].push_back({{"id", 6}, {"name", "kettle"},
+                             {"name_post", {{"top", json::array({json::array({"teapot", 0.6}), json::array({"kettle", 0.3})})}, {"p", 0.6}, {"external", false}}}});
+    std::ofstream(mem + "/view.json") << v2.dump();
+    CHECK(sgs_reload(X, err, sizeof(err)) == 0, "reload %s", err);
+    r = search(X, "teapot");
+    CHECK(!r["hits"].empty() && r["hits"][0]["id"] == 6 && r["hits"][0]["match_type"] == "name", "A' name_post object form read: %s", r.dump().c_str());
+    sgs_label_of(X, "주전자", b.data(), int(b.size()));
+    std::printf("label_of(주전자) = %s\n", b.data());
+    sgs_label_of(X, "라디오", b.data(), int(b.size()));
+    CHECK(std::string(b.data()) == "radio", "label_of(라디오) = %s", b.data());
+    CHECK(sgs_confirm_ex(X, 6, "kettle", "user", "", "[1]", b.data(), int(b.size())) > 0 && json::parse(b.data())["status"] == "error", "bad extra");
+    sgs_confirm_ex(X, 6, "kettle", "user", "주전자", "{\"map\":\"applied\",\"id\":999}", b.data(), int(b.size()));
+    const json c6 = json::parse(b.data());
+    CHECK(c6["status"] == "ok" && c6["p_after"].get<double>() > 0.9, "confirm_ex ok: %s", c6.dump().c_str());
+    std::string last;
+    {
+      std::ifstream f(mem + "/confirmations.jsonl");
+      for (std::string l; std::getline(f, l);) if (!l.empty()) last = l;
+    }
+    const json lj = json::parse(last);
+    CHECK(lj["map"] == "applied" && lj["id"] == 6, "log has map flag, extra does not override id: %s", last.c_str());
+    // 지도가 저장: 확인을 받은 사후(kettle 0.95, external) → 다시 열면 바탕 그대로(×50 을 또 하지 않음)
+    v2["objects"].back()["name_post"] = {{"top", json::array({json::array({"kettle", 0.95}), json::array({"teapot", 0.04})})}, {"p", 0.95}, {"external", true}};
+    std::ofstream(mem + "/view.json") << v2.dump();
+    CHECK(sgs_reload(X, err, sizeof(err)) == 0, "reload2 %s", err);
+    sgs_object_json(X, 6, b.data(), int(b.size()));
+    const json o6 = json::parse(b.data());
+    CHECK(o6["name"] == "kettle" && std::fabs(o6["name_p"].get<double>() - 0.95) < 0.02, "external: not counted twice: %s", o6.dump().c_str());
+    // external 이 아니면(지도가 아직 저장 전) 확인을 여기서 셈
+    v2["objects"].back()["name_post"]["external"] = false;
+    std::ofstream(mem + "/view.json") << v2.dump();
+    CHECK(sgs_reload(X, err, sizeof(err)) == 0, "reload3 %s", err);
+    sgs_object_json(X, 6, b.data(), int(b.size()));
+    CHECK(json::parse(b.data())["name_p"].get<double>() > 0.99, "not external: confirmation applied: %s", b.data());
+  }
   sgs_close(X);
   sgc_labels_close(L);
   std::printf(fails ? "FAIL (%d)\n" : "OK\n", fails);

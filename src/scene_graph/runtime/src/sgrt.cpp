@@ -516,6 +516,8 @@ int sgrt_map(sgrt* s, sgrt_map_view* out) {
 
 sm_snapshot_t* sgrt_map_snapshot(sgrt* s) { return s ? s->map_snap : nullptr; }
 
+sm_ctx* sgrt_scenemap(sgrt* s) { return s ? s->sm : nullptr; }
+
 int sgrt_set_pose_mode(sgrt* s, int32_t mode) { return s ? sm_set_pose_mode(s->sm, mode) : -1; }
 
 int sgrt_set_robot(sgrt* s, int32_t robot) { return s ? sm_set_robot(s->sm, robot) : -1; }

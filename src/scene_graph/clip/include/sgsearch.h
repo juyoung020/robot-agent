@@ -10,7 +10,7 @@
  *   — 물체 안에서 이름끼리 견주는 상대 확률이라 날 코사인(작고 흔들림)보다 안정적이다. U 밖의 질의(자유 글·tail 이름)는
  *     그 질의를 라벨 하나로 더한 분포로 셈(물체마다 시점 normalizer 만 있으면 됨 — 질의 하나에 µs).
  *   이름 사후 P_name(c | o) ∝ 바탕(c) · Λ_reg(c) · Λ_ext(c)
- *     바탕 = A′ 이름 사후(view.json "name_post")가 있으면 그것, 없으면 P_app.  Λ_reg = 등록 이름 우도비(reg_lr, A′ 사후가 있으면 1),
+ *     바탕 = A′ 이름 사후(view.json "name_post" — {"top":[[이름,p]..],..,"external"} 또는 옛 [[이름,p]..])가 있으면 그것, 없으면 P_app.  Λ_reg = 등록 이름 우도비(reg_lr, A′ 사후가 있으면 1),
  *     Λ_ext = 확인(sgs_confirm)의 우도비 곱(user / close_look). 확인은 기억 폴더 confirmations.jsonl 에 쌓이고(근거 = 원본),
  *     cache/objsearch/names.json 은 언제든 다시 셀 수 있는 캐시.
  *
@@ -84,6 +84,14 @@ int32_t sgs_object_json(const sgs_index*, uint32_t id, char* out, int32_t cap);
 /* 이름 고치기. source = "user" | "close_look". query(선택) = 그때의 사용자 질의(기록용). 결과 JSON
  * {"status":"ok","id","name","p_before","p_after","registered","logged":path} 또는 {"status":"error","message"} */
 int32_t sgs_confirm(sgs_index*, uint32_t id, const char* name, const char* source, const char* query, char* out, int32_t cap);
+
+/* sgs_confirm 과 같고, extra(NULL 가능) = 기록 한 줄에 덧붙일 JSON 객체 글(예: {"map":"applied"} — 지도 scenemap 에도
+ * sm_observe_object_name 으로 넣었음). "map":"applied" 인 확인은 view.json 의 A′ name_post 에 "external": true 가 생기면
+ * (지도가 이미 셈) 다시 열 때 두 번 세지 않는다. 덧붙인 칸은 원래 칸을 덮지 않음 */
+int32_t sgs_confirm_ex(sgs_index*, uint32_t id, const char* name, const char* source, const char* query, const char* extra, char* out,
+                       int32_t cap);
+/* 이름(영어·한국어·동의어) → 라벨 표 영어 이름(지도 sm_set_labels 표와 맞추는 데). 표에 없으면 소문자 그대로. 쓴 길이 */
+int32_t sgs_label_of(const sgs_index*, const char* name, char* out, int32_t cap);
 
 /* 열기 통계 JSON(물체 수, 벡터 출처별 수, 뽑은 수, 라벨 집합 크기, ms) */
 int32_t sgs_stats_json(const sgs_index*, char* out, int32_t cap);

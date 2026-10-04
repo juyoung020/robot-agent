@@ -98,6 +98,10 @@ int    sgrt_map(sgrt*, sgrt_map_view* out);
  * 장면 그래프(sm_snap_graph_nodes·edges·neighbors·sm_snap_place_path)·물체·방을 같은 순간 그대로 읽는다. 없으면 NULL */
 typedef struct sm_snapshot_t sm_snapshot_t;
 sm_snapshot_t* sgrt_map_snapshot(sgrt*);
+/* sgrt 안의 scenemap 문맥(sgrt_destroy 까지 유효). 다른 스레드의 읽기 도구(에이전트 search_objects 실시간 기억)가 자기 스냅숏
+ * (sm_snapshot / sm_snapshot_release — 어느 스레드든 됨)과 sm_observe_object_name(scenemap 이 잠금)을 쓰려고. sm_push_* 는 부르지 말 것 */
+typedef struct sm_ctx sm_ctx;
+sm_ctx* sgrt_scenemap(sgrt*);
 
 /* ---- 자세 원천·단계 시간·기록(추가 ABI, 10-03) ----
  * 자세 원천: 0 slam(기본, 적분 + 스캔 맞추기), 1 odom(적분만), 2 gt(외부·정답 베이스 자세 — 시뮬 진단·시각화용, 대회 제출 금지).
