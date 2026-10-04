@@ -301,7 +301,9 @@ fn main() {
     let (l0, l1, gs) = train(&mut run, u0);
     println!("bc: {} updates x {} steps, loss {:.5} -> {:.5} ({:.2} s GPU)", u0, c.upd_steps, l0, l1, gs);
     unsafe { bc_save_student(h, cstr(out.join("student_bc.bin").to_str().unwrap()).as_ptr()); }
-    eval(&mut run, "bc", 1, &mut results);
+    if v.get("eval_bc").and_then(|x| x.as_bool()).unwrap_or(true) {
+        eval(&mut run, "bc", 1, &mut results);
+    }
     if lr_decay != c.lr { unsafe { bc_set_lr(h, lr_decay); } }
     for i in 1..=nd {
         run.phase = format!("collect{}", i);
