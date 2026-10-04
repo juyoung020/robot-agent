@@ -34,6 +34,20 @@ cd training/RL/ppo/driver && PPO_BUILD_DIR=~/ra_ppobuild cargo build --release  
 ```
 출력: `log.csv`(바퀴마다), `events.txt`(커리큘럼·체크포인트), `ckpt_*.bin`(변수·Adam·학습 상태).
 
+## v2 관측·신경망(VLA_INPUT 1–7절, 2026-10-04) — **예전 체크포인트와 호환 안 됨**
+| 무엇 | v1 | v2 |
+|---|---|---|
+| 칸 입력(S1) | 48 = 숫자 33 + 이름 원-핫 7 + 생김새 원-핫 7 + 1 | **304** = 숫자 33(정규화 v2) + 이름 뜻 128 + 생김새 128(얼린 표 `training/data/vla_v1`, 장치에 bf16, `observation/vec_tab.h`) + 1 |
+| X0 | 288 | 304(+ 다음 경유 지점 4, use_map 2) |
+| 정규화 | ±10 자르기, 시간·횟수만 줄임 | 길이 sign·ln(1 + min(|x|, 5)/0.5), 각도 /π, 시간·횟수 ln(1+x) → 자료 통계 표준화(`observation/include/tok_norm.h`) |
+| 행동 | `act_dims` 앞에서부터(호스트 값, 그래프에 박힘) | 장치 값 `TrainState::act_mask` — 설정 `act_mask`(0 = act_dims), 커리큘럼 단계마다 `"act_mask"`, C ABI `ppo_set_act_mask`. 환경은 늘 팔을 풂 |
+| 흔들기 | 없음 | 설정 `"aug": {on, vel_sigma, prev_drop, prev_sigma, p_erase, p_syn, p_hyper, p_wrong, p_slot_drop, p_map_off, eval_unseen}` → 장치 값 `ObsAug`. 열쇠 = (바퀴, 스텝·판)이라 롤아웃과 갱신 모으기가 같은 입력 |
+- 칸 입력이 64 를 넘어 칸 MLP 묶음 커널(`slot_fused.cuh`, 칸 입력 ≤ 64 전용)을 못 쓴다 → 예전 따로 커널 길(`NET_SLOT_OLD` 와 같은 식, `net_kernels.cu slot_fwd/slot_bwd` 가 고름).
+- 검증(잰 값): `ppo_verify obs [--aug] [--act8] [--a2]` — 롤아웃 끝 스텝의 X0·칸 줄·채운 칸 비트를 CPU 가 같은 관측·토큰·표·열쇠로 다시 만들어 **0 낱말 다름**(흔들기 켬, 행동 8, A2 모두), `--negative`(CPU 열쇠 틀림)는 301,224 낱말 다름(정상). V4 33/33·V5 36/36(기본, `--g4data --a2 --act8 --aug` 모두), 음성 대조 버그 1·2 실패(정상), V6 0 낱말 다름(기본, `--a2 --act8 --aug`), V7 같은 씨앗 0 / 다른 씨앗 3,055,229 다름(`--a2 --act8 --aug`).
+- 처리량(`ppo_verify bench 2048 64 10`, 다른 일이 GPU 를 28 % 쓰는 중, 같은 때 번갈아): v2 9.22e5 env-step/s(rollout 34.9 + update 107.2 ms, 장치 1.28 GB) / v1 빌드 1.42e6(26.8 + 65.3 ms, 0.97 GB). 갱신 +64 % 는 칸 입력 304 의 S1 GEMM 과 묶음 커널을 못 쓰는 몫, 롤아웃 +30 % 는 경유 지점 BFS·넓은 칸 입력(나눠 재지 않음, 추정).
+- 실행기 확인(학습 아님): `ppo_run` 0.4 분(N 1,024, A2 설정 + act_mask 3 + 흔들기) — 단계 넘어가기·기록·체크포인트·실행 폴더가 그대로 돈다.
+- **호환**: 칸 입력·X0·관측 정규화가 바뀌어 v1 체크포인트(G3–G5, A2 교사 `t4/on_s1` 포함)는 읽을 수 없다(`ppo_load` 변수 수 불일치). 설정 파일은 그대로 돈다(새 키는 모두 기본 0 = 끔).
+
 ## 한 바퀴 (계획서 4절 그림 그대로)
 ```
 호스트(Rust → C ABI): cudaEventRecord · cudaGraphLaunch(rollout) · cudaEventRecord · cudaGraphLaunch(update) · cudaEventRecord

@@ -13,6 +13,8 @@ cmake -S . -B ~/ra_envbuild && cmake --build ~/ra_envbuild -j
 ~/ra_envbuild/env_verify 2048 600          # GPU == CPU 비트 동일이어야 통과
 ~/ra_envbuild/env_verify 2048 600 --negative   # 실패해야 정상
 ~/ra_envbuild/env_verify 2048 600 --stage 2   # A2(가구). --stage 0 = A0, 기본 1 = A1
+~/ra_envbuild/env_verify 2048 600 --arm        # 팔을 풀고 행동 8 모두 무작위(VLA_INPUT 5절)
+~/ra_envbuild/env_verify 2048 600 --arm-zero   # GPU 팔 풂 + 팔 행동 0 대 CPU 팔 묶음 — 비트가 같아야(학습기가 늘 팔을 풀어 두는 근거)
 ~/ra_envbuild/env_bench
 ~/ra_envbuild/env_view 127.0.0.1:9001 20   # 뷰어(--ingest)에 실시간 전송
 ```
@@ -20,6 +22,8 @@ cmake -S . -B ~/ra_envbuild && cmake --build ~/ra_envbuild -j
 ## 결과 (RTX, sm_120)
 - 2048 env × 600 스텝 비트 동일(상태·관측·보상·done·rng), 에피소드 종료: 성공 8,907 / 충돌 3,420 / 시간초과 1,543(카메라를 렌즈 프레임 x 0.094 m·FOV 67.9° 로 바꾼 뒤. 전: 0.084 m·71° 에서 성공 8,879). 음성 대조는 49,587,736 불일치로 실패(정상).
 - 처리량: N=262,144 → 7.3e8 env-step/s, N=1,048,576 → 7.8e8 env-step/s (1 env-step = 0.1 s 시뮬 = 10 서브스텝+FK+관측+보상).
+
+- 행동 8(2026-10-04): `env_verify 2048 600` 기본·`--arm`·`--arm-zero`·`--stage 2 --arm`·`--stage 2 --arm-zero` 모두 비트 동일, 끝 판수 A1 8,907 / 3,420 / 1,543, A2 21 / 22,170 / 586(팔 묶음과 같음). `--negative` 49,456,558 불일치로 실패(정상). 기본 판은 이제 팔 행동을 0 으로 준다(묶인 팔은 어차피 안 씀).
 
 ## 사양 출처
 | 값 | 출처 |
