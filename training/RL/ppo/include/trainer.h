@@ -37,6 +37,14 @@ struct Trainer {
   int* ep_len = nullptr;      // [N]
   float* gae_part = nullptr;  // GAE 블록 부분합
   int* first = nullptr;       // [N] 다음 바퀴 첫 스텝이 에피소드 첫 스텝인가(모양 잡기용)
+  // G4: 처음 지도 커리큘럼(장치 값)과 처음 완성도별 에피소드 통계(정수 원자 덧셈 — 순서와 무관하게 같은 값)
+  gmap::MapCurr* curr_d = nullptr;   // 지도 커널이 판 리셋 때 읽음(환경·지도를 다시 만들어도 그대로)
+  gmap::MapCurr* curr_h = nullptr;   // 고정 호스트 링(바꿀 때만 한 칸에 쓰고 비동기 복사)
+  cudaEvent_t curr_ev[8] = {};
+  int curr_slot = 0;
+  int* cur_len = nullptr;            // [N] 진행 중 에피소드 스텝 수
+  int* it_stat = nullptr;            // [3][3] 이 바퀴 단계별 (끝난 수, 성공, 충돌) — 기록 커널이 0 으로
+  unsigned long long* tab = nullptr; // [3 단계][2 컵 미리 확정][10 미리 확정 수][6] (끝난 수, 성공, 충돌, 시간초과, 스텝 합, 성공 스텝 합) 누적
 
   // 신경망 작업 버퍼(행 Mmax)
   uint16_t *x0 = nullptr, *sin = nullptr, *s1o = nullptr, *s2o = nullptr;
@@ -78,6 +86,7 @@ struct Trainer {
   ~Trainer();
 
   void make_env(int stage);
+  void set_map_curr(const gmap::MapCurr& c);
   void capture();
   // 한 바퀴의 두 몸통(즉시 실행 또는 그래프 잡기 중에 부름)
   void rollout_body();

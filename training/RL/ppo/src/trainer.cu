@@ -28,11 +28,11 @@ T_* Trainer::alloc(size_t n) {
 
 // ---- 관측 모으기(롤아웃: 판 i 그대로 / 갱신: 섞은 표본) ----
 constexpr int AS_L = 16, AS_E = 8;
-__global__ void __launch_bounds__(AS_L * AS_E) assemble_k(const float* obs_row, const gmap::MapTok* tok_row, int N, int use_map, uint16_t* x0,
-                                                          uint16_t* sin, uint32_t* mask) {
+__global__ void __launch_bounds__(AS_L * AS_E) assemble_k(const float* obs_row, const gmap::MapTok* tok_row, int N, int use_map, int goal_mode,
+                                                          uint16_t* x0, uint16_t* sin, uint32_t* mask) {
   const int e = blockIdx.x * AS_E + threadIdx.x / AS_L, lane = threadIdx.x % AS_L;
   if (e >= N) return;
-  const uint32_t mk = obsv::assemble(obs_row, N, e, tok_row[e], x0 + (size_t)e * X0_W, sin + (size_t)e * KSLOT * SLOT_IN, use_map, lane, AS_L);
+  const uint32_t mk = obsv::assemble(obs_row, N, e, tok_row[e], x0 + (size_t)e * X0_W, sin + (size_t)e * KSLOT * SLOT_IN, use_map, goal_mode, lane, AS_L);
   if (lane == 0) mask[e] = mk;
 }
 
@@ -59,7 +59,7 @@ inline int half_bits(uint32_t S) {
 
 struct GatherP {
   const float* obs_buf; const gmap::MapTok* tok0; const float* act_buf; const float* logp_buf; const float* val_buf; const float* adv_buf;
-  const float* ret_buf; int N, T, MB, base, epoch, hb, use_map; uint64_t seed; const TrainState* ts;
+  const float* ret_buf; int N, T, MB, base, epoch, hb, use_map, goal_mode; uint64_t seed; const TrainState* ts;
   uint16_t* x0; uint16_t* sin; uint32_t* mask; float *act, *oldlogp, *oldv, *adv, *ret;
 };
 __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
@@ -70,7 +70,7 @@ __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
   const uint32_t p = feistel_perm((uint32_t)(g.base + r), S, g.hb, key);
   const int t = (int)(p / (uint32_t)g.N), i = (int)(p % (uint32_t)g.N);
   const uint32_t mk = obsv::assemble(g.obs_buf + (size_t)t * N_OBS_G1 * g.N, g.N, i, g.tok0[(size_t)t * g.N + i], g.x0 + (size_t)r * X0_W,
-                                     g.sin + (size_t)r * KSLOT * SLOT_IN, g.use_map, lane, AS_L);
+                                     g.sin + (size_t)r * KSLOT * SLOT_IN, g.use_map, g.goal_mode, lane, AS_L);
   if (lane < N_ACT) g.act[(size_t)r * N_ACT + lane] = g.act_buf[((size_t)t * g.N + i) * N_ACT + lane];
   if (lane == 0) {
     g.mask[r] = mk;
@@ -111,6 +111,32 @@ __global__ void sample_k(const float* mean, const float* val, const float* logst
 __global__ void value_k(const float* val, int N, float* val_row) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < N) val_row[i] = val[(size_t)i * 8];
+}
+
+// ---- 처음 지도(완성도)별 에피소드 통계(G4, 5.6): 환경 스텝 뒤·지도 스텝 앞. met_init 은 아직 이 스텝의 판(끝난 판)의 처음 지도 부호 ----
+constexpr int TAB_Q = 6, TAB_C = 10;
+__global__ void epstat_k(const int* done, const float* met_init, int N, int* cur_len, int* it_stat, unsigned long long* tab) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= N) return;
+  int len = cur_len[i] + 1;
+  const int d = done[i];
+  if (d != env::kRunning) {
+    const int code = (int)met_init[i];
+    int st = (code >> 5) & 3, c = code & 15;
+    st = st > 2 ? 2 : st;
+    c = c > TAB_C - 1 ? TAB_C - 1 : c;
+    const int g = (code >> 4) & 1;
+    atomicAdd(&it_stat[st * 3], 1);
+    if (d == env::kSuccess) atomicAdd(&it_stat[st * 3 + 1], 1);
+    if (d == env::kCollision) atomicAdd(&it_stat[st * 3 + 2], 1);
+    unsigned long long* q = tab + (size_t)((st * 2 + g) * TAB_C + c) * TAB_Q;
+    atomicAdd(q, 1ull);
+    atomicAdd(q + (d == env::kSuccess ? 1 : d == env::kCollision ? 2 : 3), 1ull);
+    atomicAdd(q + 4, (unsigned long long)len);
+    if (d == env::kSuccess) atomicAdd(q + 5, (unsigned long long)len);
+    len = 0;
+  }
+  cur_len[i] = len;
 }
 
 // ---- GAE(K4): 판마다 스레드 하나가 T 스텝을 거꾸로. 에피소드 통계도 같이 ----
@@ -162,6 +188,7 @@ __global__ void __launch_bounds__(256) gae_k(GaeP g) {
       const float v = g.val[o], nv = g.val[o + g.N];
       const int d = g.done[o];
       float r = g.rew[o] * g.rs;
+      if (d == env::kCollision && g.sp.coll != 0.f) r = r + g.sp.coll * g.rs;   // 충돌 추가 벌(G4, 기록 반환값에는 안 들어감)
       // 퍼텐셜 모양 잡기: 진짜 끝이면 Φ(s') = 0. 에피소드 첫 스텝은 관측이 지난 판 끝 값이라(G1 은 끝난 스텝의 관측을 돌려줌) 더하지 않음
       const bool first = t > 0 ? g.done[o - g.N] != env::kRunning : first0 != 0;
       if (g.sp.coef != 0.f && !first) {
@@ -208,11 +235,12 @@ __global__ void __launch_bounds__(256) gae_reduce_k(const float* part, int nb, i
 }
 
 // ---- 기록(바퀴 끝): 매핑된 호스트 링에 직접 쓰고 누적을 0 으로, 바퀴 번호 +1 ----
-__global__ void __launch_bounds__(256) log_k(TrainState* ts, const float* met_task, const float* logstd, int N, int T, int ring, int stage, PpoLog* out) {
-  __shared__ float sh[256];
-  float q[1] = {0.f};
-  for (int i = threadIdx.x; i < N; i += 256) q[0] = q[0] + met_task[i];
-  bsum<1>(q, sh);
+__global__ void __launch_bounds__(256) log_k(TrainState* ts, const float* met_task, const gmap::MapTok* tok_end, int* it_stat, const float* logstd, int N, int T,
+                                             int ring, int stage, PpoLog* out) {
+  __shared__ float sh[2 * 256];
+  float q[2] = {0.f, 0.f};
+  for (int i = threadIdx.x; i < N; i += 256) { q[0] = q[0] + met_task[i]; q[1] = q[1] + (obsv::goal_known(tok_end[i]) ? 1.f : 0.f); }
+  bsum<2>(q, sh);
   if (threadIdx.x != 0) return;
   const long long it = ts->iter;
   PpoLog L;
@@ -242,6 +270,14 @@ __global__ void __launch_bounds__(256) log_k(TrainState* ts, const float* met_ta
   L.std0 = expf(logstd[0]);
   L.std1 = expf(logstd[1]);
   L.map_task = q[0] / (float)N;
+  L.goal_known = q[1] / (float)N;
+  for (int k = 0; k < 3; ++k) {
+    const int n = it_stat[k * 3];
+    L.n_c[k] = (float)n;
+    L.s_c[k] = n > 0 ? (float)it_stat[k * 3 + 1] / (float)n : 0.f;
+    L.k_c[k] = n > 0 ? (float)it_stat[k * 3 + 2] / (float)n : 0.f;
+    it_stat[k * 3] = it_stat[k * 3 + 1] = it_stat[k * 3 + 2] = 0;
+  }
   L.stage = stage;
   out[it % ring] = L;
   ts->s_pg = ts->s_vl = ts->s_kl = ts->s_clip = ts->s_ent = ts->s_gnorm = 0.f;
@@ -265,7 +301,7 @@ Trainer::Trainer(const PpoConfig& c) : cfg(c) {
   if (MB % 8 || N % 8) { std::fprintf(stderr, "ppo: minibatch and N must be multiples of 8\n"); std::abort(); }
   Mmax = MB > N ? MB : N;
   if (cfg.act_dims <= 0 || cfg.act_dims > N_ACT) cfg.act_dims = N_ACT;
-  lh = LossHyper{cfg.clip, cfg.vclip, cfg.vf_coef, cfg.ent_coef, cfg.adaptive_lr, cfg.kl_target, cfg.lr_min, cfg.lr_max, cfg.act_dims};
+  lh = LossHyper{cfg.clip, cfg.vclip, cfg.vf_coef, cfg.ent_coef, cfg.adaptive_lr, cfg.kl_target, cfg.lr_min, cfg.lr_max, cfg.act_dims, cfg.bound_coef};
   ah = AdamHyper{cfg.adam_b1, cfg.adam_b2, cfg.adam_eps, cfg.max_grad_norm};
 
   obs_buf = alloc<float>((size_t)(T + 1) * N_OBS_G1 * N);
@@ -281,6 +317,16 @@ Trainer::Trainer(const PpoConfig& c) : cfg(c) {
   ep_len = alloc<int>(N);
   gae_part = alloc<float>((size_t)((N + 255) / 256) * GAE_NQ);
   first = alloc<int>(N);
+  cur_len = alloc<int>(N);
+  it_stat = alloc<int>(9);
+  tab = alloc<unsigned long long>((size_t)3 * 2 * TAB_C * TAB_Q);
+  curr_d = alloc<gmap::MapCurr>(1);
+  PCK(cudaHostAlloc(&curr_h, sizeof(gmap::MapCurr) * 8, cudaHostAllocDefault));
+  for (int k = 0; k < 8; ++k) PCK(cudaEventCreateWithFlags(&curr_ev[k], cudaEventDisableTiming));
+  {
+    const gmap::MapCurr c0{cfg.map_p0, cfg.map_p1, cfg.map_kmin, cfg.map_kmax, cfg.map_reveal_r, 0};
+    PCK(cudaMemcpy(curr_d, &c0, sizeof c0, cudaMemcpyHostToDevice));
+  }
 
   const size_t M = Mmax, MS = (size_t)Mmax * KSLOT;
   x0 = alloc<uint16_t>(M * X0_W);
@@ -366,6 +412,18 @@ Trainer::~Trainer() {
   if (ev_ckpt) cudaEventDestroy(ev_ckpt);
   if (ring_h) cudaFreeHost(ring_h);
   if (ckpt_h) cudaFreeHost(ckpt_h);
+  if (curr_h) cudaFreeHost(curr_h);
+  for (auto& e : curr_ev) if (e) cudaEventDestroy(e);
+}
+
+// 처음 지도 비율 바꾸기: 고정 호스트 링 한 칸에 쓰고 스트림 순서대로 비동기 복사(이미 띄운 바퀴 뒤, 다음 바퀴 앞). 동기 없음.
+// 칸은 8 번 바뀐 뒤에야 다시 쓴다 — 그 칸의 복사가 아직 안 끝났을 때만(드묾) 기다린다
+void Trainer::set_map_curr(const gmap::MapCurr& c) {
+  const int k = curr_slot++ % 8;
+  if (cudaEventQuery(curr_ev[k]) == cudaErrorNotReady) PCK(cudaEventSynchronize(curr_ev[k]));
+  curr_h[k] = c;
+  PCK(cudaMemcpyAsync(curr_d, &curr_h[k], sizeof c, cudaMemcpyHostToDevice, 0));
+  PCK(cudaEventRecord(curr_ev[k], 0));
 }
 
 void Trainer::make_env(int stage) {
@@ -379,6 +437,7 @@ void Trainer::make_env(int stage) {
   PCK(cudaMemset(obs_buf, 0, sizeof(float) * (size_t)(T + 1) * N_OBS_G1 * N));
   PCK(cudaMemset(ep_ret, 0, sizeof(float) * N));
   PCK(cudaMemset(ep_len, 0, sizeof(int) * N));
+  PCK(cudaMemset(cur_len, 0, sizeof(int) * N));
   std::vector<int> ones(N, 1);
   PCK(cudaMemcpy(first, ones.data(), sizeof(int) * N, cudaMemcpyHostToDevice));
 }
@@ -448,7 +507,7 @@ void Trainer::backward(int M) {
 
 void Trainer::gather(int epoch, int mb) {
   GatherP g{obs_buf, tok->at(0), act_buf, logp_buf, val_buf, adv_buf, ret_buf, N, T, MB, mb * MB, epoch, half_bits((uint32_t)(N * T)), cfg.use_map,
-            cfg.seed, ts, x0, sin, mask, mb_act, mb_oldlogp, mb_oldv, mb_adv, mb_ret};
+            cfg.goal_from_map, cfg.seed, ts, x0, sin, mask, mb_act, mb_oldlogp, mb_oldv, mb_adv, mb_ret};
   gather_k<<<(MB + AS_E - 1) / AS_E, AS_L * AS_E>>>(g);
   PCK(cudaGetLastError());
 }
@@ -463,7 +522,7 @@ void Trainer::optimizer() { adam_step(P, G, Am, Av, Pb, lay.total, gn_part, ts, 
 
 void Trainer::gae() {
   GaeP g{rew_buf, done_buf, val_buf, obs_buf, first, adv_buf, ret_buf, ep_ret, ep_len, gae_part, N, T, cfg.gamma, cfg.lam, cfg.reward_scale,
-         rw::ShapeP{cfg.shape_coef, cfg.shape_near, cfg.shape_aim, cfg.shape_zone, cfg.shape_v, cfg.shape_w}};
+         rw::ShapeP{cfg.shape_coef, cfg.shape_near, cfg.shape_aim, cfg.shape_zone, cfg.shape_v, cfg.shape_w, cfg.coll_extra}};
   const int nb = (N + 255) / 256;
   gae_k<<<nb, 256>>>(g);
   gae_reduce_k<<<1, 256>>>(gae_part, nb, N, T, ts);
@@ -471,7 +530,7 @@ void Trainer::gae() {
 }
 
 void Trainer::log_iter() {
-  log_k<<<1, 256>>>(ts, map->metrics() + (size_t)gmap::M_TASK * N, P + lay.logstd, N, T, cfg.log_ring, cfg.stage, ring_d);
+  log_k<<<1, 256>>>(ts, map->metrics() + (size_t)gmap::M_TASK * N, tok->at(T), it_stat, P + lay.logstd, N, T, cfg.log_ring, cfg.stage, ring_d);
   PCK(cudaGetLastError());
 }
 
@@ -486,12 +545,13 @@ void Trainer::rollout_body() {
 // 롤아웃 한 스텝(t < T): 관측 모으기 → 정책 앞 → 표본 → 환경 → 지도. t == T: 마지막 가치(부트스트랩)만
 void Trainer::rollout_step(int t) {
   const int ab = (N + AS_E - 1) / AS_E, sb = (N + 127) / 128;
-  assemble_k<<<ab, AS_L * AS_E>>>(obs_buf + (size_t)t * N_OBS_G1 * N, tok->at(t), N, cfg.use_map, x0, sin, mask);
+  assemble_k<<<ab, AS_L * AS_E>>>(obs_buf + (size_t)t * N_OBS_G1 * N, tok->at(t), N, cfg.use_map, cfg.goal_from_map, x0, sin, mask);
   forward(N);
   if (t == T) { value_k<<<sb, 128>>>(val, N, val_buf + (size_t)T * N); return; }
   sample_k<<<sb, 128>>>(mean, val, P + lay.logstd, ts, cfg.seed, t, N, cfg.act_dims, act_env, act_buf, logp_buf, val_buf);
   env->step(act_env, obs_buf + (size_t)(t + 1) * N_OBS_G1 * N, rew_buf + (size_t)t * N, done_buf + (size_t)t * N);
-  map->step(env->soa(), 0, 0, 0, tok->at(t + 1));
+  epstat_k<<<sb, 128>>>(done_buf + (size_t)t * N, map->metrics() + (size_t)gmap::M_INIT * N, N, cur_len, it_stat, tab);
+  map->step(env->soa(), 0, 0, 0, tok->at(t + 1), curr_d);
 }
 
 void Trainer::update_body() {
@@ -614,6 +674,11 @@ int ppo_load(void* h, const uint8_t* data, int64_t nbytes) {
   t->issued = t->polled = s.iter;
   return 0;
 }
+int ppo_set_map_curriculum(void* h, float p0, float p1, int32_t kmin, int32_t kmax, float reveal_r) {
+  static_cast<Trainer*>(h)->set_map_curr(gmap::MapCurr{p0, p1, kmin, kmax, reveal_r, 0});
+  return 0;
+}
+int64_t ppo_issued(void* h) { return static_cast<Trainer*>(h)->issued; }
 int64_t ppo_num_params(void* h) { return static_cast<Trainer*>(h)->lay.total; }
 int64_t ppo_device_bytes(void* h) {
   auto* t = static_cast<Trainer*>(h);

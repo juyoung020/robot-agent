@@ -165,7 +165,8 @@ void pool_bwd(Mode md, const double* dpool, const double* s2o, const uint32_t* m
 void loss(Mode md, const double* mean, const double* val, const double* logstd, const Batch& b, const Hyper& h, double* dzA, double* dzC, double* dls,
           double* st) {
   const int M = b.M;
-  double q[12] = {0};
+  double q[13] = {0};
+  float qf[N_ACT] = {0.f};   // EMUL: log σ 기울기 합은 GPU 처럼 FP32 로 누산(행 순서대로 — GPU 는 블록 나무 합이라 오차가 이보다 작거나 같은 크기)
   for (int r = 0; r < M; ++r) {
     if (md == EMUL) {   // GPU ppo_loss_k 와 같은 float 식
       const float scale = 1.f / (float)M;
@@ -182,8 +183,12 @@ void loss(Mode md, const double* mean, const double* val, const double* logstd, 
       const float g = (s1 <= s2) ? -ratio * A : 0.f;
       for (int k = 0; k < N_ACT; ++k) {
         const bool on = k < h.act_dims;
-        dzA[(size_t)r * N_ACT + k] = on ? rbf(scale * g * z[k] * inv[k]) : 0.0;
-        q[k] += on ? (double)(scale * g * (z[k] * z[k] - 1.f)) : 0.0;
+        const float mu = (float)mean[(size_t)r * N_ACT + k], ex = std::fabs(mu) - 1.f;
+        const float db = (on && h.bound_coef != 0.f && ex > 0.f) ? h.bound_coef * 2.f * ex * (mu > 0.f ? 1.f : -1.f) : 0.f;
+        if (db != 0.f) q[12] += (double)(h.bound_coef * ex * ex);
+        const float d0 = scale * g * z[k] * inv[k];
+        dzA[(size_t)r * N_ACT + k] = on ? rbf(db != 0.f ? d0 + scale * db : d0) : 0.0;
+        qf[k] = qf[k] + (on ? scale * g * (z[k] * z[k] - 1.f) : 0.f);
       }
       const float v = (float)val[(size_t)r * 8], ov = b.oldv[r], R = b.ret[r];
       float vl, gv;
@@ -213,7 +218,10 @@ void loss(Mode md, const double* mean, const double* val, const double* logstd, 
       const double g = (s1 <= s2) ? -ratio * A : 0.0;
       for (int k = 0; k < N_ACT; ++k) {
         const bool on = k < h.act_dims;
-        dzA[(size_t)r * N_ACT + k] = on ? scale * g * z[k] * inv[k] : 0.0;
+        const double mu = mean[(size_t)r * N_ACT + k], ex = std::fabs(mu) - 1.0;
+        const double db = (on && h.bound_coef != 0.f && ex > 0.0) ? h.bound_coef * 2.0 * ex * (mu > 0.0 ? 1.0 : -1.0) : 0.0;
+        if (db != 0.0) q[12] += h.bound_coef * ex * ex;
+        dzA[(size_t)r * N_ACT + k] = on ? scale * g * z[k] * inv[k] + scale * db : 0.0;
         q[k] += on ? scale * g * (z[k] * z[k] - 1.0) : 0.0;
       }
       const double v = val[(size_t)r * 8], ov = b.oldv[r], R = b.ret[r];
@@ -232,11 +240,13 @@ void loss(Mode md, const double* mean, const double* val, const double* logstd, 
       q[11] += std::fabs(ratio - 1.0) > h.clip ? 1.0 : 0.0;
     }
   }
+  if (md == EMUL) for (int k = 0; k < N_ACT; ++k) q[k] = (double)(qf[k] - h.ent_coef) + h.ent_coef;   // 아래에서 빼는 ent_coef 도 FP32 로
   for (int k = 0; k < N_ACT; ++k) dls[k] = k < h.act_dims ? q[k] - h.ent_coef : 0.0;
   st[0] = q[8] / M;
   st[1] = q[9] / M;
   st[2] = q[10] / M;
   st[3] = q[11] / M;
+  st[4] = q[12] / M;   // 자르기 밖 평균 벌
 }
 
 static void run_impl(Mode md, const std::vector<double>& P, const Batch& b, const Hyper& h, Trace& tr, bool backward) {
@@ -268,12 +278,12 @@ static void run_impl(Mode md, const std::vector<double>& P, const Batch& b, cons
   tr.mean = tr.h[L_A4];
   tr.val = tr.h[L_C4];
   for (int l = 0; l < N_LAYER; ++l) tr.dz[l].assign((size_t)(l <= L_S2 ? MS : M) * kLayers[l].N, 0.0);
-  double dls[N_ACT], st[4];
+  double dls[N_ACT], st[5];
   loss(md, tr.mean.data(), tr.val.data(), logstd, b, h, tr.dz[L_A4].data(), tr.dz[L_C4].data(), dls, st);
   tr.pg = st[0]; tr.vl = st[1]; tr.kl = st[2]; tr.clipfrac = st[3];
   tr.ent = 0.0;
   for (int k = 0; k < h.act_dims; ++k) tr.ent += logstd[k] + 0.5 + 0.5 * 1.8378770664093453;
-  tr.loss = tr.pg + h.vf_coef * tr.vl - h.ent_coef * tr.ent;
+  tr.loss = tr.pg + h.vf_coef * tr.vl - h.ent_coef * tr.ent + st[4];
   if (!backward) return;
   tr.grad.assign(lay.total, 0.0);
   std::vector<double> dp[2];

@@ -26,6 +26,13 @@ typedef struct PpoConfig {
   int32_t act_dims;     /* 학습하는 행동 수(앞에서부터). 나머지는 0 으로 고정(CURRICULUM 3절: approach 는 vx, wz 2 개) */
   float shape_coef;     /* reward/shaping.h 퍼텐셜 모양 잡기 배율(0 = 끔) */
   float shape_near, shape_aim, shape_zone, shape_v, shape_w;
+  /* G4: 목표 출처와 커리큘럼 처음 지도(계획서 5.4·5.5) */
+  int32_t goal_from_map;  /* 1 = 목표 값은 지도에 확정된 뒤에만(observation/obs.h), 0 = 특권(G3 그대로) */
+  float map_p0, map_p1;   /* 처음 지도 C0(전체)·C1(부분) 비율, 나머지 C2(빈 지도). 시작 값 — 바꾸기는 ppo_set_map_curriculum */
+  int32_t map_kmin, map_kmax;   /* C1 미리 확정할 참 물체 수 */
+  float map_reveal_r;     /* C1 격자 공개 반경 m */
+  float bound_coef;       /* 정책 평균 자르기 밖 벌 coef·(|μ|−1)² (network LossHyper). 0 = 끔(G3) */
+  float coll_extra;       /* 충돌로 끝난 스텝에 더하는 보상(학습기 쪽, reward/shaping.h). 0 = 끔(G3) */
 } PpoConfig;
 
 typedef struct PpoLog {
@@ -40,6 +47,9 @@ typedef struct PpoLog {
   float map_task;        /* 지도: 과제 물체(컵) 확정 비율(판 평균, 롤아웃 끝) */
   int32_t stage;
   int32_t pad;
+  float n_c[3];          /* 이 바퀴에 끝난 에피소드 수: 처음 지도 C0·C1·C2 별 */
+  float s_c[3], k_c[3];  /* 그 성공·충돌 비율 */
+  float goal_known;      /* 롤아웃 끝에 목표(컵)가 지도에 확정된 판 비율 */
 } PpoLog;
 
 void* ppo_create(const PpoConfig* cfg);
@@ -56,6 +66,10 @@ int ppo_set_stage(void* h, int stage);
 int ppo_ckpt_begin(void* h);
 int ppo_ckpt_poll(void* h, const uint8_t** data, int64_t* nbytes);
 int ppo_load(void* h, const uint8_t* data, int64_t nbytes); /* 동기, 시작 때만 */
+/* 처음 지도 비율 바꾸기(장치 값, 비동기 복사 하나 — 동기·그래프 다시 잡기 없음). 다음에 띄우는 바퀴부터 */
+int ppo_set_map_curriculum(void* h, float p0, float p1, int32_t kmin, int32_t kmax, float reveal_r);
+/* 띄운 바퀴 수(누적, 이어 하기면 체크포인트 바퀴부터) */
+int64_t ppo_issued(void* h);
 int64_t ppo_num_params(void* h);
 int64_t ppo_device_bytes(void* h);
 

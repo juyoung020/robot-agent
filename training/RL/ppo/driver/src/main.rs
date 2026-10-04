@@ -3,6 +3,10 @@
 // 기록·체크포인트 파일 쓰기는 따로 된 스레드가 한다.
 //
 //   ppo_run <config.json> [--out DIR] [--minutes M] [--resume CKPT]
+//
+// 커리큘럼(G4, 계획서 5.5): 단계마다 G1 환경 단계(env)와 처음 지도 비율(map: [C0, C1], 나머지 C2)을 둔다. 넘어가기 = 그 단계가 재는
+// 처음 지도(metric: 0 C0, 1 C1, 2 C2, -1 전체)의 에피소드 성공률(최근 window 바퀴 에피소드 가중) ≥ promote.
+// 지도 비율만 바뀌면 장치 값 복사 하나(ppo_set_map_curriculum — 동기·그래프 다시 잡기 없음), 환경 단계가 바뀌면 예전처럼 ppo_set_stage.
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
@@ -47,6 +51,14 @@ struct PpoConfig {
     shape_zone: f32,
     shape_v: f32,
     shape_w: f32,
+    goal_from_map: i32,
+    map_p0: f32,
+    map_p1: f32,
+    map_kmin: i32,
+    map_kmax: i32,
+    map_reveal_r: f32,
+    bound_coef: f32,
+    coll_extra: f32,
 }
 
 #[repr(C)]
@@ -78,6 +90,10 @@ struct PpoLog {
     map_task: f32,
     stage: i32,
     pad: i32,
+    n_c: [f32; 3],
+    s_c: [f32; 3],
+    k_c: [f32; 3],
+    goal_known: f32,
 }
 
 #[allow(dead_code)]
@@ -91,6 +107,8 @@ extern "C" {
     fn ppo_ckpt_begin(h: *mut std::ffi::c_void) -> i32;
     fn ppo_ckpt_poll(h: *mut std::ffi::c_void, data: *mut *const u8, nbytes: *mut i64) -> i32;
     fn ppo_load(h: *mut std::ffi::c_void, data: *const u8, nbytes: i64) -> i32;
+    fn ppo_set_map_curriculum(h: *mut std::ffi::c_void, p0: f32, p1: f32, kmin: i32, kmax: i32, reveal_r: f32) -> i32;
+    fn ppo_issued(h: *mut std::ffi::c_void) -> i64;
     fn ppo_num_params(h: *mut std::ffi::c_void) -> i64;
     fn ppo_device_bytes(h: *mut std::ffi::c_void) -> i64;
 }
@@ -138,7 +156,52 @@ fn make_config(v: &Value) -> PpoConfig {
         shape_zone: gf(v.get("shaping").unwrap_or(&Value::Null), "zone", 1.0) as f32,
         shape_v: gf(v.get("shaping").unwrap_or(&Value::Null), "v", 4.0) as f32,
         shape_w: gf(v.get("shaping").unwrap_or(&Value::Null), "w", 2.0) as f32,
+        goal_from_map: gi(v, "goal_from_map", 0) as i32,
+        map_p0: 0.0,
+        map_p1: 0.0,
+        map_kmin: gi(v, "map_kmin", 3) as i32,
+        map_kmax: gi(v, "map_kmax", 6) as i32,
+        map_reveal_r: gf(v, "map_reveal_r", 1.5) as f32,
+        bound_coef: gf(v, "bound_coef", 0.0) as f32,
+        coll_extra: gf(v.get("shaping").unwrap_or(&Value::Null), "coll", 0.0) as f32,
     }
+}
+
+// 커리큘럼 한 단계
+#[derive(Clone, Debug)]
+struct Stage {
+    name: String,
+    env: i32,
+    p0: f32,
+    p1: f32,
+    promote: f64,
+    metric: i32,
+}
+
+fn parse_stages(cur: &Value, default_env: i32, default_promote: f64) -> Vec<Stage> {
+    let arr = match cur.get("stages").and_then(|x| x.as_array()) {
+        Some(a) => a.clone(),
+        None => return vec![Stage { name: format!("A{}", default_env), env: default_env, p0: 0.0, p1: 0.0, promote: default_promote, metric: -1 }],
+    };
+    arr.iter()
+        .map(|e| {
+            if let Some(k) = e.as_i64() {
+                // 예전 꼴(G3): 정수 = 환경 단계, 지도는 빈 지도
+                Stage { name: format!("A{}", k), env: k as i32, p0: 0.0, p1: 0.0, promote: default_promote, metric: -1 }
+            } else {
+                let m = e.get("map").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+                let p = |i: usize| m.get(i).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+                Stage {
+                    name: e.get("name").and_then(|x| x.as_str()).unwrap_or("?").to_string(),
+                    env: gi(e, "env", default_env as i64) as i32,
+                    p0: p(0),
+                    p1: p(1),
+                    promote: gf(e, "promote", default_promote),
+                    metric: gi(e, "metric", -1) as i32,
+                }
+            }
+        })
+        .collect()
 }
 
 enum Msg {
@@ -152,7 +215,7 @@ fn writer(rx: mpsc::Receiver<Msg>, out: PathBuf, n_per_iter: f64, print_every: i
     let mut csv = fs::File::create(out.join("log.csv")).expect("log.csv");
     writeln!(
         csv,
-        "iter,env_steps,wall_s,stage,succ,coll,tout,n_eps,ep_ret,ep_len,rew_mean,kl,clipfrac,entropy,pg_loss,v_loss,grad_norm,lr,adv_std,value_mean,std0,std1,map_task,rollout_ms,update_ms,gpu_env_steps_per_s"
+        "iter,env_steps,wall_s,stage,succ,coll,tout,n_eps,ep_ret,ep_len,rew_mean,kl,clipfrac,entropy,pg_loss,v_loss,grad_norm,lr,adv_std,value_mean,std0,std1,map_task,rollout_ms,update_ms,gpu_env_steps_per_s,n_c0,n_c1,n_c2,succ_c0,succ_c1,succ_c2,coll_c0,coll_c1,coll_c2,goal_known"
     )
     .unwrap();
     let mut notes = fs::File::create(out.join("events.txt")).expect("events.txt");
@@ -162,17 +225,18 @@ fn writer(rx: mpsc::Receiver<Msg>, out: PathBuf, n_per_iter: f64, print_every: i
                 let gpu_sps = n_per_iter / ((l.rollout_ms + l.update_ms) as f64 * 1e-3);
                 writeln!(
                     csv,
-                    "{},{},{:.3},{},{:.4},{:.4},{:.4},{},{:.3},{:.1},{:.5},{:.5},{:.4},{:.4},{:.5},{:.5},{:.4},{:.3e},{:.4},{:.4},{:.4},{:.4},{:.4},{:.3},{:.3},{:.4e}",
+                    "{},{},{:.3},{},{:.4},{:.4},{:.4},{},{:.3},{:.1},{:.5},{:.5},{:.4},{:.4},{:.5},{:.5},{:.4},{:.3e},{:.4},{:.4},{:.4},{:.4},{:.4},{:.3},{:.3},{:.4e},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4}",
                     l.iter, l.env_steps, wall, l.stage, l.succ, l.coll, l.tout, l.n_eps as i64, l.ep_ret, l.ep_len, l.rew_mean, l.kl, l.clipfrac,
                     l.entropy, l.pg_loss, l.v_loss, l.grad_norm, l.lr, l.adv_std, l.value_mean, l.std0, l.std1, l.map_task, l.rollout_ms,
-                    l.update_ms, gpu_sps
+                    l.update_ms, gpu_sps, l.n_c[0] as i64, l.n_c[1] as i64, l.n_c[2] as i64, l.s_c[0], l.s_c[1], l.s_c[2], l.k_c[0], l.k_c[1], l.k_c[2],
+                    l.goal_known
                 )
                 .unwrap();
                 if l.iter % print_every == 0 || l.iter == 1 {
                     println!(
-                        "it {:5}  steps {:10.3e}  t {:6.0}s  A{}  succ {:.3} coll {:.3} tout {:.3}  ret {:6.2} len {:5.1}  kl {:.4} ent {:6.3} lr {:.1e} σ {:.2}/{:.2}  map_task {:.2}  roll {:.1}+upd {:.1} ms ({:.2e} st/s)",
-                        l.iter, l.env_steps as f64, wall, l.stage, l.succ, l.coll, l.tout, l.ep_ret, l.ep_len, l.kl, l.entropy, l.lr, l.std0,
-                        l.std1, l.map_task, l.rollout_ms, l.update_ms, gpu_sps
+                        "it {:5}  steps {:10.3e}  t {:6.0}s  A{}  succ {:.3} coll {:.3} tout {:.3}  C0/1/2 {:.2}/{:.2}/{:.2} (n {}/{}/{})  goal {:.2}  len {:5.1}  kl {:.4} lr {:.1e} σ {:.2}/{:.2}  roll {:.1}+upd {:.1} ms ({:.2e} st/s)",
+                        l.iter, l.env_steps as f64, wall, l.stage, l.succ, l.coll, l.tout, l.s_c[0], l.s_c[1], l.s_c[2], l.n_c[0] as i64,
+                        l.n_c[1] as i64, l.n_c[2] as i64, l.goal_known, l.ep_len, l.kl, l.lr, l.std0, l.std1, l.rollout_ms, l.update_ms, gpu_sps
                     );
                 }
             }
@@ -215,8 +279,8 @@ fn main() {
     fs::write(out.join("config.json"), &text).unwrap();
     let cfg = make_config(&v);
     let cur = v.get("curriculum").cloned().unwrap_or(Value::Null);
-    let stages: Vec<i32> = cur.get("stages").and_then(|x| x.as_array()).map(|a| a.iter().map(|s| s.as_i64().unwrap() as i32).collect()).unwrap_or(vec![cfg.stage]);
-    let promote = gf(&cur, "promote_success", 0.8);
+    let promote_default = gf(&cur, "promote_success", 0.8);
+    let stages = parse_stages(&cur, cfg.stage, promote_default);
     let window = gi(&cur, "window", 20) as usize;
     let stop_success = gf(&cur, "stop_success", 2.0);
     let ckpt_every = gi(&v, "ckpt_every", 200);
@@ -224,7 +288,9 @@ fn main() {
     let depth = gi(&v, "inflight", 3) as i32;
 
     let mut c = cfg;
-    c.stage = stages[0];
+    c.stage = stages[0].env;
+    c.map_p0 = stages[0].p0;
+    c.map_p1 = stages[0].p1;
     let h = unsafe { ppo_create(&c) };
     let n_per_iter = (c.n_env as f64) * (c.horizon as f64);
     let (tx, rx) = mpsc::channel::<Msg>();
@@ -232,23 +298,34 @@ fn main() {
     let wt = std::thread::spawn(move || writer(rx, out_w, n_per_iter, print_every));
     unsafe {
         tx.send(Msg::Note(format!(
-            "ppo_run: N={} T={} epochs={} minibatches={} params={} device {:.2} GB, stages {:?}, budget {} min, out {}",
-            c.n_env, c.horizon, c.epochs, c.minibatches, ppo_num_params(h), ppo_device_bytes(h) as f64 / 1e9, stages, minutes, out.display()
+            "ppo_run: N={} T={} epochs={} minibatches={} params={} device {:.2} GB, goal_from_map {}, use_map {}, budget {} min, out {}\n  stages {:?}",
+            c.n_env, c.horizon, c.epochs, c.minibatches, ppo_num_params(h), ppo_device_bytes(h) as f64 / 1e9, c.goal_from_map, c.use_map, minutes,
+            out.display(), stages
         )))
         .unwrap();
     }
+    let mut si = gi(&v, "start_stage", 0) as usize;   // 이어 하기 때 시작 단계
     if let Some(p) = &resume {
         let b = fs::read(p).expect("resume file");
         let r = unsafe { ppo_load(h, b.as_ptr(), b.len() as i64) };
         assert_eq!(r, 0, "resume failed (size/format)");
         tx.send(Msg::Note(format!("resumed from {}", p))).unwrap();
     }
+    if si > 0 {
+        unsafe {
+            if stages[si].env != stages[0].env {
+                assert_eq!(ppo_set_stage(h, stages[si].env), 0);
+            }
+            ppo_set_map_curriculum(h, stages[si].p0, stages[si].p1, c.map_kmin, c.map_kmax, c.map_reveal_r);
+        }
+        tx.send(Msg::Note(format!("start at stage {} ({:?})", si, stages[si]))).unwrap();
+    }
 
     let t0 = Instant::now();
     let budget = Duration::from_secs_f64(minutes * 60.0);
-    let mut si = 0usize;
-    let mut win: Vec<f32> = Vec::new();
-    let mut pending_stage = false;
+    let mut win: Vec<(f64, f64)> = Vec::new();   // (성공 수, 에피소드 수) — 바퀴마다
+    let mut pending_env = false;
+    let mut ignore_upto = 0i64;   // 지도 비율을 바꾼 뒤 이미 띄워 둔 바퀴(예전 비율)의 기록은 넘어가기 판단에 쓰지 않음
     let mut ckpt_pending = false;
     let mut last_iter = 0i64;
     let mut stop = false;
@@ -256,7 +333,7 @@ fn main() {
     let ckpt_path = |it: i64| out.join(format!("ckpt_{:06}.bin", it));
     loop {
         let timeup = t0.elapsed() > budget;
-        if !timeup && !stop && !pending_stage {
+        if !timeup && !stop && !pending_env {
             while unsafe { ppo_inflight(h) } < depth {
                 if unsafe { ppo_iterate(h) } != 0 {
                     break;
@@ -268,22 +345,42 @@ fn main() {
             got = true;
             last_iter = log.iter;
             tx.send(Msg::Log(log, t0.elapsed().as_secs_f64())).unwrap();
-            if log.n_eps > 0.0 {
-                win.push(log.succ);
+            if log.iter <= ignore_upto || pending_env {
+                continue;
+            }
+            let st = &stages[si];
+            let (ns, ne) = if st.metric < 0 {
+                ((log.succ * log.n_eps) as f64, log.n_eps as f64)
+            } else {
+                let m = st.metric as usize;
+                ((log.s_c[m] * log.n_c[m]) as f64, log.n_c[m] as f64)
+            };
+            if ne > 0.0 {
+                win.push((ns, ne));
                 if win.len() > window {
                     win.remove(0);
                 }
             }
-            let avg = if win.len() == window { win.iter().sum::<f32>() / window as f32 } else { 0.0 };
-            if si + 1 < stages.len() && avg as f64 >= promote && !pending_stage {
-                pending_stage = true;
+            let avg = if win.len() == window { win.iter().map(|x| x.0).sum::<f64>() / win.iter().map(|x| x.1).sum::<f64>().max(1.0) } else { 0.0 };
+            if si + 1 < stages.len() && avg >= st.promote {
+                let nx = stages[si + 1].clone();
                 tx.send(Msg::Note(format!(
-                    "curriculum: stage A{} success {:.3} (window {}) >= {} at iter {} / {} env-steps -> A{}",
-                    stages[si], avg, window, promote, log.iter, log.env_steps, stages[si + 1]
+                    "curriculum: stage {} success {:.3} (metric C{}, window {}) >= {} at iter {} / {} env-steps / {:.0} s -> {}",
+                    st.name, avg, st.metric, window, st.promote, log.iter, log.env_steps, t0.elapsed().as_secs_f64(), nx.name
                 )))
                 .unwrap();
+                win.clear();
+                if nx.env != st.env {
+                    pending_env = true;   // 환경을 새로 만들어야 함: 띄운 바퀴가 다 끝난 뒤
+                } else {
+                    si += 1;
+                    unsafe { ppo_set_map_curriculum(h, nx.p0, nx.p1, c.map_kmin, c.map_kmax, c.map_reveal_r) };
+                    ignore_upto = unsafe { ppo_issued(h) };
+                    tx.send(Msg::Note(format!("curriculum: now {} (first map C0 {:.2} C1 {:.2} C2 {:.2}: device value, no sync, no recapture; from iter {})",
+                        nx.name, nx.p0, nx.p1, 1.0 - nx.p0 - nx.p1, ignore_upto + 1))).unwrap();
+                }
             }
-            if si + 1 == stages.len() && avg as f64 >= stop_success && !stop {
+            if si + 1 == stages.len() && avg >= stop_success && !stop {
                 stop = true;
                 tx.send(Msg::Note(format!("stop: final stage success {:.3} >= {} at iter {}", avg, stop_success, log.iter))).unwrap();
             }
@@ -302,13 +399,15 @@ fn main() {
             }
         }
         let idle = unsafe { ppo_inflight(h) } == 0;
-        if pending_stage && idle && !ckpt_pending {
+        if pending_env && idle && !ckpt_pending {
             si += 1;
-            let r = unsafe { ppo_set_stage(h, stages[si]) };
+            let nx = &stages[si];
+            let r = unsafe { ppo_set_stage(h, nx.env) };
             assert_eq!(r, 0);
+            unsafe { ppo_set_map_curriculum(h, nx.p0, nx.p1, c.map_kmin, c.map_kmax, c.map_reveal_r) };
             win.clear();
-            pending_stage = false;
-            tx.send(Msg::Note(format!("curriculum: now stage A{} (env + map recreated, rollout graph recaptured)", stages[si]))).unwrap();
+            pending_env = false;
+            tx.send(Msg::Note(format!("curriculum: now {} (env A{} recreated, rollout graph recaptured; first map C0 {:.2} C1 {:.2})", nx.name, nx.env, nx.p0, nx.p1))).unwrap();
         }
         if (timeup || stop) && idle && !ckpt_pending {
             break;

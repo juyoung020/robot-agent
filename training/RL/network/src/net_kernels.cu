@@ -143,11 +143,18 @@ __global__ void __launch_bounds__(LOSS_NT) ppo_loss_k(LossIn in, int M, const Tr
     const float s1 = ratio * A, rc = fminf(fmaxf(ratio, 1.f - h.clip), 1.f + h.clip), s2 = rc * A;
     const float pg = -fminf(s1, s2);
     const float g = (s1 <= s2) ? -ratio * A : 0.f;   // d pg / d logp
+    float bl = 0.f;
     for (int k = 0; k < N_ACT; ++k) {
       const bool on = k < h.act_dims;
-      dzA[(long long)r * N_ACT + k] = on ? f2bf(scale * g * z[k] * inv[k]) : (uint16_t)0;
+      // 자르기 밖 평균 벌(bound loss): 환경이 행동을 ±1 로 자르므로 |μ| > 1 이면 표본이 모두 같은 행동이 되어 PPO 기울기가 μ 를 되돌리지 못함
+      const float mu = in.mean[(long long)r * N_ACT + k], ex = fabsf(mu) - 1.f;
+      const float db = (on && h.bound_coef != 0.f && ex > 0.f) ? h.bound_coef * 2.f * ex * (mu > 0.f ? 1.f : -1.f) : 0.f;
+      if (db != 0.f) bl = bl + h.bound_coef * ex * ex;
+      const float d0 = scale * g * z[k] * inv[k];
+      dzA[(long long)r * N_ACT + k] = on ? f2bf(db != 0.f ? d0 + scale * db : d0) : (uint16_t)0;
       q[k] = on ? scale * g * (z[k] * z[k] - 1.f) : 0.f;
     }
+    q[12] = bl;
     const float v = in.val[(long long)r * 8], ov = in.oldv[r], R = in.ret[r];
     float vl, gv;
     if (h.vclip > 0.f) {

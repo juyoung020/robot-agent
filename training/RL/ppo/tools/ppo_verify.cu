@@ -1,5 +1,7 @@
 // 검증 사다리 V4–V7 (계획서 GPU_TRAINING.md 9절).
 //   ppo_verify v4 [--negative]   층 하나씩: GPU 가 실제로 받은 입력으로 CPU FP64(정답)·EMUL(바닥)을 돌려 GPU 출력과 비교. 기준 GPU 오차 ≤ 2 × 바닥
+//   (v4·v5 의 자료는 G3 설정(특권 목표·빈 지도) — 신경망 수치 검사의 기준. --g4data 면 G4 자료(지도 목표·처음 지도 섞음, 칸이 더 참):
+//    1 스텝 검사는 같이 통과하나 Adam 10 스텝·FP64 유한 차분은 씨앗에 따라 흔들림(README))
 //   ppo_verify v5 [--negative]   학습 한 스텝: 손실·모든 기울기·Adam 1·10 스텝 갱신량을 CPU FP64 와 비교(같은 기준) + FP64 유한 차분으로 참조판 자체 확인
 //   ppo_verify v6                그래프 = 즉시 실행(비트 동일, 3 바퀴 뒤 변수·Adam·롤아웃 버퍼·지도 토큰·기록)
 //   ppo_verify v7                같은 씨앗 두 번 비트 동일, 다른 씨앗은 달라야 함
@@ -14,6 +16,7 @@
 #include <vector>
 
 #include "net_ref.h"
+#include "obs.h"
 #include "trainer.h"
 
 using namespace net;
@@ -34,7 +37,8 @@ static std::vector<double> bfv(const std::vector<uint16_t>& v) {
 }
 static std::vector<double> fv(const std::vector<float>& v) { return std::vector<double>(v.begin(), v.end()); }
 
-static PpoConfig small_cfg(uint64_t seed, int graphs) {
+static bool g_g4data = false;   // v4/v5 --g4data: G4 자료(목표는 지도에서, 처음 지도 섞음)로. v6/v7 은 늘 G4 자료
+static PpoConfig small_cfg(uint64_t seed, int graphs, bool g4 = true) {
   PpoConfig c{};
   c.n_env = 512; c.horizon = 16; c.epochs = 2; c.minibatches = 4; c.stage = 1; c.use_map = 1; c.adaptive_lr = 0; c.use_graphs = graphs;
   c.log_ring = 8; c.dw_chunk = 1024; c.seed = seed;
@@ -42,6 +46,10 @@ static PpoConfig small_cfg(uint64_t seed, int graphs) {
   c.lr = 3e-4f; c.lr_min = 1e-5f; c.lr_max = 1e-3f; c.kl_target = 0.01f; c.max_grad_norm = 1.0f;
   c.adam_b1 = 0.9f; c.adam_b2 = 0.999f; c.adam_eps = 1e-8f; c.init_logstd = -0.5f; c.reward_scale = 1.f;
   c.act_dims = 2; c.shape_coef = 1.f; c.shape_near = 8.f; c.shape_aim = 1.f; c.shape_zone = 1.f; c.shape_v = 4.f; c.shape_w = 2.f;
+  // G4 경로를 지나게: 목표는 지도에서, 처음 지도 C0·C1·C2 섞음
+  c.goal_from_map = 1; c.map_p0 = 0.3f; c.map_p1 = 0.4f; c.map_kmin = 3; c.map_kmax = 6; c.map_reveal_r = 1.5f;
+  c.bound_coef = 0.5f;   // 자르기 밖 평균 벌(G4)도 검사에 넣음 — V4/V5 의 흔든 미니배치에서 |μ| > 1 인 행이 있게 아래에서 평균 출력을 키움
+  if (!g4) { c.goal_from_map = 0; c.map_p0 = 0.f; c.map_p1 = 0.f; }   // G3 설정(특권 목표, 빈 지도) — V4/V5 기준 자료
   return c;
 }
 
@@ -69,6 +77,13 @@ struct Report {
 
 // 롤아웃 몇 바퀴 → 미니배치 하나 모으기(+ oldlogp·oldv 흔들어 자르기가 일어나게)
 static netref::Batch make_batch(Trainer& tr, netref::Hyper& hy) {
+  {   // 정책 평균 층(A4)을 롤아웃 전에 키워 |μ| > 1 인 행이 생기게(자르기 밖 평균 벌이 검사에 들어가도록). 초기 A4 는 gain 0.01 이라 |μ| ≪ 1
+    const ParamLayout lay = param_layout();
+    std::vector<float> P = dl(tr.P, lay.total);
+    for (long long j = lay.off[L_A4]; j < lay.off[L_A4] + (long long)kLayers[L_A4].N * kLayers[L_A4].K; ++j) P[j] *= 60.f;
+    VCK(cudaMemcpy(tr.P, P.data(), sizeof(float) * lay.total, cudaMemcpyHostToDevice));
+    to_bf16(tr.P, tr.Pb, lay.total, 0);
+  }
   for (int k = 0; k < 2; ++k) tr.iterate();
   VCK(cudaDeviceSynchronize());
   PpoLog L;
@@ -98,7 +113,16 @@ static netref::Batch make_batch(Trainer& tr, netref::Hyper& hy) {
   }
   VCK(cudaMemcpy(tr.mb_oldlogp, b.oldlogp.data(), sizeof(float) * M, cudaMemcpyHostToDevice));
   VCK(cudaMemcpy(tr.mb_oldv, b.oldv.data(), sizeof(float) * M, cudaMemcpyHostToDevice));
-  hy = netref::Hyper{tr.cfg.clip, tr.cfg.vclip, tr.cfg.vf_coef, tr.cfg.ent_coef, tr.cfg.act_dims};
+  hy = netref::Hyper{tr.cfg.clip, tr.cfg.vclip, tr.cfg.vf_coef, tr.cfg.ent_coef, tr.cfg.act_dims, tr.cfg.bound_coef};
+  {
+    tr.forward(M);
+    VCK(cudaDeviceSynchronize());
+    const std::vector<float> mu = dl(tr.mean, (size_t)M * N_ACT);
+    long nb = 0;
+    for (int i = 0; i < M; ++i) for (int k = 0; k < tr.cfg.act_dims; ++k) nb += std::fabs(mu[(size_t)i * N_ACT + k]) > 1.f;
+    std::printf("batch: policy mean beyond the action clip (|mu| > 1, bound loss coef %.2f active): %.3f of entries\n", tr.cfg.bound_coef,
+                (double)nb / ((double)M * tr.cfg.act_dims));
+  }
   long nslot = 0;
   for (int i = 0; i < M; ++i) nslot += __builtin_popcount(b.mask[i]);
   std::printf("batch: M=%d rows, mean filled map slots %.2f, adv mean %.3f std %.3f\n", M, (double)nslot / M, b.adv_mean, b.adv_std);
@@ -107,7 +131,7 @@ static netref::Batch make_batch(Trainer& tr, netref::Hyper& hy) {
 
 static int run_v4(int bug) {
   std::printf("== V4: layer forward/backward vs CPU FP64 (floor = CPU bf16 emulation)%s\n", bug ? "  [NEGATIVE CONTROL]" : "");
-  Trainer tr(small_cfg(11, 0));
+  Trainer tr(small_cfg(11, 0, g_g4data));
   netref::Hyper hy;
   netref::Batch b = make_batch(tr, hy);
   tr.bug = bug;
@@ -157,7 +181,7 @@ static int run_v4(int bug) {
     std::printf("  %-26s argmax differs %ld / %zu (ties only)\n", "pool argmax", bad, amax.size());
   }
   {   // 손실
-    std::vector<double> fa((size_t)M * 8), fc((size_t)M * 8), ea((size_t)M * 8), ec((size_t)M * 8), fl(8), el(8), st(4);
+    std::vector<double> fa((size_t)M * 8), fc((size_t)M * 8), ea((size_t)M * 8), ec((size_t)M * 8), fl(8), el(8), st(5);
     netref::loss(netref::FP64, h[L_A4].data(), h[L_C4].data(), P.data() + lay.logstd, b, hy, fa.data(), fc.data(), fl.data(), st.data());
     netref::loss(netref::EMUL, h[L_A4].data(), h[L_C4].data(), P.data() + lay.logstd, b, hy, ea.data(), ec.data(), el.data(), st.data());
     R.cmp("loss dmean (dZ A4)", dz[L_A4].data(), fa.data(), ea.data(), M, N_ACT, N_ACT);
@@ -204,7 +228,7 @@ static int run_v4(int bug) {
 
 static int run_v5(int bug) {
   std::printf("== V5: one training step vs CPU FP64 chain (floor = CPU bf16 emulation chain)%s\n", bug ? "  [NEGATIVE CONTROL]" : "");
-  Trainer tr(small_cfg(23, 0));
+  Trainer tr(small_cfg(std::getenv("V5_SEED") ? (uint64_t)std::atoll(std::getenv("V5_SEED")) : 23, 0, g_g4data));
   netref::Hyper hy;
   netref::Batch b = make_batch(tr, hy);
   tr.bug = bug;
@@ -320,6 +344,7 @@ static int run_v5(int bug) {
 struct Snap {
   std::vector<float> P, m, v, obs, adv, val, act;
   std::vector<uint8_t> tok;
+  std::vector<unsigned long long> tab;
   std::vector<PpoLog> logs;
 };
 static Snap run_iters(PpoConfig c, int iters) {
@@ -338,6 +363,7 @@ static Snap run_iters(PpoConfig c, int iters) {
   s.val = dl(tr.val_buf, (size_t)(tr.T + 1) * tr.N);
   s.act = dl(tr.act_buf, (size_t)tr.T * tr.N * N_ACT);
   s.tok = dl(reinterpret_cast<const uint8_t*>(tr.tok->at(0)), sizeof(gmap::MapTok) * (size_t)(tr.T + 1) * tr.N);
+  s.tab = dl(tr.tab, (size_t)3 * 2 * 10 * 6);
   return s;
 }
 static long diff_snap(const Snap& a, const Snap& b, bool verbose) {
@@ -347,7 +373,8 @@ static long diff_snap(const Snap& a, const Snap& b, bool verbose) {
       {"adam v", cnt(a.v.data(), b.v.data(), 4 * a.v.size())}, {"obs buffer", cnt(a.obs.data(), b.obs.data(), 4 * a.obs.size())},
       {"advantages", cnt(a.adv.data(), b.adv.data(), 4 * a.adv.size())}, {"values", cnt(a.val.data(), b.val.data(), 4 * a.val.size())},
       {"actions", cnt(a.act.data(), b.act.data(), 4 * a.act.size())}, {"map tokens", cnt(a.tok.data(), b.tok.data(), a.tok.size())},
-      {"logs", a.logs.size() == b.logs.size() ? cnt(a.logs.data(), b.logs.data(), sizeof(PpoLog) * a.logs.size()) : 1}};
+      {"logs", a.logs.size() == b.logs.size() ? cnt(a.logs.data(), b.logs.data(), sizeof(PpoLog) * a.logs.size()) : 1},
+      {"episode table", cnt(a.tab.data(), b.tab.data(), 8 * a.tab.size())}};
   long tot = 0;
   for (auto& e : t) {
     tot += e.d;
@@ -357,15 +384,21 @@ static long diff_snap(const Snap& a, const Snap& b, bool verbose) {
 }
 
 static int run_v6() {
-  std::printf("== V6: CUDA graphs == eager (bit-identical after 3 iterations)\n");
-  const Snap g = run_iters(small_cfg(31, 1), 3), e = run_iters(small_cfg(31, 0), 3);
+  std::printf("== V6: CUDA graphs == eager (bit-identical after 10 iterations)\n");
+  const Snap g = run_iters(small_cfg(31, 1), 10), e = run_iters(small_cfg(31, 0), 10);   // 10 바퀴 = 160 스텝: 시간 끝 에피소드까지 지남
   const long d = diff_snap(g, e, true);
-  std::printf("V6: %s (%ld differing words); last log: succ %.3f kl %.5f\n", d ? "FAIL" : "PASS", d, g.logs.back().succ, g.logs.back().kl);
+  const PpoLog& L = g.logs.back();
+  double n0 = 0, n1 = 0, n2 = 0, ne = 0;
+  for (const PpoLog& q : g.logs) { n0 += q.n_c[0]; n1 += q.n_c[1]; n2 += q.n_c[2]; ne += q.n_eps; }
+  unsigned long long tn = 0;
+  for (size_t k = 0; k < g.tab.size(); k += 6) tn += g.tab[k];
+  std::printf("V6: %s (%ld differing words); last log: succ %.3f kl %.5f goal known %.3f; episodes %.0f, by first map C0/C1/C2 %.0f/%.0f/%.0f, table %llu\n",
+              d ? "FAIL" : "PASS", d, L.succ, L.kl, L.goal_known, ne, n0, n1, n2, tn);
   return d ? 1 : 0;
 }
 static int run_v7() {
   std::printf("== V7: determinism (same seed twice, graphs)\n");
-  const Snap a = run_iters(small_cfg(41, 1), 4), b = run_iters(small_cfg(41, 1), 4), c = run_iters(small_cfg(42, 1), 4);
+  const Snap a = run_iters(small_cfg(41, 1), 10), b = run_iters(small_cfg(41, 1), 10), c = run_iters(small_cfg(42, 1), 10);
   const long d = diff_snap(a, b, true), dc = diff_snap(a, c, false);
   std::printf("V7: same seed %s (%ld differing words); different seed differs in %ld words (%s)\n", d ? "FAIL" : "PASS", d, dc, dc ? "ok" : "FAIL");
   return (d || !dc) ? 1 : 0;
@@ -393,11 +426,18 @@ static int run_bench(int N, int T, int iters, int mbs, int use_map) {
   return 0;
 }
 
-// 체크포인트를 결정적 정책(σ → e^-12, 학습률 0)으로 돌려 성공률을 잰다:  ppo_verify eval <ckpt> <stage> [iters=10] [N=4096] [use_map=1]
-static int run_eval(const char* path, int stage, int iters, int N, int use_map) {
+// 체크포인트를 결정적 정책(σ → e^-12, 학습률 0)으로 돌려 성공률을 잰다(계획서 5.6: 처음 완성도로 나눔).
+//   ppo_verify eval <ckpt> <stage> [iters=10] [N=4096] [use_map=1] [goal_from_map=1] [p0 p1 kmin kmax]
+// 처음 완성도 = 판 시작 때 미리 확정한 참 물체 비율(9 개 중). 칸: 0 %, 0–30 %(1–2 개), 30–70 %(3–6), 70–100 %(7–8), 100 %(9)
+struct CapHook {   // 충돌 다시 돌리기: 서브스텝마다 자세를 남김(마지막 = 충돌한 자세)
+  env::Core* out;
+  __host__ __device__ void operator()(const env::Core& c) const { *out = c; }
+};
+static int run_eval(const char* path, int stage, int iters, int N, int use_map, int goal, const float* mc) {
   PpoConfig c = small_cfg(1234, 1);
   c.n_env = N; c.horizon = 64; c.minibatches = 4; c.epochs = 1; c.stage = stage; c.use_map = use_map; c.lr = 0.f; c.lr_max = 0.f; c.lr_min = 0.f;
-  c.adaptive_lr = 0;
+  c.adaptive_lr = 0; c.goal_from_map = goal;
+  c.map_p0 = mc[0]; c.map_p1 = mc[1]; c.map_kmin = (int)mc[2]; c.map_kmax = (int)mc[3]; c.map_reveal_r = 1.5f;
   Trainer tr(c);
   FILE* f = std::fopen(path, "rb");
   if (!f) { std::perror(path); return 2; }
@@ -407,38 +447,75 @@ static int run_eval(const char* path, int stage, int iters, int N, int use_map) 
   float* P = reinterpret_cast<float*>(b.data() + 64);
   for (int k = 0; k < N_ACT; ++k) P[tr.lay.logstd + k] = -12.f;
   if (got != b.size() || ppo_load(&tr, b.data(), (int64_t)b.size())) { std::fprintf(stderr, "bad checkpoint\n"); return 2; }
-  double s = 0, cl = 0, to = 0, ne = 0, len = 0, ret = 0;
+  std::printf("eval %s: A%d use_map %d goal_from_map %d, first map C0 %.2f C1 %.2f (k %d..%d) C2 %.2f, N %d, %d iters (first 3 dropped)\n", path, stage, use_map,
+              goal, mc[0], mc[1], (int)mc[2], (int)mc[3], 1.f - mc[0] - mc[1], N, iters);
+  double s = 0, cl = 0, to = 0, ne = 0, len = 0, ret = 0, gk = 0;
+  int nk = 0;
   for (int k = 0; k < iters; ++k) {
     tr.eval_iterate();   // 갱신 없음(체크포인트의 학습률이 되살아나도 변수는 그대로)
     VCK(cudaDeviceSynchronize());
-    if (std::getenv("EVAL_OBS")) {   // 진단: 관측 차원마다 판 평균 |값|
-      const int N = tr.N; const std::vector<float> o = dl(tr.obs_buf + (size_t)tr.T * N_OBS_G1 * N, (size_t)N_OBS_G1 * N);
-      std::printf("  obs iter %d:", k);
-      for (int d = 0; d < N_OBS_G1; ++d) { double a = 0; for (int i = 0; i < N; ++i) a += std::fabs(o[(size_t)d * N + i]); std::printf(" %d:%.3g", d, a / N); }
-      std::printf("\n");
-    }
-
+    if (k == 2) VCK(cudaMemset(tr.tab, 0, sizeof(unsigned long long) * 3 * 2 * 10 * 6));   // 처음 바퀴들(무작위 시작 판)은 버림
     PpoLog L;
     while (tr.poll(&L)) {
-      if (std::getenv("EVAL_TRACE")) std::printf("  eval iter %d: episodes %.0f success %.4f collision %.4f timeout %.4f len %.1f\n", k, L.n_eps, L.succ, L.coll, L.tout, L.ep_len);
-      if (k < 3) continue;   // 처음 바퀴들은 이전(무작위 시작) 에피소드가 섞여 있어 버림
+      if (std::getenv("EVAL_TRACE")) std::printf("  eval iter %d: episodes %.0f success %.4f collision %.4f timeout %.4f len %.1f goal known %.3f\n", k, L.n_eps, L.succ, L.coll, L.tout, L.ep_len, L.goal_known);
+      if (k < 3) continue;
       s += L.succ * L.n_eps; cl += L.coll * L.n_eps; to += L.tout * L.n_eps; ne += L.n_eps; len += L.ep_len * L.n_eps; ret += L.ep_ret * L.n_eps;
+      gk += L.goal_known; ++nk;
     }
   }
-  // 충돌이 에피소드 몇 번째 스텝에서 나는가(스텝마다 동기 — 평가 전용): 0–2 스텝 = 리셋 자리에서 피할 수 없는 충돌 후보
+  std::printf("eval overall: %.0f episodes, success %.4f collision %.4f timeout %.4f, mean len %.1f return %.2f; goal known at rollout end %.3f\n", ne, s / ne,
+              cl / ne, to / ne, len / ne, ret / ne, nk ? gk / nk : 0.0);
+  {   // 처음 완성도 칸(5.6)
+    const std::vector<unsigned long long> T = dl(tr.tab, (size_t)3 * 2 * 10 * 6);
+    auto bucket = [](int cnum) { return cnum == 0 ? 0 : cnum <= 2 ? 1 : cnum <= 6 ? 2 : cnum <= 8 ? 3 : 4; };
+    static const char* bn[5] = {"0 %", "0-30 %", "30-70 %", "70-100 %", "100 %"};
+    double A[3][5][6] = {};   // [전체·컵 모름·컵 앎][칸][량]
+    for (int st = 0; st < 3; ++st)
+      for (int g = 0; g < 2; ++g)
+        for (int cn = 0; cn < 10; ++cn)
+          for (int q = 0; q < 6; ++q) {
+            const double v = (double)T[(size_t)((st * 2 + g) * 10 + cn) * 6 + q];
+            A[0][bucket(cn)][q] += v;
+            A[1 + g][bucket(cn)][q] += v;
+          }
+    static const char* gn[3] = {"all", "cup NOT pre-confirmed", "cup pre-confirmed"};
+    for (int g = 0; g < 3; ++g) {
+      std::printf("eval by initial completeness (%s):\n  %-9s %8s %8s %8s %8s %10s %12s\n", gn[g], "bucket", "episodes", "success", "collide", "timeout",
+                  "steps(all)", "steps(succ)");
+      for (int k = 0; k < 5; ++k) {
+        const double n = A[g][k][0];
+        if (n == 0) { std::printf("  %-9s %8s\n", bn[k], "-"); continue; }
+        std::printf("  %-9s %8.0f %8.4f %8.4f %8.4f %10.1f %12.1f\n", bn[k], n, A[g][k][1] / n, A[g][k][2] / n, A[g][k][3] / n, A[g][k][4] / n,
+                    A[g][k][1] > 0 ? A[g][k][5] / A[g][k][1] : 0.0);
+      }
+    }
+  }
+  // 충돌 다시 보기(스텝마다 동기 — 평가 전용): 에피소드 몇 번째 스텝, 컵·벽, 충돌한 서브스텝 자세에서 방 밖으로 나간 모서리(앞·뒤),
+  // 그때 속도·각속도, 목표를 알았나
   {
     std::vector<int> iv, done;
-    std::vector<float> f;
+    std::vector<float> fs, act;
     std::vector<uint64_t> rg;
     long hist[5] = {0, 0, 0, 0, 0}, ends[4] = {0, 0, 0, 0}, near_cup = 0, near_wall = 0, both = 0;
+    long kind[6] = {0, 0, 0, 0, 0, 0};   // 컵, 벽 앞 모서리(앞으로), 벽 앞 모서리(뒤로·제자리), 벽 뒤 모서리(뒤로), 벽 뒤 모서리(앞으로·제자리), 기타
+    long known_at = 0, turning = 0, cmd_back = 0, zone_close = 0;
+    long sat_all[2] = {0, 0}, sat_hit[2] = {0, 0}, n_all = 0;   // 정책 평균 |μ| > 1(행동 자르기 밖) — 모든 스텝 / 충돌 스텝
+    double mu_hit[2] = {0, 0};
+    double sum_v = 0, sum_w = 0, sum_minray = 0, sum_surf = 0;
     for (int k = 0; k < 4 * tr.T; ++k) {
       const int t = k % tr.T;
       if (t == 0 && k == 0) { VCK(cudaMemcpy(tr.obs_buf, tr.obs_buf + (size_t)tr.T * N_OBS_G1 * N, sizeof(float) * N_OBS_G1 * N, cudaMemcpyDeviceToDevice));
                               VCK(cudaMemcpy(tr.tok->at(0), tr.tok->at(tr.T), sizeof(gmap::MapTok) * N, cudaMemcpyDeviceToDevice)); }
-      tr.env->download(f, iv, rg);
+      tr.env->download(fs, iv, rg);
+      const std::vector<gmap::MapTok> tk = dl(tr.tok->at(t), N);
+      const std::vector<float> ob = dl(tr.obs_buf + (size_t)t * N_OBS_G1 * N, (size_t)N_OBS_G1 * N);
       tr.rollout_step(t);
       VCK(cudaDeviceSynchronize());
       done = dl(tr.done_buf + (size_t)t * N, N);
+      act = dl(tr.act_env, (size_t)N_ACT * N);
+      const std::vector<float> mu = dl(tr.mean, (size_t)N * N_ACT);
+      for (int i = 0; i < N; ++i) for (int q = 0; q < 2; ++q) sat_all[q] += std::fabs(mu[(size_t)i * N_ACT + q]) > 1.f;
+      n_all += N;
       if (t == tr.T - 1) { VCK(cudaMemcpy(tr.obs_buf, tr.obs_buf + (size_t)tr.T * N_OBS_G1 * N, sizeof(float) * N_OBS_G1 * N, cudaMemcpyDeviceToDevice));
                            VCK(cudaMemcpy(tr.tok->at(0), tr.tok->at(tr.T), sizeof(gmap::MapTok) * N, cudaMemcpyDeviceToDevice)); }
       for (int i = 0; i < N; ++i) {
@@ -446,23 +523,60 @@ static int run_eval(const char* path, int stage, int iters, int N, int use_map) 
         ++ends[done[i]];
         if (done[i] != env::kCollision) continue;
         const int st = iv[env::I_STEP * N + i];   // 이 스텝 전 에피소드 스텝 수
-        {   // 스텝 전 상태로: 컵까지 중심 거리, 가장 가까운 벽까지(중심) 거리
-          const float x = f[env::F_X * N + i], y = f[env::F_Y * N + i], tx = f[env::F_TX * N + i], ty = f[env::F_TY * N + i];
-          const float hx = f[env::F_RHX * N + i], hy = f[env::F_RHY * N + i];
-          const float dc = std::sqrt((tx - x) * (tx - x) + (ty - y) * (ty - y));
-          const float dw = std::fmin(std::fmin(hx - x, x + hx), std::fmin(hy - y, y + hy));
-          ++(dc < dw ? near_cup : near_wall);
-          if (dw < 0.45f && dc < 0.6f) ++both;
-        }
+        const float x = fs[env::F_X * N + i], y = fs[env::F_Y * N + i], tx = fs[env::F_TX * N + i], ty = fs[env::F_TY * N + i];
+        const float hx = fs[env::F_RHX * N + i], hy = fs[env::F_RHY * N + i];
+        const float dc = std::sqrt((tx - x) * (tx - x) + (ty - y) * (ty - y));
+        const float dw = std::fmin(std::fmin(hx - x, x + hx), std::fmin(hy - y, y + hy));
+        ++(dc < dw ? near_cup : near_wall);
+        if (dw < 0.45f && dc < 0.6f) ++both;
         ++hist[st == 0 ? 0 : st < 3 ? 1 : st < 10 ? 2 : st < 30 ? 3 : 4];
+        // 같은 스텝을 호스트에서 다시(env.h 같은 소스): 충돌한 서브스텝 자세
+        env::Core cc;
+        env::Soa hs{fs.data(), iv.data(), rg.data(), N};
+        env::load(hs, i, cc);
+        float a[env::N_ACT];
+        for (int q = 0; q < env::N_ACT; ++q) a[q] = act[(size_t)q * N + i];
+        env::Core hit = cc;
+        env::StepOut so;
+        env::step_core(cc, a, so, false, CapHook{&hit});
+        float sn, cs;
+        dm::sincosf_d(hit.yaw, &sn, &cs);
+        int worst = -1;
+        float wv = 0.f;
+        for (int q = 0; q < 4; ++q) {
+          const float lx = (q & 1) ? env::K::half_len : -env::K::half_len, ly = (q & 2) ? env::K::half_wid : -env::K::half_wid;
+          const float wx = hit.x + cs * lx - sn * ly, wy = hit.y + sn * lx + cs * ly;
+          const float over = std::fmax(std::fmax(wx - hit.rhx, -hit.rhx - wx), std::fmax(wy - hit.rhy, -hit.rhy - wy));
+          if (over > 0.f && (worst < 0 || over > wv)) { worst = q; wv = over; }
+        }
+        const bool fwd = hit.v > 0.02f, back = hit.v < -0.02f;
+        if (worst < 0) ++kind[0];
+        else if (worst & 1) ++kind[fwd ? 1 : 2];
+        else ++kind[back ? 3 : 4];
+        turning += std::fabs(hit.w) > 0.3f;
+        cmd_back += a[0] < 0.f;
+        known_at += obsv::goal_known(tk[i]);
+        for (int q = 0; q < 2; ++q) { const float m_ = mu[(size_t)i * N_ACT + q]; sat_hit[q] += std::fabs(m_) > 1.f; mu_hit[q] += std::fabs(m_); }
+        sum_v += hit.v; sum_w += std::fabs(hit.w);
+        float mr = 4.f;
+        for (int q = 0; q < env::N_RAYS; ++q) mr = std::fmin(mr, 4.f * ob[(size_t)(env::N_BODY + q) * N + i]);
+        sum_minray += mr;
+        const float surf = ob[(size_t)(env::N_BODY + env::N_RAYS + 5) * N + i];
+        sum_surf += surf;
+        zone_close += surf < 0.9f;
       }
     }
+    const long nc = ends[2] > 0 ? ends[2] : 1;
     std::printf("eval collisions by episode step: 0: %ld, 1-2: %ld, 3-9: %ld, 10-29: %ld, >=30: %ld (of %ld episodes: success %ld, collision %ld, timeout %ld)\n",
                 hist[0], hist[1], hist[2], hist[3], hist[4], ends[1] + ends[2] + ends[3], ends[1], ends[2], ends[3]);
     std::printf("eval collisions: cup closer than wall %ld, wall closer %ld; cup within 0.6 m AND wall within 0.45 m %ld\n", near_cup, near_wall, both);
+    std::printf("eval collision replay: cup %ld | front corner out: moving fwd %ld, not fwd %ld | rear corner out: reversing %ld, not reversing %ld\n",
+                kind[0], kind[1], kind[2], kind[3], kind[4]);
+    std::printf("  at hit: mean v %.3f m/s, mean |w| %.3f rad/s, |w| > 0.3: %ld, commanded v < 0: %ld, goal known: %ld; previous obs: min wall ray %.3f m, cup surface %.3f m (< 0.9 m: %ld)\n",
+                sum_v / nc, sum_w / nc, turning, cmd_back, known_at, sum_minray / nc, sum_surf / nc, zone_close);
+    std::printf("  policy mean beyond the action clip |mu| > 1: all steps vx %.3f wz %.3f; collision steps vx %ld wz %ld of %ld (mean |mu| vx %.2f wz %.2f)\n",
+                (double)sat_all[0] / n_all, (double)sat_all[1] / n_all, sat_hit[0], sat_hit[1], ends[2], mu_hit[0] / nc, mu_hit[1] / nc);
   }
-  std::printf("eval %s stage A%d deterministic: %.0f episodes, success %.4f collision %.4f timeout %.4f, mean len %.1f return %.2f\n", path, stage, ne,
-              s / ne, cl / ne, to / ne, len / ne, ret / ne);
   return 0;
 }
 
@@ -471,6 +585,7 @@ int main(int argc, char** argv) {
   const std::string m = argv[1];
   bool neg = false;
   for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--negative")) neg = true;
+  for (int a = 2; a < argc; ++a) if (!std::strcmp(argv[a], "--g4data")) g_g4data = true;
   if (m == "bench") return run_bench(argc > 2 ? std::atoi(argv[2]) : 4096, argc > 3 ? std::atoi(argv[3]) : 64, argc > 4 ? std::atoi(argv[4]) : 20,
                                      argc > 5 ? std::atoi(argv[5]) : 4, argc > 6 ? std::atoi(argv[6]) : 1);
   if (m == "v4" || m == "v5") {
@@ -484,8 +599,12 @@ int main(int argc, char** argv) {
     return caught == 2 ? 0 : 1;
   }
   if (m == "v6") return run_v6();
-  if (m == "eval" && argc > 3) return run_eval(argv[2], std::atoi(argv[3]), argc > 4 ? std::atoi(argv[4]) : 10, argc > 5 ? std::atoi(argv[5]) : 4096,
-                                               argc > 6 ? std::atoi(argv[6]) : 1);
+  if (m == "eval" && argc > 3) {
+    float mc[4] = {0.f, 0.f, 3.f, 6.f};
+    for (int k = 0; k < 4; ++k) if (argc > 8 + k) mc[k] = (float)std::atof(argv[8 + k]);
+    return run_eval(argv[2], std::atoi(argv[3]), argc > 4 ? std::atoi(argv[4]) : 10, argc > 5 ? std::atoi(argv[5]) : 4096, argc > 6 ? std::atoi(argv[6]) : 1,
+                    argc > 7 ? std::atoi(argv[7]) : 1, mc);
+  }
   if (m == "v7") return run_v7();
   return 2;
 }

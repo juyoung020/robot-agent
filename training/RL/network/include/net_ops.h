@@ -28,6 +28,7 @@ struct LossHyper {
   int adaptive_lr;
   float kl_target, lr_min, lr_max;
   int act_dims;   // 앞에서부터 이만큼만 학습(나머지 행동은 0 고정, logp·엔트로피에서 뺌)
+  float bound_coef;   // 정책 평균이 행동 자르기(±1) 밖이면 coef·(|μ|−1)² (행 평균). 0 이면 끔(G3 와 비트 같음)
 };
 struct AdamHyper {
   float b1, b2, eps, max_norm;

@@ -22,7 +22,7 @@ struct Batch {
   std::vector<float> act, oldlogp, oldv, adv, ret;
   float adv_mean = 0.f, adv_std = 1.f;
 };
-struct Hyper { float clip, vclip, vf_coef, ent_coef; int act_dims; };
+struct Hyper { float clip, vclip, vf_coef, ent_coef; int act_dims; float bound_coef; };
 
 struct Trace {
   std::vector<double> sin, s1o, s2o, x0, h[net::N_LAYER], mean, val;   // h[l] = 층 l 출력(ldo 폭, 1 칸 포함)
