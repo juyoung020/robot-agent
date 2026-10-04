@@ -271,7 +271,7 @@ __global__ void __launch_bounds__(DV) dn_fwd_k(const float* Qn, const float* Kn,
   float S[DK];
 #pragma unroll
   for (int i = 0; i < DK; ++i) S[i] = S0 ? S0[((long long)bh * DK + i) * DV + j] : 0.f;
-  // 검문점(학습 뒤 계산용, tk::deltanet_bwd 의 배치): 16 스텝마다 S_{t−1}, 열 조각 4 개
+  // 검문점(학습 뒤 계산용, tk::deltanet_bwd 의 배치): 16 스텝마다 S_{t−1}, 열 조각 4 개(tk DNS 와 같아야 함)
   constexpr int DVS = DV / 4;
   const int nck = (n + 15) / 16;
   for (int t = 0; t < n; ++t) {
