@@ -102,12 +102,12 @@ void gemm_f32(const uint16_t* A, int lda, int M, const uint16_t* Wb, const MT& w
 // ---- 풀 어텐션 준비: 워프 = (행, 머리). 머리 0..nq−1 = q, nq..nq+nkv−1 = k(+ v 복사) ----
 constexpr int MAXHD = 256;
 __global__ void full_prep_k(const float* T0, int ldT, int R, int n, int pos0, int nq, int nkv, int hd, int rot, float theta, float eps, const float* qn,
-                            const float* kn, int skipnorm, float* Q, float* Kc, float* Vc, int Lc) {
+                            const float* kn, int skipnorm, float* Q, float* Kc, float* Vc, int Lc, const int* poff) {
   __shared__ float sv[8][MAXHD];
   const int w = blockIdx.x * 8 + threadIdx.x / 32, lane = threadIdx.x & 31, wl = threadIdx.x / 32;
   const int nh = nq + nkv;
   if (w >= R * nh) return;
-  const int r = w / nh, h = w % nh, b = r / n, t = r % n, pos = pos0 + t;
+  const int r = w / nh, h = w % nh, b = r / n, t = r % n, pos = (poff ? poff[b] : pos0) + t, kpos = pos0 + t;
   const bool isq = h < nq;
   const int kh = h - nq;
   const float* src = T0 + (long long)r * ldT + (isq ? h * 2 * hd : nq * 2 * hd + kh * hd);
@@ -119,7 +119,7 @@ __global__ void full_prep_k(const float* T0, int ldT, int R, int n, int pos0, in
   for (int d = lane; d < hd; d += 32) sv[wl][d] = skipnorm ? sv[wl][d] : sv[wl][d] * rsd * (1.f + nw[d]);
   __syncwarp();
   const int half = rot / 2;
-  float* dst = isq ? Q + (long long)r * nq * hd + h * hd : Kc + ((long long)b * Lc + pos) * nkv * hd + kh * hd;
+  float* dst = isq ? Q + (long long)r * nq * hd + h * hd : Kc + ((long long)b * Lc + kpos) * nkv * hd + kh * hd;
   for (int d = lane; d < hd; d += 32) {
     float y = sv[wl][d];
     if (d < rot) {
@@ -133,15 +133,15 @@ __global__ void full_prep_k(const float* T0, int ldT, int R, int n, int pos0, in
   }
   if (!isq) {
     const float* vs = T0 + (long long)r * ldT + nq * 2 * hd + nkv * hd + kh * hd;
-    float* vd = Vc + ((long long)b * Lc + pos) * nkv * hd + kh * hd;
+    float* vd = Vc + ((long long)b * Lc + kpos) * nkv * hd + kh * hd;
     for (int d = lane; d < hd; d += 32) vd[d] = vs[d];
   }
 }
 void full_prep(const float* T0, int ldT, int R, int B, int n, int pos0, int nq, int nkv, int hd, int rot, float theta, float eps, const float* qn,
-               const float* kn, bool skipnorm, float* Q, float* Kc, float* Vc, int Lc, cudaStream_t st) {
+               const float* kn, bool skipnorm, float* Q, float* Kc, float* Vc, int Lc, cudaStream_t st, const int* poff) {
   (void)B;
   if (hd > MAXHD) { std::fprintf(stderr, "hd > 256\n"); std::abort(); }
-  full_prep_k<<<nb((long long)R * (nq + nkv), 8), 256, 0, st>>>(T0, ldT, R, n, pos0, nq, nkv, hd, rot, theta, eps, qn, kn, skipnorm, Q, Kc, Vc, Lc);
+  full_prep_k<<<nb((long long)R * (nq + nkv), 8), 256, 0, st>>>(T0, ldT, R, n, pos0, nq, nkv, hd, rot, theta, eps, qn, kn, skipnorm, Q, Kc, Vc, Lc, poff);
   KCK();
 }
 
@@ -265,14 +265,22 @@ void lin_prep(const float* T1, int ld1, const float* T0, int ld0, int boff, int 
 // 재귀(블록 = (판, 머리), 스레드 j = 열 j, S[:, j] 는 레지스터)
 template <int DK, int DV>
 __global__ void __launch_bounds__(DV) dn_fwd_k(const float* Qn, const float* Kn, const float* V, int ldv, const float* G, const float* Bt, int n, int lh,
-                                               const float* S0, float* S1, int nodecay, float* O) {
+                                               const float* S0, float* S1, int nodecay, float* O, float* ck) {
   __shared__ float sq[DK], sk[DK];
   const int bh = blockIdx.x, b = bh / lh, h = bh % lh, j = threadIdx.x;
   float S[DK];
 #pragma unroll
   for (int i = 0; i < DK; ++i) S[i] = S0 ? S0[((long long)bh * DK + i) * DV + j] : 0.f;
+  // 검문점(학습 뒤 계산용, tk::deltanet_bwd 의 배치): 16 스텝마다 S_{t−1}, 열 조각 4 개
+  constexpr int DVS = DV / 4;
+  const int nck = (n + 15) / 16;
   for (int t = 0; t < n; ++t) {
     const long long r = (long long)b * n + t;
+    if (ck && t % 16 == 0) {
+      float* o = ck + (((long long)(bh * 4 + j / DVS) * (nck + 16) + t / 16) * DK) * DVS + j % DVS;
+#pragma unroll
+      for (int i = 0; i < DK; ++i) o[(long long)i * DVS] = S[i];
+    }
     for (int i = j; i < DK; i += DV) { sq[i] = Qn[r * lh * DK + h * DK + i]; sk[i] = Kn[r * lh * DK + h * DK + i]; }
     __syncthreads();
     const float a = nodecay ? 1.f : expf(G[r * lh + h]), beta = Bt[r * lh + h], v = V[r * ldv + h * DV + j];
@@ -292,9 +300,9 @@ __global__ void __launch_bounds__(DV) dn_fwd_k(const float* Qn, const float* Kn,
   }
 }
 void deltanet(const float* Qn, const float* Kn, const float* V, int ldv, const float* G, const float* Beta, int B, int n, int lh, int dk, int dv,
-              const float* S0, float* S1, bool nodecay, float* O, cudaStream_t st) {
-  if (dk == 128 && dv == 128) dn_fwd_k<128, 128><<<B * lh, 128, 0, st>>>(Qn, Kn, V, ldv, G, Beta, n, lh, S0, S1, nodecay, O);
-  else if (dk == 16 && dv == 16) dn_fwd_k<16, 16><<<B * lh, 16, 0, st>>>(Qn, Kn, V, ldv, G, Beta, n, lh, S0, S1, nodecay, O);
+              const float* S0, float* S1, bool nodecay, float* O, cudaStream_t st, float* ck) {
+  if (dk == 128 && dv == 128) dn_fwd_k<128, 128><<<B * lh, 128, 0, st>>>(Qn, Kn, V, ldv, G, Beta, n, lh, S0, S1, nodecay, O, ck);
+  else if (dk == 16 && dv == 16) dn_fwd_k<16, 16><<<B * lh, 16, 0, st>>>(Qn, Kn, V, ldv, G, Beta, n, lh, S0, S1, nodecay, O, ck);
   else { std::fprintf(stderr, "deltanet dk %d dv %d\n", dk, dv); std::abort(); }
   KCK();
 }

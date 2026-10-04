@@ -20,7 +20,7 @@ QCfg tiny_cfg() {
   QCfg c;
   c.H = 64; c.I = 128; c.layers = 4;
   c.nq = 2; c.nkv = 1; c.hd = 32; c.rot = 8; c.theta = 10000.f;
-  c.lh = 2; c.dk = 16; c.dv = 16; c.conv = 4; c.vocab = 256;
+  c.lh = 4; c.dk = 16; c.dv = 16; c.conv = 4; c.vocab = 256;   // lin_all = 200 (GEMM 은 8 의 배수)
   c.full = {0, 0, 0, 1};
   return c;
 }
@@ -184,17 +184,17 @@ void Qwen::init_random(const QCfg& cfg, int rmax, uint64_t seed) {
   std::vector<float> hv(lay.nV, 0.f);
   auto fm = [&](const MT& m, float a) { for (long long i = 0; i < (long long)m.N * m.K; ++i) hw[m.off + i] = f2bf(a * u(g)); };
   auto fv = [&](long long off, int n, float base, float a) { for (int i = 0; i < n; ++i) hv[off + i] = base + a * u(g); };
-  fm(lay.emb, 1.0f);
-  const float s = 1.f / std::sqrt((float)c.H);
+  fm(lay.emb, 0.5f);
+  const float s = 0.5f / std::sqrt((float)c.H);   // 작은 구성은 잔차 흐름이 잘 조건 지어지게 작은 가중치(bf16 바닥이 작아야 V5 가 날카로움)
   for (int i = 0; i < c.layers; ++i) {
     const auto& L = lay.l[i];
     fv(L.ln1, c.H, 0.f, 0.3f); fv(L.ln2, c.H, 0.f, 0.3f);
-    if (c.full[i]) { fm(L.wqkv, 2 * s); fm(L.wo, 2.f / std::sqrt((float)(c.nq * c.hd))); fv(L.qn, c.hd, 0.f, 0.3f); fv(L.kn, c.hd, 0.f, 0.3f); }
+    if (c.full[i]) { fm(L.wqkv, 2 * s); fm(L.wo, 0.5f / std::sqrt((float)(c.nq * c.hd))); fv(L.qn, c.hd, 0.f, 0.3f); fv(L.kn, c.hd, 0.f, 0.3f); }
     else {
-      fm(L.win, 2 * s); fm(L.wout, 2.f / std::sqrt((float)(c.lh * c.dv)));
+      fm(L.win, 2 * s); fm(L.wout, 0.5f / std::sqrt((float)(c.lh * c.dv)));
       fv(L.convw, c.lin_in() * c.conv, 0.f, 0.5f); fv(L.alog, c.lh, 0.5f, 0.5f); fv(L.dtb, c.lh, 0.f, 1.f); fv(L.gnw, c.dv, 1.f, 0.3f);
     }
-    fm(L.wgu, 2 * s); fm(L.wdn, 2.f / std::sqrt((float)c.I));
+    fm(L.wgu, 2 * s); fm(L.wdn, 0.5f / std::sqrt((float)c.I));
   }
   fv(lay.lnf, c.H, 0.f, 0.3f);
   Wb = alloc<uint16_t>(lay.nW);

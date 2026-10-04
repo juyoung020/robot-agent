@@ -17,9 +17,17 @@ find_package(OpenMP REQUIRED)
 set(RLNET ${CMAKE_CURRENT_LIST_DIR}/../RL/network)
 set(INC ${CMAKE_CURRENT_LIST_DIR}/include ${CMAKE_CURRENT_LIST_DIR}/src ${RLNET}/include ${RLNET}/src)
 
-add_library(rvla STATIC src/st.cpp src/qwen.cu src/qkern.cu)
+add_library(rvla STATIC src/st.cpp src/qwen.cu src/qkern.cu src/tkern.cu src/model.cu src/optim.cu)
 target_include_directories(rvla PUBLIC ${INC})
 target_link_libraries(rvla PUBLIC CUDA::cudart)
 
 add_executable(qwen_verify tools/qwen_verify.cu)
 target_link_libraries(qwen_verify rvla)
+
+# 검증 전용 CPU 참조판(V5)과 학습 검증·측정 도구
+add_library(vref STATIC tools/vref.cpp)
+target_include_directories(vref PUBLIC ${INC} tools ${CUDAToolkit_INCLUDE_DIRS})
+target_compile_options(vref PRIVATE -O3)
+add_executable(vla_verify tools/vla_verify.cu)
+target_include_directories(vla_verify PRIVATE tools)
+target_link_libraries(vla_verify rvla vref)
