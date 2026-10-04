@@ -33,8 +33,9 @@ static void g2(const GemmG& g, int np, cudaStream_t st) {
 }
 // 문제 np 개(1 또는 2, 모양 같음), 문제마다 조각 gz 개
 template <bool AT, bool BT, int EPI>
-static void gemm_launch(const GemmP* ps, int np, int gz, cudaStream_t st) {
+static void gemm_launch(const GemmP* ps, int np, int gz, cudaStream_t st, int role = -1) {
   const GemmP& p = ps[0];
+  if (role >= 0 && fp8_gemm(role, ps, np, gz, EPI, st)) return;   // G6: FP8 켬 층(아래 fp8_role)
   if (gemm_old()) {
     for (int k = 0; k < np; ++k) gemm_k<AT, BT, EPI><<<ggrid(p.M, p.N, gz), GNT, 0, st>>>(ps[k]);
   } else {
@@ -46,6 +47,9 @@ static void gemm_launch(const GemmP* ps, int np, int gz, cudaStream_t st) {
   }
   NCK(cudaGetLastError());
 }
+
+// FP8 로 돌릴지: 층이 몸통(LayerDesc::fp8)이고 그 역할 비트가 켜졌으면 role, 아니면 −1
+static int fp8_role(const LayerDesc& L, int role) { return L.fp8 && (fp8_mask() >> role & 1) ? role : -1; }
 
 static GemmP fwd_p(const LayerDesc& L, const uint16_t* X, int M, const uint16_t* Wb, void* out) {
   GemmP p{};
@@ -62,47 +66,47 @@ static GemmP dw_p(const LayerDesc& L, const uint16_t* dZ, const uint16_t* X, int
   p.A = dZ; p.lda = L.N; p.B = X; p.ldb = L.K; p.M = L.N; p.N = L.K; p.K = M; p.C = ws; p.ldc = L.K; p.kchunk = kchunk;
   return p;
 }
-static void fwd_launch(const GemmP* ps, int np, int act, cudaStream_t st) {
-  if (act == ACT_LIN) gemm_launch<false, false, EPI_F32>(ps, np, 1, st);
-  else gemm_launch<false, false, EPI_ACT_BF16>(ps, np, 1, st);
+static void fwd_launch(const GemmP* ps, int np, const LayerDesc& L, cudaStream_t st) {
+  if (L.act == ACT_LIN) gemm_launch<false, false, EPI_F32>(ps, np, 1, st, fp8_role(L, 0));
+  else gemm_launch<false, false, EPI_ACT_BF16>(ps, np, 1, st, fp8_role(L, 0));
 }
 
 void gemm_fwd(const LayerDesc& L, const uint16_t* X, int M, const uint16_t* Wb, void* out, cudaStream_t st) {
   const GemmP p = fwd_p(L, X, M, Wb, out);
-  fwd_launch(&p, 1, L.act, st);
+  fwd_launch(&p, 1, L, st);
 }
 void gemm_fwd2(const LayerDesc& L, const uint16_t* XA, const uint16_t* XC, int M, const uint16_t* WA, const uint16_t* WC, void* outA, void* outC,
                cudaStream_t st) {
   const GemmP p[2] = {fwd_p(L, XA, M, WA, outA), fwd_p(L, XC, M, WC, outC)};
-  fwd_launch(p, 2, L.act, st);
+  fwd_launch(p, 2, L, st);
 }
 
 void gemm_dx_dact(const LayerDesc& L, const uint16_t* dZ, int M, const uint16_t* Wb, const uint16_t* Xin, int Np, uint16_t* dZprev, int bug,
                   cudaStream_t st) {
   const GemmP p = dx_p(L, dZ, M, Wb, Xin, Np, dZprev, bug);
-  gemm_launch<false, true, EPI_DACT_BF16>(&p, 1, 1, st);
+  gemm_launch<false, true, EPI_DACT_BF16>(&p, 1, 1, st, fp8_role(L, 1));
 }
 void gemm_dx_dact2(const LayerDesc& L, const uint16_t* dZA, const uint16_t* dZC, int M, const uint16_t* WA, const uint16_t* WC, const uint16_t* XinA,
                    const uint16_t* XinC, int Np, uint16_t* dZprevA, uint16_t* dZprevC, int bugA, cudaStream_t st) {
   const GemmP p[2] = {dx_p(L, dZA, M, WA, XinA, Np, dZprevA, bugA), dx_p(L, dZC, M, WC, XinC, Np, dZprevC, 0)};
-  gemm_launch<false, true, EPI_DACT_BF16>(p, 2, 1, st);
+  gemm_launch<false, true, EPI_DACT_BF16>(p, 2, 1, st, fp8_role(L, 1));
 }
 
 void gemm_dx_pool(const LayerDesc& L, const uint16_t* dZ, int M, const uint16_t* Wb, float* dpool, bool accumulate, cudaStream_t st) {
   GemmP p{};
   p.A = dZ; p.lda = L.N; p.B = Wb; p.ldb = L.K; p.M = M; p.N = POOL_W; p.K = L.N; p.C = dpool; p.ldc = POOL_W;
-  if (accumulate) gemm_launch<false, true, EPI_ACC_F32>(&p, 1, 1, st);
-  else gemm_launch<false, true, EPI_F32>(&p, 1, 1, st);
+  if (accumulate) gemm_launch<false, true, EPI_ACC_F32>(&p, 1, 1, st, fp8_role(L, 1));
+  else gemm_launch<false, true, EPI_F32>(&p, 1, 1, st, fp8_role(L, 1));
 }
 
 void gemm_dw(const LayerDesc& L, const uint16_t* dZ, const uint16_t* X, int M, float* ws, int kchunk, cudaStream_t st) {
   const GemmP p = dw_p(L, dZ, X, M, ws, kchunk);
-  gemm_launch<true, true, EPI_SPLIT_F32>(&p, 1, dw_splits(M, kchunk), st);
+  gemm_launch<true, true, EPI_SPLIT_F32>(&p, 1, dw_splits(M, kchunk), st, fp8_role(L, 2));
 }
 void gemm_dw2(const LayerDesc& L, const uint16_t* dZA, const uint16_t* dZC, const uint16_t* XA, const uint16_t* XC, int M, float* wsA, float* wsC,
               int kchunk, cudaStream_t st) {
   const GemmP p[2] = {dw_p(L, dZA, XA, M, wsA, kchunk), dw_p(L, dZC, XC, M, wsC, kchunk)};
-  gemm_launch<true, true, EPI_SPLIT_F32>(p, 2, dw_splits(M, kchunk), st);
+  gemm_launch<true, true, EPI_SPLIT_F32>(p, 2, dw_splits(M, kchunk), st, fp8_role(L, 2));
 }
 
 struct DwJobs { DwJob j[N_LAYER]; };

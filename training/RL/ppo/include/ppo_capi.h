@@ -33,6 +33,8 @@ typedef struct PpoConfig {
   float map_reveal_r;     /* C1 격자 공개 반경 m */
   float bound_coef;       /* 정책 평균 자르기 밖 벌 coef·(|μ|−1)² (network LossHyper). 0 = 끔(G3) */
   float coll_extra;       /* 충돌로 끝난 스텝에 더하는 보상(학습기 쪽, reward/shaping.h). 0 = 끔(G3) */
+  int32_t fp8;            /* G6: 몸통 층(A1–A3, C1–C3) FP8 켬 비트(net::Fp8Bits: 1 앞, 2 dgrad, 4 wgrad). 0 = BF16(기본, G3–G5 와 비트 같음) */
+  int32_t pad_fp8;
 } PpoConfig;
 
 typedef struct PpoLog {

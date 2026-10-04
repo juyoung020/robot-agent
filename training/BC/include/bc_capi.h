@@ -28,7 +28,7 @@ typedef struct BcConfig {
   float map_p0, map_p1; /* 처음 지도 C0·C1 비율(나머지 C2) */
   int32_t map_kmin, map_kmax;
   float map_reveal_r;
-  int32_t pad;
+  int32_t fp8;          /* G6: 학생 몸통 층 FP8 켬 비트(net::Fp8Bits: 1 앞, 2 dgrad, 4 wgrad). 0 = BF16(기본). 교사 앞 계산은 늘 BF16 */
   /* 영상 학생(G5 본판) — 모두 0 이면 student-lite(예전과 같은 MSE 학생) */
   int32_t vision;       /* 1 = 카메라 2 장 → 얼린 SigLIP 2 패치 토큰(128 개) → 칸마다 P1(784 → img_dim, ELU) → 펼쳐 A1 입력에 */
   int32_t head;         /* 0 = 한 스텝 MSE(A4), 1 = flow matching 행동 청크(E1–E3) */
@@ -39,7 +39,8 @@ typedef struct BcConfig {
   int32_t render_batch; /* 렌더 한 번의 판 수(작업 공간 크기) */
   int32_t img_dim;      /* P1 출력(토큰마다) — 16 고정 */
   int32_t sample_render;    /* 1 = 미니배치 표본마다 다시 렌더(기본), 0 = 검증용 */
-  int32_t pad2;
+  int32_t vit_prec;     /* 얼린 인코더 GEMM 정밀도(G6): 0 = FP16 피연산자·FP32 누산(G5), 1 = FP16 피연산자·FP16 누산(k 64 마다 FP32 로, 패치 포함 — 기본),
+                           2 = 실험: 블록 GEMM 48 개 FP8 E4M3(코사인 기준 미달, 속도 재기용) */
 } BcConfig;
 
 typedef struct BcLog {

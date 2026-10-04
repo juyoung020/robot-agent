@@ -36,7 +36,13 @@ bool load_weights(const std::string& path, HostWeights& w, std::string* used_pat
 struct DevWeights {
   uint16_t* patch_w = nullptr;   // bf16 [768][3072]
   float *patch_b = nullptr, *pos = nullptr;
-  struct Blk { float *ln1_g, *ln1_b, *qkv_b, *proj_b, *ln2_g, *ln2_b, *fc1_b, *fc2_b; uint16_t *qkv_w, *proj_w, *fc1_w, *fc2_w; } blk[LAYERS];
+  struct Blk {
+    float *ln1_g, *ln1_b, *qkv_b, *proj_b, *ln2_g, *ln2_b, *fc1_b, *fc2_b;
+    uint16_t *qkv_w, *proj_w, *fc1_w, *fc2_w;
+    // G6 FP8(E4M3, 출력 채널마다 2 의 거듭제곱 배율): 바이트 [N][K] + 되돌림 배율 [N]. FP8 을 하나라도 켜면 채움
+    uint8_t *qkv_w8 = nullptr, *proj_w8 = nullptr, *fc1_w8 = nullptr, *fc2_w8 = nullptr;
+    float *qkv_s = nullptr, *proj_s = nullptr, *fc1_s = nullptr, *fc2_s = nullptr;
+  } blk[LAYERS];
   float *norm_g = nullptr, *norm_b = nullptr;
   std::vector<void*> allocs;
   size_t bytes = 0;
@@ -53,7 +59,16 @@ struct Encoder {
   uint16_t* h = nullptr;         // [max_img × 64][3072] fc1 출력(GELU 뒤)
   size_t bytes = 0;
   bool half = true;              // 저장·GEMM 피연산자 FP16(기본) / BF16 — README "인코더 정밀도"
-  int bug = 0;                   // 음성 대조: 1 = 어텐션 배율 1/√64 빠뜨림, 2 = LN 분산에 ε 대신 0, 3 = 위치 임베딩 빠뜨림
+  // G6 FP8: 층마다 GEMM 넷의 켬 비트(F8_QKV 1, F8_PROJ 2, F8_FC1 4, F8_FC2 8). init 전에 정한다(하나라도 켜면 FP8 가중치·작업 공간을 잡음).
+  // FP8 GEMM = E4M3 × E4M3, FP32 누산. 입력 활성값은 토큰(행)마다 2 의 거듭제곱 배율(LN 커널이 바로 FP8 로 쓰거나 rowq 커널), 가중치는 출력 채널마다.
+  // 패치 임베딩(첫 층), LN·softmax·어텐션(QKᵀ·PV), 잔차는 FP16/FP32 그대로(계획서 7.1). half = true 일 때만.
+  uint8_t f8[LAYERS] = {};
+  // G6 대안: FP16 피연산자 + FP16 누산(k 32 마다 FP32 로 옮김, f8::tn_k<TN_F16H>) — GeForce 에서 FP32 누산의 2 배 명령 속도. 층마다 같은 비트 표(FP8 이 우선)
+  uint8_t h16[LAYERS] = {};
+  bool h16_patch = false;        // 패치 임베딩 GEMM 도 FP16 누산
+  uint8_t* a8 = nullptr;         // [max_img × 64][3072] FP8 GEMM 입력(LN 출력·어텐션 출력·GELU 출력)
+  float* srow = nullptr;         // [max_img × 64] 그 행 배율(되돌림)
+  int bug = 0;                   // 음성 대조: 1 = 어텐션 배율 1/√64 빠뜨림, 2 = LN 평균 빼기 빠뜨림, 3 = 위치 임베딩 빠뜨림, 4 = FP8 행 배율 빠뜨림
 
   void init(const HostWeights& hw, int max_images, bool fp16 = true);
   void free_all();
@@ -65,6 +80,11 @@ struct Encoder {
   // 단계 시간 측정용: 블록 하나(같은 버퍼 그대로)
   void block(int b, int n_img, cudaStream_t st);
 };
+
+enum F8Bits : uint8_t { F8_QKV = 1, F8_PROJ = 2, F8_FC1 = 4, F8_FC2 = 8, F8_ALL = 15 };
+// FP8 켬 표 읽기: "all" | "none" | 층마다 16 진 한 자리 12 개(예 "fffffffffff0") | "all-but:L1,L2" (그 층은 FP16)
+bool parse_f8(const std::string& spec, uint8_t (&f8)[LAYERS]);
+int h16_promo();   // 빌드에 박힌 FP16 누산 옮김 간격(k 32 단위, CMake TN_HPROMO)
 
 // 학생이 쓰는 토큰 버퍼에 1 칸(768) 을 미리 써 둔다(한 번)
 void init_token_buffer(uint16_t* tok, long long rows, cudaStream_t st);

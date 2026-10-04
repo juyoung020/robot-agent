@@ -47,12 +47,12 @@ StudentNet student_net(const BcConfig& c) {
   s.L[SL_S1] = kLayers[L_S1];
   s.L[SL_S2] = kLayers[L_S2];
   s.L[SL_P1] = LayerDesc{vit::TOK_LD, IMG_D, IMG_D, vit::D, ACT_ELU, g2};
-  s.L[SL_A1] = LayerDesc{s.k1, 256, 272, X0_BIAS, ACT_ELU, g2};
+  s.L[SL_A1] = LayerDesc{s.k1, 256, 272, X0_BIAS, ACT_ELU, g2, 1};   // fp8 1 = 몸통(G6 FP8 켤 수 있음): A1–A3, E2
   s.L[SL_A2] = kLayers[L_A2];
-  s.L[SL_A3] = LayerDesc{272, 128, s.head ? E_IN : 144, 256, ACT_ELU, g2};
+  s.L[SL_A3] = LayerDesc{272, 128, s.head ? E_IN : 144, 256, ACT_ELU, g2, 1};
   s.L[SL_A4] = kLayers[L_A4];
   s.L[SL_E1] = LayerDesc{E_IN, 256, 272, 128, ACT_ELU, g2};
-  s.L[SL_E2] = LayerDesc{272, 256, 272, 256, ACT_ELU, g2};
+  s.L[SL_E2] = LayerDesc{272, 256, 272, 256, ACT_ELU, g2, 1};
   s.L[SL_E3] = LayerDesc{272, FLOW_W, FLOW_W, 256, ACT_LIN, 0.01f};
   for (int l = 0; l < SL_N; ++l) s.on[l] = false;
   s.on[SL_S1] = s.on[SL_S2] = s.on[SL_A1] = s.on[SL_A2] = s.on[SL_A3] = true;
@@ -456,6 +456,7 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
   if (sn.vision && !cfg.store_render) { std::fprintf(stderr, "bc: vision needs store_render\n"); std::abort(); }
   cap = cfg.cap;
   ah = AdamHyper{cfg.adam_b1, cfg.adam_b2, cfg.adam_eps, cfg.max_grad_norm};
+  set_fp8(cfg.fp8);   // G6: 학생 몸통 층만(교사 앞은 forward_teacher 가 끔), 그래프 잡기 전에
 
   obs_col = alloc<float>((size_t)2 * env::N_OBS * N);
   act_env = alloc<float>((size_t)N_ACT * N);
@@ -508,6 +509,12 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
   if (sn.vision) {
     vit::HostWeights hw;
     if (!vit::load_weights("", hw)) { std::fprintf(stderr, "bc: SigLIP 2 weights not found\n"); std::abort(); }
+    if (cfg.vit_prec == 1 || cfg.vit_prec == 2) {   // README G6 "인코더 정밀도"
+      for (int l = 0; l < vit::LAYERS; ++l) enc.h16[l] = vit::F8_ALL;
+      enc.h16_patch = true;
+    }
+    if (cfg.vit_prec == 2)
+      for (int l = 0; l < vit::LAYERS; ++l) enc.f8[l] = vit::F8_ALL;
     enc.init(hw, 2 * SM);
     const int rb = cfg.render_batch > 0 ? cfg.render_batch : 256;
     rnd = bcr::create(rb < SM ? rb : SM, cfg.render_profile);
@@ -619,6 +626,7 @@ void Bc::capture() {
 
 // ---- 신경망 ----
 void Bc::forward_teacher(NetBufs& b, int M) {
+  struct Fp8Off { int m = fp8_mask(); Fp8Off() { set_fp8(0); } ~Fp8Off() { set_fp8(m); } } off;   // 교사 앞은 늘 BF16(라벨이 바뀌지 않게)
   auto Wl = [&](int l) { return PbT + lay.off[l]; };
   slot_fwd(b.sin, b.mask, Wl(L_S1), Wl(L_S2), M, b.s1o, b.s2o, b.x0, b.amax, 0);
   gemm_fwd(kLayers[L_A1], b.x0, M, Wl(L_A1), b.ho[L_A1], 0);

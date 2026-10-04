@@ -52,6 +52,8 @@ static PpoConfig small_cfg(uint64_t seed, int graphs, bool g4 = true) {
   c.bound_coef = 0.5f;   // 자르기 밖 평균 벌(G4)도 검사에 넣음 — V4/V5 의 흔든 미니배치에서 |μ| > 1 인 행이 있게 아래에서 평균 출력을 키움
   if (!g4) { c.goal_from_map = 0; c.map_p0 = 0.f; c.map_p1 = 0.f; }   // G3 설정(특권 목표, 빈 지도) — V4/V5 기준 자료
   else if (g_a2) { c.stage = 2; c.use_map = 2; }
+  c.fp8 = std::getenv("NET_FP8") ? std::atoi(std::getenv("NET_FP8")) : 0;   // G6: 몸통 층 FP8 비트(1 앞, 2 dgrad, 4 wgrad)
+  netref::set_fp8(c.fp8);                                                    // CPU 흉내(바닥)도 같은 FP8 처방
   return c;
 }
 

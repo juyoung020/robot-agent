@@ -24,7 +24,12 @@ set(RL ${CMAKE_CURRENT_LIST_DIR}/..)
 set(INC ${RL}/env/include ${RL}/map/include ${RL}/network/include ${RL}/network/src ${RL}/observation/include ${RL}/reward/include ${CMAKE_CURRENT_LIST_DIR}/include)
 
 # 학습 경로: 환경 커널 + 지도 커널 + 신경망 커널 + 학습기 (CPU 참조판은 넣지 않음)
-add_library(ppo SHARED ${RL}/env/src/env_kernel.cu ${RL}/map/src/map_kernel.cu ${RL}/network/src/net_kernels.cu src/trainer.cu)
+# G6: 학습 신경망 FP8 실행(net_fp8.cu)만 sm_120a(FP8 mma 전용 명령) — 나머지는 sm_120 그대로라 BF16 결과 비트가 안 바뀜
+add_library(ppofp8 OBJECT ${RL}/network/src/net_fp8.cu)
+set_target_properties(ppofp8 PROPERTIES CUDA_ARCHITECTURES OFF POSITION_INDEPENDENT_CODE ON)
+target_compile_options(ppofp8 PRIVATE -gencode=arch=compute_120a,code=sm_120a)
+target_include_directories(ppofp8 PRIVATE ${INC})
+add_library(ppo SHARED ${RL}/env/src/env_kernel.cu ${RL}/map/src/map_kernel.cu ${RL}/network/src/net_kernels.cu src/trainer.cu $<TARGET_OBJECTS:ppofp8>)
 target_include_directories(ppo PUBLIC ${INC})
 target_link_libraries(ppo PUBLIC CUDA::cudart)
 

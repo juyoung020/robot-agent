@@ -4,6 +4,8 @@
 //          편향·LN·softmax·GELU 는 double(GPU 는 FP32 — bf16 반올림보다 훨씬 작은 차이) → 정답과의 차가 "바닥"
 #include "vit_ref.h"
 
+#include "fp8_ref.h"
+
 #include <cmath>
 #include <algorithm>
 #include <cstring>
@@ -33,6 +35,34 @@ static inline float rh(float f) {
 }
 static bool g_half = true;
 void set_half(bool h) { g_half = h; }
+static uint8_t g_f8[LAYERS] = {};
+static uint8_t g_h16[LAYERS] = {};
+static bool g_h16p = false;
+void set_h16(const uint8_t* h, bool patch) { for (int l = 0; l < LAYERS; ++l) g_h16[l] = h ? h[l] : 0; g_h16p = patch; }
+static bool g_hacc = false;
+static int g_hpromo = 1;   // FP16 부분합을 FP32 로 옮기는 간격(k 32 단위) — GPU TN_HPROMO 와 같게
+void set_hpromo(int p) { g_hpromo = p; }   // 다음 gemm 부름이 FP16 누산 흉내인가(forward 가 부르기 전에 정함)
+void set_f8(const uint8_t* f8) { for (int l = 0; l < LAYERS; ++l) g_f8[l] = f8 ? f8[l] : 0; }
+// EMUL FP8: 행 [T][K] 마다 amax(float) → 2 의 거듭제곱 배율 → E4M3 반올림한 값(GPU 의 ln8_k·rowq_k 와 같은 식)
+static void q8rows(double* A, int T, int K) {
+#pragma omp parallel for schedule(static)
+  for (int t = 0; t < T; ++t) {
+    float am = 0.f;
+    for (int k = 0; k < K; ++k) am = std::fmax(am, std::fabs((float)A[(size_t)t * K + k]));
+    const float inv = f8ref::pow2_inv(am, 0);
+    for (int k = 0; k < K; ++k) A[(size_t)t * K + k] = f8ref::qd((float)A[(size_t)t * K + k], inv, 0);
+  }
+}
+static std::vector<float> w8conv(const std::vector<float>& w, int N, int K) {
+  std::vector<float> o(w.size());
+  for (int n = 0; n < N; ++n) {
+    float am = 0.f;
+    for (int k = 0; k < K; ++k) am = std::fmax(am, std::fabs(w[(size_t)n * K + k]));
+    const float inv = f8ref::pow2_inv(am, 0);
+    for (int k = 0; k < K; ++k) o[(size_t)n * K + k] = (float)f8ref::qd(w[(size_t)n * K + k], inv, 0);
+  }
+  return o;
+}
 static inline float r16(float f) { return g_half ? rh(f) : rbf(f); }
 static inline double q(int md, double v) { return md == EMUL ? (double)r16((float)v) : v; }
 
@@ -50,7 +80,21 @@ static void gemm(const double* A, int T, int K, const std::vector<float>& W, con
     for (int n = 0; n < N; ++n) {
       const float* w = W.data() + (size_t)n * K;
       double s = 0.0;
-      for (int k = 0; k < K; ++k) s += a[k] * (double)w[k];
+      if (g_hacc) {   // FP16 누산 흉내: k16 정확 합을 FP16 부분합에 더해 반올림, k32 마다 FP32 누산기로
+        float acc = 0.f;
+        for (int k0 = 0; k0 < K; k0 += 32 * g_hpromo) {
+          float h = 0.f;
+          for (int k1 = k0; k1 < std::min(K, k0 + 32 * g_hpromo); k1 += 16) {
+            double p = 0.0;
+            for (int k = k1; k < k1 + 16; ++k) p += a[k] * (double)w[k];
+            h = rh((float)((double)h + p));
+          }
+          acc = acc + h;
+        }
+        s = acc;
+      } else {
+        for (int k = 0; k < K; ++k) s += a[k] * (double)w[k];
+      }
       Y[(size_t)t * N + n] = s + (double)b[n];
     }
   }
@@ -86,7 +130,9 @@ void forward(int md, const HostWeights& hw, const std::vector<const uint8_t*>& i
         else v = ((double)u / 255.0 - 0.5) / 0.5;
         P[((size_t)i * NTOK + p) * KP + k] = v;
       }
+  g_hacc = md == EMUL && g_half && g_h16p;
   gemm(P.data(), T, KP, wconv(md, hw.patch_w), hw.patch_b, D, X.data());
+  g_hacc = false;
   for (int t = 0; t < T; ++t)
     for (int c = 0; c < D; ++c) {
       double& x = X[(size_t)t * D + c];
@@ -95,8 +141,12 @@ void forward(int md, const HostWeights& hw, const std::vector<const uint8_t*>& i
     }
   for (int l = 0; l < layers; ++l) {
     const auto& B = hw.blk[l];
-    layernorm(md, X.data(), T, B.ln1_g, B.ln1_b, Y.data());
-    gemm(Y.data(), T, D, wconv(md, B.qkv_w), B.qkv_b, 3 * D, QKV.data());
+    const uint8_t f8 = md == EMUL && g_half ? g_f8[l] : 0;
+    const uint8_t h16 = md == EMUL && g_half ? (uint8_t)(g_h16[l] & ~f8) : 0;
+    layernorm(f8 & F8_QKV ? FP64 : md, X.data(), T, B.ln1_g, B.ln1_b, Y.data());
+    if (f8 & F8_QKV) { for (auto& v : Y) v = (float)v; q8rows(Y.data(), T, D); }   // GPU: LN 출력 FP32 → FP8
+    g_hacc = h16 & F8_QKV;
+    gemm(Y.data(), T, D, f8 & F8_QKV ? w8conv(B.qkv_w, 3 * D, D) : wconv(md, B.qkv_w), B.qkv_b, 3 * D, QKV.data());
     for (auto& v : QKV) v = q(md, v);
 #pragma omp parallel for schedule(static)
     for (int ih = 0; ih < n * HEADS; ++ih) {
@@ -120,15 +170,22 @@ void forward(int md, const HostWeights& hw, const std::vector<const uint8_t*>& i
         }
       }
     }
-    gemm(Y.data(), T, D, wconv(md, B.proj_w), B.proj_b, D, tmp.data());
+    if (f8 & F8_PROJ) q8rows(Y.data(), T, D);   // 어텐션 출력(FP16) → FP8
+    g_hacc = h16 & F8_PROJ;
+    gemm(Y.data(), T, D, f8 & F8_PROJ ? w8conv(B.proj_w, D, D) : wconv(md, B.proj_w), B.proj_b, D, tmp.data());
     for (size_t k = 0; k < X.size(); ++k) { X[k] = X[k] + tmp[k]; if (md == EMUL) X[k] = (float)X[k]; }
-    layernorm(md, X.data(), T, B.ln2_g, B.ln2_b, Y.data());
-    gemm(Y.data(), T, D, wconv(md, B.fc1_w), B.fc1_b, MLP, H.data());
+    layernorm(f8 & F8_FC1 ? FP64 : md, X.data(), T, B.ln2_g, B.ln2_b, Y.data());
+    if (f8 & F8_FC1) { for (auto& v : Y) v = (float)v; q8rows(Y.data(), T, D); }
+    g_hacc = h16 & F8_FC1;
+    gemm(Y.data(), T, D, f8 & F8_FC1 ? w8conv(B.fc1_w, MLP, D) : wconv(md, B.fc1_w), B.fc1_b, MLP, H.data());
     for (auto& v : H) {
       const double u = 0.7978845608028654 * (v + 0.044715 * v * v * v);
       v = q(md, 0.5 * v * (1.0 + std::tanh(u)));
     }
-    gemm(H.data(), T, MLP, wconv(md, B.fc2_w), B.fc2_b, D, tmp.data());
+    if (f8 & F8_FC2) q8rows(H.data(), T, MLP);   // GELU 출력(FP16) → FP8
+    g_hacc = h16 & F8_FC2;
+    gemm(H.data(), T, MLP, f8 & F8_FC2 ? w8conv(B.fc2_w, D, MLP) : wconv(md, B.fc2_w), B.fc2_b, D, tmp.data());
+    g_hacc = false;
     for (size_t k = 0; k < X.size(); ++k) { X[k] = X[k] + tmp[k]; if (md == EMUL) X[k] = (float)X[k]; }
   }
   out.assign((size_t)T * D, 0.0);

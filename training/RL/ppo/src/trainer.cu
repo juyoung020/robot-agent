@@ -316,6 +316,7 @@ Trainer::Trainer(const PpoConfig& c) : cfg(c) {
   if (MB % 8 || N % 8) { std::fprintf(stderr, "ppo: minibatch and N must be multiples of 8\n"); std::abort(); }
   Mmax = MB > N ? MB : N;
   if (cfg.act_dims <= 0 || cfg.act_dims > N_ACT) cfg.act_dims = N_ACT;
+  net::set_fp8(cfg.fp8);   // G6: 그래프를 잡기 전에(잡을 때 고정되는 호스트 값)
   lh = LossHyper{cfg.clip, cfg.vclip, cfg.vf_coef, cfg.ent_coef, cfg.adaptive_lr, cfg.kl_target, cfg.lr_min, cfg.lr_max, cfg.act_dims, cfg.bound_coef};
   ah = AdamHyper{cfg.adam_b1, cfg.adam_b2, cfg.adam_eps, cfg.max_grad_norm};
 

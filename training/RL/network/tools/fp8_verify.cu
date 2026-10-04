@@ -16,6 +16,7 @@
 
 #include <cuda_fp16.h>
 
+#include "fp8_ref.h"
 #include "gemm_fp8.cuh"
 #include "net_ops.h"
 
@@ -23,34 +24,10 @@
 
 using namespace f8;
 
-// ---- CPU 참조 FP8 반올림(가장 가까운 짝수, satfinite: 넘으면 ±최댓값). 반환 = 바이트 ----------------------------------------
-static uint8_t qref(float x, int f) {
-  const int mb = f == E4M3 ? 3 : 2, bias = f == E4M3 ? 7 : 15, emin = 1 - bias;
-  const double maxv = fmax_of(f);
-  const uint8_t sg = std::signbit(x) ? 0x80 : 0;
-  double a = std::fabs((double)x);
-  if (std::isnan(x)) return sg | 0x7f;
-  if (a > maxv) a = maxv;
-  int e;
-  std::frexp(a, &e);
-  e -= 1;
-  if (e < emin) e = emin;
-  double qv = std::nearbyint(a / std::ldexp(1.0, e - mb)) * std::ldexp(1.0, e - mb);
-  if (qv > maxv) qv = maxv;
-  if (qv == 0.0) return sg;
-  std::frexp(qv, &e);
-  e -= 1;
-  if (e < emin) return sg | (uint8_t)(int)(qv / std::ldexp(1.0, emin - mb));
-  const int m = (int)((qv / std::ldexp(1.0, e) - 1.0) * (1 << mb));
-  return sg | (uint8_t)(((e + bias) << mb) | m);
-}
-static double dqref(uint8_t b, int f) {
-  const int mb = f == E4M3 ? 3 : 2, bias = f == E4M3 ? 7 : 15;
-  const int s = b >> 7, e = (b >> mb) & ((1 << (7 - mb)) - 1), m = b & ((1 << mb) - 1);
-  const double v = e == 0 ? std::ldexp((double)m, 1 - bias - mb) : std::ldexp(1.0 + (double)m / (1 << mb), e - bias);
-  return s ? -v : v;
-}
-static double qd(float x, float inv, int f) { return dqref(qref(x * inv, f), f) / inv; }
+// CPU 참조 FP8 반올림은 include/fp8_ref.h (인코더 참조판 vit_ref 도 같은 것을 씀)
+static uint8_t qref(float x, int f) { return f8ref::q(x, f); }
+static double dqref(uint8_t b, int f) { return f8ref::dq(b, f); }
+static double qd(float x, float inv, int f) { return f8ref::qd(x, inv, f); }
 
 // ---- quant: 2³² 전수 ----
 __global__ void quant_all_k(uint32_t base, uint8_t* o4, uint8_t* o5, uint32_t n) {
@@ -462,18 +439,21 @@ static int run_bench() {
   FCK(cudaMalloc(&sa, M * 4)); FCK(cudaMalloc(&sb, 3072 * 4));
   FCK(cudaMemset(A, 0x22, (size_t)M * 3072 * 2)); FCK(cudaMemset(B, 0x22, (size_t)3072 * 3072 * 2));
   const EpiOut e{C, 0, sa, sb};
-  double t16 = 0, t8 = 0, fl = 0;
+  double t16 = 0, t8 = 0, fl = 0, th = 0;
   for (int i = 0; i < 4; ++i) {
     const int N = shp[i][0], K = shp[i][1];
     EpiOut ee = e;
     ee.ldc = N;
     const float a = time_ms([&] { launch_tn<TN_F16>(A, K, B, K, M, N, K, ee, 0); }, 20);
     const float b = time_ms([&] { launch_tn<TN_E4E4>(A, K / 2, B, K / 2, M, N, K / 2, ee, 0); }, 20);
+    const float c = time_ms([&] { launch_tn<TN_F16H>(A, K, B, K, M, N, K, ee, 0); }, 20);
     const double f = 2.0 * M * N * K;
-    t16 += a; t8 += b; fl += f;
-    std::printf("  %s: FP16 %.3f ms %.1f TFLOPS | FP8 %.3f ms %.1f TFLOPS | x%.2f\n", nm[i], a, f / a / 1e9, b, f / b / 1e9, a / b);
+    t16 += a; t8 += b; fl += f; th += c;
+    std::printf("  %s: FP16 %.3f ms %.1f TFLOPS | FP8 %.3f ms %.1f TFLOPS | x%.2f | FP16 with FP16-accumulate (promote every k32) %.3f ms %.1f TFLOPS x%.2f\n", nm[i], a,
+                f / a / 1e9, b, f / b / 1e9, a / b, c, f / c / 1e9, a / c);
   }
-  std::printf("  one block's 4 GEMMs: FP16 %.3f ms (%.1f TFLOPS), FP8 %.3f ms (%.1f TFLOPS), x%.2f\n", t16, fl / t16 / 1e9, t8, fl / t8 / 1e9, t16 / t8);
+  std::printf("  one block's 4 GEMMs: FP16 %.3f ms (%.1f TFLOPS), FP8 %.3f ms (%.1f TFLOPS), x%.2f; FP16-acc %.3f ms (%.1f TFLOPS) x%.2f\n", t16, fl / t16 / 1e9, t8,
+              fl / t8 / 1e9, t16 / t8, th, fl / th / 1e9, t16 / th);
   // 학습 신경망 모양의 상한: 앞 층 끝단이 FP8 사본을 이미 써 두었다고 치고(미리 양자화) 같은 tn_k 로
   std::printf(" training-net forward shapes, pre-quantized bound (tn_k FP16 vs FP8, 128x128 tile): M 65,536\n");
   for (int i = 0; i < 3; ++i) {

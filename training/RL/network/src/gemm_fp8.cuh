@@ -16,6 +16,7 @@
 #pragma once
 #include <cstdint>
 
+#include <cuda_fp16.h>
 #include <cuda_fp8.h>
 #include <cuda_runtime.h>
 
@@ -77,7 +78,8 @@ __device__ __forceinline__ void ldsm8t2(uint32_t (&r)[4], const uint8_t* p) {
 //     KIND: TN_E4E4 / TN_E5E4 (FP8 바이트, 미리 양자화) 또는 TN_F16 / TN_BF16 (16 비트) — 같은 타일·같은 ldmatrix·같은 파이프라인이고 mma 만 다르다
 //     (16 비트 낱말 단위로 보면 FP8 은 낱말 하나에 값 둘: kk 16 낱말 = FP8 k32 mma 하나 = 16 비트 k16 mma 하나). 그래서 속도 비교가 공정하다.
 //     A16·B16 = 16 비트 낱말 포인터, K16·lda16·ldb16 = 낱말 단위(FP8 이면 바이트/2). K16 은 8 의 배수, 16 B 정렬. 타일 k = 32 낱말, NST 단 cp.async.
-enum TnKind : int { TN_E4E4 = 0, TN_E5E4 = 1, TN_F16 = 2, TN_BF16 = 3 };
+// TN_F16H: FP16 피연산자 + **FP16 누산**(GeForce 에서 FP32 누산의 2 배 속도, 백서 175.8 TFLOPS) — 타일(k 32)마다 FP16 부분합을 FP32 누산기로 옮김(잃음을 k 32 안으로 묶음)
+enum TnKind : int { TN_E4E4 = 0, TN_E5E4 = 1, TN_F16 = 2, TN_BF16 = 3, TN_F16H = 4 };
 template <int BM, int BN>
 constexpr int tn_smem(int nst) { return nst * 2 * (net::G2Tile<BM, false>::ELEMS + net::G2Tile<BN, false>::ELEMS); }
 template <int KIND>
@@ -91,6 +93,10 @@ __device__ __forceinline__ void tn_mma(float (&d)[4], const uint32_t (&a)[4], co
   else net::mma_bf16(d, a, b);
 }
 
+#ifndef TN_HPROMO
+#define TN_HPROMO 1
+#endif
+constexpr int HPROMO = TN_HPROMO;   // TN_F16H 의 FP32 로 옮기는 간격(타일 수, 타일 = k 32)
 template <int KIND, int BM, int BN, int WM, int WN, int NST, class Epi>
 __global__ void __launch_bounds__((BM / WM) * (BN / WN) * 32) tn_k(const uint16_t* __restrict__ A16, int lda16, const uint16_t* __restrict__ B16, int ldb16,
                                                                    int M, int N, int K16, const __grid_constant__ Epi epi) {
@@ -111,6 +117,7 @@ __global__ void __launch_bounds__((BM / WM) * (BN / WN) * 32) tn_k(const uint16_
 #pragma unroll
       for (int c = 0; c < 4; ++c) acc[a][b][c] = 0.f;
   const int nk = (K16 + net::G2K - 1) / net::G2K;
+  uint32_t hacc[KIND == TN_F16H ? MI : 1][KIND == TN_F16H ? NI : 1][2];   // TN_F16H: FP16 부분합(HPROMO 타일마다 FP32 로)
 #pragma unroll
   for (int s = 0; s < NST - 1; ++s) {
     if (s < nk) {
@@ -131,6 +138,12 @@ __global__ void __launch_bounds__((BM / WM) * (BN / WN) * 32) tn_k(const uint16_
     __syncthreads();
     const uint16_t* As = sA[kt % NST];
     const uint16_t* Bs = sB[kt % NST];
+    if constexpr (KIND == TN_F16H) if (kt % HPROMO == 0) {
+#pragma unroll
+      for (int a = 0; a < MI; ++a)
+#pragma unroll
+        for (int b = 0; b < NI; ++b) hacc[a][b][0] = hacc[a][b][1] = 0u;
+    }
 #pragma unroll
     for (int kk = 0; kk < net::G2K; kk += 16) {
       uint32_t af[MI][4], bfr[NI][2];
@@ -145,7 +158,25 @@ __global__ void __launch_bounds__((BM / WM) * (BN / WN) * 32) tn_k(const uint16_
 #pragma unroll
       for (int mi = 0; mi < MI; ++mi)
 #pragma unroll
-        for (int ni = 0; ni < NI; ++ni) tn_mma<KIND>(acc[mi][ni], af[mi], bfr[ni]);
+        for (int ni = 0; ni < NI; ++ni) {
+          if constexpr (KIND == TN_F16H)
+            asm volatile("mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 {%0,%1}, {%2,%3,%4,%5}, {%6,%7}, {%0,%1};\n"
+                         : "+r"(hacc[mi][ni][0]), "+r"(hacc[mi][ni][1])
+                         : "r"(af[mi][0]), "r"(af[mi][1]), "r"(af[mi][2]), "r"(af[mi][3]), "r"(bfr[ni][0]), "r"(bfr[ni][1]));
+          else tn_mma<KIND>(acc[mi][ni], af[mi], bfr[ni]);
+        }
+    }
+    if constexpr (KIND == TN_F16H) if (kt % HPROMO == HPROMO - 1 || kt == nk - 1) {
+#pragma unroll
+      for (int a = 0; a < MI; ++a)
+#pragma unroll
+        for (int b = 0; b < NI; ++b)
+#pragma unroll
+          for (int h = 0; h < 2; ++h) {
+            const float2 f = __half22float2(*reinterpret_cast<const __half2*>(&hacc[a][b][h]));
+            acc[a][b][2 * h] += f.x;
+            acc[a][b][2 * h + 1] += f.y;
+          }
     }
     __syncthreads();
   }

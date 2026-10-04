@@ -1,6 +1,8 @@
 // CPU 참조판: FP64(정답) 와 EMUL(GPU 정밀도 처방 흉내 → 바닥). 행 단위 OpenMP. 학습 경로에는 들어가지 않는다.
 #include "net_ref.h"
 
+#include "fp8_ref.h"
+
 #include <cmath>
 #include <algorithm>
 #include <cstring>
@@ -23,6 +25,21 @@ static inline double elu_g(double y) { return y > 0.0 ? 1.0 : y + 1.0; }
 // 텐서 코어 FP32 누산 흉내(EMUL): k 16 개(mma 한 번)의 곱은 정확히 더하고, 누산기와 합친 결과를 0 쪽으로 잘라 FP32 로(가정 — 잰 비율로 확인, README).
 static int g_kblk = 16, g_kchunk = 1024;
 void set_tc_model(int kblock, int kchunk) { g_kblk = kblock; g_kchunk = kchunk; }
+static int g_fp8 = 0;
+void set_fp8(int mask) { g_fp8 = mask; }
+static bool f8on(Mode md, const LayerDesc& L, int role) { return md == EMUL && L.fp8 && (g_fp8 >> role & 1); }
+// 텐서(행 R × 열 C, 줄 간격 ld) 를 bf16 값 그대로 보고 amax → 배율 inv, 양자화한 값(배율 공간, 정수배 아님)을 q 에
+static float f8quant(const double* X, long long R, int C, long long ld, int fmt, std::vector<double>& q) {
+  float am = 0.f;
+  for (long long r = 0; r < R; ++r)
+    for (int c = 0; c < C; ++c) am = std::fmax(am, std::fabs((float)X[r * ld + c]));
+  const float inv = f8ref::pow2_inv(am, fmt);
+  q.assign((size_t)R * ld, 0.0);
+#pragma omp parallel for schedule(static)
+  for (long long r = 0; r < R; ++r)
+    for (int c = 0; c < C; ++c) q[(size_t)(r * ld + c)] = f8ref::dq(f8ref::q((float)X[r * ld + c] * inv, fmt), fmt);
+  return inv;
+}
 static inline float rz(double x) {
   float f = (float)x;
   if (std::fabs((double)f) > std::fabs(x)) f = std::nextafter(f, 0.f);
@@ -30,6 +47,27 @@ static inline float rz(double x) {
 }
 
 void lin_fwd(Mode md, const double* X, int M, const LayerDesc& L, const double* W, double* out) {
+  if (f8on(md, L, 0)) {   // FP8: E4M3 X × E4M3 W, k 32 묶음 RZ 누산, 배율 곱(float) → 끝단
+    std::vector<double> xq, wq;
+    const float ix = f8quant(X, M, L.K, L.K, 0, xq), iw = f8quant(W, L.N, L.K, L.K, 0, wq);
+    const float deq = (1.f / ix) * (1.f / iw);
+#pragma omp parallel for schedule(static)
+    for (int m = 0; m < M; ++m) {
+      double* o = out + (size_t)m * L.ldo;
+      for (int n = 0; n < L.N; ++n) {
+        float s = 0.f;
+        for (int k0 = 0; k0 < L.K; k0 += 32) {
+          double b = s;
+          for (int k = k0; k < L.K && k < k0 + 32; ++k) b += xq[(size_t)m * L.K + k] * wq[(size_t)n * L.K + k];
+          s = rz(b);
+        }
+        const double z = (double)(s * deq);
+        o[n] = L.act == ACT_ELU ? rnd(md, elu_d(md, z), true) : rnd(md, z, false);
+      }
+      for (int n = L.N; n < L.ldo; ++n) o[n] = n == L.N ? 1.0 : 0.0;
+    }
+    return;
+  }
 #pragma omp parallel for schedule(static)
   for (int m = 0; m < M; ++m) {
     const double* x = X + (size_t)m * L.K;
@@ -57,6 +95,25 @@ void lin_fwd(Mode md, const double* X, int M, const LayerDesc& L, const double* 
 }
 
 void lin_dx(Mode md, const double* dZ, int M, const LayerDesc& L, const double* W, int Np, const double* Y, double* out, bool round_bf16) {
+  if (f8on(md, L, 1)) {   // FP8 dgrad: E5M2 dZ × E4M3 W[:, 0:Np]
+    std::vector<double> dq, wq;
+    const float id = f8quant(dZ, M, L.N, L.N, 1, dq), iw = f8quant(W, L.N, Np, L.K, 0, wq);
+    const float deq = (1.f / id) * (1.f / iw);
+#pragma omp parallel for schedule(static)
+    for (int m = 0; m < M; ++m)
+      for (int j = 0; j < Np; ++j) {
+        float s = 0.f;
+        for (int n0 = 0; n0 < L.N; n0 += 32) {
+          double b = s;
+          for (int n = n0; n < L.N && n < n0 + 32; ++n) b += dq[(size_t)m * L.N + n] * wq[(size_t)n * L.K + j];
+          s = rz(b);
+        }
+        double a = (double)(s * deq);
+        if (Y) a = (double)((float)a * (float)elu_g(Y[(size_t)m * L.K + j]));
+        out[(size_t)m * Np + j] = rnd(md, a, round_bf16);
+      }
+    return;
+  }
 #pragma omp parallel for schedule(static)
   for (int m = 0; m < M; ++m) {
     const double* d = dZ + (size_t)m * L.N;
@@ -83,6 +140,31 @@ void lin_dx(Mode md, const double* dZ, int M, const LayerDesc& L, const double* 
 }
 
 void lin_dw(Mode md, const double* dZ, const double* X, int M, const LayerDesc& L, double* G) {
+  if (f8on(md, L, 2)) {   // FP8 wgrad: E5M2 dZᵀ × E4M3 X, 조각(kchunk 행)마다 k 32 묶음 RZ, 배율 곱(float), 조각 합 float 차례
+    std::vector<double> dq, xq;
+    const float id = f8quant(dZ, M, L.N, L.N, 1, dq), ix = f8quant(X, M, L.K, L.K, 0, xq);
+    const float deq = (1.f / id) * (1.f / ix);
+#pragma omp parallel for schedule(dynamic, 4)
+    for (int n = 0; n < L.N; ++n) {
+      std::vector<float> accf(L.K), tot(L.K, 0.f);
+      std::vector<double> blk(L.K);
+      for (int c0 = 0; c0 < M; c0 += g_kchunk) {
+        std::fill(accf.begin(), accf.end(), 0.f);
+        for (int m0 = c0; m0 < M && m0 < c0 + g_kchunk; m0 += 32) {
+          for (int k = 0; k < L.K; ++k) blk[k] = accf[k];
+          for (int m = m0; m < M && m < m0 + 32 && m < c0 + g_kchunk; ++m) {
+            const double d = dq[(size_t)m * L.N + n];
+            if (d == 0.0) continue;
+            for (int k = 0; k < L.K; ++k) blk[k] += d * xq[(size_t)m * L.K + k];
+          }
+          for (int k = 0; k < L.K; ++k) accf[k] = rz(blk[k]);
+        }
+        for (int k = 0; k < L.K; ++k) tot[k] = tot[k] + accf[k] * deq;
+      }
+      for (int k = 0; k < L.K; ++k) G[(size_t)n * L.K + k] = tot[k];
+    }
+    return;
+  }
 #pragma omp parallel for schedule(dynamic, 4)
   for (int n = 0; n < L.N; ++n) {
     std::vector<double> acc(L.K, 0.0), blk(L.K);

@@ -48,6 +48,9 @@ static BcConfig small_cfg(uint64_t seed, int graphs) {
     c.vision = 1; c.head = 1; c.chunk = 16; c.flow_steps = 4; c.text = 1; c.render_profile = 1; c.render_batch = 256; c.img_dim = IMG_D;
     c.n_env = 256; c.mb = 256; c.cap = 256 * 16 * 3; c.upd_steps = 2;
   }
+  c.vit_prec = std::getenv("BC_VIT_PREC") ? std::atoi(std::getenv("BC_VIT_PREC")) : 0;   // 인코더 정밀도(G6): 0 FP16·FP32 누산, 1 FP16 누산, 2 FP8
+  c.fp8 = std::getenv("NET_FP8") ? std::atoi(std::getenv("NET_FP8")) : 0;   // G6: 몸통 층 FP8 비트(1 앞, 2 dgrad, 4 wgrad)
+  netref::set_fp8(c.fp8);                                                    // CPU 흉내(바닥)도 같은 FP8 처방
   return c;
 }
 static void load_aux(Bc* b) {
@@ -619,6 +622,7 @@ static int run_bench(int N, int T, int mb, int K) {
   bc_set_mode(&b, 1, 0);
   const double r_st = timed(0, 2);
   const double u = timed(1, 3);
+  std::printf("bench vit_prec %d (0 FP16/FP32-acc, 1 FP16-acc, 2 FP8)\n", c.vit_prec);
   std::printf("bench %s N %d T %d: rollout teacher+record %.2f ms (%.3g env-step/s), student acts %.2f ms (%.3g env-step/s); update %d steps x mb %d: %.2f ms (%.3f ms/step, %.3g samples/s); device %.2f GB\n",
               g_lite ? "lite" : "image", N, T, r_rec, (double)N * T / (r_rec * 1e-3), r_st, (double)N * T / (r_st * 1e-3), K, mb, u, u / K, (double)mb * K / (u * 1e-3),
               bc_device_bytes(&b) / 1e9);

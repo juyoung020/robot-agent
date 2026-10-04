@@ -2,7 +2,7 @@
 // 계산은 모두 libppo(C++/CUDA, 그래프 둘). 이 프로그램은 바퀴를 띄우고, 끝난 바퀴의 기록을 이벤트로 확인해 꺼내고(기다리지 않음),
 // 기록·체크포인트 파일 쓰기는 따로 된 스레드가 한다.
 //
-//   ppo_run <config.json> [--out DIR] [--minutes M] [--resume CKPT]
+//   ppo_run <config.json> [--out DIR] [--minutes M] [--steps S] [--resume CKPT]   (--steps: 환경 스텝 예산, 넘으면 새 바퀴를 띄우지 않음 — G6 BF16 대 FP8 같은 예산 비교)
 //
 // 커리큘럼(G4, 계획서 5.5): 단계마다 G1 환경 단계(env)와 처음 지도 비율(map: [C0, C1], 나머지 C2)을 둔다. 넘어가기 = 그 단계가 재는
 // 처음 지도(metric: 0 C0, 1 C1, 2 C2, -1 전체)의 에피소드 성공률(최근 window 바퀴 에피소드 가중) ≥ promote.
@@ -59,6 +59,8 @@ struct PpoConfig {
     map_reveal_r: f32,
     bound_coef: f32,
     coll_extra: f32,
+    fp8: i32,
+    pad_fp8: i32,
 }
 
 #[repr(C)]
@@ -164,6 +166,8 @@ fn make_config(v: &Value) -> PpoConfig {
         map_reveal_r: gf(v, "map_reveal_r", 1.5) as f32,
         bound_coef: gf(v, "bound_coef", 0.0) as f32,
         coll_extra: gf(v.get("shaping").unwrap_or(&Value::Null), "coll", 0.0) as f32,
+        fp8: gi(v, "fp8", 0) as i32,
+        pad_fp8: 0,
     }
 }
 
@@ -266,6 +270,7 @@ fn main() {
     let mut minutes = gf(&v, "budget_minutes", 60.0);
     let mut resume: Option<String> = None;
     let mut seed: Option<u64> = None;   // 설정의 seed 를 덮어씀(같은 설정으로 씨앗 여럿)
+    let mut max_steps: i64 = gi(&v, "budget_steps", 0);   // 0 = 없음
     let mut a = 2;
     while a < args.len() {
         match args[a].as_str() {
@@ -273,6 +278,7 @@ fn main() {
             "--minutes" => { minutes = args[a + 1].parse().unwrap(); a += 1; }
             "--resume" => { resume = Some(args[a + 1].clone()); a += 1; }
             "--seed" => { seed = Some(args[a + 1].parse().unwrap()); a += 1; }
+            "--steps" => { max_steps = args[a + 1].parse::<f64>().unwrap() as i64; a += 1; }
             _ => {}
         }
         a += 1;
@@ -335,7 +341,7 @@ fn main() {
     let mut log = PpoLog::default();
     let ckpt_path = |it: i64| out.join(format!("ckpt_{:06}.bin", it));
     loop {
-        let timeup = t0.elapsed() > budget;
+        let timeup = t0.elapsed() > budget || (max_steps > 0 && log.env_steps >= max_steps);
         if !timeup && !stop && !pending_env {
             while unsafe { ppo_inflight(h) } < depth {
                 if unsafe { ppo_iterate(h) } != 0 {

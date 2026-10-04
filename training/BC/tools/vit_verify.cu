@@ -239,9 +239,21 @@ static int run_enc(const std::string& dir, bool negative) {
   const bool have_ref = read_file(dir + "/ref_tok.f32", refb);
   vit::Encoder enc;
   const bool half = std::getenv("VIT_BF16") == nullptr;
+  const char* f8s = std::getenv("VIT_FP8");
+  if (f8s && !vit::parse_f8(f8s, enc.f8)) { std::fprintf(stderr, "bad VIT_FP8 '%s'\n", f8s); return 2; }
+  if (const char* hs = std::getenv("VIT_F16ACC")) {
+    if (!vit::parse_f8(hs, enc.h16)) { std::fprintf(stderr, "bad VIT_F16ACC '%s'\n", hs); return 2; }
+    enc.h16_patch = std::getenv("VIT_F16ACC_PATCH") != nullptr;
+    std::printf("FP16-accumulate table %s, patch %d\n", hs, (int)enc.h16_patch);
+  }
   enc.init(hw, n_img + 1, half);
   vitref::set_half(half);
-  std::printf("enc: GEMM operands %s\n", half ? "FP16" : "BF16");
+  vitref::set_f8(enc.f8);
+  vitref::set_h16(enc.h16, enc.h16_patch);
+  vitref::set_hpromo(vit::h16_promo());
+  std::printf("enc: GEMM operands %s, FP8 table (qkv1 proj2 fc1 4 fc2 8 per layer):", half ? "FP16" : "BF16");
+  for (int l = 0; l < vit::LAYERS; ++l) std::printf(" %x", enc.f8[l]);
+  std::printf("\n");
   int fails = 0, total = 0;
   const auto G = gpu_encode(enc, imgs, n_img);
   // (1) PyTorch FP32 기준값
@@ -268,6 +280,7 @@ static int run_enc(const std::string& dir, bool negative) {
   } else {
     std::printf("  (no %s/ref_tok.f32 — run tools/siglip_ref.py)\n", dir.c_str());
   }
+  if (std::getenv("VIT_QUICK")) return fails;   // 혼합 정밀도 찾기용: PyTorch 기준값 비교만
   // (2) CPU FP64 / EMUL (영상 4 장): 2 층 뒤와 12 층 뒤
   {
     const int nr = std::min(n_img, 4);
@@ -317,8 +330,11 @@ static int run_enc(const std::string& dir, bool negative) {
   vitref::forward(vitref::FP64, hw, ptr, vit::LAYERS, f64);
   vitref::forward(vitref::EMUL, hw, ptr, vit::LAYERS, emu);
   const double ef = rel_l2(emu, f64);
-  const char* names[4] = {"", "attention scale 1/8 dropped", "LayerNorm mean not subtracted", "position embedding dropped"};
-  for (int bug = 1; bug <= 3; ++bug) {
+  const char* names[5] = {"", "attention scale 1/8 dropped", "LayerNorm mean not subtracted", "position embedding dropped", "FP8 activation row scale dropped"};
+  bool any8 = false;
+  for (int l = 0; l < vit::LAYERS; ++l) any8 = any8 || enc.f8[l];
+  const int nbug = any8 ? 4 : 3;
+  for (int bug = 1; bug <= nbug; ++bug) {
     enc.bug = bug;
     const auto g = gpu_encode(enc, std::vector<uint8_t>(imgs.begin(), imgs.begin() + (size_t)nr * im), nr);
     const double eg = rel_l2(g, f64);
@@ -327,8 +343,8 @@ static int run_enc(const std::string& dir, bool negative) {
     std::printf("  negative bug %d (%s): GPU vs FP64 rel %.3e vs floor %.3e -> %s\n", bug, names[bug], eg, ef, fail ? "fails (good)" : "PASSES (bad)");
   }
   enc.bug = 0;
-  std::printf("enc --negative: %d / 3 bugs caught  %s\n", caught, caught == 3 ? "PASS" : "FAIL");
-  return caught == 3 ? 0 : 1;
+  std::printf("enc --negative: %d / %d bugs caught  %s\n", caught, nbug, caught == nbug ? "PASS" : "FAIL");
+  return caught == nbug ? 0 : 1;
 }
 
 // ---- 속도 ----
@@ -336,7 +352,15 @@ static int run_bench(int n_img) {
   vit::HostWeights hw;
   if (!vit::load_weights("", hw)) return 2;
   vit::Encoder enc;
+  const char* f8s = std::getenv("VIT_FP8");
+  if (f8s && !vit::parse_f8(f8s, enc.f8)) { std::fprintf(stderr, "bad VIT_FP8 '%s'\n", f8s); return 2; }
+  if (const char* hs = std::getenv("VIT_F16ACC")) {
+    if (!vit::parse_f8(hs, enc.h16)) { std::fprintf(stderr, "bad VIT_F16ACC '%s'\n", hs); return 2; }
+    enc.h16_patch = std::getenv("VIT_F16ACC_PATCH") != nullptr;
+    std::printf("FP16-accumulate table %s, patch %d\n", hs, (int)enc.h16_patch);
+  }
   enc.init(hw, n_img);
+  std::printf("bench: VIT_FP8=%s\n", f8s ? f8s : "(none: FP16)");
   uint16_t* tok;
   VCK(cudaMalloc(&tok, (size_t)n_img * vit::NTOK * vit::TOK_LD * 2));
   vit::init_token_buffer(tok, (long long)n_img * vit::NTOK, ST);

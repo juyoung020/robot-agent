@@ -34,6 +34,15 @@ struct AdamHyper {
   float b1, b2, eps, max_norm;
 };
 
+// ---- G6 FP8 ----
+// 켬 표(비트): FP8_FWD 1 = 앞(E4M3×E4M3), FP8_DGRAD 2 = dX(E5M2 dZ × E4M3 W), FP8_WGRAD 4 = dW(E5M2 dZᵀ × E4M3 X). LayerDesc::fp8 인 층만.
+// 호스트 값이고 그래프를 잡을 때 고정된다(잡기 전에 정함). 기본 0 = 모두 BF16(G3–G5 와 비트 같음).
+enum Fp8Bits : int { FP8_FWD = 1, FP8_DGRAD = 2, FP8_WGRAD = 4 };
+void set_fp8(int mask);
+int fp8_mask();
+// role 0 앞 / 1 dgrad / 2 wgrad. 다룰 수 없는 모양이면 false(그때는 BF16 길)
+bool fp8_gemm(int role, const struct GemmP* ps, int np, int gz, int epi, cudaStream_t st);
+
 // ---- GEMM ----
 // 앞: X[M][L.K] → out. 숨은 층은 bf16 [M][L.ldo] (ELU), 머리(ACT_LIN)는 f32 [M][L.ldo]
 void gemm_fwd(const LayerDesc& L, const uint16_t* X, int M, const uint16_t* Wb, void* out, cudaStream_t st);

@@ -39,7 +39,7 @@ struct BcConfig {
     map_kmin: i32,
     map_kmax: i32,
     map_reveal_r: f32,
-    pad: i32,
+    fp8: i32,
     vision: i32,
     head: i32,
     chunk: i32,
@@ -49,7 +49,7 @@ struct BcConfig {
     render_batch: i32,
     img_dim: i32,
     sample_render: i32,
-    pad2: i32,
+    vit_prec: i32,
 }
 
 #[repr(C)]
@@ -213,7 +213,7 @@ fn main() {
         map_kmin: gi(&v, "map_kmin", 1) as i32,
         map_kmax: gi(&v, "map_kmax", 8) as i32,
         map_reveal_r: gf(&v, "map_reveal_r", 1.5) as f32,
-        pad: 0,
+        fp8: gi(&v, "fp8", 0) as i32,
         vision: gi(&v, "vision", 0) as i32,
         head: gi(&v, "head", 0) as i32,
         chunk: gi(&v, "chunk", 16) as i32,
@@ -223,7 +223,7 @@ fn main() {
         render_batch: gi(&v, "render_batch", 256) as i32,
         img_dim: 16,
         sample_render: 1,
-        pad2: 0,
+        vit_prec: gi(&v, "vit_prec", 1) as i32,
     };
     let r0 = gi(&v, "record_rollouts", 4) as usize;
     let u0 = gi(&v, "bc_updates", 100) as usize;

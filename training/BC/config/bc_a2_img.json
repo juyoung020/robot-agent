@@ -37,5 +37,6 @@
  "chunk": 16,
  "flow_steps": 10,
  "render_profile": 1,
+ "vit_prec": 0,
  "render_batch": 256
 }

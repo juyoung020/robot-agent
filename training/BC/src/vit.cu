@@ -12,6 +12,7 @@
 #include <cuda_fp16.h>
 
 #include "gemm.cuh"
+#include "gemm_fp8.cuh"
 #include "vit.h"
 
 namespace vit {
@@ -328,6 +329,150 @@ __global__ void __launch_bounds__(NTOK) attn_k(const uint16_t* qkv, uint16_t* ou
   }
 }
 
+// ---- G6 FP8 경로 ---------------------------------------------------------------------------------------------------
+// LayerNorm(FP32 통계, ln_k 와 같은 식) → 행 amax → E4M3 + 행 되돌림 배율. 워프 하나 = 행 하나
+__global__ void __launch_bounds__(256) ln8_k(const float* X, int rows, const float* gm, const float* bt, uint8_t* out, float* srow, int bug) {
+  const int r = blockIdx.x * 8 + threadIdx.x / 32, l = threadIdx.x % 32;
+  if (r >= rows) return;
+  const float4* x4 = reinterpret_cast<const float4*>(X + (size_t)r * D);
+  float v[24];
+#pragma unroll
+  for (int k = 0; k < 6; ++k) {
+    const float4 q = x4[l + 32 * k];
+    v[4 * k] = q.x; v[4 * k + 1] = q.y; v[4 * k + 2] = q.z; v[4 * k + 3] = q.w;
+  }
+  float s = 0.f;
+#pragma unroll
+  for (int k = 0; k < 24; ++k) s = s + v[k];
+#pragma unroll
+  for (int m = 16; m > 0; m >>= 1) s = s + __shfl_xor_sync(0xffffffffu, s, m);
+  const float mean = s / (float)D;
+  float q = 0.f;
+#pragma unroll
+  for (int k = 0; k < 24; ++k) { const float d = v[k] - mean; q = q + d * d; }
+#pragma unroll
+  for (int m = 16; m > 0; m >>= 1) q = q + __shfl_xor_sync(0xffffffffu, q, m);
+  const float rstd = 1.f / sqrtf(q / (float)D + LN_EPS);
+  float am = 0.f;
+#pragma unroll
+  for (int k = 0; k < 6; ++k) {
+    const int c = 4 * (l + 32 * k);
+#pragma unroll
+    for (int e = 0; e < 4; ++e) {
+      const float xc = bug == 2 ? v[4 * k + e] : v[4 * k + e] - mean;
+      v[4 * k + e] = xc * rstd * gm[c + e] + bt[c + e];
+      am = fmaxf(am, fabsf(v[4 * k + e]));
+    }
+  }
+#pragma unroll
+  for (int m = 16; m > 0; m >>= 1) am = fmaxf(am, __shfl_xor_sync(0xffffffffu, am, m));
+  const float inv = f8::pow2_inv(am, f8::E4M3);
+#pragma unroll
+  for (int k = 0; k < 6; ++k) {
+    const int c = 4 * (l + 32 * k);
+    uint32_t w = 0;
+#pragma unroll
+    for (int e = 0; e < 4; ++e) w |= f8::q8<f8::E4M3>(v[4 * k + e] * inv) << (8 * e);
+    *reinterpret_cast<uint32_t*>(out + (size_t)r * D + c) = w;
+  }
+  if (l == 0) srow[r] = bug == 4 ? 1.f : 1.f / inv;
+}
+// FP16 행(폭 W) → E4M3 + 행 배율. 워프 하나 = 행 하나, 레인마다 8 개 덩이
+template <int W>
+__global__ void __launch_bounds__(256) rowq_k(const uint16_t* X, int rows, uint8_t* out, float* srow, int bug) {
+  constexpr int PER = W / 256;   // 레인당 덩이(8 개) 수: 768 → 3, 3072 → 12
+  const int r = blockIdx.x * 8 + threadIdx.x / 32, l = threadIdx.x % 32;
+  if (r >= rows) return;
+  float v[PER][8];
+  float am = 0.f;
+#pragma unroll
+  for (int j = 0; j < PER; ++j) {
+    const uint4 q = *reinterpret_cast<const uint4*>(X + (size_t)r * W + (l + 32 * j) * 8);
+    const uint32_t w[4] = {q.x, q.y, q.z, q.w};
+#pragma unroll
+    for (int e = 0; e < 8; ++e) {
+      v[j][e] = __half2float(__ushort_as_half((uint16_t)(w[e >> 1] >> ((e & 1) * 16))));
+      am = fmaxf(am, fabsf(v[j][e]));
+    }
+  }
+#pragma unroll
+  for (int m = 16; m > 0; m >>= 1) am = fmaxf(am, __shfl_xor_sync(0xffffffffu, am, m));
+  const float inv = f8::pow2_inv(am, f8::E4M3);
+#pragma unroll
+  for (int j = 0; j < PER; ++j) {
+    uint32_t o[2] = {0u, 0u};
+#pragma unroll
+    for (int e = 0; e < 8; ++e) o[e >> 2] |= f8::q8<f8::E4M3>(v[j][e] * inv) << ((e & 3) * 8);
+    *reinterpret_cast<uint2*>(out + (size_t)r * W + (l + 32 * j) * 8) = make_uint2(o[0], o[1]);
+  }
+  if (l == 0) srow[r] = bug == 4 ? 1.f : 1.f / inv;
+}
+// FP8 GEMM 끝단: x = acc · 행 배율 · 채널 배율 + 편향 → (FP16 | GELU FP16 | FP32 잔차에 더하기)
+template <int EPI>
+struct VEpi8 {
+  void* C; int ldc; const float* bias; const float* sa; const float* sw;
+  __device__ __forceinline__ void operator()(int r, int c, float a0, float a1) const {
+    const float s = sa[r];
+    float x0 = a0 * s * sw[c] + bias[c], x1 = a1 * s * sw[c + 1] + bias[c + 1];
+    if (EPI == VE_BF16 || EPI == VE_GELU) {
+      if (EPI == VE_GELU) { x0 = gelu_tanh(x0); x1 = gelu_tanh(x1); }
+      reinterpret_cast<uint32_t*>(C)[((long long)r * ldc + c) >> 1] = (uint32_t)st16<true>(x0) | ((uint32_t)st16<true>(x1) << 16);
+    } else {
+      float2* d = reinterpret_cast<float2*>(reinterpret_cast<float*>(C) + (long long)r * ldc + c);
+      float2 o = *d;
+      o.x = o.x + x0;
+      o.y = o.y + x1;
+      *d = o;
+    }
+  }
+};
+// FP16 누산 GEMM 끝단(vgemm_k 끝단과 같은 식)
+template <int EPI>
+struct VEpiH {
+  void* C; int ldc; const float* bias; const float* pos; int bug;
+  __device__ __forceinline__ void operator()(int r, int c, float a0, float a1) const {
+    float x0 = a0 + bias[c], x1 = a1 + bias[c + 1];
+    if (EPI == VE_BF16 || EPI == VE_GELU) {
+      if (EPI == VE_GELU) { x0 = gelu_tanh(x0); x1 = gelu_tanh(x1); }
+      reinterpret_cast<uint32_t*>(C)[((long long)r * ldc + c) >> 1] = (uint32_t)st16<true>(x0) | ((uint32_t)st16<true>(x1) << 16);
+    } else if (EPI == VE_F32_POS) {
+      if (bug != 3) { const float* ps = pos + (size_t)(r % NTOK) * D + c; x0 = x0 + ps[0]; x1 = x1 + ps[1]; }
+      *reinterpret_cast<float2*>(reinterpret_cast<float*>(C) + (long long)r * ldc + c) = make_float2(x0, x1);
+    } else {
+      float2* d = reinterpret_cast<float2*>(reinterpret_cast<float*>(C) + (long long)r * ldc + c);
+      float2 o = *d;
+      o.x = o.x + x0;
+      o.y = o.y + x1;
+      *d = o;
+    }
+  }
+};
+constexpr int V8BM = 128, V8BN = 128, V8WM = 64, V8WN = 32, V8ST = 4;
+template <int EPI>
+static void vgemmh_attr() {
+  VTK(cudaFuncSetAttribute(f8::tn_k<f8::TN_F16H, V8BM, V8BN, V8WM, V8WN, V8ST, VEpiH<EPI>>, cudaFuncAttributeMaxDynamicSharedMemorySize, f8::tn_smem<V8BM, V8BN>(V8ST)));
+}
+template <int EPI>
+static void vgemmh(const uint16_t* A, const uint16_t* W, int M, int N, int K, const VEpiH<EPI>& e, cudaStream_t st) {
+  if (K % 32 || N % V8BN || M % 64) { std::fprintf(stderr, "vgemmh: bad shape M %d N %d K %d\n", M, N, K); std::abort(); }
+  f8::tn_k<f8::TN_F16H, V8BM, V8BN, V8WM, V8WN, V8ST, VEpiH<EPI>><<<dim3(N / V8BN, (M + V8BM - 1) / V8BM), (V8BM / V8WM) * (V8BN / V8WN) * 32,
+                                                                   f8::tn_smem<V8BM, V8BN>(V8ST), st>>>(A, K, W, K, M, N, K, e);
+  VTK(cudaGetLastError());
+}
+template <int EPI>
+static void vgemm8_attr() {
+  VTK(cudaFuncSetAttribute(f8::tn_k<f8::TN_E4E4, V8BM, V8BN, V8WM, V8WN, V8ST, VEpi8<EPI>>, cudaFuncAttributeMaxDynamicSharedMemorySize, f8::tn_smem<V8BM, V8BN>(V8ST)));
+}
+// C[M][N] = A8[M][K] · W8[N][K]ᵀ (바이트, K 연속)
+template <int EPI>
+static void vgemm8(const uint8_t* A8, const uint8_t* W8, int M, int N, int K, const VEpi8<EPI>& e, cudaStream_t st) {
+  if (K % 64 || N % V8BN || M % 64) { std::fprintf(stderr, "vgemm8: bad shape M %d N %d K %d\n", M, N, K); std::abort(); }
+  f8::tn_k<f8::TN_E4E4, V8BM, V8BN, V8WM, V8WN, V8ST, VEpi8<EPI>><<<dim3(N / V8BN, (M + V8BM - 1) / V8BM), (V8BM / V8WM) * (V8BN / V8WN) * 32,
+                                                                  f8::tn_smem<V8BM, V8BN>(V8ST), st>>>(
+      reinterpret_cast<const uint16_t*>(A8), K / 2, reinterpret_cast<const uint16_t*>(W8), K / 2, M, N, K / 2, e);
+  VTK(cudaGetLastError());
+}
+
 // K11 패치 자르기: 스레드 하나 = (영상 행, k 8 개). v = (u8/255 − 0.5)/0.5 (torchvision ToTensor + Normalize(0.5, 0.5) 와 같은 식)
 template <bool HF>
 __global__ void patchify_k(const uint8_t* cam0, const uint8_t* cam1, int n, int row0, uint16_t* P) {
@@ -387,6 +532,49 @@ static uint16_t* up16(DevWeights& W, const std::vector<float>& v, bool half) {
   return d;
 }
 
+// 가중치 [N][K] FP32 → E4M3 바이트(출력 채널마다 2 의 거듭제곱 배율, 호스트 반올림 = cuda_fp8 호스트 함수 __nv_cvt_float_to_fp8) + 되돌림 배율
+static void up8(DevWeights& W, const std::vector<float>& w, int N, int K, uint8_t*& q, float*& s) {
+  std::vector<uint8_t> hq(w.size());
+  std::vector<float> hs(N);
+  for (int n = 0; n < N; ++n) {
+    float am = 0.f;
+    for (int k = 0; k < K; ++k) am = std::fmax(am, std::fabs(w[(size_t)n * K + k]));
+    const float inv = f8::pow2_inv(am, f8::E4M3);
+    hs[n] = 1.f / inv;
+    for (int k = 0; k < K; ++k) hq[(size_t)n * K + k] = (uint8_t)__nv_cvt_float_to_fp8(w[(size_t)n * K + k] * inv, __NV_SATFINITE, __NV_E4M3);
+  }
+  q = dalloc<uint8_t>(W, hq.size());
+  VTK(cudaMemcpy(q, hq.data(), hq.size(), cudaMemcpyHostToDevice));
+  s = up_f(W, hs);
+}
+int h16_promo() { return f8::HPROMO; }
+bool parse_f8(const std::string& spec, uint8_t (&f8)[LAYERS]) {
+  for (int l = 0; l < LAYERS; ++l) f8[l] = 0;
+  if (spec.empty() || spec == "none" || spec == "0") return true;
+  if (spec == "all") { for (int l = 0; l < LAYERS; ++l) f8[l] = F8_ALL; return true; }
+  if (spec.rfind("all-but:", 0) == 0) {
+    for (int l = 0; l < LAYERS; ++l) f8[l] = F8_ALL;
+    size_t p = 8;
+    while (p < spec.size()) {
+      const int l = std::atoi(spec.c_str() + p);
+      if (l < 0 || l >= LAYERS) return false;
+      f8[l] = 0;
+      const size_t c = spec.find(',', p);
+      if (c == std::string::npos) break;
+      p = c + 1;
+    }
+    return true;
+  }
+  if (spec.size() != LAYERS) return false;
+  for (int l = 0; l < LAYERS; ++l) {
+    const char ch = spec[l];
+    const int v = ch >= '0' && ch <= '9' ? ch - '0' : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10 : -1;
+    if (v < 0) return false;
+    f8[l] = (uint8_t)v;
+  }
+  return true;
+}
+
 void Encoder::init(const HostWeights& hw, int max_images, bool fp16) {
   free_all();
   half = fp16;
@@ -406,6 +594,21 @@ void Encoder::init(const HostWeights& hw, int max_images, bool fp16) {
   }
   W.norm_g = up_f(W, hw.norm_g);
   W.norm_b = up_f(W, hw.norm_b);
+  bool any8 = false;
+  for (int l = 0; l < LAYERS; ++l) any8 = any8 || f8[l];
+  if (any8 && !half) { std::fprintf(stderr, "vit: FP8 needs the FP16 path (half = true)\n"); std::abort(); }
+  if (any8) {
+    for (int l = 0; l < LAYERS; ++l) {
+      const auto& B = hw.blk[l];
+      auto& O = W.blk[l];
+      up8(W, B.qkv_w, 3 * D, D, O.qkv_w8, O.qkv_s);
+      up8(W, B.proj_w, D, D, O.proj_w8, O.proj_s);
+      up8(W, B.fc1_w, MLP, D, O.fc1_w8, O.fc1_s);
+      up8(W, B.fc2_w, D, MLP, O.fc2_w8, O.fc2_s);
+    }
+    vgemm8_attr<VE_BF16>(); vgemm8_attr<VE_GELU>(); vgemm8_attr<VE_F32_ACC>();
+  }
+  if (half) { vgemmh_attr<VE_BF16>(); vgemmh_attr<VE_GELU>(); vgemmh_attr<VE_F32_ACC>(); vgemmh_attr<VE_F32_POS>(); }
   const size_t T = (size_t)max_img * NTOK;
   auto mk = [&](size_t nb) { void* p = nullptr; VTK(cudaMalloc(&p, nb)); VTK(cudaMemset(p, 0, nb)); this->bytes += nb; return p; };
   X = (float*)mk(T * D * 4);
@@ -413,6 +616,10 @@ void Encoder::init(const HostWeights& hw, int max_images, bool fp16) {
   qkv = (uint16_t*)mk(T * 3 * D * 2);
   h = (uint16_t*)mk(T * MLP * 2);
   patches = h;
+  if (any8) {
+    a8 = (uint8_t*)mk(T * MLP);
+    srow = (float*)mk(T * 4);
+  }
   for (bool hf : {false, true}) {
     if (hf) {
       vgemm_attr<true, VE_BF16, 128, 128, 64, 32>(); vgemm_attr<true, VE_GELU, 128, 128, 64, 32>();
@@ -428,8 +635,10 @@ void Encoder::free_all() {
   for (void* p : W.allocs) cudaFree(p);
   W.allocs.clear();
   W.bytes = 0;
-  for (void* p : {(void*)X, (void*)ln, (void*)qkv, (void*)h}) if (p) cudaFree(p);
+  for (void* p : {(void*)X, (void*)ln, (void*)qkv, (void*)h, (void*)a8, (void*)srow}) if (p) cudaFree(p);
   X = nullptr; ln = qkv = h = patches = nullptr;
+  a8 = nullptr;
+  srow = nullptr;
   bytes = 0;
 }
 
@@ -444,13 +653,41 @@ template <bool HF>
 static void block_t(Encoder& e, int b, int n_img, cudaStream_t st) {
   const int T = n_img * NTOK, bug = e.bug;
   const auto& B = e.W.blk[b];
-  ln_k<HF><<<(T + 7) / 8, 256, 0, st>>>(e.X, T, B.ln1_g, B.ln1_b, e.ln, D, bug);
-  vgemm<HF, VE_BF16>(VG{e.ln, B.qkv_w, e.qkv, B.qkv_b, nullptr, T, 3 * D, D, D, D, 3 * D, bug}, st);
+  const uint8_t m = HF ? e.f8[b] : 0, hm = HF ? (uint8_t)(e.h16[b] & ~m) : 0;
+  const unsigned g8 = (T + 7) / 8;
+  if (m & F8_QKV) {
+    ln8_k<<<g8, 256, 0, st>>>(e.X, T, B.ln1_g, B.ln1_b, e.a8, e.srow, bug);
+    vgemm8<VE_BF16>(e.a8, B.qkv_w8, T, 3 * D, D, VEpi8<VE_BF16>{e.qkv, 3 * D, B.qkv_b, e.srow, B.qkv_s}, st);
+  } else {
+    ln_k<HF><<<g8, 256, 0, st>>>(e.X, T, B.ln1_g, B.ln1_b, e.ln, D, bug);
+    if (hm & F8_QKV) vgemmh<VE_BF16>(e.ln, B.qkv_w, T, 3 * D, D, VEpiH<VE_BF16>{e.qkv, 3 * D, B.qkv_b, nullptr, bug}, st);
+    else vgemm<HF, VE_BF16>(VG{e.ln, B.qkv_w, e.qkv, B.qkv_b, nullptr, T, 3 * D, D, D, D, 3 * D, bug}, st);
+  }
   attn_k<HF><<<n_img * HEADS, NTOK, 0, st>>>(e.qkv, e.ln, bug);
-  vgemm<HF, VE_F32_ACC>(VG{e.ln, B.proj_w, e.X, B.proj_b, nullptr, T, D, D, D, D, D, bug}, st);
-  ln_k<HF><<<(T + 7) / 8, 256, 0, st>>>(e.X, T, B.ln2_g, B.ln2_b, e.ln, D, bug);
-  vgemm<HF, VE_GELU>(VG{e.ln, B.fc1_w, e.h, B.fc1_b, nullptr, T, MLP, D, D, D, MLP, bug}, st);
-  vgemm<HF, VE_F32_ACC>(VG{e.h, B.fc2_w, e.X, B.fc2_b, nullptr, T, D, MLP, MLP, MLP, D, bug}, st);
+  if (m & F8_PROJ) {
+    rowq_k<D><<<g8, 256, 0, st>>>(e.ln, T, e.a8, e.srow, bug);
+    vgemm8<VE_F32_ACC>(e.a8, B.proj_w8, T, D, D, VEpi8<VE_F32_ACC>{e.X, D, B.proj_b, e.srow, B.proj_s}, st);
+  } else if (hm & F8_PROJ) {
+    vgemmh<VE_F32_ACC>(e.ln, B.proj_w, T, D, D, VEpiH<VE_F32_ACC>{e.X, D, B.proj_b, nullptr, bug}, st);
+  } else {
+    vgemm<HF, VE_F32_ACC>(VG{e.ln, B.proj_w, e.X, B.proj_b, nullptr, T, D, D, D, D, D, bug}, st);
+  }
+  if (m & F8_FC1) {
+    ln8_k<<<g8, 256, 0, st>>>(e.X, T, B.ln2_g, B.ln2_b, e.a8, e.srow, bug);
+    vgemm8<VE_GELU>(e.a8, B.fc1_w8, T, MLP, D, VEpi8<VE_GELU>{e.h, MLP, B.fc1_b, e.srow, B.fc1_s}, st);
+  } else {
+    ln_k<HF><<<g8, 256, 0, st>>>(e.X, T, B.ln2_g, B.ln2_b, e.ln, D, bug);
+    if (hm & F8_FC1) vgemmh<VE_GELU>(e.ln, B.fc1_w, T, MLP, D, VEpiH<VE_GELU>{e.h, MLP, B.fc1_b, nullptr, bug}, st);
+    else vgemm<HF, VE_GELU>(VG{e.ln, B.fc1_w, e.h, B.fc1_b, nullptr, T, MLP, D, D, D, MLP, bug}, st);
+  }
+  if (m & F8_FC2) {
+    rowq_k<MLP><<<g8, 256, 0, st>>>(e.h, T, e.a8, e.srow, bug);
+    vgemm8<VE_F32_ACC>(e.a8, B.fc2_w8, T, D, MLP, VEpi8<VE_F32_ACC>{e.X, D, B.fc2_b, e.srow, B.fc2_s}, st);
+  } else if (hm & F8_FC2) {
+    vgemmh<VE_F32_ACC>(e.h, B.fc2_w, T, D, MLP, VEpiH<VE_F32_ACC>{e.X, D, B.fc2_b, nullptr, bug}, st);
+  } else {
+    vgemm<HF, VE_F32_ACC>(VG{e.h, B.fc2_w, e.X, B.fc2_b, nullptr, T, D, MLP, MLP, MLP, D, bug}, st);
+  }
   VTK(cudaGetLastError());
 }
 void Encoder::block(int b, int n_img, cudaStream_t st) {
@@ -462,7 +699,8 @@ void Encoder::run(int n_img, uint16_t* out, cudaStream_t st, int layers) {
   if (n_img > max_img) { std::fprintf(stderr, "vit: %d images > max %d\n", n_img, max_img); std::abort(); }
   const int T = n_img * NTOK;
   const VG pg{patches, W.patch_w, X, W.patch_b, W.pos, T, D, KP, KP, KP, D, bug};
-  if (half) vgemm<true, VE_F32_POS>(pg, st);
+  if (half && h16_patch) vgemmh<VE_F32_POS>(patches, W.patch_w, T, D, KP, VEpiH<VE_F32_POS>{X, D, W.patch_b, W.pos, bug}, st);
+  else if (half) vgemm<true, VE_F32_POS>(pg, st);
   else vgemm<false, VE_F32_POS>(pg, st);
   for (int b = 0; b < layers; ++b) block(b, n_img, st);
   ln_k<false><<<(T + 7) / 8, 256, 0, st>>>(X, T, W.norm_g, W.norm_b, out, TOK_LD, bug);   // 학생 입력 토큰은 bf16 (RL 신경망 규칙)

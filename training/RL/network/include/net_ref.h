@@ -41,6 +41,10 @@ double loss_only(const std::vector<double>& P, const Batch& b, const Hyper& h);
 double adam(Mode md, std::vector<double>& P, const std::vector<double>& G, std::vector<double>& m, std::vector<double>& v, long long t, float lr,
             const net::AdamHyper& ah);
 
+// G6: EMUL 의 FP8 흉내 켬 표(net::Fp8Bits 와 같은 비트, LayerDesc::fp8 인 층만). GPU 처방과 같게: 피연산자 텐서마다 amax → 2 의 거듭제곱 배율 →
+// 앞 E4M3×E4M3, dgrad E5M2 dZ × E4M3 W, wgrad E5M2 dZ × E4M3 X(FP8 반올림은 fp8_ref.h), 누산은 k 32 묶음 정확 합 → 0 쪽 자르기 FP32, 끝에 배율 곱
+void set_fp8(int mask);
+
 // EMUL 의 텐서 코어 누산 모형: k 묶음 크기(기본 16 = mma k), dW 조각 행 수(학습기 dw_chunk 와 같게)
 void set_tc_model(int kblock, int kchunk);
 

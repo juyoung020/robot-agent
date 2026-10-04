@@ -25,7 +25,17 @@ set(INC ${RL}/env/include ${RL}/map/include ${RL}/network/include ${RL}/network/
 
 # 학습 경로: 환경 + 지도 + 신경망 커널(RL 소스 그대로) + BC 학습기
 set(ENGINE_DIR ${CMAKE_CURRENT_LIST_DIR}/../../src/behavior-2026/src/sim/engine)
-add_library(bc SHARED ${RL}/env/src/env_kernel.cu ${RL}/map/src/map_kernel.cu ${RL}/network/src/net_kernels.cu src/bc.cu src/vit.cu src/bc_render.cu)
+# G6: 인코더(vit.cu)와 학습 신경망 FP8 실행(net_fp8.cu)은 FP8 mma(sm_120a 전용)를 쓰므로 이 둘만 compute_120a/sm_120a 로(아래 SM120A). 나머지는 sm_120 그대로.
+set(SM120A -gencode=arch=compute_120a,code=sm_120a)
+if(NOT TN_HPROMO)
+  set(TN_HPROMO 2)   # FP16 누산 옮김 간격 k 64 — 잰 값으로 고름(README G6)
+endif()
+add_library(bcvit OBJECT src/vit.cu ${RL}/network/src/net_fp8.cu)
+set_target_properties(bcvit PROPERTIES CUDA_ARCHITECTURES OFF POSITION_INDEPENDENT_CODE ON)
+target_compile_options(bcvit PRIVATE ${SM120A})
+target_compile_definitions(bcvit PRIVATE TN_HPROMO=${TN_HPROMO})
+target_include_directories(bcvit PRIVATE ${INC})
+add_library(bc SHARED ${RL}/env/src/env_kernel.cu ${RL}/map/src/map_kernel.cu ${RL}/network/src/net_kernels.cu src/bc.cu src/bc_render.cu $<TARGET_OBJECTS:bcvit>)
 target_include_directories(bc PUBLIC ${INC})
 target_include_directories(bc PRIVATE ${ENGINE_DIR})
 target_link_libraries(bc PUBLIC CUDA::cudart)
@@ -61,7 +71,6 @@ target_link_libraries(vit_verify bc vitref)
 
 # G6 FP8: sm_120a 전용 명령(mma.sync kind::f8f6f4, 8 비트 ldmatrix 전치)을 쓰는 대상은 아키텍처를 따로(compute_120a/sm_120a — 이 PC 의 cc 12.0 에서만 돎).
 # 나머지 대상은 그대로 sm_120 이라 결과 비트가 바뀌지 않는다.
-set(SM120A -gencode=arch=compute_120a,code=sm_120a)
 add_executable(fp8_verify ${RL}/network/tools/fp8_verify.cu)
 set_target_properties(fp8_verify PROPERTIES CUDA_ARCHITECTURES OFF)
 target_compile_options(fp8_verify PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:${SM120A}> $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fopenmp>)

@@ -47,18 +47,19 @@ struct LayerDesc {
   int bias;    // 입력에서 1 인 칸
   int act;
   float gain;  // 초기화 배율
+  int fp8 = 0; // G6: 1 = 몸통 층(FP8 GEMM 을 켤 수 있음, net::set_fp8). 첫 층·머리는 0(계획서 7.1)
 };
 // 출력 버퍼에 1 칸이 있는 층: ldo > N 이고 1 칸은 N 번째
 constexpr LayerDesc kLayers[N_LAYER] = {
     {SLOT_IN, S_H, S_H + 16, SLOT_BIAS, ACT_ELU, 1.41421356f},   // S1
     {S_H + 16, S_H, S_H, S_H, ACT_ELU, 1.41421356f},             // S2 (출력은 집합으로)
-    {X0_W, 256, 272, X0_BIAS, ACT_ELU, 1.41421356f},             // A1
-    {272, 256, 272, 256, ACT_ELU, 1.41421356f},                  // A2
-    {272, 128, 144, 256, ACT_ELU, 1.41421356f},                  // A3
+    {X0_W, 256, 272, X0_BIAS, ACT_ELU, 1.41421356f, 1},          // A1
+    {272, 256, 272, 256, ACT_ELU, 1.41421356f, 1},               // A2
+    {272, 128, 144, 256, ACT_ELU, 1.41421356f, 1},               // A3
     {144, N_ACT, N_ACT, 128, ACT_LIN, 0.01f},                    // A4 평균
-    {X0_W, 256, 272, X0_BIAS, ACT_ELU, 1.41421356f},             // C1
-    {272, 256, 272, 256, ACT_ELU, 1.41421356f},                  // C2
-    {272, 128, 144, 256, ACT_ELU, 1.41421356f},                  // C3
+    {X0_W, 256, 272, X0_BIAS, ACT_ELU, 1.41421356f, 1},          // C1
+    {272, 256, 272, 256, ACT_ELU, 1.41421356f, 1},               // C2
+    {272, 128, 144, 256, ACT_ELU, 1.41421356f, 1},               // C3
     {144, 8, 8, 128, ACT_LIN, 1.0f},                             // C4 가치(0 번 출력만)
 };
 constexpr int kValueOut = 1;   // C4 에서 쓰는 출력 수
