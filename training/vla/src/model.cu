@@ -317,7 +317,7 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
                                             (long long)Rv * 3 * c.vD, (long long)RA * std::max(c.De, (Q.nq + Q.nkv) * Q.hd), (long long)c.Bmax * 16 * H});
   s.wt = alloc<float>(wtn);
   s.part = alloc<float>((size_t)((std::max({R, Rv, RA}) + 255) / 256 + 1) * std::max<long long>({(long long)s.W0, (long long)Q.lin_in() * Q.conv, 3LL * c.vD, (long long)c.vMLP, (long long)c.vT * c.vD, (long long)H, 2LL * c.Ie}));
-  s.cpart = alloc<float>((size_t)c.Bmax * Q.lin_in() * Q.conv);
+  s.cpart = alloc<float>((size_t)(c.Bmax * tk::conv_nseg(c.Lmax) + (c.Bmax * tk::conv_nseg(c.Lmax) + 255) / 256 + 1) * Q.lin_in() * Q.conv);
   s.npart = alloc<float>((size_t)std::max({tk::npart_floats(R, H), tk::npart_floats((long long)R * Q.lh, Q.dv), 2 * tk::npart_floats(Rv, c.vD),
                                            tk::npart_floats(RA, c.De), tk::npart_floats((long long)c.Bmax * c.mem_nmax, H),
                                            tk::npart_floats((long long)c.Bmax * c.mem_lat, H)}) + 64);

@@ -123,7 +123,7 @@ void mm_dw(const uint16_t* dZ, int ldz, const uint16_t* X, int ldx, int M, int N
 
 // ---- 줄마다 더하는 변수 기울기를 커널 안에서(D): 블록 = 벡터 RPB 개(워프 8, 워프마다 RPB/8 개), 레인이 d = lane + 32j 를 레지스터에 더하고
 // 블록 끝에 워프 0..7 순서로 합해 조각 part[블록][D] → colred(조각 순서대로). 결정적(원자 없음). wt 행렬을 쓰고 다시 읽던 것을 없앰.
-constexpr int RPB = 32, PJ = 32;   // D ≤ 1024
+constexpr int RPB = 8, PJ = 32;   // 블록 = 벡터 8 개(워프마다 하나), D ≤ 1024
 struct PAcc {
   float a[PJ];
   __device__ __forceinline__ void zero() {
@@ -145,7 +145,7 @@ __device__ __forceinline__ void pacc_flush(PAcc& A, int D, float* part, int ldp)
     part[(long long)blockIdx.x * ldp + d] = s;
   }
 }
-long long npart_floats(long long rows, int D) { return ((rows + RPB - 1) / RPB) * (long long)D; }
+long long npart_floats(long long rows, int D) { const long long nb_ = (rows + RPB - 1) / RPB; return nb_ * D + ((nb_ + 255) / 256 + 1) * (long long)D; }
 
 // ---- RMSNorm 뒤: 블록 = 벡터 RPB 개, 워프 = 벡터 ----
 __global__ void __launch_bounds__(256) rms_bwd_k(const float* dY, int lddy, const float* X, int ldx, int NV, int per, int D, const float* w, int w1, float eps,
@@ -188,7 +188,7 @@ void rms_bwd(const float* dY, int lddy, const float* X, int ldx, int NV, int per
   if (D > PJ * 32) { std::fprintf(stderr, "rms_bwd D > 1024\n"); std::abort(); }
   const int nbk = (NV + RPB - 1) / RPB;
   rms_bwd_k<<<nbk, 256, 0, st>>>(dY, lddy, X, ldx, NV, per, D, w, w1 ? 1 : 0, eps, dX, lddx, acc ? 1 : 0, dXb, gw ? npart : nullptr, bug);
-  if (gw) colred_k<<<nb(D), 256, 0, st>>>(npart, nbk, D, gw, 0);
+  if (gw) colsum(npart, nbk, D, D, npart + (long long)nbk * D, gw, false, st);
   KCK();
 }
 
@@ -256,9 +256,10 @@ void ln_bwd(const float* dY, const float* X, int R, int D, const float* g, float
   if (D > PJ * 32) { std::fprintf(stderr, "ln_bwd D > 1024\n"); std::abort(); }
   const int nbk = (R + RPB - 1) / RPB;
   float* pb = npart + (long long)nbk * D;
+  float* p2 = pb + (long long)nbk * D;
   ln_bwd_k<<<nbk, 256, 0, st>>>(dY, X, R, D, g, eps, dX, dXb, npart, pb);
-  colred_k<<<nb(D), 256, 0, st>>>(npart, nbk, D, gg, 0);
-  colred_k<<<nb(D), 256, 0, st>>>(pb, nbk, D, gb, 0);
+  colsum(npart, nbk, D, D, p2, gg, false, st);
+  colsum(pb, nbk, D, D, p2, gb, false, st);
   KCK();
 }
 __global__ void bias_k(float* Y, int R, int N, int ld, const float* b) {
@@ -573,25 +574,32 @@ __global__ void lin_prep_conv_k(const float* T0, int ld0, int n, int R, int lh, 
   if (w >= R * lh) return;
   const int r = w / lh, h = w % lh, t = r % n;
   const long long rb = (long long)(r - t);
-  constexpr int MX = 8;   // dk ≤ 256
+  constexpr int MX = 8;   // dk ≤ 256, 정적 첨자(레지스터)
   float qv[MX], kv[MX];
   float sq = 0.f, sk = 0.f;
-  int ii = 0;
-  for (int d = lane; d < dk; d += 32, ++ii) {
-    const int cq = h * dk + d, ck = lh * dk + h * dk + d;
-    qv[ii] = conv1(T0, ld0, rb, t, cq, K, cw);
-    kv[ii] = conv1(T0, ld0, rb, t, ck, K, cw);
-    if (keep) { T1[(long long)r * ld1 + cq] = qv[ii]; T1[(long long)r * ld1 + ck] = kv[ii]; }
+#pragma unroll
+  for (int j = 0; j < MX; ++j) {
+    const int d = lane + 32 * j;
+    qv[j] = 0.f; kv[j] = 0.f;
+    if (d < dk) {
+      const int cq = h * dk + d, ck = lh * dk + h * dk + d;
+      qv[j] = conv1(T0, ld0, rb, t, cq, K, cw);
+      kv[j] = conv1(T0, ld0, rb, t, ck, K, cw);
+      if (keep) { T1[(long long)r * ld1 + cq] = qv[j]; T1[(long long)r * ld1 + ck] = kv[j]; }
+    }
   }
-  ii = 0;
-  for (int d = lane; d < dk; d += 32, ++ii) { sq = sq + qv[ii] * qv[ii]; sk = sk + kv[ii] * kv[ii]; }
+#pragma unroll
+  for (int j = 0; j < MX; ++j) if (lane + 32 * j < dk) { sq = sq + qv[j] * qv[j]; sk = sk + kv[j] * kv[j]; }
   sq = wsum(sq); sk = wsum(sk);
   const float iq = 1.f / sqrtf(sq + 1e-6f), ik = 1.f / sqrtf(sk + 1e-6f);
   const float sc = 1.f / sqrtf((float)dk);
-  ii = 0;
-  for (int d = lane; d < dk; d += 32, ++ii) {
-    Qn[(long long)r * lh * dk + h * dk + d] = qv[ii] * iq * sc;
-    Kn[(long long)r * lh * dk + h * dk + d] = kv[ii] * ik;
+#pragma unroll
+  for (int j = 0; j < MX; ++j) {
+    const int d = lane + 32 * j;
+    if (d < dk) {
+      Qn[(long long)r * lh * dk + h * dk + d] = qv[j] * iq * sc;
+      Kn[(long long)r * lh * dk + h * dk + d] = kv[j] * ik;
+    }
   }
   for (int d = lane; d < dv; d += 32) {
     const int cv = 2 * lh * dk + h * dv + d;
@@ -615,34 +623,42 @@ void lin_prep_conv(const float* T0, int ld0, int B, int n, int lh, int dk, int d
 
 // ---- 합성곱 뒤(융합 E): 스레드 = (채널, 판), 시간 차례로 미끄럼 창(X·dp 탭 K) — dp 버퍼 없음.
 // pre = Σ w·x, dp = dT1·silu'(pre), dX[t] = Σ_k w_k·dp[t+K−1−k](예전 convx 와 같은 순서), 가중치 조각 part[판][c·K + k] = Σ_t dp[t]·x[t−K+1+k] → colred(판 순서)
-constexpr int CKM = 8;
-__global__ void conv_bwd_seq_k(const float* X, int ld, int n, int C, int K, const float* w, const float* dT1, int ld1, uint16_t* dXb, float* part) {
-  const int c = blockIdx.x * blockDim.x + threadIdx.x, b = blockIdx.y;
+constexpr int CSEG = 32;   // 시간 조각(앞뒤 K−1 겹침): 판 × 조각 × 채널 스레드. K 는 컴파일 상수(창 배열이 레지스터에 남게)
+template <int K>
+__global__ void conv_bwd_seq_k(const float* X, int ld, int n, int C, const float* w, const float* dT1, int ld1, uint16_t* dXb, float* part) {
+  const int c = blockIdx.x * blockDim.x + threadIdx.x, b = blockIdx.z, sg = blockIdx.y;
   if (c >= C) return;
-  float wk[CKM], xw[CKM], dpw[CKM], gw[CKM];
+  const int t0 = sg * CSEG, t1 = min(n, t0 + CSEG);
+  float wk[K], xw[K], dpw[K], gw[K];
+#pragma unroll
   for (int k = 0; k < K; ++k) { wk[k] = w[c * K + k]; xw[k] = 0.f; dpw[k] = 0.f; gw[k] = 0.f; }
   const long long rb = (long long)b * n;
-  // 창: xw[K−1] = x[tc], xw[j] = x[tc − (K−1−j)]; dpw 같은 꼴
-  for (int tc = 0; tc < n + K - 1; ++tc) {
+  // 창: xw[K−1] = x[tc], dpw[K−1] = dp[tc]. x 는 t0 − (K−1) 부터, dp 는 [t0, t1 + K − 1) 만 셈(dX[t] 는 dp[t..t+K−1])
+  for (int tc = t0 - (K - 1); tc < t1 + K - 1; ++tc) {
+#pragma unroll
     for (int j = 0; j < K - 1; ++j) { xw[j] = xw[j + 1]; dpw[j] = dpw[j + 1]; }
-    if (tc < n) {
-      const long long r = rb + tc;
-      xw[K - 1] = X[r * ld + c];
+    xw[K - 1] = (tc >= 0 && tc < n) ? X[(rb + tc) * ld + c] : 0.f;
+    float dp = 0.f;
+    if (tc >= t0 && tc < n) {
       float pre = 0.f;
+#pragma unroll
       for (int k = 0; k < K; ++k) {
         const int p = tc - (K - 1) + k;
         if (p >= 0) pre = pre + wk[k] * xw[k];
       }
-      const float dp = dT1[r * ld1 + c] * dsilu(pre);
-      dpw[K - 1] = dp;
-      for (int k = 0; k < K; ++k) {
-        const int p = tc - (K - 1) + k;
-        if (p >= 0) gw[k] = gw[k] + dp * xw[k];
-      }
-    } else { xw[K - 1] = 0.f; dpw[K - 1] = 0.f; }
-    const int t = tc - (K - 1);   // dX[t] 를 끝냄: dp[t..t+K−1] = dpw[0..K−1]
-    if (t >= 0) {
+      dp = dT1[(rb + tc) * ld1 + c] * dsilu(pre);
+      if (tc < t1)
+#pragma unroll
+        for (int k = 0; k < K; ++k) {
+          const int p = tc - (K - 1) + k;
+          if (p >= 0) gw[k] = gw[k] + dp * xw[k];
+        }
+    }
+    dpw[K - 1] = dp;
+    const int t = tc - (K - 1);
+    if (t >= t0 && t < t1) {
       float s = 0.f;
+#pragma unroll
       for (int k = 0; k < K; ++k) {
         const int o = t + (K - 1) - k;
         if (o < n) s = s + wk[k] * dpw[K - 1 - k];
@@ -650,13 +666,17 @@ __global__ void conv_bwd_seq_k(const float* X, int ld, int n, int C, int K, cons
       dXb[(rb + t) * ld + c] = net::f2bf(s);
     }
   }
-  for (int k = 0; k < K; ++k) part[(long long)b * C * K + (long long)c * K + k] = gw[k];
+  const long long pi = (long long)b * gridDim.y + sg;
+#pragma unroll
+  for (int k = 0; k < K; ++k) part[pi * C * K + (long long)c * K + k] = gw[k];
 }
+int conv_nseg(int n) { return (n + CSEG - 1) / CSEG; }
 void conv_bwd_seq(const float* X, int ld, int B, int n, int C, int K, const float* w, const float* dT1, int ld1, uint16_t* dXb, float* part, float* gw,
                   cudaStream_t st) {
-  if (K > CKM) { std::fprintf(stderr, "conv K > 8\n"); std::abort(); }
-  conv_bwd_seq_k<<<dim3(nb(C, 128), B), 128, 0, st>>>(X, ld, n, C, K, w, dT1, ld1, dXb, part);
-  colred_k<<<nb((long long)C * K), 256, 0, st>>>(part, B, C * K, gw, 0);
+  const int ns = conv_nseg(n);
+  if (K == 4) conv_bwd_seq_k<4><<<dim3(nb(C, 128), ns, B), 128, 0, st>>>(X, ld, n, C, w, dT1, ld1, dXb, part);
+  else { std::fprintf(stderr, "conv_bwd_seq: K %d (4 만)\n", K); std::abort(); }
+  colsum(part, B * ns, C * K, C * K, part + (long long)B * ns * C * K, gw, false, st);
   KCK();
 }
 
@@ -893,7 +913,7 @@ void gnorm_bwd(const float* O, const float* Z, int ldz, int R, int lh, int dv, c
                float* npart, float* gw, cudaStream_t st, uint16_t* dZb) {
   const int nbk = (R * lh + RPB - 1) / RPB;
   gnorm_bwd_k<<<nbk, 256, 0, st>>>(O, Z, ldz, R, lh, dv, w, eps, dY, dO, dZ, dZb, lddz, npart);
-  colred_k<<<nb(dv), 256, 0, st>>>(npart, nbk, dv, gw, 0);
+  colsum(npart, nbk, dv, dv, npart + (long long)nbk * dv, gw, false, st);
   KCK();
 }
 

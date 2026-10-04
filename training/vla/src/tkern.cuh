@@ -112,7 +112,8 @@ void lin_prep_bwd(const float* T1, int ld1, const float* T0, int ld0, int boff, 
 // 융합 E — 앞: 합성곱 + SiLU + q·k L2 정규화 + β·g 한 커널(T0 = in_proj 출력 [R][ld0], T1 = 합성곱 출력: keep 이면 qkv 전부, 아니면 v 만)
 void lin_prep_conv(const float* T0, int ld0, int B, int n, int lh, int dk, int dv, int K, const float* cw, int boff, const float* alog, const float* dtb,
                    bool keep, float* T1, int ld1, float* Qn, float* Kn, float* G, float* Beta, cudaStream_t st);
-// 뒤: dp·dX(bf16)·가중치 기울기 한 커널(판마다 조각 part ≥ B·C·K) + colred
+// 뒤: dp·dX(bf16)·가중치 기울기 한 커널(판 × 시간 조각마다 조각 part ≥ B·conv_nseg(n)·C·K) + colred
+int conv_nseg(int n);
 void conv_bwd_seq(const float* X, int ld, int B, int n, int C, int K, const float* w, const float* dT1, int ld1, uint16_t* dXb, float* part, float* gw,
                   cudaStream_t st);
 // 덩이 꼴(WY/UT 변환, 텐서 코어) 덩이 크기: dk 64 이상 = 64, 작은 구성 = 16(덩이 여럿을 시험하게)
