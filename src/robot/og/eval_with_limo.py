@@ -50,6 +50,32 @@ def _load_policy(self):
 
 _ev.BatchedEvaluator.load_policy = _load_policy
 
+# 평가기는 머리 카메라(eval.camera_sensor_names.head = eyes)의 sensor_config 를 링크 키("eyes:Camera:0")로 해상도만 넣어
+# 덮어쓰므로 limo_omx_eval.yaml 의 VisionSensor.sensor_kwargs.clipping_range 가 eyes 에는 안 들어간다(손목에는 들어감).
+# 게다가 머리 카메라 조리개를 R1 값(40)으로 넓혀 화각이 커져 앞 범퍼가 화면 아래에 찍힌다 → 로드 뒤 우리 로봇의 모든
+# 카메라에 yaml 의 가까운 자르기를 다시 넣는다.
+_orig_apply_settings = _ev.BatchedEvaluator._apply_robot_eval_settings
+
+
+def _apply_robot_eval_settings(self):
+    _orig_apply_settings(self)
+    from omegaconf import OmegaConf
+    from omnigibson.sensors.vision_sensor import VisionSensor
+
+    clip = OmegaConf.select(self.cfg, "robot.sensor_config.VisionSensor.sensor_kwargs.clipping_range")
+    if clip is None:
+        return
+    for st in self.instance_eval_states:
+        robot = st.env_accessor.robot
+        if robot.model != "limo_omx":
+            continue
+        for sen in robot.sensors.values():
+            if isinstance(sen, VisionSensor):
+                sen.clipping_range = tuple(float(c) for c in clip)
+
+
+_ev.BatchedEvaluator._apply_robot_eval_settings = _apply_robot_eval_settings
+
 # 사람 시연 통계(human_stats)는 R1 의 두 팔(left/right) 키만 있어 우리 팔 이름 "0" 으로 정규화하면 에피소드 끝에서
 # KeyError '0' 이 난다. 사람 기록이 없는 팔은 정규화 거리(normalized_agent_distance)에서만 빼고, 원 거리(agent_distance)는 그대로 남긴다.
 import omnigibson.metrics.agent_metric as _am
