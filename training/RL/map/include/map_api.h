@@ -36,7 +36,13 @@ class DeviceMap {
   int16_t* L_ = nullptr;
   uint32_t* seen_ = nullptr;
   float* met_ = nullptr;
+  uint32_t* list_ = nullptr;   // 이번 스텝 keyframe·리셋 판 번호(+ 시작 결과 2 비트), 장치 안에서 채움
+  int* count_ = nullptr;       // 목록 길이
 };
+
+// 구간별 시간(-DMAP_PROF 빌드에서만 뜻이 있음): 블록 스레드 0 의 clock64 합(P_NSEC 칸) + 블록 수(keyframe 아님, keyframe)
+void prof_reset();
+void prof_read(unsigned long long out[P_NSEC + 3]);
 
 // CPU 참조판: 같은 map_block 을 tid 0, nt 1 로(판끼리 독립이라 판 단위로만 나눠 돈다)
 struct CpuMap {

@@ -1,5 +1,5 @@
 // 처리량: 판 수를 늘려 가며 지도 단계의 keyframe 갱신/초를 잰다(G1 환경 + 장치 안 접근 제어로 몬다).
-//   map_bench [steps=200] [maxN=32768]
+//   map_bench [steps=200] [maxN=32768] [minN=0]
 // 줄마다: 움직임 거르기 그대로(자연) / 매 스텝 keyframe(force). 지도 커널 시간만 이벤트로 재고, keyframe 수는 장치 카운터로 센다.
 #include <cstdio>
 #include <cstdlib>
@@ -31,12 +31,16 @@ static long total_kf(const gmap::DeviceMap& m) {
 int main(int argc, char** argv) {
   const int T = argc > 1 ? std::atoi(argv[1]) : 200;
   const int maxN = argc > 2 ? std::atoi(argv[2]) : 32768;
+  const int minN = argc > 3 ? std::atoi(argv[3]) : 0;   // 프로파일용: 이 판 수보다 작은 줄은 건너뜀
   cudaDeviceProp p;
   cudaGetDeviceProperties(&p, 0);
   std::printf("GPU %s (sm_%d%d, %d SMs). map per env: %zu B (grid %d x %d @ %.2f m)\n", p.name, p.major, p.minor, p.multiProcessorCount,
               sizeof(gmap::MapCore) + sizeof(int16_t) * gmap::NCELL + 4 * gmap::NWORD, gmap::GW, gmap::GW, gmap::RES);
-  for (int N : {1024, 4096, 16384, 32768, 65536}) {
+  std::vector<int> Ns = {1024, 4096, 16384, 32768, 65536};
+  if (minN > 0 && minN == maxN) Ns = {minN};   // 판 수 하나만(아무 값)
+  for (int N : Ns) {
     if (N > maxN) break;
+    if (N < minN) continue;
     for (int force = 0; force < 2; ++force) {
       DeviceEnv e(N, 1, 1);
       gmap::DeviceMap m(N, 7);
@@ -56,6 +60,7 @@ int main(int argc, char** argv) {
       for (int t = 0; t < 20; ++t) one(t, nullptr, nullptr);
       cudaDeviceSynchronize();
       const long kf0 = total_kf(m);
+      gmap::prof_reset();
       std::vector<cudaEvent_t> ev(2 * T);
       for (auto& x : ev) cudaEventCreate(&x);
       cudaEvent_t w0, w1;
@@ -70,6 +75,23 @@ int main(int argc, char** argv) {
       const long kf = total_kf(m) - kf0;
       std::printf("N=%6d %s: keyframes %5.1f %% of steps | map kernel %7.3f ms/step | %.3e keyframe-updates/s | env+policy+map %.3e env-steps/s\n",
                   N, force ? "force  " : "natural", 100.0 * kf / ((double)N * T), map_ms / T, kf / (map_ms * 1e-3), (double)N * T / (wall_ms * 1e-3));
+#ifdef MAP_PROF
+      {
+        unsigned long long pr[gmap::P_NSEC + 3];
+        gmap::prof_read(pr);
+        static const char* nm[gmap::P_NSEC] = {"load core", "begin(odo/kf gate)", "reset clear", "ray cast+prefilter", "pose corr+detect(t0)",
+                                               "association+update", "absence+prune", "obj vis points", "grid mark+complete", "grid apply",
+                                               "finish+metrics", "store core"};
+        const double nb = (double)(pr[gmap::P_NSEC] + pr[gmap::P_NSEC + 1]);
+        double tot = 0;
+        for (int k = 0; k < gmap::P_NSEC; ++k) tot += (double)pr[k];
+        std::printf("  blocks: non-kf %llu, kf %llu. thread-0 cycles: per block (avg over all) | share | per kf block\n", pr[gmap::P_NSEC], pr[gmap::P_NSEC + 1]);
+        for (int k = 0; k < gmap::P_NSEC; ++k)
+          std::printf("    %-22s %9.1f  %5.1f %%  %9.1f\n", nm[k], pr[k] / nb, 100.0 * pr[k] / tot, pr[gmap::P_NSEC + 1] ? pr[k] / (double)pr[gmap::P_NSEC + 1] : 0.0);
+        std::printf("    %-22s %9.1f\n", "total", tot / nb);
+        if (pr[gmap::P_NSEC + 1]) std::printf("    marked grid words per kf block %.1f (of %d)\n", pr[gmap::P_NSEC + 2] / (double)pr[gmap::P_NSEC + 1], gmap::NWORD);
+      }
+#endif
       for (auto& x : ev) cudaEventDestroy(x);
       cudaEventDestroy(w0); cudaEventDestroy(w1);
       cudaFree(act); cudaFree(obs); cudaFree(rew); cudaFree(done);

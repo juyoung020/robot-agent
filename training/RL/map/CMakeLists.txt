@@ -31,3 +31,11 @@ target_link_libraries(map_bench gmap)
 enable_testing()
 add_test(NAME map_bit_identical COMMAND map_verify 1024 300)
 add_test(NAME map_negative_control COMMAND map_verify 1024 120 --negative)
+
+# 구간별 시간(clock64) 재기: 같은 소스를 -DMAP_PROF 로. 결과 비교에는 쓰지 않음
+add_library(gmap_prof STATIC src/map_kernel.cu src/map_ref.cpp)
+target_include_directories(gmap_prof PUBLIC include)
+target_compile_definitions(gmap_prof PUBLIC MAP_PROF)
+target_link_libraries(gmap_prof PUBLIC env_core CUDA::cudart OpenMP::OpenMP_CXX)
+add_executable(map_prof tools/map_bench.cu)
+target_link_libraries(map_prof gmap_prof)

@@ -115,6 +115,15 @@ int main(int argc, char** argv) {
   std::printf("  finished episodes %ld: mean at end  task-object confirmed %.3f, scene objects confirmed %.3f, room cells seen %.3f\n",
               n_end, n_end ? sum_task_end / n_end : 0.0, n_end ? sum_obj_end / n_end : 0.0, n_end ? sum_seen_end / n_end : 0.0);
   std::printf("  slam pose error max %.3f m / %.3f rad;  slots now: confirmed %ld, candidates %ld, gone %ld, moved %ld\n", max_err, max_err_yaw, n_confirmed, n_cand, n_gone, n_moved);
+  {  // 마지막 CPU 지도 전체의 FNV-1a 해시: 최적화 전후 의미가 같은지(같은 씨앗·같은 스텝) 비교용
+    uint64_t hsh = 1469598103934665603ull;
+    auto mix = [&](const void* p, size_t n) { const unsigned char* c = (const unsigned char*)p; for (size_t k = 0; k < n; ++k) { hsh ^= c[k]; hsh *= 1099511628211ull; } };
+    mix(cmap.h.core.data(), sizeof(gmap::MapCore) * cmap.h.core.size());
+    mix(cmap.h.L.data(), sizeof(int16_t) * cmap.h.L.size());
+    mix(cmap.h.seen.data(), sizeof(uint32_t) * cmap.h.seen.size());
+    mix(cmap.h.met.data(), sizeof(float) * cmap.h.met.size());
+    std::printf("  final CPU map state hash %016llx\n", (unsigned long long)hsh);
+  }
   if (negative) {
     std::printf("negative control (confirm rule off on GPU): %ld mismatching items (must be > 0)\n", mismatches);
     if (first_step >= 0) std::printf("  first mismatch: step %ld, %s\n", first_step, first_what);
