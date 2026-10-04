@@ -18,6 +18,12 @@
 
 <br><br>
 
+<img src="docs/assets/realbag_openloris_office.gif" width="760" alt="실제 로봇 데이터에서 인지 파이프라인 (3배속)">
+
+<sub>실제 로봇 데이터(OpenLORIS-Scene, CC BY-ND 4.0)에 우리 인지 파이프라인(검출 + scenemap SLAM·물체 기억·장면 그래프)을 돌린 모습, 3배속 — office1-5, 바퀴 오도메트리 + 깊이 스캔 맞추기. 오른쪽 위 작은 창은 bag 의 RGB 원본 프레임(크기만 줄이고 고치지 않음). 데이터: X. Shi et al., "Are We Ready for Service Robots? The OpenLORIS-Scene Datasets for Lifelong SLAM", ICRA 2020 (<a href="https://lifelong-robotic-vision.github.io/dataset/scene">OpenLORIS-Scene</a>, iVip Tsinghua · Intel). <a href="docs/assets/realbag_openloris_office.mp4">MP4</a> · 잰 값은 <a href="docs/map_vla/MAP_STATE_PLAN.md">MAP_STATE_PLAN</a> "실제 데이터"</sub>
+
+<br><br>
+
 <table>
 <tr>
 <td align="center" width="50%"><img src="docs/assets/behavior_sim.gif" width="380" alt="BEHAVIOR 시뮬레이션"></td>
