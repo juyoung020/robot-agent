@@ -37,6 +37,13 @@ VCfg tiny_vcfg() {
   c.vocab_chunk = 96;
   return c;
 }
+VCfg tiny_vcfg_mem() {
+  VCfg c = tiny_vcfg();
+  c.mem = true;
+  c.mem_nmax = 12; c.mem_lat = 6; c.mem_blk = 2; c.mem_heads = 2; c.mem_I = 128; c.n_prec = 4;
+  c.Lmax = 80;
+  return c;
+}
 
 struct Model::WS {
   int R = 0, Rv = 0, RA = 0, nf = 0, W0 = 0, QKW = 0, OW = 0;
@@ -60,6 +67,14 @@ struct Model::WS {
   uint16_t *ain, *eA1, *eAg, *eA2, *eHh, *Ao, *dz;
   float *tau, *eps, *u, *eT, *eQ, *eK, *eV, *eO, *else_, *eXm, *eGU, *edR, *edA, *edHh, *edAg, *edO, *edT0, *edQ, *edK, *edV, *eDd;
   uint16_t *edRb, *edGU, *edT0b;
+  // 기억 요약 인코더(mem 켬). 작아서 층 재계산 없이 앞 중간값을 다 둔다
+  struct MemB { float *Q, *KV, *O, *lse, *zx, *QKV, *Os, *lses, *zs, *GU; uint16_t *aq, *mk, *Ob, *as, *Osb, *am, *Hh; };
+  std::vector<MemB> mbk;
+  std::vector<float*> mz;   // mz[k] = 블록 k 입력, mz[nblk] = 끝
+  float *mI = nullptr, *nullb, *drl, *rpart, *mdz, *mda, *mdO, *mdQKV, *mdQ, *mDd, *mdHh, *mdKV, *mdmk, *mdnull, *mdI, *mwt, *mpart;
+  uint16_t *mdzb, *mdGU, *mdKVb, *mdIb;
+  float *dexl, *epart;
+  long long rows_all = 0;   // φ 줄 수(Bmax·16 + Bmax·nmax)
 };
 
 template <class T_>
@@ -110,7 +125,12 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
   }
   v_lnfg = ap.vec(c.vD); v_lnfb = ap.vec(c.vD);
   v_proj = MTo(H, c.vD); v_projb = ap.vec(H);
-  for (int g = 0; g < N_VG; ++g) {
+  if (c.mem && (c.mem_nmax > 256 || c.n_prec > 16 || H % c.mem_heads || c.mem_lat < 3)) {
+    if (err) *err = "mem config: nmax <= 256, n_prec <= 16, H % heads == 0, lat >= 3";
+    return false;
+  }
+  for (int g = 0; g < VG_RITEM; ++g) {
+    if (!grp_on(g)) continue;
     g_w1[g] = MTo(g == VG_OBJ ? c.obj_hid : H, kVGrp[g].K);
     g_type[g] = ap.vec(H);
   }
@@ -127,6 +147,23 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
   }
   e_lnf = ap.vec(c.De);
   e_out = MTo(c.A, c.De);
+  // 기억 경로 변수(맨 끝 — 옛 경로의 배치·난수 흐름을 건드리지 않게)
+  if (c.mem) {
+    for (int g = VG_RITEM; g < VG_MEM; ++g) { g_w1[g] = MTo(H, kVGrp[g].K); g_type[g] = ap.vec(H); }
+    g_type[VG_MEM] = ap.vec(H);
+    m_lat = ap.vec((long long)c.mem_lat * H);
+    m_instr = MTo(H, c.instr_k);
+    for (int k = 0; k < c.mem_blk; ++k) {
+      MBlk b{};
+      b.lnq = ap.vec(H); b.lnk = ap.vec(H); b.nullkv = ap.vec(2 * H); b.lns = ap.vec(H); b.lnm = ap.vec(H);
+      b.wq = MTo(H, H); b.wkv = MTo(2 * H, H); b.wo = MTo(H, H);
+      b.sqkv = MTo(3 * H, H); b.so = MTo(H, H);
+      b.gu = MTo(2 * c.mem_I, H); b.dn = MTo(H, c.mem_I);
+      mb.push_back(b);
+    }
+    m_lnout = ap.vec(H);
+    m_ex = ap.vec(H + 1);
+  }
   ap.W = alloc<uint16_t>(ap.nW); ap.GW = alloc<uint16_t>(ap.nW);
   ap.V = alloc<float>(ap.nV); ap.GV = alloc<float>(ap.nV);
   // 값: 무작위(결정적) + SigLIP 2 가중치(있으면)
@@ -182,8 +219,9 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
   // 사영·묶음: 출력 표준편차 ≈ 임베딩 크기(es)
   const float pg = (float)es;
   fill(v_proj, c.vD, pg);
-  for (int g = 0; g < N_VG; ++g) {
-    if (g == VG_OBJ) fill(g_w1[g], kVGrp[g].k_real, 1.f);
+  for (int g = 0; g < VG_RITEM; ++g) {
+    if (!grp_on(g)) continue;
+    if (g == VG_OBJ) fill(g_w1[g], c.mem ? MEM_KREAL : kVGrp[g].k_real, 1.f);
     else fill(g_w1[g], kVGrp[g].k_real, pg);
     for (int i = 0; i < H; ++i) hv[g_type[g] + i] = 0.1f * pg * U(rg);
   }
@@ -200,6 +238,26 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
   }
   if (qdir.empty()) for (int i = 0; i < c.De; ++i) hv[e_lnf + i] = 0.2f * U(rg);
   fill(e_out, c.De, qdir.empty() ? 1.f : 0.01f);
+  if (c.mem) {
+    const bool tiny = qdir.empty();
+    for (int g = VG_RITEM; g < VG_MEM; ++g) fill(g_w1[g], kVGrp[g].k_real + 1, pg);
+    for (int g = VG_RITEM; g <= VG_MEM; ++g) for (int i = 0; i < H; ++i) hv[g_type[g] + i] = 0.1f * pg * U(rg);
+    for (int i = 0; i < c.mem_lat * H; ++i) hv[m_lat + i] = pg * U(rg);
+    fill(m_instr, 129, pg);
+    const float mres = 1.f / std::sqrt(2.f * (float)c.mem_blk);
+    for (auto& b : mb) {
+      for (int i = 0; i < H; ++i) {
+        hv[b.lnq + i] = tiny ? 0.2f * U(rg) : 0.f; hv[b.lnk + i] = tiny ? 0.2f * U(rg) : 0.f;
+        hv[b.lns + i] = tiny ? 0.2f * U(rg) : 0.f; hv[b.lnm + i] = tiny ? 0.2f * U(rg) : 0.f;
+      }
+      for (int i = 0; i < 2 * H; ++i) hv[b.nullkv + i] = 0.5f * U(rg);
+      fill(b.wq, H, 1.f); fill(b.wkv, H, 1.f); fill(b.wo, H, pg * mres);
+      fill(b.sqkv, H, 1.f); fill(b.so, H, pg * mres);
+      fill(b.gu, H, 1.f); fill(b.dn, c.mem_I, pg * mres);
+    }
+    for (int i = 0; i < H; ++i) hv[m_lnout + i] = (pg - 1.f) + (tiny ? 0.2f * U(rg) : 0.f);   // RMSN(1 + w): 출력 크기 ≈ 임베딩 크기
+    for (int i = 0; i < H; ++i) hv[m_ex + i] = U(rg) / (pg * std::sqrt((float)H));
+  }
   MCK(cudaMemcpy(ap.W, hw.data(), hw.size() * 2, cudaMemcpyHostToDevice));
   MCK(cudaMemcpy(ap.V, hv.data(), hv.size() * 4, cudaMemcpyHostToDevice));
 
@@ -239,6 +297,12 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
   need(Rv, 3 * c.vD, c.vD); need(Rv, c.vMLP, c.vD); need(Rv, c.vD, c.vMLP); need(Rv, c.vD, c.vK); need(Rv, H, c.vD);
   for (int g = 0; g < N_VG; ++g) need((long long)c.Bmax * kVGrp[g].n_tok, g_w1[g].N, g_w1[g].K);
   need((long long)c.Bmax * 16, H, c.obj_hid);
+  const long long Rl = (long long)c.Bmax * c.mem_lat, Rm = (long long)c.Bmax * c.mem_nmax;
+  s.rows_all = c.mem ? (long long)c.Bmax * 16 + Rm : (long long)c.Bmax * 16;
+  if (c.mem) {
+    need(s.rows_all, c.obj_hid, MEM_K); need(s.rows_all, H, c.obj_hid);
+    need(Rl, H, H); need(Rm, 2 * H, H); need(Rl, 3 * H, H); need(Rl, 2 * c.mem_I, H); need(Rl, H, c.mem_I); need(c.Bmax, H, c.instr_k);
+  }
   need(RA, Q.qg() + 2 * Q.kvw(), c.De); need(RA, c.De, Q.nq * Q.hd); need(RA, 2 * c.Ie, c.De); need(RA, c.De, c.Ie); need(RA, c.De, c.kpad()); need(RA, c.A, c.De);
   need(c.Mtmax, c.vocab_chunk, H);
   s.ws = alloc<float>(wsn);
@@ -254,11 +318,43 @@ bool Model::init(const VCfg& cfg, const std::string& qdir, const std::string& si
   s.vdb = alloc<uint16_t>((size_t)Rv * std::max(std::max(3 * c.vD, c.vMLP), H));
   // 묶음
   for (int g = 0; g < N_VG; ++g) {
-    s.gOut[g] = alloc<float>((size_t)c.Bmax * kVGrp[g].n_tok * H);
-    s.dgOut[g] = alloc<float>((size_t)c.Bmax * kVGrp[g].n_tok * H);
+    s.gOut[g] = s.dgOut[g] = nullptr;
+    if (!grp_on(g)) continue;
+    const size_t rows = g == VG_OBJ ? (size_t)s.rows_all : (size_t)c.Bmax * ntok(g);   // mem: OBJ = φ 출력 [정밀 | 기억]
+    s.gOut[g] = alloc<float>(rows * H);
+    s.dgOut[g] = alloc<float>(rows * H);
   }
-  s.gH1 = alloc<float>((size_t)c.Bmax * 16 * c.obj_hid); s.dgH = alloc<float>((size_t)c.Bmax * 16 * c.obj_hid);
-  s.gH = alloc<uint16_t>((size_t)c.Bmax * 16 * c.obj_hid); s.gdb = alloc<uint16_t>((size_t)c.Bmax * 16 * std::max(c.obj_hid, H));
+  s.gH1 = alloc<float>((size_t)s.rows_all * c.obj_hid); s.dgH = alloc<float>((size_t)s.rows_all * c.obj_hid);
+  s.gH = alloc<uint16_t>((size_t)s.rows_all * c.obj_hid); s.gdb = alloc<uint16_t>((size_t)s.rows_all * std::max(c.obj_hid, H));
+  if (c.mem) {
+    const int I = c.mem_I, nh = c.mem_heads;
+    phin = alloc<uint16_t>((size_t)s.rows_all * MEM_K);
+    sel = alloc<int>((size_t)c.Bmax * c.n_prec);
+    exlog = alloc<float>((size_t)c.Bmax * 2);
+    s.dexl = alloc<float>((size_t)c.Bmax * 2 + 8); s.epart = alloc<float>((size_t)c.Bmax * 2 + 8);
+    rlog = alloc<float>((size_t)c.Bmax * 2 * (c.mem_nmax + 1));
+    for (int k = 0; k <= c.mem_blk; ++k) s.mz.push_back(alloc<float>((size_t)Rl * H));
+    for (int k = 0; k < c.mem_blk; ++k) {
+      WS::MemB b{};
+      b.Q = alloc<float>((size_t)Rl * H); b.KV = alloc<float>((size_t)Rm * 2 * H); b.O = alloc<float>((size_t)Rl * H); b.lse = alloc<float>((size_t)Rl * nh);
+      b.zx = alloc<float>((size_t)Rl * H); b.QKV = alloc<float>((size_t)Rl * 3 * H); b.Os = alloc<float>((size_t)Rl * H); b.lses = alloc<float>((size_t)Rl * nh);
+      b.zs = alloc<float>((size_t)Rl * H); b.GU = alloc<float>((size_t)Rl * 2 * I);
+      b.aq = alloc<uint16_t>((size_t)Rl * H); b.mk = alloc<uint16_t>((size_t)Rm * H); b.Ob = alloc<uint16_t>((size_t)Rl * H); b.as = alloc<uint16_t>((size_t)Rl * H);
+      b.Osb = alloc<uint16_t>((size_t)Rl * H); b.am = alloc<uint16_t>((size_t)Rl * H); b.Hh = alloc<uint16_t>((size_t)Rl * I);
+      s.mbk.push_back(b);
+    }
+    s.mI = alloc<float>((size_t)c.Bmax * H); s.nullb = alloc<float>((size_t)c.Bmax * 2 * H);
+    s.drl = alloc<float>((size_t)c.Bmax * 2 * (c.mem_nmax + 1)); s.rpart = alloc<float>((size_t)c.Bmax * 2 + 8);
+    s.mdz = alloc<float>((size_t)Rl * H); s.mda = alloc<float>((size_t)Rl * H); s.mdO = alloc<float>((size_t)Rl * H); s.mdQKV = alloc<float>((size_t)Rl * 3 * H);
+    s.mdQ = alloc<float>((size_t)Rl * H); s.mDd = alloc<float>((size_t)Rl * nh); s.mdHh = alloc<float>((size_t)Rl * I);
+    s.mdKV = alloc<float>((size_t)Rm * 2 * H); s.mdmk = alloc<float>((size_t)Rm * H); s.mdnull = alloc<float>((size_t)c.Bmax * 2 * H);
+    s.mdI = alloc<float>((size_t)c.Bmax * H); s.mwt = alloc<float>((size_t)std::max(Rm, Rl) * H);
+    const long long cs = 256;
+    s.mpart = alloc<float>((size_t)std::max({((Rm + cs - 1) / cs + 1) * 2 * H, ((s.rows_all + cs - 1) / cs + 1) * H, ((Rl + cs - 1) / cs + 1) * 3 * H,
+                                              ((c.Bmax + cs - 1) / cs + 1) * (long long)c.mem_lat * H}));
+    s.mdzb = alloc<uint16_t>((size_t)Rl * std::max(3 * H, 2 * I)); s.mdGU = alloc<uint16_t>((size_t)Rl * 2 * I);
+    s.mdKVb = alloc<uint16_t>((size_t)Rm * 2 * H); s.mdIb = alloc<uint16_t>((size_t)c.Bmax * H);
+  }
   // 글
   s.hnT = alloc<uint16_t>((size_t)c.Mtmax * H); s.dLg = alloc<uint16_t>((size_t)c.Mtmax * Q.vocab);
   s.lg = alloc<float>((size_t)c.Mtmax * c.vocab_chunk); s.dHnT = alloc<float>((size_t)c.Mtmax * H);
@@ -440,7 +536,200 @@ __global__ void fm_red_k(const float* part, int n, int B, float* out) {
   for (int k = 0; k < n; ++k) s = s + part[k];
   out[0] = s / (float)B;
 }
-__global__ void loss_tot_k(float* L, float lt, float lf) { if (threadIdx.x == 0) L[0] = lt * L[1] + lf * L[2]; }
+__global__ void loss_tot_k(float* L, float lt, float lf, float lr, float lx) {
+  if (threadIdx.x == 0) L[0] = lt * L[1] + lf * L[2] + lr * L[3] + lx * L[4];
+}
+
+// ---- 기억 요약 인코더 커널(TRAINING_DESIGN 2절) ----
+// 잠재 시작: z0[b·nl + j] = lat[j] + I[b] (I = 지시 벡터 사영)
+__global__ void mem_lat_k(const float* lat, const float* I, int B, int nl, int H, float* z) {
+  const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (q >= (long long)B * nl * H) return;
+  const long long r = q / H;
+  const int c = (int)(q % H);
+  z[q] = lat[(r % nl) * H + c] + I[(r / nl) * H + c];
+}
+// 지시 사영 기울기: dI[b] = Σ_j dz[b·nl + j] (고정 순서). bug 8: j = 0 만
+__global__ void mem_dI_k(const float* dz, int B, int nl, int H, int bug, float* dI) {
+  const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (q >= (long long)B * H) return;
+  const long long b = q / H;
+  const int c = (int)(q % H);
+  float s = 0.f;
+  for (int j = 0; j < (bug == 8 ? 1 : nl); ++j) s = s + dz[(b * nl + j) * H + c];
+  dI[q] = s;
+}
+__global__ void bcast_k(const float* v, int B, int n, float* out) {   // out[b][c] = v[c]
+  const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (q < (long long)B * n) out[q] = v[q % n];
+}
+// 유효하지 않은 기억 줄(i ≥ n)의 행 0
+__global__ void mask_rows_k(float* X, const int* nv, int B, int nmax, int C) {
+  const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (q >= (long long)B * nmax * C) return;
+  const long long r = q / C;
+  if ((int)(r % nmax) >= nv[r / nmax]) X[q] = 0.f;
+}
+// 검색 로짓(블록 = (판, 역할)): s_j = cs·Q_r·K_j, j 0 = 없음 열쇠(끝 블록 nullkv 의 K 반쪽), 1 + i = 기억 줄 i(끝 블록 KV 의 K 반쪽).
+// cs = 1/(√hd·머리 수) — 끝 블록 교차 어텐션의 머리 평균 로짓과 같은 값. 유효하지 않은 j = −1e30
+__global__ void rec_fwd_k(const float* Q, const float* KV, const float* nullk, const int* nv, int nl, int nmax, int H, float cs, float* rlog) {
+  const int b = blockIdx.x / 2, r = blockIdx.x % 2, n = nv[b];
+  const float* q = Q + ((long long)b * nl + r) * H;
+  for (int j = threadIdx.x; j <= nmax; j += blockDim.x) {
+    float v = -1e30f;
+    if (j <= n) {
+      const float* k = j == 0 ? nullk : KV + ((long long)b * nmax + j - 1) * 2 * H;
+      float d = 0.f;
+      for (int c = 0; c < H; ++c) d = d + q[c] * k[c];
+      v = cs * d;
+    }
+    rlog[(long long)blockIdx.x * (nmax + 1) + j] = v;
+  }
+}
+// InfoNCE(스레드 = (판, 역할)): 정답 y = tgt + 1(−1 → 0 없음), −2 = 라벨 없음. drl = lam/B·(p − onehot)
+__global__ void rec_loss_k(const float* rlog, const int* tgt, const int* nv, int B, int nmax, float lam, float nullw, float* drl, float* part) {
+  const int q = blockIdx.x * blockDim.x + threadIdx.x;
+  if (q >= B * 2) return;
+  const int b = q / 2, n = nv[b], t = tgt[q];
+  const float* l = rlog + (long long)q * (nmax + 1);
+  float* d = drl + (long long)q * (nmax + 1);
+  for (int j = 0; j <= nmax; ++j) d[j] = 0.f;
+  if (t < -1 || t >= n) { part[q] = 0.f; return; }
+  float mx = -INFINITY;
+  for (int j = 0; j <= n; ++j) mx = fmaxf(mx, l[j]);
+  float z = 0.f;
+  for (int j = 0; j <= n; ++j) z = z + expf(l[j] - mx);
+  const int y = t + 1;
+  const float wq = t == -1 ? nullw : 1.f;
+  part[q] = wq * (mx + logf(z) - l[y]);
+  for (int j = 0; j <= n; ++j) d[j] = wq * lam / (float)B * (expf(l[j] - mx) / z - (j == y ? 1.f : 0.f));
+}
+__global__ void rec_red_k(const float* part, int n, int B, float* out) {
+  if (threadIdx.x != 0) return;
+  float s = 0.f;
+  for (int k = 0; k < n; ++k) s = s + part[k];
+  out[0] = s / (float)B;
+}
+// InfoNCE 의 뒤: dQ[q_r] += cs·Σ_j d_j K_j, dK[i] += cs·Σ_r d_r,1+i Q_r, dnull[b] += cs·Σ_r d_r,0 Q_r. bug 7: 열쇠 쪽 빠뜨림
+__global__ void rec_dq_k(const float* drl, const float* KV, const float* nullk, const int* nv, int B, int nl, int nmax, int H, float cs, float* dQ) {
+  const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (q >= (long long)B * 2 * H) return;
+  const int c = (int)(q % H), br = (int)(q / H), b = br / 2, r = br % 2, n = nv[b];
+  const float* d = drl + (long long)br * (nmax + 1);
+  float s = d[0] * nullk[c];
+  for (int i = 0; i < n; ++i) s = s + d[1 + i] * KV[((long long)b * nmax + i) * 2 * H + c];
+  dQ[((long long)b * nl + r) * H + c] += cs * s;
+}
+__global__ void rec_dk_k(const float* drl, const float* Q, const int* nv, int B, int nl, int nmax, int H, float cs, float* dKV, float* dnull) {
+  const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (q >= (long long)B * (nmax + 1) * H) return;
+  const int c = (int)(q % H), bj = (int)(q / H), b = bj / (nmax + 1), j = bj % (nmax + 1);
+  if (j > nv[b]) return;
+  const float* d0 = drl + (long long)(b * 2) * (nmax + 1);
+  const float* d1 = d0 + (nmax + 1);
+  const float v = cs * (d0[j] * Q[((long long)b * nl) * H + c] + d1[j] * Q[((long long)b * nl + 1) * H + c]);
+  if (j == 0) dnull[(long long)b * 2 * H + c] += v;
+  else dKV[((long long)b * nmax + j - 1) * 2 * H + c] += v;
+}
+// 있음 머리(gRefCOCO 꼴 따로 머리, 스레드 = (판, 역할)): ℓ = w·t_r + b(t_r = 기억 토큰 r, 끝 RMSN 뒤), 정답 = 1 줄 번호 ≥ 0 / 0 기억에 없음, −2 건너뜀.
+// BCE, dℓ = lam/B·(σ(ℓ) − y)
+__global__ void ex_fwd_k(const float* mt, const float* wex, const int* tgt, int B, int nl, int H, float lam, float* exlog, float* dl, float* part) {
+  const int q = blockIdx.x * blockDim.x + threadIdx.x;
+  if (q >= B * 2) return;
+  const float* t = mt + ((long long)(q / 2) * nl + q % 2) * H;
+  float v = wex[H];
+  for (int c = 0; c < H; ++c) v = v + wex[c] * t[c];
+  exlog[q] = v;
+  const int y = tgt[q];
+  if (y < -1) { dl[q] = 0.f; part[q] = 0.f; return; }
+  const float yy = y >= 0 ? 1.f : 0.f, p = 1.f / (1.f + expf(-v));
+  part[q] = fmaxf(v, 0.f) - v * yy + log1pf(expf(-fabsf(v)));
+  dl[q] = lam / (float)B * (p - yy);
+}
+// 뒤: d기억토큰[r] += dℓ·w(bug 9: 빠뜨림), w·b 기울기 = Σ_(판, 역할) 고정 순서
+__global__ void ex_dt_k(const float* dl, const float* wex, int B, int nl, int H, float* dmt) {
+  const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (q >= (long long)B * 2 * H) return;
+  const int c = (int)(q % H), br = (int)(q / H);
+  dmt[((long long)(br / 2) * nl + br % 2) * H + c] += dl[br] * wex[c];
+}
+__global__ void ex_dw_k(const float* dl, const float* mt, int B, int nl, int H, float* gw) {
+  const int c = blockIdx.x * blockDim.x + threadIdx.x;
+  if (c > H) return;
+  float s = 0.f;
+  for (int br = 0; br < B * 2; ++br) s = s + dl[br] * (c == H ? 1.f : mt[((long long)(br / 2) * nl + br % 2) * H + c]);
+  gw[c] = s;
+}
+// 정밀 칸 고르기(블록 = 판, 워프 하나): 들고 있음 → 목표 칸 → 힌트 → (학습 일정) 정답 끼워 넣기 → q_pick·q_place 로짓 상위 2 씩 번갈아(없음 열쇠보다 클 때만)
+// → 가까운 순, 합 min(np, n). 같은 값은 앞 줄 먼저. 고른 줄을 phin 의 정밀 칸 줄로 옮기고 표시 칸(힌트·고름)을 씀.
+// 고르기는 이산(기울기 없음) — 기울기는 고른 칸의 φ 와 검색 InfoNCE 로 흐른다. 호스트 동기 없음(그래프 안).
+__global__ void mem_sel_k(const int* nv, const int* meta, const float* nearv, const float* rlog, const int* tgt, const int* force, int nmax, int np,
+                          const uint16_t* mem, int* sel, uint16_t* phin) {
+  const int b = blockIdx.x;
+  __shared__ int si[16], sf[16], scnt;
+  if (threadIdx.x == 0) {
+    const int n = nv[b];
+    const int* mt = meta + (long long)b * nmax;
+    const float* nr = nearv + (long long)b * nmax;
+    const float* lg = rlog + (long long)b * 2 * (nmax + 1);
+    unsigned used[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    int cnt = 0;
+    const int want = min(np, n);
+    auto add = [&](int i, int f) {
+      if (i < 0 || i >= n) return;
+      if (used[i >> 5] >> (i & 31) & 1u) {
+        for (int k = 0; k < cnt; ++k) if (si[k] == i) sf[k] |= f;
+        return;
+      }
+      if (cnt >= want) return;
+      used[i >> 5] |= 1u << (i & 31);
+      si[cnt] = i; sf[cnt] = f; ++cnt;
+    };
+    for (int i = 0; i < n; ++i) if (mt[i] & MM_HELD) add(i, 0);
+    for (int i = 0; i < n; ++i) if (mt[i] & (MM_GPICK | MM_GPLACE)) add(i, 0);
+    for (int i = 0; i < n; ++i) if (mt[i] & MM_HINT) add(i, 0);
+    const int f = force[b];
+    if (f & 1) add(tgt[2 * b], 1);
+    if (f & 2) add(tgt[2 * b + 1], 2);
+    int top[2][2] = {{-1, -1}, {-1, -1}};
+    for (int r = 0; r < 2; ++r)
+      for (int i = 0; i < n; ++i) {
+        const float v = lg[r * (nmax + 1) + 1 + i];
+        if (top[r][0] < 0 || v > lg[r * (nmax + 1) + 1 + top[r][0]]) { top[r][1] = top[r][0]; top[r][0] = i; }
+        else if (top[r][1] < 0 || v > lg[r * (nmax + 1) + 1 + top[r][1]]) top[r][1] = i;
+      }
+    // 기억에 없음 열쇠가 이기는 후보는 넣지 않는다(목표 칸을 쓰지 않음 — 탐사는 단계 문장·행동이 맡음)
+    auto addr = [&](int r, int i) { if (i >= 0 && lg[r * (nmax + 1) + 1 + i] > lg[r * (nmax + 1)]) add(i, r + 1); };
+    addr(0, top[0][0]); addr(1, top[1][0]); addr(0, top[0][1]); addr(1, top[1][1]);
+    while (cnt < want) {
+      int bi = -1;
+      for (int i = 0; i < n; ++i) {
+        if (used[i >> 5] >> (i & 31) & 1u) continue;
+        if (bi < 0 || nr[i] < nr[bi]) bi = i;
+      }
+      if (bi < 0) break;
+      add(bi, 0);
+    }
+    scnt = cnt;
+    for (int k = 0; k < np; ++k) sel[(long long)b * np + k] = k < cnt ? si[k] : -1;
+  }
+  __syncwarp();
+  const int cnt = scnt;
+  for (int k = 0; k < 16; ++k) {
+    uint16_t* row = phin + ((long long)b * 16 + k) * MEM_K;
+    if (k < cnt) {
+      const int i = si[k];
+      const uint16_t* src = mem + ((long long)b * nmax + i) * MEM_K;
+      for (int c = threadIdx.x; c < MEM_K; c += 32) {
+        uint16_t v = src[c];
+        if (c == MEM_HINT) v = (meta[(long long)b * nmax + i] & MM_HINT) ? 0x3f80 : 0;
+        if (c == MEM_SELP) v = (sf[k] & 1) ? 0x3f80 : 0;
+        if (c == MEM_SELQ) v = (sf[k] & 2) ? 0x3f80 : 0;
+        row[c] = v;
+      }
+    } else for (int c = threadIdx.x; c < MEM_K; c += 32) row[c] = 0;
+  }
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // 몸통 한 층(학습, 열 시작 0). 중간값은 작업 버퍼에(뒤에서 다시 계산)
@@ -697,6 +986,190 @@ static void e_block_bwd(Model& m, int f, const VBatch& bt, cudaStream_t st) {
   tk::colsum(s.wt, RA, De, De, s.part, GV + e.ln1, false, st);
 }
 
+// ---- 기억 요약 인코더 ----
+// φ(공유 물체 MLP, 옛 OBJ 묶음 변수) 한 줄 범위: phin 줄 [r0, r0 + rows) → gOut[OBJ] 같은 줄
+static void phi_fwd(Model& m, long long r0, long long rows, cudaStream_t st) {
+  Model::WS& s = *m.w;
+  const VCfg& c = m.c;
+  const int H = m.q.c.H;
+  tk::mm(m.phin + r0 * MEM_K, MEM_K, (int)rows, m.ap.W + m.g_w1[VG_OBJ].off, c.obj_hid, MEM_K, s.gH1 + r0 * c.obj_hid, c.obj_hid, false, st);
+  tk::gelu_fwd(s.gH1 + r0 * c.obj_hid, rows * c.obj_hid, s.gH + r0 * c.obj_hid, st);
+  tk::mm(s.gH + r0 * c.obj_hid, c.obj_hid, (int)rows, m.ap.W + m.g_w2.off, H, c.obj_hid, s.gOut[VG_OBJ] + r0 * H, H, false, st);
+  tk::bias_add(s.gOut[VG_OBJ] + r0 * H, (int)rows, H, H, m.ap.V + m.g_b2, st);
+}
+static tk::AttP mem_cross_att(Model& m, int k, int B) {
+  Model::WS& s = *m.w;
+  const VCfg& c = m.c;
+  const int H = m.q.c.H, hd = H / c.mem_heads;
+  auto& b = s.mbk[k];
+  tk::AttP a;
+  a.Q = b.Q; a.ldq = H; a.K1 = b.KV; a.V1 = b.KV + H; a.ldk1 = 2 * H; a.L1 = c.mem_nmax; a.len1 = nullptr;
+  a.K2 = s.nullb; a.V2 = s.nullb + H; a.ldk2 = 2 * H; a.n2 = 1;
+  a.B = B; a.n = c.mem_lat; a.nq = c.mem_heads; a.nkv = c.mem_heads; a.hd = hd; a.scale = 1.f / std::sqrt((float)hd);
+  a.O = b.O; a.ldo = H; a.lse = b.lse;
+  return a;
+}
+static tk::AttP mem_self_att(Model& m, int k, int B) {
+  Model::WS& s = *m.w;
+  const VCfg& c = m.c;
+  const int H = m.q.c.H, hd = H / c.mem_heads;
+  auto& b = s.mbk[k];
+  tk::AttP a;
+  a.Q = b.QKV; a.ldq = 3 * H; a.K1 = b.QKV + H; a.V1 = b.QKV + 2 * H; a.ldk1 = 3 * H; a.L1 = c.mem_lat; a.n1c = c.mem_lat;
+  a.B = B; a.n = c.mem_lat; a.nq = c.mem_heads; a.nkv = c.mem_heads; a.hd = hd; a.scale = 1.f / std::sqrt((float)hd);
+  a.O = b.Os; a.ldo = H; a.lse = b.lses;
+  return a;
+}
+// 앞: 기억 줄 φ → 잠재(지시 조건) → 블록(교차 → 자기 → MLP) × mem_blk → 끝 RMSN = 기억 토큰. 끝 블록 q_pick·q_place 로 검색 로짓·InfoNCE,
+// 정밀 칸 고르기 → 정밀 칸 φ.
+static void mem_fwd(Model& m, const VBatch& bt, cudaStream_t st) {
+  Model::WS& s = *m.w;
+  const VCfg& c = m.c;
+  const QCfg& Q = m.q.c;
+  const int B = bt.B, H = Q.H, nl = c.mem_lat, nmax = c.mem_nmax, I = c.mem_I;
+  const long long Rl = (long long)B * nl, Rm = (long long)B * nmax, r0 = (long long)B * 16;
+  const uint16_t* W = m.ap.W;
+  const float* P = m.ap.V;
+  MCK(cudaMemcpyAsync(m.phin + r0 * MEM_K, bt.mem, sizeof(uint16_t) * (size_t)Rm * MEM_K, cudaMemcpyDeviceToDevice, st));
+  phi_fwd(m, r0, Rm, st);
+  const float* phim = s.gOut[VG_OBJ] + r0 * H;
+  tk::mm(bt.instr, c.instr_k, B, W + m.m_instr.off, H, c.instr_k, s.mI, H, false, st);
+  mem_lat_k<<<nb(Rl * H), 256, 0, st>>>(P + m.m_lat, s.mI, B, nl, H, s.mz[0]);
+  MKC();
+  for (int k = 0; k < c.mem_blk; ++k) {
+    const auto& e = m.mb[k];
+    auto& b = s.mbk[k];
+    qk::rmsnorm(s.mz[k], (int)Rl, H, P + e.lnq, true, Q.eps, b.aq, nullptr, nullptr, st);
+    tk::mm(b.aq, H, (int)Rl, W + e.wq.off, H, H, b.Q, H, false, st);
+    qk::rmsnorm(phim, (int)Rm, H, P + e.lnk, true, Q.eps, b.mk, nullptr, nullptr, st);
+    tk::mm(b.mk, H, (int)Rm, W + e.wkv.off, 2 * H, H, b.KV, 2 * H, false, st);
+    bcast_k<<<nb((long long)B * 2 * H), 256, 0, st>>>(P + e.nullkv, B, 2 * H, s.nullb);
+    MKC();
+    tk::AttP a = mem_cross_att(m, k, B);
+    a.len1 = bt.mem_n;
+    tk::att_fwd(a, st);
+    if (k == c.mem_blk - 1) {   // 검색 로짓은 같은 블록의 Q·K(그다음 블록이 없으니 nullb 그대로)
+      const float cs = 1.f / (std::sqrt((float)(H / c.mem_heads)) * (float)c.mem_heads);
+      rec_fwd_k<<<B * 2, 128, 0, st>>>(b.Q, b.KV, P + e.nullkv, bt.mem_n, nl, nmax, H, cs, m.rlog);
+      MKC();
+    }
+    tk::f2bf(b.O, Rl * H, b.Ob, st);
+    MCK(cudaMemcpyAsync(b.zx, s.mz[k], sizeof(float) * (size_t)Rl * H, cudaMemcpyDeviceToDevice, st));
+    tk::mm(b.Ob, H, (int)Rl, W + e.wo.off, H, H, b.zx, H, true, st);
+    qk::rmsnorm(b.zx, (int)Rl, H, P + e.lns, true, Q.eps, b.as, nullptr, nullptr, st);
+    tk::mm(b.as, H, (int)Rl, W + e.sqkv.off, 3 * H, H, b.QKV, 3 * H, false, st);
+    tk::att_fwd(mem_self_att(m, k, B), st);
+    tk::f2bf(b.Os, Rl * H, b.Osb, st);
+    MCK(cudaMemcpyAsync(b.zs, b.zx, sizeof(float) * (size_t)Rl * H, cudaMemcpyDeviceToDevice, st));
+    tk::mm(b.Osb, H, (int)Rl, W + e.so.off, H, H, b.zs, H, true, st);
+    qk::rmsnorm(b.zs, (int)Rl, H, P + e.lnm, true, Q.eps, b.am, nullptr, nullptr, st);
+    tk::mm(b.am, H, (int)Rl, W + e.gu.off, 2 * I, H, b.GU, 2 * I, false, st);
+    qk::swiglu(b.GU, (int)Rl, I, b.Hh, st);
+    MCK(cudaMemcpyAsync(s.mz[k + 1], b.zs, sizeof(float) * (size_t)Rl * H, cudaMemcpyDeviceToDevice, st));
+    tk::mm(b.Hh, I, (int)Rl, W + e.dn.off, H, I, s.mz[k + 1], H, true, st);
+  }
+  qk::rmsnorm(s.mz[c.mem_blk], (int)Rl, H, P + m.m_lnout, true, Q.eps, nullptr, s.gOut[VG_MEM], nullptr, st);
+  // 있음 머리 + InfoNCE
+  ex_fwd_k<<<nb(B * 2, 64), 64, 0, st>>>(s.gOut[VG_MEM], P + m.m_ex, bt.rec_tgt, B, nl, H, c.lam_ex, m.exlog, s.dexl, s.epart);
+  rec_red_k<<<1, 32, 0, st>>>(s.epart, B * 2, B, m.loss + 4);
+  rec_loss_k<<<nb(B * 2, 64), 64, 0, st>>>(m.rlog, bt.rec_tgt, bt.mem_n, B, nmax, c.lam_rec, c.rec_null_w, s.drl, s.rpart);
+  rec_red_k<<<1, 32, 0, st>>>(s.rpart, B * 2, B, m.loss + 3);
+  // 정밀 칸
+  mem_sel_k<<<B, 32, 0, st>>>(bt.mem_n, bt.mem_meta, bt.mem_near, m.rlog, bt.rec_tgt, bt.rec_force, nmax, c.n_prec, bt.mem, m.sel, m.phin);
+  MKC();
+  phi_fwd(m, 0, r0, st);
+}
+// 뒤: dgOut[MEM](몸통에서) → 끝 RMSN → 블록 거꾸로(+ 끝 블록에 InfoNCE 기울기) → 잠재·지시 사영, 기억 줄 φ 출력 기울기(dgOut[OBJ] 기억 줄 쪽)
+static void mem_bwd(Model& m, const VBatch& bt, cudaStream_t st) {
+  Model::WS& s = *m.w;
+  const VCfg& c = m.c;
+  const QCfg& Q = m.q.c;
+  const int B = bt.B, H = Q.H, nl = c.mem_lat, nmax = c.mem_nmax, I = c.mem_I;
+  const long long Rl = (long long)B * nl, Rm = (long long)B * nmax, r0 = (long long)B * 16;
+  const uint16_t* W = m.ap.W;
+  const float* P = m.ap.V;
+  uint16_t* GW = m.ap.GW;
+  float* GV = m.ap.GV;
+  const float* phim = s.gOut[VG_OBJ] + r0 * H;
+  float* dphim = s.dgOut[VG_OBJ] + r0 * H;
+  MCK(cudaMemsetAsync(dphim, 0, sizeof(float) * (size_t)Rm * H, st));
+  // 있음 머리(종류 임베딩 기울기는 이미 몸통 몫만으로 냈음)
+  ex_dw_k<<<nb(H + 1, 128), 128, 0, st>>>(s.dexl, s.gOut[VG_MEM], B, nl, H, GV + m.m_ex);
+  if (m.bug != 9) ex_dt_k<<<nb((long long)B * 2 * H), 256, 0, st>>>(s.dexl, P + m.m_ex, B, nl, H, s.dgOut[VG_MEM]);
+  MKC();
+  tk::rms_bwd(s.dgOut[VG_MEM], H, s.mz[c.mem_blk], H, (int)Rl, 1, H, P + m.m_lnout, true, Q.eps, s.mdz, H, false, s.mwt, 0, st);
+  tk::colsum(s.mwt, (int)Rl, H, H, s.mpart, GV + m.m_lnout, false, st);
+  for (int k = c.mem_blk - 1; k >= 0; --k) {
+    const auto& e = m.mb[k];
+    auto& b = s.mbk[k];
+    // MLP
+    tk::f2bf(s.mdz, Rl * H, s.mdzb, st);
+    tk::mm_dw(s.mdzb, H, b.Hh, I, (int)Rl, H, I, s.ws, DWCH, GW + e.dn.off, nullptr, st);
+    tk::mm_dx(s.mdzb, H, (int)Rl, W + e.dn.off, H, I, s.mdHh, I, false, st);
+    tk::swiglu_bwd(b.GU, s.mdHh, (int)Rl, I, s.mdGU, m.bug == 1 ? 1 : 0, st);
+    tk::mm_dw(s.mdGU, 2 * I, b.am, H, (int)Rl, 2 * I, H, s.ws, DWCH, GW + e.gu.off, nullptr, st);
+    tk::mm_dx(s.mdGU, 2 * I, (int)Rl, W + e.gu.off, 2 * I, H, s.mda, H, false, st);
+    tk::rms_bwd(s.mda, H, b.zs, H, (int)Rl, 1, H, P + e.lnm, true, Q.eps, s.mdz, H, true, s.mwt, 0, st);
+    tk::colsum(s.mwt, (int)Rl, H, H, s.mpart, GV + e.lnm, false, st);
+    // 자기 어텐션
+    tk::f2bf(s.mdz, Rl * H, s.mdzb, st);
+    tk::mm_dw(s.mdzb, H, b.Osb, H, (int)Rl, H, H, s.ws, DWCH, GW + e.so.off, nullptr, st);
+    tk::mm_dx(s.mdzb, H, (int)Rl, W + e.so.off, H, H, s.mdO, H, false, st);
+    {
+      tk::AttP a = mem_self_att(m, k, B);
+      a.dO = s.mdO; a.lddo = H; a.Dd = s.mDd; a.dQ = s.mdQKV; a.lddq = 3 * H; a.dK1 = s.mdQKV + H; a.dV1 = s.mdQKV + 2 * H; a.bug = m.bug == 5 ? 1 : 0;
+      tk::att_bwd(a, st);
+    }
+    tk::f2bf(s.mdQKV, Rl * 3 * H, s.mdzb, st);
+    tk::mm_dw(s.mdzb, 3 * H, b.as, H, (int)Rl, 3 * H, H, s.ws, DWCH, GW + e.sqkv.off, nullptr, st);
+    tk::mm_dx(s.mdzb, 3 * H, (int)Rl, W + e.sqkv.off, 3 * H, H, s.mda, H, false, st);
+    tk::rms_bwd(s.mda, H, b.zx, H, (int)Rl, 1, H, P + e.lns, true, Q.eps, s.mdz, H, true, s.mwt, 0, st);
+    tk::colsum(s.mwt, (int)Rl, H, H, s.mpart, GV + e.lns, false, st);
+    // 교차 어텐션
+    tk::f2bf(s.mdz, Rl * H, s.mdzb, st);
+    tk::mm_dw(s.mdzb, H, b.Ob, H, (int)Rl, H, H, s.ws, DWCH, GW + e.wo.off, nullptr, st);
+    tk::mm_dx(s.mdzb, H, (int)Rl, W + e.wo.off, H, H, s.mdO, H, false, st);
+    bcast_k<<<nb((long long)B * 2 * H), 256, 0, st>>>(P + e.nullkv, B, 2 * H, s.nullb);   // 앞의 nullb 는 끝 블록 값 — 이 블록 것으로 다시
+    MKC();
+    MCK(cudaMemsetAsync(s.mdKV, 0, sizeof(float) * (size_t)Rm * 2 * H, st));
+    {
+      tk::AttP a = mem_cross_att(m, k, B);
+      a.len1 = bt.mem_n;
+      a.dO = s.mdO; a.lddo = H; a.Dd = s.mDd; a.dQ = s.mdQ; a.lddq = H; a.dK1 = s.mdKV; a.dV1 = s.mdKV + H; a.dK2 = s.mdnull; a.dV2 = s.mdnull + H;
+      a.bug = m.bug == 5 ? 1 : 0;
+      tk::att_bwd(a, st);
+    }
+    if (k == c.mem_blk - 1) {
+      const float cs = 1.f / (std::sqrt((float)(H / c.mem_heads)) * (float)c.mem_heads);
+      rec_dq_k<<<nb((long long)B * 2 * H), 256, 0, st>>>(s.drl, b.KV, P + e.nullkv, bt.mem_n, B, nl, nmax, H, cs, s.mdQ);
+      if (m.bug != 7) rec_dk_k<<<nb((long long)B * (nmax + 1) * H), 256, 0, st>>>(s.drl, b.Q, bt.mem_n, B, nl, nmax, H, cs, s.mdKV, s.mdnull);
+      MKC();
+    }
+    mask_rows_k<<<nb(Rm * 2 * H), 256, 0, st>>>(s.mdKV, bt.mem_n, B, nmax, 2 * H);
+    MKC();
+    if (m.bug == 6) MCK(cudaMemsetAsync(GV + e.nullkv, 0, sizeof(float) * 2 * H, st));
+    else tk::colsum(s.mdnull, B, 2 * H, 2 * H, s.mpart, GV + e.nullkv, false, st);
+    // 질의 쪽
+    tk::f2bf(s.mdQ, Rl * H, s.mdzb, st);
+    tk::mm_dw(s.mdzb, H, b.aq, H, (int)Rl, H, H, s.ws, DWCH, GW + e.wq.off, nullptr, st);
+    tk::mm_dx(s.mdzb, H, (int)Rl, W + e.wq.off, H, H, s.mda, H, false, st);
+    tk::rms_bwd(s.mda, H, s.mz[k], H, (int)Rl, 1, H, P + e.lnq, true, Q.eps, s.mdz, H, true, s.mwt, 0, st);
+    tk::colsum(s.mwt, (int)Rl, H, H, s.mpart, GV + e.lnq, false, st);
+    // 열쇠·값 쪽 → 기억 줄 φ
+    tk::f2bf(s.mdKV, Rm * 2 * H, s.mdKVb, st);
+    tk::mm_dw(s.mdKVb, 2 * H, b.mk, H, (int)Rm, 2 * H, H, s.ws, DWCH, GW + e.wkv.off, nullptr, st);
+    tk::mm_dx(s.mdKVb, 2 * H, (int)Rm, W + e.wkv.off, 2 * H, H, s.mdmk, H, false, st);
+    tk::rms_bwd(s.mdmk, H, phim, H, (int)Rm, 1, H, P + e.lnk, true, Q.eps, dphim, H, true, s.mwt, 0, st);
+    tk::colsum(s.mwt, (int)Rm, H, H, s.mpart, GV + e.lnk, false, st);
+  }
+  // 잠재·지시 사영
+  tk::colsum(s.mdz, B, nl * H, nl * H, s.mpart, GV + m.m_lat, false, st);
+  mem_dI_k<<<nb((long long)B * H), 256, 0, st>>>(s.mdz, B, nl, H, m.bug, s.mdI);
+  MKC();
+  tk::f2bf(s.mdI, (long long)B * H, s.mdIb, st);
+  tk::mm_dw(s.mdIb, H, bt.instr, c.instr_k, B, H, c.instr_k, s.ws, DWCH, GW + m.m_instr.off, nullptr, st);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 static void forward_all(Model& m, const VBatch& bt, bool train, cudaStream_t st) {
   Model::WS& s = *m.w;
@@ -715,8 +1188,11 @@ static void forward_all(Model& m, const VBatch& bt, bool train, cudaStream_t st)
   tk::ln_fwd(s.vX[c.vL], Rv, c.vD, P + m.v_lnfg, P + m.v_lnfb, c.vEps, s.vTok, nullptr, st);
   tk::mm(s.vTok, c.vD, Rv, W + m.v_proj.off, H, c.vD, s.vOut, H, false, st);
   tk::bias_add(s.vOut, Rv, H, H, P + m.v_projb, st);
-  // 묶음
+  // 묶음(mem: OBJ = 정밀 칸 φ, MEM = 기억 요약 — mem_fwd 가 만듦)
+  if (c.mem) mem_fwd(m, bt, st);
+  else MCK(cudaMemsetAsync(m.loss + 3, 0, 8, st));
   for (int g = 0; g < N_VG; ++g) {
+    if (!m.grp_on(g) || g == VG_MEM || (c.mem && g == VG_OBJ)) continue;
     const int rows = B * kVGrp[g].n_tok;
     if (g == VG_OBJ) {
       tk::mm(bt.grp[g], kVGrp[g].K, rows, W + m.g_w1[g].off, c.obj_hid, kVGrp[g].K, s.gH1, c.obj_hid, false, st);
@@ -728,7 +1204,7 @@ static void forward_all(Model& m, const VBatch& bt, bool train, cudaStream_t st)
     }
   }
   GPtr gp;
-  for (int g = 0; g < N_VG; ++g) { gp.p[g] = s.gOut[g]; gp.typ[g] = m.g_type[g]; gp.ntok[g] = kVGrp[g].n_tok; }
+  for (int g = 0; g < N_VG; ++g) { gp.p[g] = s.gOut[g]; gp.typ[g] = m.g_type[g]; gp.ntok[g] = m.ntok(g); }
   assemble_k<<<nb((long long)R * H), 256, 0, st>>>(bt.src, R, H, m.q.Wb + m.q.lay.emb.off, s.vOut, gp, P, s.Xs[0]);
   MKC();
   // 몸통
@@ -761,13 +1237,14 @@ static void forward_all(Model& m, const VBatch& bt, bool train, cudaStream_t st)
   tk::mm(s.Ao, c.De, RA, W + m.e_out.off, c.A, c.De, m.vel, c.A, false, st);
   fm_loss_k<<<nb(RA, 128), 128, 0, st>>>(m.vel, s.u, bt.cmask, bt.adim, B, c.Hc, c.A, c.lam_fm, s.dz, s.lpart);
   fm_red_k<<<1, 32, 0, st>>>(s.lpart, RA, B, m.loss + 2);
-  loss_tot_k<<<1, 32, 0, st>>>(m.loss, c.lam_txt, c.lam_fm);
+  loss_tot_k<<<1, 32, 0, st>>>(m.loss, c.lam_txt, c.lam_fm, c.mem ? c.lam_rec : 0.f, c.mem ? c.lam_ex : 0.f);
   MKC();
 }
 
 void Model::forward_loss(const VBatch& b, cudaStream_t st) { forward_all(*this, b, false, st); }
 const uint16_t* Model::flow_ain() const { return w->ain; }
 const float* Model::flow_u() const { return w->u; }
+const float* Model::w_memtok() const { return w->gOut[VG_MEM]; }
 
 void Model::step_grads(const VBatch& bt, cudaStream_t st) {
   if (!c.vis_train) {   // 얼린 영상 탑: 기울기 0(옵티마이저는 Opt::Buf::skip 범위로 건너뜀)
@@ -812,13 +1289,19 @@ void Model::step_grads(const VBatch& bt, cudaStream_t st) {
   // 입력 열 흩기
   MCK(cudaMemsetAsync(s.vdOut, 0, sizeof(float) * (size_t)Rv * H, st));
   GPtrW gw;
-  for (int g = 0; g < N_VG; ++g) { MCK(cudaMemsetAsync(s.dgOut[g], 0, sizeof(float) * (size_t)B * kVGrp[g].n_tok * H, st)); gw.p[g] = s.dgOut[g]; }
+  for (int g = 0; g < N_VG; ++g) {
+    gw.p[g] = s.dgOut[g];
+    if (grp_on(g)) MCK(cudaMemsetAsync(s.dgOut[g], 0, sizeof(float) * (size_t)B * ntok(g) * H, st));
+  }
   scatter_k<<<nb((long long)R * H), 256, 0, st>>>(bt.src, R, H, s.dR, s.vdOut, gw);
   MKC();
-  // 묶음 인코더
+  // 묶음 인코더(mem: 기억 요약 뒤 → φ 를 정밀·기억 줄 한꺼번에)
   for (int g = 0; g < N_VG; ++g) {
-    const int rows = B * kVGrp[g].n_tok;
+    if (!grp_on(g)) continue;
+    const int rows = B * ntok(g);
     tk::colsum(s.dgOut[g], rows, H, H, s.part, ap.GV + g_type[g], false, st);
+    if (g == VG_MEM) continue;
+    if (c.mem && g == VG_OBJ) continue;
     tk::f2bf(s.dgOut[g], (long long)rows * H, s.gdb, st);
     if (g == VG_OBJ) {
       tk::colsum(s.dgOut[g], rows, H, H, s.part, ap.GV + g_b2, false, st);
@@ -829,6 +1312,16 @@ void Model::step_grads(const VBatch& bt, cudaStream_t st) {
     } else {
       tk::mm_dw(s.gdb, H, bt.grp[g], kVGrp[g].K, rows, H, kVGrp[g].K, s.ws, DWCH, ap.GW + g_w1[g].off, nullptr, st);
     }
+  }
+  if (c.mem) {
+    mem_bwd(*this, bt, st);
+    const int rows = (int)((long long)B * 16 + (long long)B * c.mem_nmax);
+    tk::colsum(s.dgOut[VG_OBJ], rows, H, H, s.mpart, ap.GV + g_b2, false, st);
+    tk::f2bf(s.dgOut[VG_OBJ], (long long)rows * H, s.gdb, st);
+    tk::mm_dw(s.gdb, H, s.gH, c.obj_hid, rows, H, c.obj_hid, s.ws, DWCH, ap.GW + g_w2.off, nullptr, st);
+    tk::mm_dx(s.gdb, H, rows, ap.W + g_w2.off, H, c.obj_hid, s.dgH, c.obj_hid, false, st);
+    tk::gelu_bwd(s.dgH, s.gH1, (long long)rows * c.obj_hid, s.gdb, nullptr, st);
+    tk::mm_dw(s.gdb, c.obj_hid, phin, MEM_K, rows, c.obj_hid, MEM_K, s.ws, DWCH, ap.GW + g_w1[VG_OBJ].off, nullptr, st);
   }
   // 영상 사영·탑
   tk::colsum(s.vdOut, Rv, H, H, s.part, ap.GV + v_projb, false, st);

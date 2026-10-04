@@ -610,7 +610,126 @@ void run(Mode md, const Model& m, const Params& P, const In& in, Out& out, bool 
   for (int r = 0; r < Rv; ++r) for (int k = 0; k < H; ++k) vOut[(size_t)r * H + k] += aV[m.v_projb + k];
   // ---- 묶음 ----
   V gOut[N_VG], gh1, gh;
+  // 기억 경로: φ 를 [정밀 B·16 | 기억 B·nmax] 줄에 한꺼번에, 그다음 기억 요약 인코더
+  const int nl = c.mem_lat, nmax = c.mem_nmax, MI = c.mem_I, nh = c.mem_heads, mhd = c.mem ? H / nh : 1;
+  const int Rl = B * nl, Rm = B * nmax, r0 = B * 16, rows_all = r0 + Rm;
+  const double rcs = 1.0 / (std::sqrt((double)mhd) * nh);
+  V Xall, phi;
+  struct MS { V zin, aq, Q, mk, KV, O, Ob, zx, as, QKV, Os, Osb, zs, am, gu, hh; std::vector<std::vector<double>> Pc, Ps; };
+  std::vector<MS> ms(c.mem ? c.mem_blk : 0);
+  V mz, drl, dex;
+  if (c.mem) {
+    Xall = in.prec;
+    Xall.insert(Xall.end(), in.mem.begin(), in.mem.end());
+    gh1 = mm(Xall, rows_all, MEM_K, aW, m.g_w1[VG_OBJ].off, c.obj_hid);
+    gh.resize(gh1.size());
+    for (size_t i = 0; i < gh1.size(); ++i) gh[i] = gelu(gh1[i]);
+    Qv(gh);
+    phi = mm(gh, rows_all, c.obj_hid, aW, m.g_w2.off, H);
+    for (int r = 0; r < rows_all; ++r) for (int k = 0; k < H; ++k) phi[(size_t)r * H + k] += aV[m.g_b2 + k];
+    gOut[VG_OBJ] = phi;   // 정밀 칸 = 앞 B·16 줄
+    const double* phim = &phi[(size_t)r0 * H];
+    V Iv = mm(in.instr, B, c.instr_k, aW, m.m_instr.off, H);
+    mz.assign((size_t)Rl * H, 0.0);
+    for (int r = 0; r < Rl; ++r) for (int k = 0; k < H; ++k) mz[(size_t)r * H + k] = aV[m.m_lat + (r % nl) * H + k] + Iv[(size_t)(r / nl) * H + k];
+    out.rlog.assign((size_t)B * 2 * (nmax + 1), -1e30);
+    for (int kb = 0; kb < c.mem_blk; ++kb) {
+      const auto& e = m.mb[kb];
+      MS& S = ms[kb];
+      S.zin = mz;
+      S.aq.resize((size_t)Rl * H);
+      for (int r = 0; r < Rl; ++r) rms_f(&mz[(size_t)r * H], H, &aV[e.lnq], true, eps, &S.aq[(size_t)r * H]);
+      Qv(S.aq);
+      S.Q = mm(S.aq, Rl, H, aW, e.wq.off, H);
+      S.mk.resize((size_t)Rm * H);
+      for (int r = 0; r < Rm; ++r) rms_f(phim + (size_t)r * H, H, &aV[e.lnk], true, eps, &S.mk[(size_t)r * H]);
+      Qv(S.mk);
+      S.KV = mm(S.mk, Rm, H, aW, e.wkv.off, 2 * H);
+      S.O.assign((size_t)Rl * H, 0.0);
+      S.Pc.resize(B);
+      for (int b = 0; b < B; ++b) {
+        const int n = in.mem_n[b];
+        V Kc((size_t)(n + 1) * H), Vc((size_t)(n + 1) * H);
+        for (int j = 0; j < n; ++j) for (int d = 0; d < H; ++d) { Kc[(size_t)j * H + d] = S.KV[((size_t)b * nmax + j) * 2 * H + d]; Vc[(size_t)j * H + d] = S.KV[((size_t)b * nmax + j) * 2 * H + H + d]; }
+        for (int d = 0; d < H; ++d) { Kc[(size_t)n * H + d] = aV[e.nullkv + d]; Vc[(size_t)n * H + d] = aV[e.nullkv + H + d]; }
+        AttIO a{nl, n + 1, nh, nh, mhd, [](int, int) { return true; }};
+        att_f(a, &S.Q[(size_t)b * nl * H], Kc.data(), Vc.data(), &S.O[(size_t)b * nl * H], S.Pc[b]);
+        if (kb == c.mem_blk - 1)
+          for (int r = 0; r < 2; ++r)
+            for (int j = 0; j <= n; ++j) {
+              const double* kk = j == 0 ? &aV[e.nullkv] : &S.KV[((size_t)b * nmax + j - 1) * 2 * H];
+              double d = 0;
+              for (int q = 0; q < H; ++q) d += S.Q[((size_t)b * nl + r) * H + q] * kk[q];
+              out.rlog[((size_t)b * 2 + r) * (nmax + 1) + j] = rcs * d;
+            }
+      }
+      S.Ob = qd(S.O);
+      S.zx = mz;
+      addv(S.zx, mm(S.Ob, Rl, H, aW, e.wo.off, H));
+      S.as.resize((size_t)Rl * H);
+      for (int r = 0; r < Rl; ++r) rms_f(&S.zx[(size_t)r * H], H, &aV[e.lns], true, eps, &S.as[(size_t)r * H]);
+      Qv(S.as);
+      S.QKV = mm(S.as, Rl, H, aW, e.sqkv.off, 3 * H);
+      S.Os.assign((size_t)Rl * H, 0.0);
+      S.Ps.resize(B);
+      for (int b = 0; b < B; ++b) {
+        V q((size_t)nl * H), k((size_t)nl * H), v((size_t)nl * H);
+        for (int t = 0; t < nl; ++t) for (int d = 0; d < H; ++d) {
+          q[(size_t)t * H + d] = S.QKV[((size_t)b * nl + t) * 3 * H + d];
+          k[(size_t)t * H + d] = S.QKV[((size_t)b * nl + t) * 3 * H + H + d];
+          v[(size_t)t * H + d] = S.QKV[((size_t)b * nl + t) * 3 * H + 2 * H + d];
+        }
+        AttIO a{nl, nl, nh, nh, mhd, [](int, int) { return true; }};
+        att_f(a, q.data(), k.data(), v.data(), &S.Os[(size_t)b * nl * H], S.Ps[b]);
+      }
+      S.Osb = qd(S.Os);
+      S.zs = S.zx;
+      addv(S.zs, mm(S.Osb, Rl, H, aW, e.so.off, H));
+      S.am.resize((size_t)Rl * H);
+      for (int r = 0; r < Rl; ++r) rms_f(&S.zs[(size_t)r * H], H, &aV[e.lnm], true, eps, &S.am[(size_t)r * H]);
+      Qv(S.am);
+      S.gu = mm(S.am, Rl, H, aW, e.gu.off, 2 * MI);
+      S.hh.resize((size_t)Rl * MI);
+      for (int r = 0; r < Rl; ++r) for (int i = 0; i < MI; ++i) S.hh[(size_t)r * MI + i] = silu(S.gu[(size_t)r * 2 * MI + i]) * S.gu[(size_t)r * 2 * MI + MI + i];
+      Qv(S.hh);
+      mz = S.zs;
+      addv(mz, mm(S.hh, Rl, MI, aW, e.dn.off, H));
+    }
+    gOut[VG_MEM].resize((size_t)Rl * H);
+    for (int r = 0; r < Rl; ++r) rms_f(&mz[(size_t)r * H], H, &aV[m.m_lnout], true, eps, &gOut[VG_MEM][(size_t)r * H]);
+    out.memtok = gOut[VG_MEM];
+    // InfoNCE
+    drl.assign((size_t)B * 2 * (nmax + 1), 0.0);
+    double lr = 0;
+    for (int b = 0; b < B; ++b) for (int r = 0; r < 2; ++r) {
+      const int n = in.mem_n[b], t = in.rec_tgt[b * 2 + r];
+      if (t < -1 || t >= n) continue;
+      const double* l = &out.rlog[((size_t)b * 2 + r) * (nmax + 1)];
+      double mx = -1e300;
+      for (int j = 0; j <= n; ++j) mx = std::max(mx, l[j]);
+      double z = 0;
+      for (int j = 0; j <= n; ++j) z += std::exp(l[j] - mx);
+      lr += mx + std::log(z) - l[t + 1];
+      for (int j = 0; j <= n; ++j) drl[((size_t)b * 2 + r) * (nmax + 1) + j] = c.lam_rec / B * (std::exp(l[j] - mx) / z - (j == t + 1 ? 1.0 : 0.0));
+    }
+    out.lrec = lr / B;
+    // 있음 머리
+    dex.assign((size_t)B * 2, 0.0);
+    double lx = 0;
+    for (int q = 0; q < B * 2; ++q) {
+      const double* t = &gOut[VG_MEM][((size_t)(q / 2) * nl + q % 2) * H];
+      double v = aV[m.m_ex + H];
+      for (int k = 0; k < H; ++k) v += aV[m.m_ex + k] * t[k];
+      const int y = in.rec_tgt[q];
+      if (y < -1) continue;
+      const double yy = y >= 0 ? 1.0 : 0.0;
+      lx += std::max(v, 0.0) - v * yy + std::log1p(std::exp(-std::fabs(v)));
+      dex[q] = c.lam_ex / B * (1.0 / (1.0 + std::exp(-v)) - yy);
+    }
+    out.lex = lx / B;
+  }
   for (int g = 0; g < N_VG; ++g) {
+    if (!m.grp_on(g) || g == VG_MEM || (c.mem && g == VG_OBJ)) continue;
     const int rows = B * kVGrp[g].n_tok, K = kVGrp[g].K;
     if (g == VG_OBJ) {
       gh1 = mm(in.grp[g], rows, K, aW, m.g_w1[g].off, c.obj_hid);
@@ -826,7 +945,7 @@ void run(Mode md, const Model& m, const Params& P, const In& in, Out& out, bool 
     dz[(size_t)r * c.A + k] = c.lam_fm * 2.0 * on * d / B;
   }
   lfm /= B;
-  out.ltxt = ltxt; out.lfm = lfm; out.loss = c.lam_txt * ltxt + c.lam_fm * lfm;
+  out.ltxt = ltxt; out.lfm = lfm; out.loss = c.lam_txt * ltxt + c.lam_fm * lfm + (c.mem ? c.lam_rec * out.lrec + c.lam_ex * out.lex : 0.0);
   if (!backward) return;
 
   // ================= 뒤 =================
@@ -1033,7 +1152,7 @@ void run(Mode md, const Model& m, const Params& P, const In& in, Out& out, bool 
   }
   // 열 흩기
   V dvOut((size_t)Rv * H, 0.0), dgOut[N_VG];
-  for (int g = 0; g < N_VG; ++g) dgOut[g].assign((size_t)B * kVGrp[g].n_tok * H, 0.0);
+  for (int g = 0; g < N_VG; ++g) if (m.grp_on(g)) dgOut[g].assign((size_t)B * m.ntok(g) * H, 0.0);
   for (int r = 0; r < R; ++r) {
     const int code = in.src[r], kind = (code >> 28) & 15, idx = code & 0x0fffffff;
     for (int k = 0; k < H; ++k) {
@@ -1043,7 +1162,110 @@ void run(Mode md, const Model& m, const Params& P, const In& in, Out& out, bool 
       else if (kind >= SK_GRP) { dgOut[kind - SK_GRP][(size_t)idx * H + k] = d; gaV[m.g_type[kind - SK_GRP] + k] += d; }
     }
   }
+  if (c.mem) {
+    // 기억 요약 인코더 뒤
+    const double* phim = &phi[(size_t)r0 * H];
+    V dphim((size_t)Rm * H, 0.0), dz((size_t)Rl * H, 0.0);
+    for (int q = 0; q < B * 2; ++q) {
+      const size_t row = ((size_t)(q / 2) * nl + q % 2) * H;
+      for (int k = 0; k < H; ++k) { gaV[m.m_ex + k] += dex[q] * gOut[VG_MEM][row + k]; dgOut[VG_MEM][row + k] += dex[q] * aV[m.m_ex + k]; }
+      gaV[m.m_ex + H] += dex[q];
+    }
+    for (int r = 0; r < Rl; ++r) rms_b(&dgOut[VG_MEM][(size_t)r * H], &mz[(size_t)r * H], H, &aV[m.m_lnout], true, eps, &dz[(size_t)r * H], &gaV[m.m_lnout]);
+    for (int kb = c.mem_blk - 1; kb >= 0; --kb) {
+      const auto& e = m.mb[kb];
+      MS& S = ms[kb];
+      V db = qd(dz);
+      mmdw(db, Rl, H, S.hh, MI, gaW, e.dn.off);
+      V dhh = mmdx(db, Rl, H, aW, e.dn.off, MI);
+      V dgu((size_t)Rl * 2 * MI);
+      for (int r = 0; r < Rl; ++r) for (int i = 0; i < MI; ++i) {
+        const double g = S.gu[(size_t)r * 2 * MI + i], u = S.gu[(size_t)r * 2 * MI + MI + i], d = dhh[(size_t)r * MI + i];
+        dgu[(size_t)r * 2 * MI + i] = d * u * dsilu(g);
+        dgu[(size_t)r * 2 * MI + MI + i] = d * silu(g);
+      }
+      Qv(dgu);
+      mmdw(dgu, Rl, 2 * MI, S.am, H, gaW, e.gu.off);
+      V da = mmdx(dgu, Rl, 2 * MI, aW, e.gu.off, H);
+      for (int r = 0; r < Rl; ++r) rms_b(&da[(size_t)r * H], &S.zs[(size_t)r * H], H, &aV[e.lnm], true, eps, &dz[(size_t)r * H], &gaV[e.lnm]);
+      // 자기 어텐션
+      db = qd(dz);
+      mmdw(db, Rl, H, S.Osb, H, gaW, e.so.off);
+      V dOs = mmdx(db, Rl, H, aW, e.so.off, H);
+      V dqkv((size_t)Rl * 3 * H, 0.0);
+      for (int b = 0; b < B; ++b) {
+        V q((size_t)nl * H), k((size_t)nl * H), v((size_t)nl * H), dq((size_t)nl * H, 0.0), dk2((size_t)nl * H, 0.0), dv2((size_t)nl * H, 0.0);
+        for (int t = 0; t < nl; ++t) for (int d = 0; d < H; ++d) {
+          q[(size_t)t * H + d] = S.QKV[((size_t)b * nl + t) * 3 * H + d];
+          k[(size_t)t * H + d] = S.QKV[((size_t)b * nl + t) * 3 * H + H + d];
+          v[(size_t)t * H + d] = S.QKV[((size_t)b * nl + t) * 3 * H + 2 * H + d];
+        }
+        AttIO a{nl, nl, nh, nh, mhd, [](int, int) { return true; }};
+        att_b(a, q.data(), k.data(), v.data(), S.Ps[b], &dOs[(size_t)b * nl * H], dq.data(), dk2.data(), dv2.data());
+        for (int t = 0; t < nl; ++t) for (int d = 0; d < H; ++d) {
+          dqkv[((size_t)b * nl + t) * 3 * H + d] = dq[(size_t)t * H + d];
+          dqkv[((size_t)b * nl + t) * 3 * H + H + d] = dk2[(size_t)t * H + d];
+          dqkv[((size_t)b * nl + t) * 3 * H + 2 * H + d] = dv2[(size_t)t * H + d];
+        }
+      }
+      Qv(dqkv);
+      mmdw(dqkv, Rl, 3 * H, S.as, H, gaW, e.sqkv.off);
+      da = mmdx(dqkv, Rl, 3 * H, aW, e.sqkv.off, H);
+      for (int r = 0; r < Rl; ++r) rms_b(&da[(size_t)r * H], &S.zx[(size_t)r * H], H, &aV[e.lns], true, eps, &dz[(size_t)r * H], &gaV[e.lns]);
+      // 교차 어텐션
+      db = qd(dz);
+      mmdw(db, Rl, H, S.Ob, H, gaW, e.wo.off);
+      V dO = mmdx(db, Rl, H, aW, e.wo.off, H);
+      V dQ((size_t)Rl * H, 0.0), dKV((size_t)Rm * 2 * H, 0.0);
+      for (int b = 0; b < B; ++b) {
+        const int n = in.mem_n[b];
+        V Kc((size_t)(n + 1) * H), Vc((size_t)(n + 1) * H), dK((size_t)(n + 1) * H, 0.0), dVv((size_t)(n + 1) * H, 0.0);
+        for (int j = 0; j < n; ++j) for (int d = 0; d < H; ++d) { Kc[(size_t)j * H + d] = S.KV[((size_t)b * nmax + j) * 2 * H + d]; Vc[(size_t)j * H + d] = S.KV[((size_t)b * nmax + j) * 2 * H + H + d]; }
+        for (int d = 0; d < H; ++d) { Kc[(size_t)n * H + d] = aV[e.nullkv + d]; Vc[(size_t)n * H + d] = aV[e.nullkv + H + d]; }
+        AttIO a{nl, n + 1, nh, nh, mhd, [](int, int) { return true; }};
+        att_b(a, &S.Q[(size_t)b * nl * H], Kc.data(), Vc.data(), S.Pc[b], &dO[(size_t)b * nl * H], &dQ[(size_t)b * nl * H], dK.data(), dVv.data());
+        for (int j = 0; j < n; ++j) for (int d = 0; d < H; ++d) { dKV[((size_t)b * nmax + j) * 2 * H + d] = dK[(size_t)j * H + d]; dKV[((size_t)b * nmax + j) * 2 * H + H + d] = dVv[(size_t)j * H + d]; }
+        for (int d = 0; d < H; ++d) { gaV[e.nullkv + d] += dK[(size_t)n * H + d]; gaV[e.nullkv + H + d] += dVv[(size_t)n * H + d]; }
+        if (kb == c.mem_blk - 1)
+          for (int r = 0; r < 2; ++r) {
+            const double* dr = &drl[((size_t)b * 2 + r) * (nmax + 1)];
+            for (int j = 0; j <= n; ++j) {
+              if (dr[j] == 0) continue;
+              const double* kk = j == 0 ? &aV[e.nullkv] : &S.KV[((size_t)b * nmax + j - 1) * 2 * H];
+              double* dkk = j == 0 ? &gaV[e.nullkv] : &dKV[((size_t)b * nmax + j - 1) * 2 * H];
+              for (int q = 0; q < H; ++q) {
+                dQ[((size_t)b * nl + r) * H + q] += rcs * dr[j] * kk[q];
+                dkk[q] += rcs * dr[j] * S.Q[((size_t)b * nl + r) * H + q];
+              }
+            }
+          }
+      }
+      Qv(dQ);
+      mmdw(dQ, Rl, H, S.aq, H, gaW, e.wq.off);
+      da = mmdx(dQ, Rl, H, aW, e.wq.off, H);
+      for (int r = 0; r < Rl; ++r) rms_b(&da[(size_t)r * H], &S.zin[(size_t)r * H], H, &aV[e.lnq], true, eps, &dz[(size_t)r * H], &gaV[e.lnq]);
+      Qv(dKV);
+      mmdw(dKV, Rm, 2 * H, S.mk, H, gaW, e.wkv.off);
+      V dmk = mmdx(dKV, Rm, 2 * H, aW, e.wkv.off, H);
+      for (int r = 0; r < Rm; ++r) rms_b(&dmk[(size_t)r * H], phim + (size_t)r * H, H, &aV[e.lnk], true, eps, &dphim[(size_t)r * H], &gaV[e.lnk]);
+    }
+    V dI((size_t)B * H, 0.0);
+    for (int r = 0; r < Rl; ++r) for (int k = 0; k < H; ++k) { gaV[m.m_lat + (r % nl) * H + k] += dz[(size_t)r * H + k]; dI[(size_t)(r / nl) * H + k] += dz[(size_t)r * H + k]; }
+    Qv(dI);
+    mmdw(dI, B, H, in.instr, c.instr_k, gaW, m.m_instr.off);
+    // φ(정밀 + 기억 줄)
+    V dphi = dgOut[VG_OBJ];
+    dphi.insert(dphi.end(), dphim.begin(), dphim.end());
+    for (int r = 0; r < rows_all; ++r) for (int k = 0; k < H; ++k) gaV[m.g_b2 + k] += dphi[(size_t)r * H + k];
+    V dgb = qd(dphi);
+    mmdw(dgb, rows_all, H, gh, c.obj_hid, gaW, m.g_w2.off);
+    V dgh = mmdx(dgb, rows_all, H, aW, m.g_w2.off, c.obj_hid);
+    for (size_t i = 0; i < dgh.size(); ++i) dgh[i] *= dgelu(gh1[i]);
+    Qv(dgh);
+    mmdw(dgh, rows_all, c.obj_hid, Xall, MEM_K, gaW, m.g_w1[VG_OBJ].off);
+  }
   for (int g = 0; g < N_VG; ++g) {
+    if (!m.grp_on(g) || g == VG_MEM || (c.mem && g == VG_OBJ)) continue;
     const int rows = B * kVGrp[g].n_tok, K = kVGrp[g].K;
     V dgb = qd(dgOut[g]);
     if (g == VG_OBJ) {

@@ -79,6 +79,10 @@ struct HB {
   std::vector<float> tw, chunk, cmask;
   uint32_t adim = 0xff;
   long long iter = 5;
+  // 기억 경로(가짜 기억 표 — 환경이 아직 안 만듦)
+  std::vector<uint16_t> mem, instr;
+  std::vector<int> mem_n, meta, tgt, force;
+  std::vector<float> nearv;
   std::vector<void*> dev;
   VBatch vb;
   template <class T> T* up(const std::vector<T>& v) {
@@ -96,6 +100,10 @@ struct HB {
     vb.chunk = up(chunk); vb.cmask = up(cmask);
     vb.adim = up(std::vector<uint32_t>{adim});
     vb.iter = up(std::vector<long long>{iter});
+    if (!mem.empty()) {
+      vb.mem = up(mem); vb.mem_n = up(mem_n); vb.mem_meta = up(meta); vb.mem_near = up(nearv); vb.instr = up(instr);
+      vb.rec_tgt = up(tgt); vb.rec_force = up(force);
+    }
   }
   void set_iter(long long it) { CK(cudaMemcpy((void*)vb.iter, &it, 8, cudaMemcpyHostToDevice)); iter = it; }
   ~HB() { for (void* p : dev) cudaFree(p); }
@@ -111,10 +119,54 @@ static void make_batch(HB& h, const VCfg& c, int B, int Lmin, uint64_t seed, con
   for (auto& x : h.patches) x = net::f2bf(U(g));
   for (int gg = 0; gg < N_VG; ++gg) {
     const auto& d = kVGrp[gg];
+    if (gg == VG_MEM || (c.mem && gg == VG_OBJ) || (c.mem ? gg == VG_ROOM : gg >= VG_RITEM)) continue;
     h.grp[gg].assign((size_t)B * d.n_tok * d.K, 0);
     for (int r = 0; r < B * d.n_tok; ++r) {
       for (int k = 0; k < d.k_real; ++k) h.grp[gg][(size_t)r * d.K + k] = net::f2bf(U(g));
       h.grp[gg][(size_t)r * d.K + d.k_real] = 0x3f80;
+    }
+  }
+  // 가짜 기억 표: 판마다 유효 줄 수(0·가득·중간을 씨앗으로 돌림), 물체 줄(살펴본 정도 3 포함), 표시·가까운 순·정답·끼워 넣기. 방향 칸은 늘 8
+  std::vector<int> nprec(B, 0), nri(B, 0), nfr(B, 0);
+  if (c.mem) {
+    const int nm = c.mem_nmax;
+    h.mem.assign((size_t)B * nm * MEM_K, 0); h.mem_n.resize(B); h.meta.assign((size_t)B * nm, 0); h.nearv.assign((size_t)B * nm, 0.f);
+    h.instr.assign((size_t)B * c.instr_k, 0); h.tgt.resize(B * 2); h.force.resize(B);
+    for (int b = 0; b < B; ++b) {
+      const int sv = (int)((seed + 3 * b) % 4);
+      const int n = sv == 0 ? 0 : sv == 1 ? nm : 1 + (int)(g() % (uint64_t)nm);
+      h.mem_n[b] = n;
+      for (int i = 0; i < n; ++i) {
+        uint16_t* row = &h.mem[((size_t)b * nm + i) * MEM_K];
+        for (int k = 0; k < 289; ++k) row[k] = net::f2bf(U(g));
+        row[289] = 0x3f80;
+        row[MEM_ROOM0 + (int)(g() % 6)] = 0x3f80;
+        for (int k = 0; k < 3; ++k) row[MEM_INSP0 + k] = net::f2bf(U(g));
+        int mt = 0;
+        const uint64_t r = g() % 48;
+        if (r == 0) mt |= MM_HELD;
+        if (r == 1) mt |= MM_GPICK;
+        if (r == 2) mt |= MM_GPLACE;
+        if (r == 3) mt |= MM_HINT;
+        h.meta[(size_t)b * nm + i] = mt;
+        h.nearv[(size_t)b * nm + i] = 0.1f + 10.f * (0.5f + 0.5f * U(g));
+      }
+      for (int k = 0; k < 128; ++k) h.instr[(size_t)b * c.instr_k + k] = net::f2bf(U(g));
+      h.instr[(size_t)b * c.instr_k + 128] = 0x3f80;
+      for (int r = 0; r < 2; ++r) { const int v = (int)(g() % (uint64_t)(n + 2)); h.tgt[b * 2 + r] = v - 2; }   // −2 라벨 없음, −1 없음, 0.. 줄
+      h.force[b] = (int)(g() % 4);
+      nprec[b] = std::min(c.n_prec, n);
+      nri[b] = (int)(g() % (uint64_t)(kVGrp[VG_RITEM].n_tok + 1));
+      nfr[b] = N_SECT;
+      if (B > 2) nri[b] = kVGrp[VG_RITEM].n_tok;   // 실제 크기 bench: 늘 가득(L 상한)
+    }
+    for (auto gg : {VG_RITEM, VG_SECT}) {
+      const auto& d = kVGrp[gg];
+      h.grp[gg].assign((size_t)B * d.n_tok * d.K, 0);
+      for (int r = 0; r < B * d.n_tok; ++r) {
+        for (int k = 0; k < d.k_real; ++k) h.grp[gg][(size_t)r * d.K + k] = net::f2bf(U(g));
+        h.grp[gg][(size_t)r * d.K + d.k_real] = 0x3f80;
+      }
     }
   }
   std::vector<std::vector<int>> seqs(B), kinds(B);
@@ -130,9 +182,17 @@ static void make_batch(HB& h, const VCfg& c, int B, int Lmin, uint64_t seed, con
       txt(ve);
     }
     s.push_back(src_code(SK_GRP + VG_ARM, b)); s.push_back(src_code(SK_GRP + VG_BASE, b)); s.push_back(src_code(SK_GRP + VG_GOAL, b));
-    const int nobj = 2 + (int)((b * 3 + seed) % 6);
-    for (int j = 0; j < nobj; ++j) s.push_back(src_code(SK_GRP + VG_OBJ, b * 16 + j));
-    s.push_back(src_code(SK_GRP + VG_WALL, b)); s.push_back(src_code(SK_GRP + VG_ROOM, b));
+    if (c.mem) {
+      for (int j = 0; j < c.mem_lat; ++j) s.push_back(src_code(SK_GRP + VG_MEM, b * c.mem_lat + j));
+      for (int j = 0; j < nprec[b]; ++j) s.push_back(src_code(SK_GRP + VG_OBJ, b * 16 + j));
+      s.push_back(src_code(SK_GRP + VG_WALL, b));
+      for (int j = 0; j < nri[b]; ++j) s.push_back(src_code(SK_GRP + VG_RITEM, b * kVGrp[VG_RITEM].n_tok + j));
+      for (int j = 0; j < nfr[b]; ++j) s.push_back(src_code(SK_GRP + VG_SECT, b * kVGrp[VG_SECT].n_tok + j));
+    } else {
+      const int nobj = 2 + (int)((b * 3 + seed) % 6);
+      for (int j = 0; j < nobj; ++j) s.push_back(src_code(SK_GRP + VG_OBJ, b * 16 + j));
+      s.push_back(src_code(SK_GRP + VG_WALL, b)); s.push_back(src_code(SK_GRP + VG_ROOM, b));
+    }
     txt(tt ? tt->instr[(b + seed) % tt->instr.size()] : rid(4 + b % 3));
     txt(suf);
     sub0[b] = (int)s.size();
@@ -202,9 +262,23 @@ static std::vector<TRef> tensors(const Model& m) {
   }
   Vv("v.lnf_g", 1, m.v_lnfg, c.vD); Vv("v.lnf_b", 1, m.v_lnfb, c.vD);
   M("v.proj(768->H)", 1, m.v_proj); Vv("v.proj_b", 1, m.v_projb, Q.H);
-  const char* gn[N_VG] = {"arm", "base", "goal", "obj", "wall", "room"};
-  for (int g = 0; g < N_VG; ++g) { M(std::string("g.") + gn[g] + ".w1", 1, m.g_w1[g]); Vv(std::string("g.") + gn[g] + ".type", 1, m.g_type[g], Q.H); }
+  const char* gn[N_VG] = {"arm", "base", "goal", "obj", "wall", "room", "ritem", "sect", "mem"};
+  for (int g = 0; g < N_VG; ++g) {
+    if (!m.grp_on(g)) continue;
+    if (g != VG_MEM) M(std::string("g.") + gn[g] + ".w1", 1, m.g_w1[g]);
+    Vv(std::string("g.") + gn[g] + ".type", 1, m.g_type[g], Q.H);
+  }
   M("g.obj.w2", 1, m.g_w2); Vv("g.obj.b2", 1, m.g_b2, Q.H);
+  if (c.mem) {
+    Vv("m.lat", 1, m.m_lat, (long long)c.mem_lat * Q.H); M("m.instr", 1, m.m_instr); Vv("m.lnout", 1, m.m_lnout, Q.H);
+    Vv("m.exists_head", 1, m.m_ex, Q.H + 1);
+    for (size_t k = 0; k < m.mb.size(); ++k) {
+      const auto& b = m.mb[k];
+      const std::string p = "m.B" + std::to_string(k) + ".";
+      Vv(p + "lnq", 1, b.lnq, Q.H); Vv(p + "lnk", 1, b.lnk, Q.H); Vv(p + "null_kv", 1, b.nullkv, 2 * Q.H); Vv(p + "lns", 1, b.lns, Q.H); Vv(p + "lnm", 1, b.lnm, Q.H);
+      M(p + "wq", 1, b.wq); M(p + "wkv", 1, b.wkv); M(p + "wo", 1, b.wo); M(p + "self_qkv", 1, b.sqkv); M(p + "self_o", 1, b.so); M(p + "gu", 1, b.gu); M(p + "dn", 1, b.dn);
+    }
+  }
   M("e.in", 1, m.e_in);
   for (size_t f = 0; f < m.eb.size(); ++f) {
     const auto& e = m.eb[f];
@@ -229,7 +303,52 @@ struct V5Res { int pass = 0, tot = 0; double worst_ratio = 0; };
 // 바닥 하나는 반올림 잡음의 한 표본이라 묶음(입력)에 따라 크게 흔들린다(같은 뿌리를 가진 텐서 무리 — 지도 인코더 g.*, 영상 ln1 — 가 함께 2 배를 넘나듦).
 // 그래서 묶음 V5_NB 개(씨앗 11, 12, …)의 오차·바닥을 각각 제곱 평균 제곱근으로 모은 뒤 같은 2 배 규칙을 쓴다(검사 수는 그대로). 유한 차분은 첫 묶음에서.
 static int g_v5seed = 11, g_v5nb = 4;
-struct V5One { std::vector<std::string> nm; std::vector<double> eg, ef, ge; double fdw = 0; std::string fdn; int nfd = 0; };
+static bool g_mem = false;   // --mem: 기억 요약 인코더 경로(tiny_vcfg_mem)
+static VCfg tiny_cfg_sel() { return g_mem ? tiny_vcfg_mem() : tiny_vcfg(); }
+// 정밀 칸 고르기의 따로 짠 CPU 판(GPU mem_sel_k 와 같은 규칙, 같은 로짓 입력): 고른 줄 번호와 만든 줄 바이트를 비교한다.
+// neg = true 면 검색 상위를 빼고 가까운 순을 거꾸로(음성 대조 — 달라야 함)
+static void cpu_select(const HB& h, const VCfg& c, const std::vector<float>& rlog, int b, bool neg, std::vector<int>& sel, std::vector<uint16_t>& rows) {
+  const int nm = c.mem_nmax, n = h.mem_n[b], want = std::min(c.n_prec, n);
+  std::vector<int> si, sf;
+  auto add = [&](int i, int f) {
+    if (i < 0 || i >= n) return;
+    for (size_t k = 0; k < si.size(); ++k) if (si[k] == i) { sf[k] |= f; return; }
+    if ((int)si.size() >= want) return;
+    si.push_back(i); sf.push_back(f);
+  };
+  const int* mt = &h.meta[(size_t)b * nm];
+  for (int i = 0; i < n; ++i) if (mt[i] & MM_HELD) add(i, 0);
+  for (int i = 0; i < n; ++i) if (mt[i] & (MM_GPICK | MM_GPLACE)) add(i, 0);
+  for (int i = 0; i < n; ++i) if (mt[i] & MM_HINT) add(i, 0);
+  if (h.force[b] & 1) add(h.tgt[2 * b], 1);
+  if (h.force[b] & 2) add(h.tgt[2 * b + 1], 2);
+  int top[2][2];
+  for (int r = 0; r < 2; ++r) {
+    std::vector<int> ord(n);
+    for (int i = 0; i < n; ++i) ord[i] = i;
+    const float* l = &rlog[((size_t)b * 2 + r) * (nm + 1) + 1];
+    std::stable_sort(ord.begin(), ord.end(), [&](int a, int bb) { return l[a] > l[bb]; });
+    top[r][0] = n > 0 ? ord[0] : -1; top[r][1] = n > 1 ? ord[1] : -1;
+  }
+  auto addr = [&](int r, int i) { if (i >= 0 && rlog[((size_t)b * 2 + r) * (nm + 1) + 1 + i] > rlog[((size_t)b * 2 + r) * (nm + 1)]) add(i, r + 1); };
+  if (!neg) { addr(0, top[0][0]); addr(1, top[1][0]); addr(0, top[0][1]); addr(1, top[1][1]); }
+  {
+    std::vector<int> ord;
+    for (int i = 0; i < n; ++i) ord.push_back(i);
+    std::stable_sort(ord.begin(), ord.end(), [&](int a, int bb) { const float x = h.nearv[(size_t)b * nm + a], y = h.nearv[(size_t)b * nm + bb]; return neg ? x > y : x < y; });
+    for (int i : ord) add(i, 0);
+  }
+  sel.assign(c.n_prec, -1);
+  rows.assign((size_t)16 * MEM_K, 0);
+  for (size_t k = 0; k < si.size(); ++k) {
+    sel[k] = si[k];
+    for (int q = 0; q < MEM_K; ++q) rows[k * MEM_K + q] = h.mem[((size_t)b * nm + si[k]) * MEM_K + q];
+    rows[k * MEM_K + MEM_HINT] = (mt[si[k]] & MM_HINT) ? 0x3f80 : 0;
+    rows[k * MEM_K + MEM_SELP] = (sf[k] & 1) ? 0x3f80 : 0;
+    rows[k * MEM_K + MEM_SELQ] = (sf[k] & 2) ? 0x3f80 : 0;
+  }
+}
+struct V5One { std::vector<std::string> nm; std::vector<double> eg, ef, ge; double fdw = 0; std::string fdn; int nfd = 0; size_t seldiff = 0, selneg = 0, nsel = 0; };
 static V5One run_v5_one(Model& m, const VCfg& c, bool frozen, uint64_t seed, bool fd) {
   V5One r;
   HB h;
@@ -249,6 +368,23 @@ static V5One run_v5_one(Model& m, const VCfg& c, bool frozen, uint64_t seed, boo
   in.u = tod(down(m.flow_u(), (size_t)RA * c.A));
   in.cmask = tod(h.cmask);
   in.adim = h.adim;
+  if (c.mem) {
+    in.mem = tod(h.mem); in.instr = tod(h.instr); in.mem_n = h.mem_n; in.rec_tgt = h.tgt;
+    in.prec = tod(down(m.phin, (size_t)h.B * 16 * MEM_K));
+    // 고르기: GPU 결과 == 따로 짠 CPU 고르기(같은 GPU 로짓으로), 음성 대조(가까운 순 거꾸로)는 달라야 함
+    const auto rl = down(m.rlog, (size_t)h.B * 2 * (c.mem_nmax + 1));
+    const auto sg = down(m.sel, (size_t)h.B * c.n_prec);
+    const auto pg = down(m.phin, (size_t)h.B * 16 * MEM_K);
+    for (int b = 0; b < h.B; ++b) {
+      std::vector<int> sc, sn;
+      std::vector<uint16_t> rc, rn;
+      cpu_select(h, c, rl, b, false, sc, rc);
+      cpu_select(h, c, rl, b, true, sn, rn);
+      for (int k = 0; k < c.n_prec; ++k) { r.seldiff += sc[k] != sg[(size_t)b * c.n_prec + k]; r.selneg += sn[k] != sg[(size_t)b * c.n_prec + k]; }
+      for (size_t q = 0; q < rc.size(); ++q) r.seldiff += rc[q] != pg[(size_t)b * 16 * MEM_K + q];
+      r.nsel += c.n_prec + rc.size();
+    }
+  }
   vref::Out o64, oem;
   vref::run(vref::FP64, m, P, in, o64, true);
   vref::run(vref::EMUL, m, P, in, oem, true);
@@ -260,6 +396,18 @@ static V5One run_v5_one(Model& m, const VCfg& c, bool frozen, uint64_t seed, boo
   sc("loss total", lossg[0], o64.loss, oem.loss);
   sc("loss text CE", lossg[1], o64.ltxt, oem.ltxt);
   sc("loss flow", lossg[2], o64.lfm, oem.lfm);
+  if (c.mem) {
+    const auto l5 = down(m.loss, 5);
+    sc("loss retrieval InfoNCE", l5[3], o64.lrec, oem.lrec);
+    sc("loss exists-in-memory BCE", l5[4], o64.lex, oem.lex);
+    const auto rl = tod(down(m.rlog, (size_t)h.B * 2 * (c.mem_nmax + 1)));
+    vref::V a, f, e;
+    for (size_t i = 0; i < rl.size(); ++i) if (o64.rlog[i] > -1e29) { a.push_back(rl[i]); f.push_back(o64.rlog[i]); e.push_back(oem.rlog[i]); }
+    if (!a.empty()) put("fwd retrieval logits", rel(a, f, 0, a.size()), rel(e, f, 0, a.size()), rel(a, e, 0, a.size()));
+    const size_t nt = (size_t)h.B * c.mem_lat * c.q.H;
+    const auto mt = tod(down(m.w_memtok(), nt));
+    put("fwd memory tokens", rel(mt, o64.memtok, 0, nt), rel(oem.memtok, o64.memtok, 0, nt), rel(mt, oem.memtok, 0, nt));
+  }
   {
     const auto hg = tod(down(m.hidden, (size_t)h.B * h.L * c.q.H));
     double e = 0, f = 0, z = 0, x = 0;
@@ -304,7 +452,7 @@ static V5One run_v5_one(Model& m, const VCfg& c, bool frozen, uint64_t seed, boo
   return r;
 }
 static V5Res run_v5(bool ki0, bool frozen, int bug, bool fd, bool verbose) {
-  VCfg c = tiny_vcfg();
+  VCfg c = tiny_cfg_sel();
   c.ki = !ki0;
   c.vis_train = !frozen;
   Model m;
@@ -330,6 +478,13 @@ static V5Res run_v5(bool ki0, bool frozen, int bug, bool fd, bool verbose) {
     if (!ok && rs[0].nm[i].rfind("grad", 0) == 0) ++tfail;
     if (verbose) std::printf("  %-27s err %.2e  floor %.2e  ratio %5.2f  GPU-EMUL %.2e %s\n", rs[0].nm[i].c_str(), eg, ef, eg / std::max(ef, 1e-12), ge, ok ? "" : "FAIL");
   }
+  if (c.mem) {
+    size_t d = 0, dn = 0, n = 0;
+    for (auto& x : rs) { d += x.seldiff; dn += x.selneg; n += x.nsel; }
+    const bool ok = d == 0 && dn > 0;
+    if (verbose) std::printf("  precise-slot selection GPU vs separate CPU selection (same logits): %zu / %zu differ; negative (no retrieval top, nearest reversed): %zu differ %s\n", d, n, dn, ok ? "" : "FAIL");
+    res.pass += ok; res.tot++;
+  }
   if (fd) {
     const bool ok = rs[0].fdw < 1e-4;
     std::printf("  FD (FP64 ref vs central differences, batch seed %d, %d params, h = 2e-5%s): worst rel err %.2e (%s) %s\n", g_v5seed, rs[0].nfd,
@@ -347,8 +502,8 @@ static V5Res run_v5(bool ki0, bool frozen, int bug, bool fd, bool verbose) {
 
 // ---- V6·V7 ----
 static int run_v67(bool real, int B, int Lmin) {
-  VCfg c = real ? VCfg() : tiny_vcfg();
-  if (real) { c.Bmax = B; c.Lmax = std::max(Lmin, 240); c.Mtmax = B * 16; }
+  VCfg c = real ? VCfg() : tiny_cfg_sel();
+  if (real) { c.Bmax = B; c.Lmax = std::max(Lmin, 240) + (g_mem ? 64 : 0); c.Mtmax = B * 16; c.mem = g_mem; }
   Model m;
   std::string err;
   if (!m.init(c, real ? QDIR() : "", real ? sig_path() : "", &err)) { std::fprintf(stderr, "init %s\n", err.c_str()); return 2; }
@@ -771,7 +926,8 @@ static size_t used_bytes() { size_t f, t; cudaMemGetInfo(&f, &t); return t - f; 
 static int run_bench(int B, int Lmin, bool novis, bool fp32opt, int steps, bool smoke) {
   const size_t base = used_bytes();
   VCfg c;
-  c.Bmax = B; c.Lmax = std::max(Lmin, 64); c.Mtmax = B * 16;
+  c.Bmax = B; c.Lmax = std::max(Lmin, 64) + (g_mem ? 64 : 0); c.Mtmax = B * 16;
+  c.mem = g_mem;
   c.vis_train = !novis;
   Model m;
   std::string err;
@@ -837,21 +993,25 @@ int main(int argc, char** argv) {
     if (std::string(argv[i]) == "--seed") g_v5seed = std::atoi(argv[i + 1]);
     if (std::string(argv[i]) == "--nb") g_v5nb = std::atoi(argv[i + 1]);
   }
+  g_mem = has("--mem");
   if (cmd == "v5") {
     V5Res r = run_v5(has("--ki0"), has("--frozen-vis"), 0, true, true);
     return r.pass == r.tot ? 0 : 1;
   }
   if (cmd == "neg") {
-    const char* nm[] = {"", "SwiGLU silu' dropped", "RoPE forward instead of transpose", "DeltaNet dS decay dropped", "CE softmax dropped", "attention bwd scale dropped"};
+    const char* nm[] = {"", "SwiGLU silu' dropped", "RoPE forward instead of transpose", "DeltaNet dS decay dropped", "CE softmax dropped", "attention bwd scale dropped",
+                        "memory null key grad dropped", "retrieval InfoNCE key-side grad dropped", "instruction-conditioning grad only from latent 0",
+                        "exists head grad not passed to memory tokens"};
     int caught = 0;
-    for (int b = 1; b <= 5; ++b) {
+    const int nbug = g_mem ? 9 : 5;
+    for (int b = 1; b <= nbug; ++b) {
       V5Res r = run_v5(false, false, b, false, false);
       const bool c = r.pass < r.tot;
       caught += c;
       std::printf("negative %d (%s): %d / %d checks fail -> %s\n", b, nm[b], r.tot - r.pass, r.tot, c ? "caught" : "NOT caught");
     }
-    std::printf("[neg] caught %d / 5\n", caught);
-    return caught == 5 ? 0 : 1;
+    std::printf("[neg] caught %d / %d\n", caught, nbug);
+    return caught == nbug ? 0 : 1;
   }
   if (cmd == "v67") {
     const bool real = has("real");

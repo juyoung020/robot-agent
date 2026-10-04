@@ -19,10 +19,15 @@ struct In {
   V ain, u, cmask;           // GPU 가 만든 flow 입력(bf16 값)·목표·가림
   uint32_t adim = 0xff;
   const std::vector<V>* kvfix = nullptr;   // 지식 격리 유한 차분: 전문가가 보는 prefix K·V 를 이 값으로 고정(= stop-gradient 의 뜻)
+  // 기억 경로(mem): 기억 줄 [B·nmax][304], 유효 수, 지시 벡터 [B][instr_k], 검색 정답 [B·2], GPU 가 고르고 만든 정밀 칸 줄 [B·16][304]
+  // (고르기는 이산이라 참조판은 GPU 의 고른 결과를 입력으로 받는다 — 고르기 자체는 vla_verify 의 따로 짠 CPU 고르기와 비트 비교)
+  V mem, instr, prec;
+  std::vector<int> mem_n, rec_tgt;
 };
 struct Params { V qW, qV, aW, aV; };
 struct Out {
-  double loss = 0, ltxt = 0, lfm = 0;
+  double loss = 0, ltxt = 0, lfm = 0, lrec = 0, lex = 0;
+  V rlog, memtok;            // 검색 로짓 [B·2][nmax + 1](유효 밖 −1e30), 기억 토큰 [B·lat][H]
   V hidden, vel;
   std::vector<V> Kf, Vf;     // 풀 층 prefix K·V(RoPE 뒤)
   Params g;                  // 기울기(변수와 같은 배치)
