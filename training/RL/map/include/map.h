@@ -26,6 +26,11 @@
 #ifndef P_GHOST_V
 #define P_GHOST_V 1.0f
 #endif
+// 잡음 끄기(map_cmp 의 진짜 scenemap 비교용, -DMAP_NOISE_V=0): 오도메트리 치우침·걸음 잡음, 놓침, 틀린 이름, 유령, 깊이·옆·크기 잡음을
+// 모두 끈다. 기본 1 = 지금 모형 그대로(비트 같음)
+#ifndef MAP_NOISE_V
+#define MAP_NOISE_V 1
+#endif
 
 
 namespace gmap {
@@ -107,6 +112,7 @@ struct MP {
   // ---- (가정) ----
   static constexpr int img_w = 640, img_h = 400;                 // 깊이 영상 640×400 (Dabai 데이터시트), 정사각 화소(가정: 세로 FOV 45.6°, 사양 45.3°)
   static constexpr float wall_h = 2.5f;                          // 벽 높이(가정)
+  static constexpr bool noise = MAP_NOISE_V != 0;                // 잡음 켬(기본). 0 이면 위 잡음·실수가 모두 꺼짐(map_cmp 비교용)
   static constexpr int min_hits = 5;                             // 맞추기 최소 맞은 줄 (가정: min_inliers 50 / 720 칸 × 64 줄 ≈ 5)
   static constexpr float cup_h = 2.f * env::K::tgt_z;            // 컵 높이 0.10 m (가정: tgt_z 를 중심 높이로 봄)
 };
@@ -351,9 +357,9 @@ DEV void reset_core(MapCore& m, const EnvView& e) {
   }
   make_scene(m, e);
   // 이 판의 오도메트리 치우침(판 안에서 고정): 이동 배율, 회전 배율, 직진 중 yaw 표류
-  m.bt = gauss(m.rng) * MP::odo_bt;
-  m.br = gauss(m.rng) * MP::odo_br;
-  m.bw = gauss(m.rng) * MP::odo_bw;
+  m.bt = (MP::noise ? gauss(m.rng) : 0.f) * MP::odo_bt;
+  m.br = (MP::noise ? gauss(m.rng) : 0.f) * MP::odo_br;
+  m.bw = (MP::noise ? gauss(m.rng) : 0.f) * MP::odo_bw;
   // 유령 자리: 방 안 아무 데나, 높이·크기·이름은 예전 가짜 물체와 같은 범위(가정)
   for (int g = 0; g < MP::n_ghost; ++g) {
     Ghost& G = m.ghost[g];
@@ -388,7 +394,7 @@ DEV int phase_begin(MapCore& m, const EnvView& e, int force_kf) {
     const float dxb = c0 * dxw + s0 * dyw, dyb = -s0 * dxw + c0 * dyw;
     const float dth = wrap_pi(e.yaw - m.pyaw);
     const float dist = sqrtf(dxb * dxb + dyb * dyb);
-    const float n1 = gauss(m.rng), n2 = gauss(m.rng), n3 = gauss(m.rng);
+    const float n1 = MP::noise ? gauss(m.rng) : 0.f, n2 = MP::noise ? gauss(m.rng) : 0.f, n3 = MP::noise ? gauss(m.rng) : 0.f;
     const float sx = MP::odo_t * dist, st = 1.f + m.bt;
     const float nxb = dxb * st + n1 * sx, nyb = dyb * st + n2 * sx;
     const float nth = dth * (1.f + m.br) + m.bw * dist + n3 * (MP::odo_rr * absf(dth) + MP::odo_rt * dist);
@@ -555,7 +561,7 @@ DEV float p_miss_at(float d) { return d < MP::miss_d1 ? MP::p_miss_near : d < MP
 // 검출 하나를 지도에: 참 몸 좌표의 앞·옆·위(fwd, left, up, 수평 거리 rh)에 깊이·옆·높이 잡음을 넣고, 본 순간의 믿는 자세로 세계에 놓는다
 DEV void put_det(Det& D, uint64_t& rng, float fwd, float left, float up, float rh, const float ext[3], float o2, float ex, float ey, float ec, float es) {
   const float sig_d = MP::dn0 + MP::dn2 * fwd * fwd;
-  const float gd = gauss(rng) * sig_d, gl = gauss(rng) * MP::lat_n, gz = gauss(rng) * MP::lat_n;
+  const float gd = (MP::noise ? gauss(rng) : 0.f) * sig_d, gl = (MP::noise ? gauss(rng) : 0.f) * MP::lat_n, gz = (MP::noise ? gauss(rng) : 0.f) * MP::lat_n;
   // 몸 좌표의 수평 시선 단위(fwd, left)/rh 와 그 수직
   const float bu = fwd / rh, bv = left / rh;
   const float f2 = fwd + bu * gd - bv * gl, l2 = left + bv * gd + bu * gl;
@@ -563,7 +569,7 @@ DEV void put_det(Det& D, uint64_t& rng, float fwd, float left, float up, float r
   D.pos[0] = ex + (ec * bx - es * by);
   D.pos[1] = ey + (es * bx + ec * by);
   D.pos[2] = o2 + up + gz;
-  for (int a = 0; a < 3; ++a) D.ext[a] = maxf(0.01f, ext[a] + gauss(rng) * MP::ext_n);
+  for (int a = 0; a < 3; ++a) D.ext[a] = maxf(0.01f, ext[a] + (MP::noise ? gauss(rng) : 0.f) * MP::ext_n);
 }
 
 // 3a·3b(스레드 0): 자세 보정, 검출(난수 순서 그대로), 유령 자리
@@ -593,11 +599,11 @@ DEV void obj_detect(MapCore& m, Scratch& sh, const EnvView& e, int nt) {
     for (int q = 0; q < NPT; ++q) nv += (int)((sh.vism[p] >> q) & 1u);
     if (nv == 0) continue;
     if (g.af * ((float)nv / (float)NPT) < (float)MP::min_points) continue;   // 깊이 점 수(간격 1)
-    if (rand01(rng) < p_miss_at(sqrtf(g.rh * g.rh + g.up * g.up))) continue;
+    if (MP::noise && rand01(rng) < p_miss_at(sqrtf(g.rh * g.rh + g.up * g.up))) continue;
     Det& D = sh.det[nd++];
     put_det(D, rng, g.fwd, g.left, g.up, g.rh, g.ext, o2, ex, ey, ec, es);
     int cls = m.prim[p].cls;
-    if (rand01(rng) < MP::p_conf) cls = (cls + 1 + (int)(rand01(rng) * (float)(NCLS - 1))) % NCLS;
+    if (MP::noise && rand01(rng) < MP::p_conf) cls = (cls + 1 + (int)(rand01(rng) * (float)(NCLS - 1))) % NCLS;
     D.cls = cls;
     D.score = 0.9f;
   }
@@ -605,7 +611,7 @@ DEV void obj_detect(MapCore& m, Scratch& sh, const EnvView& e, int nt) {
   const Cam k = cam_consts();
   const float c = sh.tc, s = sh.ts;
   int nfp = 0;
-  for (int gi = 0; gi < MP::n_ghost; ++gi) {
+  for (int gi = 0; gi < (MP::noise ? MP::n_ghost : 0); ++gi) {
     const Ghost& G = m.ghost[gi];
     const float rx = G.pos[0] - sh.to[0], ry = G.pos[1] - sh.to[1], up = G.pos[2] - o2;
     const float fwd = c * rx + s * ry, left = -s * rx + c * ry;
