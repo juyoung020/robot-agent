@@ -1,6 +1,6 @@
 # BC — 모방학습 (VLA 증류)
 
-RL 전문가가 시뮬에서 성공한 궤적(영상, state, 지도 토큰, 행동)과 자연어 단계 지시로 Qwen 기반 VLA를 학습한다. 몸통(Qwen3.5-2B + 자체 비전 타워)은 얼리고 flow matching 액션 전문가와 지도 토큰 인코더를 학습한다. C++/CUDA/Rust 네이티브만 쓴다(PyTorch·JAX 등 프레임워크와 Python 학습·추론 코드 금지. 층별 정확성 검증용 오프라인 기준값 덤프만 예외).
+RL 전문가가 시뮬에서 성공한 궤적(영상, state, 지도 토큰, 행동)과 자연어 단계 지시로 작은 VLA 를 학습한다. 지금 학생 = 얼린 SigLIP 2 B/32-256 영상 탑(우리 C++/CUDA, 패치 토큰) + 토큰마다 트랜스포머 6 층(변수 9.2M, `arch: 1`) + flow matching 행동 전문가. Qwen 몸통을 쓰는 큰 모델(G7)은 아직 없고 사양은 [MAPVLA_SPEC.md](../../docs/map_vla/MAPVLA_SPEC.md). C++/CUDA/Rust 네이티브만 쓴다(PyTorch·JAX 등 프레임워크와 Python 학습·추론 코드 금지. 층별 정확성 검증용 오프라인 기준값 덤프만 예외).
 
 ## v2 — VLA_INPUT 1–7절에 맞춤(2026-10-04): 토큰마다 학생, 행동 8, 얼린 128-d 표, 흔들기, 렌더 흔들기
 
