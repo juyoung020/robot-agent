@@ -66,7 +66,56 @@ struct Obs {
   float score;
   double pos[3], ext[3], lo[3], hi[3];
   int n;
+  // A′
+  const float* z = nullptr;       // SigLIP 임베딩(검출 k)
+  double kappa = 0;               // vMF 집중도(viewKappa)
+  bool wall_like = false;         // 벽 선 위 세운 얇은 평면(작아서 구조물로 안 버린 것)
+  bool sec = false;               // 같은 물체에 붙은 이번 영상의 다른 조각(첫 조각에 합쳐 갱신 — 짝·모습만)
+  double ps = -1;                 // 이 조각의 (지울) 구조물 확률(라벨 위 p(c|z) 의 벽·바닥·천장 … 합, 임베딩 없으면 −1)
+  double pso = 0;                 // 이 조각의 구조 물체(문·창·계단) 확률
+  int top_lab = -1;               // 이 조각 하나의 가장 그럴듯한 라벨·확률(이름 충돌 막기)
+  double top_p = 0;
 };
+
+// 점 p(xy)와 선분 사이 수평 거리
+double segDist(double px, double py, const double* s) {
+  const double ax = s[0], ay = s[1], bx = s[2], by = s[3];
+  const double dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+  double u = l2 > 1e-12 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0.0;
+  u = std::clamp(u, 0.0, 1.0);
+  return std::hypot(px - ax - u * dx, py - ay - u * dy);
+}
+
+// A′ 같은 것 특징(a = 관측 또는 작은 쪽 물체, b = 물체): a 의 점 표본 중 b 접촉 칸에 닿는 비율, 상자 틈, 중심 거리/크기, cos, 겹침, 받침
+ApPair pairFeatures(const double alo[3], const double ahi[3], const double apos[3], const float* apts, int na, const double blo[3],
+                    const double bhi[3], const double bpos[3], const std::vector<uint64_t>& bidx, double cos, const ApParams& P,
+                    bool merge = false) {
+  ApPair q;
+  q.f[0] = apContact(apts, na, bidx, P.contact_cell);
+  double g2 = 0;
+  for (int k = 0; k < 3; ++k) {
+    const double g = std::max({0.0, alo[k] - bhi[k], blo[k] - ahi[k]});
+    g2 += g * g;
+  }
+  q.f[1] = std::sqrt(g2);
+  const double ea = std::max({ahi[0] - alo[0], ahi[1] - alo[1], ahi[2] - alo[2]});
+  const double eb = std::max({bhi[0] - blo[0], bhi[1] - blo[1], bhi[2] - blo[2]});
+  q.f[2] = dist3(apos, bpos) / (0.5 * (ea + eb) + 0.05);
+  q.f[3] = cos > -1.5 ? cos - P.cos0 : 0.0;
+  q.f[4] = da::boxOverlap(alo, ahi, blo, bhi, 0.05);
+  // 받침: 작은 것이 큰 것 윗면에 놓임(컵·탁자) — 같은 물체가 아님
+  const bool a_small = ea < eb;
+  const double *slo = a_small ? alo : blo, *shi = a_small ? ahi : bhi, *llo = a_small ? blo : alo, *lhi = a_small ? bhi : ahi;
+  const double es = std::min(ea, eb), el = std::max(ea, eb);
+  if (es < 0.6 * el) {
+    const double cx = 0.5 * (slo[0] + shi[0]), cy = 0.5 * (slo[1] + shi[1]);
+    const bool inside = cx > llo[0] - 0.05 && cx < lhi[0] + 0.05 && cy > llo[1] - 0.05 && cy < lhi[1] + 0.05;
+    if (inside && std::fabs(slo[2] - lhi[2]) < 0.08) q.f[5] = 1.0;
+  }
+  q.logit = apLogit(q, P, merge);
+  q.p = 1.0 / (1.0 + std::exp(-q.logit));
+  return q;
+}
 
 }  // namespace
 
@@ -117,7 +166,21 @@ void ObjectMap::envOverrides(ObjParams* p) {
                     {"da_min", &p->da_min, nullptr, nullptr},            {"da_k", &p->da_k, nullptr, nullptr},
                     {"merge_overlap", &p->merge_overlap, nullptr, nullptr},
                     {"grasp_check", nullptr, nullptr, &p->grasp_check},  {"self_pad", &p->self_pad, nullptr, nullptr},
-                    {"self_mask", nullptr, nullptr, &p->self_mask}};
+                    {"self_mask", nullptr, nullptr, &p->self_mask},
+                    // A′(objprob.hpp ApParams — 앞에 ap_)
+                    {"aprime", nullptr, nullptr, &p->aprime},  {"ap_name_struct_skip", nullptr, nullptr, &p->ap_name_struct_skip},
+                    {"ap_same_p", &p->ap.same_p, nullptr, nullptr},  {"ap_merge_p", &p->ap.merge_p, nullptr, nullptr},
+                    {"ap_gate", &p->ap.gate, nullptr, nullptr},  {"ap_name_tau", &p->ap.name_tau, nullptr, nullptr},
+                    {"ap_name_wmax", &p->ap.name_wmax, nullptr, nullptr},  {"ap_size_w", &p->ap.size_w, nullptr, nullptr},
+                    {"ap_kappa_ref", &p->ap.kappa_ref, nullptr, nullptr},  {"ap_temper", &p->ap.temper, nullptr, nullptr},
+                    {"ap_wall_big", &p->ap.wall_big, nullptr, nullptr},  {"ap_struct_p", &p->ap.struct_p, nullptr, nullptr},
+                    {"ap_ceil_z", &p->ap.ceil_z, nullptr, nullptr},  {"ap_struct_obj_p", &p->ap.struct_obj_p, nullptr, nullptr},
+                    {"ap_obj_wall_span", &p->ap.obj_wall_span, nullptr, nullptr},  {"ap_obj_wall_top", &p->ap.obj_wall_top, nullptr, nullptr},
+                    {"ap_reenc_max", nullptr, &p->ap.reenc_max, nullptr},  {"ap_reenc_gain", &p->ap.reenc_gain, nullptr, nullptr},
+                    {"ap_link_cos", &p->ap.link_cos, nullptr, nullptr},  {"ap_whole_w", &p->ap.whole_w, nullptr, nullptr},
+                    {"ap_export_named", nullptr, nullptr, &p->ap.export_named},  {"ap_guard_obj", &p->ap.guard_obj, nullptr, nullptr},
+                    {"ap_guard_obs", &p->ap.guard_obs, nullptr, nullptr},  {"ap_geo_w", &p->ap.geo_w, nullptr, nullptr},
+                    {"ap_name_veto", &p->ap.name_veto, nullptr, nullptr},  {"ap_through_d", &p->ap.through_d, nullptr, nullptr},  {"ap_bridge_max", &p->ap.bridge_max, nullptr, nullptr},  {"ap_frame_group", nullptr, nullptr, &p->ap.frame_group},  {"ap_struct_obj_min_views", nullptr, &p->ap.struct_obj_min_views, nullptr}};
   std::string s(e);
   size_t a = 0;
   while (a < s.size()) {
@@ -173,7 +236,7 @@ bool ObjectMap::nameOk(const MapObject& m, int cls) const {
 }
 
 bool ObjectMap::isBig(const MapObject& m) const {
-  return kindOf(m.cls) == kKindStatic || std::max({m.hi[0] - m.lo[0], m.hi[1] - m.lo[1], m.hi[2] - m.lo[2]}) > p_.big;
+  return kindOf(m.cls) == kKindStatic || kindOf(m.cls) == kKindStructObj || std::max({m.hi[0] - m.lo[0], m.hi[1] - m.lo[1], m.hi[2] - m.lo[2]}) > p_.big;
 }
 
 namespace {
@@ -293,7 +356,10 @@ void ObjectMap::relink(double t) {
     if (t - n.first_seen > p_.link_window_s) continue;   // 오래 자리 잡은 새 물체는 더 잇지 않음
     for (const MapObject& m : objs_) {
       if (&m == &n || m.state != SM_GONE || !m.confirmed || m.held_by >= 0 || (!m.moved && int(m.n_obs) < p_.spurious_obs)) continue;
-      if (m.cls != n.cls && !(p_.name_vote && (nameShare(m, n.cls) >= p_.name_share || nameShare(n, m.cls) >= p_.name_share))) continue;
+      if (p_.aprime && m.ap && n.ap) {   // A′: 이름 대신 임베딩(μ 끼리 가장 잘 맞는 cos)
+        std::vector<float> mu;
+        if (!apMu(*n.ap, &mu) || apCosMax(*m.ap, mu.data(), int(mu.size())) < p_.ap.link_cos) continue;
+      } else if (m.cls != n.cls && !(p_.name_vote && (nameShare(m, n.cls) >= p_.name_share || nameShare(n, m.cls) >= p_.name_share))) continue;
       if (!(n.first_seen > m.last_seen)) continue;   // 둘이 같이 있던 적이 있으면 다른 물체
       const double d = dist3(n.pos, m.pos);
       if (d > std::min(p_.link_max_d, p_.link_d0 + p_.link_v * (n.first_seen - m.last_seen))) continue;
@@ -510,6 +576,79 @@ void ObjectMap::update(const ObjFrame& f) {
     last_cam_t_ = f.stamp;
   }
   const bool cam_steady = cam_w <= p_.move_max_cam_w;
+  cam_w_ = cam_w;
+  const bool ap = p_.aprime;
+  // A′: 지난 keyframe 들의 구름이 쌓인 뒤 물체끼리 같은 것 판정(이름 없이) — 합친 물체를 이번 관측이 바로 받게 먼저
+  if (ap) {
+    if (f.wall_segs) wsegs_.assign(f.wall_segs, f.wall_segs + 4 * f.n_wall_segs);
+    apMergePass(f.stamp);
+  }
+  const double cam6[6] = {T[3], T[7], T[11], T[2], T[6], T[10]};
+  // A′ 기하 구조물: 관측 점(복셀 후보)의 평면 맞춤 — 얇은 수평면이 천장 높이(ceil_z) 위면 천장, 바닥 높이면 바닥,
+  // 얇은 세운 평면의 점 wall_frac 이상이 벽 선분 wall_d 안이면 벽 선 위 평면: 크면(wall_big) 벽, 작으면 이 조각 하나의
+  // 구조물(벽·문·창 …) 확률이 struct_p 이상일 때만 벽(벽에 건 액자·간판은 남김) — 남긴 것은 wall_like(벽 추출에서 자리를 안 지움)
+  std::vector<uint8_t> smask, omask;   // 라벨이 지울 구조물(벽·바닥·천장 …) / 구조 물체(문·창·계단)
+  if (ap) {
+    smask.assign(size_t(std::max(0, text_.n_labels)), 0);
+    omask.assign(size_t(std::max(0, text_.n_labels)), 0);
+    for (int l = 0; l < text_.n_labels; ++l) { smask[size_t(l)] = kindOf(l) == kKindStructure; omask[size_t(l)] = kindOf(l) == kKindStructObj; }
+  }
+  std::vector<uint8_t> gmask(smask.size());   // 구조물 막기용: 지울 구조물 + 구조 물체
+  for (size_t l = 0; l < gmask.size(); ++l) gmask[l] = smask[l] || omask[l];
+  std::vector<float> llz;
+  auto apObsStructural = [&](Obs& o) -> bool {
+    if (o.z && text_.ready() && text_.dim == f.emb_dim) {
+      apLabelLogLik(text_, o.z, &llz);
+      double q = 0, qo = 0;
+      for (size_t l = 0; l < llz.size() && l < smask.size(); ++l) {
+        if (llz[l] <= -1e29f) continue;
+        if (smask[l]) q += std::exp(llz[l]);
+        if (omask[l]) qo += std::exp(llz[l]);
+      }
+      o.ps = q;
+      o.pso = qo;
+      for (size_t l = 0; l < llz.size(); ++l)   // 이 조각 하나의 이름(사전 없이 p(c|z) 최대)
+        if (llz[l] > -1e29f && std::exp(llz[l]) > o.top_p) { o.top_p = std::exp(llz[l]); o.top_lab = int(l); }
+    }
+    const int nc = int(o.cxyz.size() / 3);
+    if (nc < 8) return false;
+    const ApParams& A = p_.ap;
+    const ApPlane pl = apPlaneFit(o.cxyz.data(), nc);
+    if (!pl.ok || pl.thick > A.plane_thick) return false;
+    const double nz = std::fabs(pl.n[2]);
+    if (nz > A.horiz) {
+      if (pl.zmed > 1.8) {   // 천장 높이 추정에 씀(정답 없이)
+        ceil_obs_.push_back(pl.zmed);
+        if (ceil_obs_.size() > 400) ceil_obs_.erase(ceil_obs_.begin());
+        if (ceil_obs_.size() >= 20) {
+          std::vector<double> v = ceil_obs_;
+          std::nth_element(v.begin(), v.begin() + long(v.size() / 2), v.end());
+          ceil_est_ = v[v.size() / 2];
+        }
+      }
+      const double cz = ceil_est_ > 0 ? std::min(A.ceil_z, ceil_est_ - A.ceil_band) : A.ceil_z;
+      if (pl.zmed > cz) { ++aps_.n_ceil; return true; }
+      if (pl.zhi < A.floor_z) { ++aps_.n_floor; return true; }
+      return false;
+    }
+    if (nz > A.wall_vert) return false;
+    // 얇은 세운 평면이고 모습도 구조물 쪽이면 벽 조각 후보(벽 선분이 아직 없어도) — 그 물체 자리로 벽을 지우지 않음
+    if (o.ps >= 0.5) o.wall_like = true;
+    if (!f.wall_segs || f.n_wall_segs <= 0) return false;
+    const int stp = std::max(1, nc / 64);
+    int near = 0, tot = 0;
+    for (int i = 0; i < nc; i += stp, ++tot) {
+      double dm = 1e9;
+      for (int k = 0; k < f.n_wall_segs && dm > A.wall_d; ++k) dm = std::min(dm, segDist(o.cxyz[3 * i], o.cxyz[3 * i + 1], f.wall_segs + 4 * k));
+      near += dm <= A.wall_d;
+    }
+    if (near < A.wall_frac * tot) return false;
+    if (o.pso >= 0.5) return false;   // 문·창 조각(벽 선 위 평면이지만 지우지 않음)
+    if (std::max(pl.hspan, pl.zhi - pl.zlo) >= A.wall_big) { ++aps_.n_wall; return true; }
+    if (o.ps >= A.struct_p) { ++aps_.n_wall_name; return true; }
+    o.wall_like = true;
+    return false;
+  };
   auto inSelf = [&](const ObjFrame& fr, double px, double py, double pz) {
     return inSelfCaps(fr.self_caps, fr.n_self_caps, p_.self_pad, px, py, pz);
   };
@@ -533,7 +672,9 @@ void ObjectMap::update(const ObjFrame& f) {
     std::vector<int32_t>& PV = wpv_;
     const size_t words = (size_t(D->mask_w) * D->mask_h + 31) / 32;
     for (int k = 0; k < D->n; ++k) {
-      if (kindOf(D->cls[k]) == kKindStructure) continue;   // 벽·바닥·문 등: 격자만(물체 아님)
+      if (kindOf(D->cls[k]) == kKindStructure) {   // 벽·바닥·문 등: 격자만(물체 아님)
+        if (!ap || p_.ap_name_struct_skip) { if (ap) ++aps_.n_name_struct; continue; }
+      }
       X.clear(); Y.clear(); Z.clear(); ZC.clear(); PU.clear(); PV.clear();
       // 상자 안만 훑는다(검출 영상 화소 → 깊이 화소)
       const float* b = D->box + 4 * k;
@@ -628,11 +769,37 @@ void ObjectMap::update(const ObjFrame& f) {
         o.hi[a] = hi;
       }
       // 바닥 조각(점이 거의 다 바닥 높이): 물체 아님. 바닥에 깔리는 이름(러그·카펫·매트 — setFloorClasses)은 둠
-      if (o.hi[2] < p_.floor_h && !floorLevel(o.cls)) continue;
+      if (o.hi[2] < p_.floor_h && !floorLevel(o.cls)) { if (ap) ++aps_.n_floor; continue; }
+      if (ap && f.wall_segs && f.n_wall_segs > 0) {
+        // 벽 너머(창·유리문으로 본 바깥): 카메라 → 관측 중심 수평 선분이 벽 선분을 지나고 그 뒤로 through_d 넘게 더 가면 집 안 물체가 아님
+        const double cx0 = T[3], cy0 = T[7], dx = o.pos[0] - cx0, dy = o.pos[1] - cy0, L = std::hypot(dx, dy);
+        bool behind = false;
+        for (int s2 = 0; s2 < f.n_wall_segs && !behind && L > 1e-6; ++s2) {
+          const double* w = f.wall_segs + 4 * s2;
+          const double ex = w[2] - w[0], ey = w[3] - w[1], den = dx * ey - dy * ex;
+          if (std::fabs(den) < 1e-9) continue;
+          const double t = ((w[0] - cx0) * ey - (w[1] - cy0) * ex) / den, u = ((w[0] - cx0) * dy - (w[1] - cy0) * dx) / den;
+          behind = u >= 0 && u <= 1 && t > 0 && (1 - t) * L > p_.ap.through_d;
+        }
+        if (behind) { ++aps_.n_through; continue; }
+      }
+      if (ap) {
+        ++aps_.n_obs;
+        if (f.emb && f.emb_dim > 0) o.z = f.emb + size_t(k) * size_t(f.emb_dim);
+        ViewQuality vq;
+        vq.size_px = float(std::sqrt(double(np) * sk * sk / std::max(1e-9, double(sxu) * syv)));
+        vq.trunc = o.trunc;
+        vq.depth_m = float(zmed);
+        vq.cam_w = float(cam_w);
+        o.kappa = viewKappa(vq, p_.kap);
+        if (apObsStructural(o)) continue;
+      }
       obs.push_back(std::move(o));
     }
   }
   // 2. 같은 물체: 같은 이름(이름 표에서 name_share 이상인 이름 포함)끼리 가까운 쌍부터 1:1. 이름이 표 최댓값과 다르면 조금 뒤로
+  std::vector<int> obs_to(obs.size(), -1), obj_hit(objs_.size(), 0), touched(objs_.size(), 0);
+  if (!ap) {
   std::vector<std::tuple<double, int, int>> pairs;
   for (int a = 0; a < int(obs.size()); ++a)
     for (int b = 0; b < int(objs_.size()); ++b) {
@@ -650,11 +817,70 @@ void ObjectMap::update(const ObjFrame& f) {
       if (d < thr || gap < p_.da_gap) pairs.emplace_back(gap + 1e-3 * d + (m.cls != obs[a].cls ? 0.02 : 0.0), a, b);
     }
   std::sort(pairs.begin(), pairs.end());
-  std::vector<int> obs_to(obs.size(), -1), obj_hit(objs_.size(), 0);
   for (auto& [d, a, b] : pairs) {
     if (obs_to[a] >= 0 || obj_hit[b]) continue;
     obs_to[a] = b;
     obj_hit[b] = 1;
+  }
+  } else {
+    // A′: 이름 없이 관측마다 P(같은 물체) 가 가장 큰 물체(≥ same_p). 여러 조각이 한 물체에 붙을 수 있음(FastSAM 은 한 물체를
+    // 여러 마스크로 나눔) — 한 물체에 붙은 조각들은 첫(가장 큰) 조각에 합쳐 한 번 갱신. 접촉 ≥ 0.3 또는 P ≥ 0.2 인 물체는
+    // '이번에 보임'(놓침으로 안 셈 — 조각 하나를 놓쳐도 물체는 보임)
+    const ApParams& A = p_.ap;
+    std::vector<float> sp;
+    std::vector<float> mu;
+    for (int a = 0; a < int(obs.size()); ++a) {
+      Obs& o = obs[a];
+      const int nc = int(o.cxyz.size() / 3);
+      sp.clear();
+      const int stp = std::max(1, nc / std::max(8, A.contact_samples));
+      for (int i = 0; i < nc; i += stp) sp.insert(sp.end(), {o.cxyz[3 * i], o.cxyz[3 * i + 1], o.cxyz[3 * i + 2]});
+      double best = A.same_p;
+      for (int b = 0; b < int(objs_.size()); ++b) {
+        MapObject& m = objs_[b];
+        if (m.held_by >= 0 || !m.ap) continue;
+        double g2 = 0;
+        for (int k = 0; k < 3; ++k) {
+          const double g = std::max({0.0, o.lo[k] - m.hi[k], m.lo[k] - o.hi[k]});
+          g2 += g * g;
+        }
+        if (g2 > A.gate * A.gate) continue;
+        if (o.ps >= 0 && !m.ap->post.empty() && apGroupProb(*m.ap, gmask) >= A.guard_obj && o.ps + o.pso <= A.guard_obs) continue;   // 구조물 막기(문·창 포함)
+        if (A.name_veto > 0 && o.top_lab >= 0 && o.top_p >= A.name_veto && m.ap->top_lab >= 0 && m.ap->top_p >= A.name_veto &&
+            !labelRelated(o.top_lab, m.ap->top_lab))
+          continue;   // 이름 충돌
+        const double cs = o.z ? apCosMax(*m.ap, o.z, f.emb_dim) : -2.0;
+        const ApPair q = pairFeatures(o.lo, o.hi, o.pos, sp.data(), int(sp.size() / 3), m.lo, m.hi, m.pos, apContactIdx(m), cs, A);
+        if (q.f[0] >= 0.3 || q.p >= 0.2) touched[b] = 1;
+        if (q.p > best) { best = q.p; obs_to[a] = b; }
+      }
+      if (obs_to[a] >= 0) { obj_hit[obs_to[a]] = 1; ++aps_.n_assoc; }
+    }
+    // 한 물체에 붙은 조각 합치기: 가장 큰(점 많은) 조각을 대표로, 상자 = 합집합, 중심 = 점 수 가중 평균
+    std::vector<int> head(objs_.size(), -1);
+    for (int a = 0; a < int(obs.size()); ++a) {
+      const int b = obs_to[a];
+      if (b < 0) continue;
+      if (head[b] < 0 || obs[a].n > obs[head[b]].n) head[b] = a;
+    }
+    for (int a = 0; a < int(obs.size()); ++a) {
+      const int b = obs_to[a];
+      if (b < 0 || head[b] == a) continue;
+      Obs& h = obs[head[b]];
+      const Obs& o = obs[a];
+      const double wh = h.n, wo = o.n;
+      for (int k = 0; k < 3; ++k) {
+        h.lo[k] = std::min(h.lo[k], o.lo[k]);
+        h.hi[k] = std::max(h.hi[k], o.hi[k]);
+        h.pos[k] = (h.pos[k] * wh + o.pos[k] * wo) / (wh + wo);
+        h.ext[k] = h.hi[k] - h.lo[k];
+      }
+      h.n += o.n;
+      h.trunc = h.trunc || o.trunc;
+      h.zmed = std::min(h.zmed, o.zmed);
+      h.score = std::max(h.score, o.score);
+      obs[a].sec = true;
+    }
   }
   // 3. 갱신
   for (int a = 0; a < int(obs.size()); ++a) {
@@ -666,11 +892,19 @@ void ObjectMap::update(const ObjFrame& f) {
     if (obs_to[a] >= 0) {
       MapObject& m = objs_[obs_to[a]];
       as.obj_id = m.id;
+      if (ap && m.ap) {   // 조각마다 모습 하나(vMF r·이름 우도), 벽 선 위 평면 셈
+        if (o.z) apAddView(*m.ap, &text_, p_.ap, o.z, f.emb_dim, o.kappa, f.stamp, cam6, false);
+        ++m.ap->n_ap_obs;
+        if (o.wall_like) ++m.ap->n_wall_obs;
+        m.ap->wall_like = 2 * m.ap->n_wall_obs >= m.ap->n_ap_obs;
+        if (o.sec) continue;   // 갱신은 대표 조각(합친 상자)으로 한 번
+      }
+      const double dt_seen = f.stamp - m.last_seen;
       if (m.parent && dist3(m.pos, o.pos) > 0.3) m.parent = 0;
       if (m.last_kf != f.stamp) ++m.n_obs;
       m.last_kf = f.stamp;
       const double w = std::min<double>(m.n_obs, 20);
-      const bool big = kindOf(m.cls) == kKindStatic || std::max({m.hi[0] - m.lo[0], m.hi[1] - m.lo[1], o.ext[0], o.ext[1]}) > p_.big;
+      const bool big = kindOf(m.cls) == kKindStatic || kindOf(m.cls) == kKindStructObj || std::max({m.hi[0] - m.lo[0], m.hi[1] - m.lo[1], o.ext[0], o.ext[1]}) > p_.big;
       // 움직이는 중(사람이 옮김): 관측 중심(날 것)이 잇달아 move_v 넘는 빠르기로 같은 쪽으로 가고 쉬던 자리에서 move_min_d(또는 상자
       // 반 폭) 넘게 벗어나면 그동안 평균·합집합 대신 관측 자리로 바로 옮긴다(평균이 뒤처져 놓치지 않게)
       bool snap = false;
@@ -716,7 +950,15 @@ void ObjectMap::update(const ObjFrame& f) {
         if (m.moved && m.state == SM_SEEN) m.state = SM_MOVED;
         m.parent = 0;
       }
+      const bool fresh = ap && m.first_seen == f.stamp;   // 이번 영상에 생긴 물체에 붙은 다음 조각: 상자 합집합
       for (int k = 0; k < 3 && !snap; ++k) {
+        if (fresh) {
+          m.lo[k] = std::min(m.lo[k], o.lo[k]);
+          m.hi[k] = std::max(m.hi[k], o.hi[k]);
+          m.pos[k] = 0.5 * (m.lo[k] + m.hi[k]);
+          m.ext[k] = m.hi[k] - m.lo[k];
+          continue;
+        }
         if (big) {
           // 합집합, 단 keyframe 마다 면마다 grow_max 까지·한 변 max_ext 까지(이상값·잘못 붙은 관측이 끝없이 키우지 않게)
           const double lo = std::max(std::min(m.lo[k], o.lo[k]), m.lo[k] - p_.grow_max);
@@ -727,11 +969,29 @@ void ObjectMap::update(const ObjFrame& f) {
           }
           m.pos[k] = 0.5 * (m.lo[k] + m.hi[k]);
           m.ext[k] = m.hi[k] - m.lo[k];
+        } else if (ap && m.ap) {
+          // 칼만(축마다): 예측 P += q·dt, 관측 잡음 R = (r0 + r1·깊이)² (+ 잘렸으면 (반 폭)²), 이득 K = P/(P+R)
+          double& P = m.ap->P[k];
+          P += p_.ap_q_pos * std::max(0.0, dt_seen);
+          double sd = p_.ap_r0 + p_.ap_r1 * o.zmed;
+          double R = sd * sd + (o.trunc ? 0.25 * o.ext[k] * o.ext[k] : 0.0);
+          const double K = P / (P + R);
+          m.pos[k] += K * (o.pos[k] - m.pos[k]);
+          m.lo[k] += K * (o.lo[k] - m.lo[k]);
+          m.hi[k] += K * (o.hi[k] - m.hi[k]);
+          m.ext[k] = m.hi[k] - m.lo[k];
+          P *= 1.0 - K;
         } else {
           m.pos[k] = (m.pos[k] * (w - 1) + o.pos[k]) / w;
           m.ext[k] = (m.ext[k] * (w - 1) + o.ext[k]) / w;
           m.lo[k] = (m.lo[k] * (w - 1) + o.lo[k]) / w;
           m.hi[k] = (m.hi[k] * (w - 1) + o.hi[k]) / w;
+        }
+        if (big && ap && m.ap) {   // 큰 것: 자리는 상자 합집합, 분산만 칼만(상자 폭의 1/4 을 관측 잡음에)
+          double& P = m.ap->P[k];
+          const double sd = p_.ap_r0 + p_.ap_r1 * o.zmed;
+          const double R = sd * sd + 0.0625 * m.ext[k] * m.ext[k];
+          P = 1.0 / (1.0 / (P + p_.ap_q_pos * std::max(0.0, dt_seen)) + 1.0 / R);
         }
       }
       m.score = std::max(m.score, o.score);
@@ -767,10 +1027,42 @@ void ObjectMap::update(const ObjFrame& f) {
     }
     m.confirmed = p_.confirm <= 1;
     as.obj_id = m.id;
+    if (ap) {
+      m.ap = std::make_shared<ApState>();
+      const double sd = p_.ap_r0 + p_.ap_r1 * o.zmed;
+      for (int k = 0; k < 3; ++k) m.ap->P[k] = sd * sd + (o.trunc ? 0.25 * o.ext[k] * o.ext[k] : 0.0);
+      if (o.z) apAddView(*m.ap, &text_, p_.ap, o.z, f.emb_dim, o.kappa, f.stamp, cam6, false);
+      m.ap->n_ap_obs = 1;
+      m.ap->n_wall_obs = o.wall_like;
+      m.ap->wall_like = o.wall_like;
+      ++aps_.n_new;
+    }
     objs_.push_back(m);
     obj_hit.push_back(1);
+    touched.push_back(1);
+    // A′: 같은 영상의 뒤 조각이 이 새 물체에 붙을 수 있게(아직 구름이 없으니 상자·임베딩으로만) — 앞 관측이 만든 새 물체도 후보
+    if (ap && p_.ap.frame_group)
+      for (int b2 = a + 1; b2 < int(obs.size()); ++b2) {
+        if (obs_to[b2] >= 0) continue;
+        const Obs& q = obs[b2];
+        double g2 = 0;
+        for (int k = 0; k < 3; ++k) {
+          const double g = std::max({0.0, q.lo[k] - o.hi[k], o.lo[k] - q.hi[k]});
+          g2 += g * g;
+        }
+        if (g2 > 0.02 * 0.02 || !q.z || !o.z) continue;
+        // 닿은 두 조각: 이웃 조각 접촉을 1 로 보고 같은 로지스틱(구름 대신 상자 맞닿음)
+        static const std::vector<uint64_t> none;
+        ApPair pr = pairFeatures(q.lo, q.hi, q.pos, nullptr, 0, o.lo, o.hi, o.pos, none, apDot(q.z, o.z, f.emb_dim), p_.ap);
+        pr.f[0] = 1.0;
+        if (1.0 / (1.0 + std::exp(-apLogit(pr, p_.ap))) >= p_.ap.same_p) obs_to[b2] = int(objs_.size()) - 1;
+      }
     event(f.stamp, objs_.back(), 0);
   }
+  // A′: 이번에 본 물체의 이름 사후를 다시(이름 = 다시 셀 수 있는 캐시, 벡터가 원본)
+  if (ap)
+    for (MapObject& m : objs_)
+      if (m.ap && m.last_kf == f.stamp) apRename(m);
   // 구름 후보를 물체 id 와 함께 내놓음(색은 호출자가 붙여 addPoints)
   for (Obs& o : obs) {
     const uint32_t id = assoc_[o.det].obj_id;
@@ -841,8 +1133,10 @@ void ObjectMap::update(const ObjFrame& f) {
       if (!ev) continue;
       // 다른 이름으로 검출됨: 이 물체 상자 안에 중심이 있는 관측의 이름이 이 물체 이름 표에 있으면(전에 그 이름으로도 불림)
       // 이름 흔들림이지 없어진 것이 아니다. 표에 없던 이름이면(다른 물체가 그 자리에 놓임) 놓침으로 센다
+      if (ap && touched[b]) continue;   // A′: 다른 조각이 이 물체에 닿음(물체는 보임)
       bool renamed = false;
       for (const Obs& o : obs) {
+        if (ap) break;
         if (o.cls == m.cls || nameShare(m, o.cls) <= 0) continue;
         bool in = true;
         for (int k = 0; k < 3; ++k) in = in && o.pos[k] >= m.lo[k] - 0.1 && o.pos[k] <= m.hi[k] + 0.1;
@@ -881,9 +1175,12 @@ void ObjectMap::update(const ObjFrame& f) {
     }
   }
   relink(f.stamp);
+  if (ap)   // A′: 합친 덩어리가 구조물(벽 크기 평면·천장·구조물 이름)이면 지움
+    for (MapObject& m : objs_) if (m.ap) m.ap->drop = apStructObject(m);
   // 5. 오래된 후보 버리기
   objs_.erase(std::remove_if(objs_.begin(), objs_.end(),
                              [&](const MapObject& m) {
+                               if (ap && m.ap && m.ap->drop) { ++aps_.n_obj_struct; return true; }
                                if (!m.confirmed) return f.stamp - m.last_seen > p_.prune_s;
                                // 몇 번 안 보이고 사라진 것은 헛검출(조각)로 보고 지움 — 옮겨짐 잇기 후보가 되지 않게
                                return m.state == SM_GONE && !m.moved && int(m.n_obs) < p_.spurious_obs;
@@ -893,7 +1190,7 @@ void ObjectMap::update(const ObjFrame& f) {
   // 6. 중복 병합(da): 한 프레임에 일부만 보였거나 마스크가 쪼개져 따로 확정된 같은 물체를 하나로
   static const bool no_merge = std::getenv("SM_NO_MERGE") != nullptr;   // A/B 비교용
   static const bool log_merge = std::getenv("SM_MERGE_LOG") != nullptr;
-  if (p_.merge && !no_merge) {
+  if (p_.merge && !no_merge && !ap) {   // A′ 는 다음 keyframe 앞에서 apMergePass(이름 없이)
     da::MergeParams mp;
     mp.overlap_min = p_.merge_overlap;
     mp.min_ext = p_.merge_min_ext;
@@ -904,6 +1201,298 @@ void ObjectMap::update(const ObjFrame& f) {
       for (const MapObject& m : objs_) if (m.id == r.keep) { event(f.stamp, m, 7); break; }
     }
   }
+}
+
+// ---------------- A′ ----------------
+
+const std::vector<uint64_t>& ObjectMap::apContactIdx(MapObject& m) {
+  ApState& s = *m.ap;
+  if (s.cidx_ver != m.cloud.version) {
+    std::vector<float> xyz;
+    if (m.cloud.data) {
+      const auto& pts = m.cloud.data->pts;
+      xyz.reserve(3 * pts.size());
+      for (const CloudPt& q : pts) xyz.insert(xyz.end(), {float(m.cloud.org[0] + q.x), float(m.cloud.org[1] + q.y), float(m.cloud.org[2] + q.z)});
+    }
+    apBuildContact(xyz.data(), int(xyz.size() / 3), p_.ap.contact_cell, &s.cidx);
+    s.cidx_ver = m.cloud.version;
+  }
+  return s.cidx;
+}
+
+namespace {
+// 구름 점(map) 표본 최대 n 개
+void cloudSample(const MapObject& m, int n, std::vector<float>* out) {
+  out->clear();
+  if (!m.cloud.data) return;
+  const auto& pts = m.cloud.data->pts;
+  const size_t stp = std::max<size_t>(1, pts.size() / size_t(std::max(1, n)));
+  for (size_t i = 0; i < pts.size(); i += stp)
+    out->insert(out->end(), {float(m.cloud.org[0] + pts[i].x), float(m.cloud.org[1] + pts[i].y), float(m.cloud.org[2] + pts[i].z)});
+}
+}  // namespace
+
+// 물체 쌍: 구름이 작은 쪽을 표본으로 큰 쪽 접촉 칸에(구름이 아직 없으면 상자만), cos = 서로의 μ 를 상대 모습들에 맞춘 최대
+ApPair ObjectMap::apPairObj(MapObject& a, MapObject& b) {
+  MapObject& sm = a.cloud.size() <= b.cloud.size() ? a : b;
+  MapObject& lg = &sm == &a ? b : a;
+  thread_local std::vector<float> sp, mu;
+  cloudSample(sm, p_.ap.contact_samples, &sp);
+  double cs = -2;
+  if (apMu(*a.ap, &mu)) cs = std::max(cs, apCosMax(*b.ap, mu.data(), int(mu.size())));
+  if (apMu(*b.ap, &mu)) cs = std::max(cs, apCosMax(*a.ap, mu.data(), int(mu.size())));
+  ApPair q = pairFeatures(sm.lo, sm.hi, sm.pos, sp.data(), int(sp.size() / 3), lg.lo, lg.hi, lg.pos, apContactIdx(lg), cs, p_.ap, true);
+  if (!a.ap->post.empty() && a.ap->post.size() == b.ap->post.size()) {   // 이름 분포 겹침
+    double bc = 0;
+    for (size_t l = 0; l < a.ap->post.size(); ++l) bc += std::sqrt(double(a.ap->post[l]) * b.ap->post[l]);
+    q.f[6] = bc - 0.5;
+    q.logit = apLogit(q, p_.ap, true);
+    q.p = 1.0 / (1.0 + std::exp(-q.logit));
+  }
+  return q;
+}
+
+// 물체끼리 같은 것 판정(이름 없이): 상자 틈 gate 안 쌍마다 P(같음), 큰 것부터 하나씩 합침(한 판에 물체 하나는 한 번만 — 바뀐 상자로
+// 다음 keyframe 에 다시). 합친 물체는 통째 다시 담기를 기다림(need_whole)
+void ObjectMap::apMergePass(double t) {
+  const ApParams& A = p_.ap;
+  smask_.assign(size_t(std::max(0, text_.n_labels)), 0);
+  for (int l = 0; l < text_.n_labels; ++l) smask_[size_t(l)] = kindOf(l) == kKindStructure || kindOf(l) == kKindStructObj;   // 막기: 구조물 쪽 전부
+  std::vector<std::tuple<double, uint32_t, uint32_t>> cand;
+  for (size_t i = 0; i < objs_.size(); ++i) {
+    MapObject& a = objs_[i];
+    if (!a.ap || a.held_by >= 0 || a.state == SM_GONE) continue;
+    for (size_t j = i + 1; j < objs_.size(); ++j) {
+      MapObject& b = objs_[j];
+      if (!b.ap || b.held_by >= 0 || b.state == SM_GONE) continue;
+      double g2 = 0;
+      bool too_big = false;
+      for (int k = 0; k < 3; ++k) {
+        const double g = std::max({0.0, a.lo[k] - b.hi[k], b.lo[k] - a.hi[k]});
+        g2 += g * g;
+        too_big = too_big || std::max(a.hi[k], b.hi[k]) - std::min(a.lo[k], b.lo[k]) > p_.max_ext;
+      }
+      if (g2 > A.gate * A.gate || too_big) continue;
+      if (!a.ap->post.empty() && !b.ap->post.empty()) {   // 구조물 막기(한쪽은 구조물, 다른 쪽은 아님)
+        const double sa = apGroupProb(*a.ap, smask_), sb = apGroupProb(*b.ap, smask_);
+        if ((sa >= A.guard_obj && sb <= A.guard_obs) || (sb >= A.guard_obj && sa <= A.guard_obs)) continue;
+      }
+      const ApPair q = apPairObj(a, b);
+      static const bool log_m = std::getenv("SM_AP_LOG") != nullptr;
+      if (log_m && q.p > 0.2)
+        std::fprintf(stderr, "[ap-pair] t=%.1f O%u O%u contact %.2f gap %.2f cdist %.2f cos %.3f ov %.2f sup %.0f p %.2f\n", t, a.id, b.id, q.f[0], q.f[1],
+                     q.f[2], q.f[3] + A.cos0, q.f[4], q.f[5], q.p);
+      if (q.p >= A.merge_p) cand.emplace_back(q.p, a.id, b.id);
+    }
+  }
+  if (cand.empty()) return;
+  std::sort(cand.begin(), cand.end(), [](const auto& x, const auto& y) { return std::get<0>(x) > std::get<0>(y); });
+  std::vector<uint32_t> used;
+  for (auto& [pp, ia, ib] : cand) {
+    if (std::find(used.begin(), used.end(), ia) != used.end() || std::find(used.begin(), used.end(), ib) != used.end()) continue;
+    auto ai = std::find_if(objs_.begin(), objs_.end(), [&](const MapObject& o) { return o.id == ia; });
+    auto bi = std::find_if(objs_.begin(), objs_.end(), [&](const MapObject& o) { return o.id == ib; });
+    if (ai == objs_.end() || bi == objs_.end()) continue;
+    if (bi->n_obs > ai->n_obs || (bi->n_obs == ai->n_obs && ib < ia)) std::swap(ai, bi);   // 관측이 많은(같으면 먼저 본) 쪽을 남김
+    used.push_back(ia);
+    used.push_back(ib);
+    const uint32_t kid = ai->id, did = bi->id;
+    da::absorbObject(*ai, *bi, p_, t, &kinds_);
+    apMerge(*ai->ap, *bi->ap, A);
+    ai->confirmed = ai->confirmed || bi->confirmed;
+    apRename(*ai);
+    ++aps_.n_merge;
+    static const bool log_m = std::getenv("SM_AP_LOG") != nullptr;
+    if (log_m) std::fprintf(stderr, "[ap-merge] t=%.1f keep O%u drop O%u p %.2f\n", t, kid, did, pp);
+    objs_.erase(bi);
+    remapId(did, kid);
+    for (const MapObject& x : objs_) if (x.id == kid) { event(t, x, 7); break; }
+  }
+}
+
+void ObjectMap::apRename(MapObject& m) {
+  if (!m.ap || !text_.ready()) return;
+  const double size = std::max({m.hi[0] - m.lo[0], m.hi[1] - m.lo[1], m.hi[2] - m.lo[2]});
+  ApState& s = *m.ap;
+  if (s.geo == 3) {   // 벽 선 위 아주 얇은 평면: 문·창·계단·납작한 물체(액자·TV …) 쪽이 그럴듯함
+    s.L_geo.assign(size_t(text_.n_labels), 0.f);
+    for (int l = 0; l < text_.n_labels; ++l)
+      if (kindOf(l) == kKindStructObj || (size_t(l) < text_.flat_ok.size() && text_.flat_ok[size_t(l)])) s.L_geo[size_t(l)] = float(p_.ap.geo_w);
+  } else {
+    s.L_geo.clear();
+  }
+  apName(s, text_, p_.ap, size);
+  if (m.ap->name_lab >= 0) m.cls = m.ap->name_lab;
+}
+
+// 라벨 a 와 b 가 같거나 한쪽이 다른 쪽의 상위어(부모 사슬)
+bool ObjectMap::labelRelated(int a, int b) const {
+  if (a == b) return true;
+  auto up = [&](int x, int y) {
+    for (int g = 0; x >= 0 && g < 8; ++g) {
+      x = size_t(x) < text_.parent.size() ? text_.parent[size_t(x)] : -1;
+      if (x == y) return true;
+    }
+    return false;
+  };
+  return up(a, b) || up(b, a);
+}
+
+bool ObjectMap::apStructObject(MapObject& m) {
+  if (!m.ap || m.held_by >= 0) return false;
+  ApState& s = *m.ap;
+  const ApParams& A = p_.ap;
+  // 기하(구름이 바뀌었을 때만 다시)
+  if (s.geo_ver != m.cloud.version && m.cloud.size() >= 30) {
+    s.geo_ver = m.cloud.version;
+    thread_local std::vector<float> P;
+    cloudSample(m, 800, &P);
+    const int n = int(P.size() / 3);
+    const ApPlane pl = apPlaneFit(P.data(), n);
+    s.geo = 0;
+    const double nz = std::fabs(pl.n[2]);
+    if (pl.ok && pl.thick < A.obj_thick) {
+      if (nz < A.wall_vert && (pl.hspan >= A.obj_wall_span || (pl.zhi >= A.obj_wall_top && pl.zhi - pl.zlo >= A.obj_wall_h))) s.geo = 1;
+      else if (nz > A.horiz && pl.zmed > A.ceil_z) s.geo = 2;
+    }
+    // 천장 덩어리: 점 대부분이 천장 띠 안이고 수평으로 넓음(평면 맞춤이 나빠도 — 낮은 카메라로 비스듬히 본 천장·벽 모서리)
+    if (!s.geo && ceil_est_ > 0 && n > 0) {
+      int up = 0;
+      for (int i = 0; i < n; ++i) up += P[size_t(3 * i + 2)] > ceil_est_ - A.ceil_band;
+      if (up >= A.ceil_frac * n && std::max(m.hi[0] - m.lo[0], m.hi[1] - m.lo[1]) >= A.ceil_wide) s.geo = 2;
+    }
+    // 벽 선 위 아주 얇은 평면(문짝·창유리)
+    if (!s.geo && pl.ok && pl.thick < A.obj_flat_thick && nz < A.wall_vert && !wsegs_.empty() && n > 0) {
+      int near = 0;
+      for (int i = 0; i < n; ++i) {
+        double dm = 1e9;
+        for (size_t k = 0; k + 3 < wsegs_.size() && dm > A.obj_flat_d; k += 4) dm = std::min(dm, segDist(P[size_t(3 * i)], P[size_t(3 * i + 1)], &wsegs_[k]));
+        near += dm <= A.obj_flat_d;
+      }
+      if (near >= A.obj_flat_frac * n) s.geo = 3;
+    }
+  }
+  double qso = 0;   // 구조 물체(문·창·계단) 사후 — 벽 크기 평면·벽 선 위 평면이어도 남김
+  for (size_t l = 0; l < s.post.size(); ++l) if (kindOf(int(l)) == kKindStructObj) qso += s.post[l];
+  if (qso >= 0.5 && s.geo != 2) return false;
+  if (s.geo == 3) {   // 납작한 물체 이름(액자·TV …)이면 남김(문·창은 위에서 남김)
+    double q = qso;
+    for (size_t l = 0; l < s.post.size() && l < text_.flat_ok.size(); ++l) if (text_.flat_ok[l]) q += s.post[l];
+    if (q < A.flat_keep_p) return true;
+  }
+  if (s.geo == 1 || s.geo == 2) return true;
+  if (s.n_whole < A.struct_obj_min_views || s.post.empty()) return false;
+  double q = 0;
+  for (size_t l = 0; l < s.post.size(); ++l) if (kindOf(int(l)) == kKindStructure) q += s.post[l];
+  return q >= A.struct_obj_p;
+}
+
+void ObjectMap::observeName(uint32_t id, int lab, double log_lr) {
+  for (MapObject& m : objs_)
+    if (m.id == id && m.ap) {
+      apObserveName(*m.ap, text_.n_labels, lab, log_lr);
+      apRename(m);
+      return;
+    }
+}
+
+void ObjectMap::addWholeView(uint32_t id, const float* z, int dim, double kappa, double stamp, const double cam[6]) {
+  for (MapObject& m : objs_)
+    if (m.id == id && m.ap) {
+      apAddView(*m.ap, &text_, p_.ap, z, dim, kappa, stamp, cam, true);
+      apRename(m);
+      ++aps_.n_reenc_done;
+      return;
+    }
+}
+
+void ObjectMap::buildReencode(const ObjFrame& f, int img_w, int img_h, int mw, int mh, float msx, float msy, float mox, float moy,
+                              std::vector<ReencReq>* out) {
+  out->clear();
+  if (!p_.aprime || !(f.depth_m || f.depth_mm) || mw <= 0 || mh <= 0 || img_w <= 0 || img_h <= 0) return;
+  const ApParams& A = p_.ap;
+  const double* T = f.T_mc;
+  const double sxu = double(f.w) / img_w, syv = double(f.h) / img_h;   // 검출 화소 → 깊이 화소
+  const size_t words = (size_t(mw) * mh + 31) / 32;
+  struct Cand { double prio; ReencReq r; };
+  std::vector<Cand> cands;
+  std::vector<uint8_t> grid;
+  for (MapObject& m : objs_) {
+    if (!m.ap || !m.confirmed || m.held_by >= 0 || m.state == SM_GONE || m.last_kf != f.stamp || m.cloud.size() < 30) continue;
+    const auto& pts = m.cloud.data->pts;
+    const size_t stp = std::max<size_t>(1, pts.size() / 3000);
+    grid.assign(size_t(mw) * mh, 0);
+    int tot = 0, vis = 0;
+    bool trunc = false;
+    std::vector<float> zs;
+    double u0 = 1e9, v0 = 1e9, u1 = -1e9, v1 = -1e9;
+    for (size_t i = 0; i < pts.size(); i += stp) {
+      ++tot;
+      const double p[3] = {m.cloud.org[0] + pts[i].x - T[3], m.cloud.org[1] + pts[i].y - T[7], m.cloud.org[2] + pts[i].z - T[11]};
+      const double cx = T[0] * p[0] + T[4] * p[1] + T[8] * p[2], cy = T[1] * p[0] + T[5] * p[1] + T[9] * p[2],
+                   cz = T[2] * p[0] + T[6] * p[1] + T[10] * p[2];
+      if (cz < 0.15) continue;
+      const double ud = f.fx * cx / cz + f.cx, vd = f.fy * cy / cz + f.cy;   // 깊이 화소
+      if (ud < 0 || vd < 0 || ud >= f.w || vd >= f.h) { trunc = true; continue; }
+      const size_t di = size_t(int(vd)) * f.w + size_t(int(ud));
+      const float d = f.depth_m ? f.depth_m[di] : f.depth_mm[di] * 1e-3f;
+      if (!(d > 0) || d < cz - 0.08) continue;   // 앞에 다른 것(가림)·깊이 없음
+      ++vis;
+      zs.push_back(float(cz));
+      // 검출 화소 → 마스크 칸, 복셀 크기만큼 칠함
+      const double ui = ud / sxu, vi = vd / syv;
+      const double rpx = 0.6 * p_.voxel * f.fx / cz / sxu;
+      const int i0 = int(std::floor((ui - rpx - mox) / msx)), i1 = int(std::floor((ui + rpx - mox) / msx));
+      const int j0 = int(std::floor((vi - rpx - moy) / msy)), j1 = int(std::floor((vi + rpx - moy) / msy));
+      for (int jj = std::max(0, j0); jj <= std::min(mh - 1, j1); ++jj)
+        for (int ii = std::max(0, i0); ii <= std::min(mw - 1, i1); ++ii) grid[size_t(jj) * mw + ii] = 1;
+      u0 = std::min(u0, ui); u1 = std::max(u1, ui); v0 = std::min(v0, vi); v1 = std::max(v1, vi);
+      if (ui <= 2 || vi <= 2 || ui >= img_w - 3 || vi >= img_h - 3) trunc = true;
+    }
+    if (tot == 0 || vis < 12) continue;
+    const double vfrac = double(vis) / tot;
+    if (vfrac < A.reenc_min_vis) continue;
+    // 닫기(이웃 칸 하나 넓힘): 점 사이 틈을 메움
+    std::vector<uint8_t> g2 = grid;
+    long area = 0;
+    for (int jj = 0; jj < mh; ++jj)
+      for (int ii = 0; ii < mw; ++ii) {
+        if (grid[size_t(jj) * mw + ii]) continue;
+        int nb = 0;
+        for (int dj = -1; dj <= 1; ++dj)
+          for (int di2 = -1; di2 <= 1; ++di2) {
+            const int a = ii + di2, b = jj + dj;
+            nb += a >= 0 && b >= 0 && a < mw && b < mh && grid[size_t(b) * mw + a];
+          }
+        if (nb >= 3) g2[size_t(jj) * mw + ii] = 1;
+      }
+    for (uint8_t v : g2) area += v;
+    const double size_px = std::sqrt(double(area) * msx * msy);
+    if (size_px < A.reenc_min_px) continue;
+    std::nth_element(zs.begin(), zs.begin() + long(zs.size() / 2), zs.end());
+    ViewQuality vq;
+    vq.size_px = float(size_px);
+    vq.trunc = trunc;
+    vq.depth_m = zs[zs.size() / 2];
+    vq.vis = float(vfrac);
+    vq.cam_w = float(cam_w_);
+    const double kap = viewKappa(vq, p_.kap);
+    const bool need = m.ap->need_whole;
+    if (!need && kap < A.reenc_gain * m.ap->whole_kappa) continue;
+    Cand c;
+    c.prio = (need ? 1e6 : 0) + kap / std::max(1.0, m.ap->whole_kappa);
+    c.r.id = m.id;
+    c.r.kappa = float(kap);
+    c.r.box[0] = float(std::max(0.0, u0 - 2)); c.r.box[1] = float(std::max(0.0, v0 - 2));
+    c.r.box[2] = float(std::min(double(img_w), u1 + 2)); c.r.box[3] = float(std::min(double(img_h), v1 + 2));
+    for (int k = 0; k < 6; ++k) c.r.cam[k] = k < 3 ? T[4 * k + 3] : T[4 * (k - 3) + 2];
+    c.r.bits.assign(words, 0u);
+    for (size_t q = 0; q < g2.size(); ++q) if (g2[q]) c.r.bits[q >> 5] |= 1u << (q & 31);
+    cands.push_back(std::move(c));
+  }
+  std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.prio > b.prio; });
+  for (size_t i = 0; i < cands.size() && int(i) < A.reenc_max; ++i) out->push_back(std::move(cands[i].r));
+  aps_.n_reenc_req += long(out->size());
 }
 
 }  // namespace scenemap

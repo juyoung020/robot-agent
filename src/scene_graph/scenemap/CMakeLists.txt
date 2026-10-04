@@ -9,7 +9,7 @@ endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O2")
 
 add_library(scenemap STATIC src/scan.cpp src/grid.cpp src/slam2d.cpp src/fk.cpp src/capi.cpp src/objmap.cpp src/bestview.cpp src/cloud.cpp src/png.cpp src/walls.cpp src/stream.cpp ../da/src/merge.cpp
-            src/dsg_save.cpp src/rooms.cpp src/sgraph.cpp)
+            src/dsg_save.cpp src/rooms.cpp src/sgraph.cpp src/objprob.cpp)
 target_include_directories(scenemap PUBLIC include ../da/include)
 find_package(ZLIB REQUIRED)   # best view PNG(deflate·crc32)
 target_link_libraries(scenemap PUBLIC ZLIB::ZLIB)
@@ -134,3 +134,7 @@ add_test(NAME limo_e2e COMMAND test_limo_e2e)
 add_executable(test_limo_held tests/test_limo_held.cpp)
 target_link_libraries(test_limo_held scenemap)
 add_test(NAME limo_held COMMAND test_limo_held)
+# A′ 물체 모델(objprob.hpp): vMF r·μ·합침, 덜 세기, 이름 사후(상위어·엔트로피·바깥 관측), 받침 막기, 평면 맞춤, 접촉
+add_executable(test_aprime tests/test_aprime.cpp)
+target_link_libraries(test_aprime scenemap)
+add_test(NAME aprime COMMAND test_aprime)

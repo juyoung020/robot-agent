@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <mutex>
 #include <queue>
 #include <string>
@@ -47,14 +48,20 @@ struct ViewSlot {
 const char* const kStructureNames[] = {"wall", "floor", "ceiling", "door", "doorway", "door frame", "window", "pillar", "column",
                                        "partition", "staircase", "stairs", "stair", "railing", "baseboard",
                                        // 사람(COCO person): 시뮬에는 없고 로봇 팔·몸이 이것으로 잘못 잡힘 — 노드로 만들지 않음
-                                       "person"};
+                                       "person",
+                                       // A′ 상위어 라벨(realbag_run kApLabels): 구조물 묶음
+                                       "structure", "outdoors"};
 const char* const kStaticNames[] = {
     "table", "desk", "counter", "countertop", "sofa", "couch", "shelf", "shelving unit", "bookshelf", "bookcase", "cabinet",
     "wardrobe", "dresser", "chest of drawers", "nightstand", "sideboard", "bed", "bench", "island", "refrigerator", "fridge",
     "freezer", "oven", "stove", "range", "cooktop", "microwave", "dishwasher", "washer", "dryer", "washing machine", "sink",
     "toilet", "bathtub", "bath", "shower", "fireplace", "piano", "television", "tv", "lamp", "chandelier", "plant",
     "picture frame", "picture", "painting", "mirror", "rug", "carpet", "curtain", "blind", "radiator", "heater",
-    "light switch", "electric outlet", "outlet", "socket", "vent", "fixture", "appliance"};
+    "light switch", "electric outlet", "outlet", "socket", "vent", "fixture", "appliance",
+    "furniture"};   // A′ 상위어 라벨(가구 묶음)
+
+// A′ 구조 물체(지우지 않고 structural 노드로): 지도·RecallVLA 가 문 토큰·방 나누기·계단 위험으로 씀
+const char* const kStructObjNames[] = {"door", "doorway", "door frame", "window", "staircase", "stairs", "stair", "railing", "pillar", "column"};
 
 // 바닥에 깔리는 물체: objmap 바닥 조각 거르기(점이 거의 다 바닥 높이 floor_h 아래면 물체 아님)에서 뺀다
 const char* const kFloorLevelNames[] = {"rug", "carpet", "mat", "doormat", "floor mat", "bath mat"};
@@ -78,6 +85,9 @@ bool headMatch(const std::string& name, const std::string& e) {
 }
 
 constexpr float kCropMargin = 0.10f;
+constexpr double kWallAngleEvery = 2.0;          // 벽 방향 θ 다시 재는 간격(영상 시각 s)
+constexpr double kWallAngleHyst = M_PI / 180.0;  // θ 가 이만큼 넘게 바뀔 때만 새 값
+constexpr double kWallAlignedEvery = 0.5;        // 기울어진 지도: 돌린 격자 벽 다시 뽑는 간격(s, 격자가 바뀌었을 때)
 constexpr int kCropMaxSide = 256;
 }  // namespace
 
@@ -147,6 +157,10 @@ struct sm_ctx {
   std::atomic<uint64_t> st_views_built{0}, st_views_skipped{0};
   std::atomic<double> st_view_us{0};         // 요약 한 번 만드는 시간(µs, 비동기 스레드)
   uint64_t walls_grid_ver = ~0ull;
+  // 벽 방향(10-05): slam 지도는 출발 자세 기준이라 벽이 지도 축에서 기울 수 있다(radio r3: 41°). 주된 방향 θ 를 가끔(kWallAngleEvery 초)
+  // 재어 들고, |θ| > kAlignTol 이면 돌린 격자에서 뽑는다(wallSegmentsAtAngle — 전부 다시, kWallAlignedEvery 초에 한 번까지).
+  // 축에 맞는 지도(gt 자세·축 맞은 출발)는 예전 증분 추출 그대로. 진단: SM_WALLS_AXIS=1 이면 옛 동작(축만)
+  double wall_th = 0, wall_th_t = -1e300, walls_full_t = -1e300;
   // 단계별 시간(timing.hpp). 쓰기는 입력·스냅숏 스레드, 읽기는 sm_get_timing — 작은 잠금 하나
   std::mutex tmu;
   Timings tm;
@@ -155,6 +169,13 @@ struct sm_ctx {
   JsonCache jcache;                   // scene.json 노드 조각(저장 스레드 하나 — save_mu)
   std::mutex save_mu;
   std::unordered_map<uint32_t, std::string> obj_meta;
+  // A′(sm_set_object_model): 다음 영상의 검출 임베딩, 마지막 keyframe 의 통째 다시 담기 요청, 저장한 벡터 version
+  std::vector<float> det_emb;
+  int det_emb_n = -1, det_emb_dim = 0;
+  std::vector<ReencReq> reenc;
+  std::vector<sm_reenc_req> reenc_pub;
+  std::vector<uint32_t> reenc_bits;
+  std::unordered_map<uint32_t, uint32_t> saved_ap_ver;
   void addT(int st, double us) {
     std::lock_guard<std::mutex> g(tmu);
     tm.h[st].add(us);
@@ -172,6 +193,12 @@ struct sm_ctx {
         for (const std::string& e : kind_names[k])
           if (kinds[i] == SM_KIND_OBJECT && headMatch(n, e)) kinds[i] = uint8_t(k);
     }
+    if (oparams.aprime)   // A′: 문·창·계단·난간·기둥은 구조 물체(내보냄) — 벽·바닥·천장·걸레받이·칸막이·바깥은 그대로 구조물(지움)
+      for (size_t i = 0; i < labels.size(); ++i) {
+        if (kinds[i] != SM_KIND_STRUCTURE) continue;
+        const std::string n = normName(labels[i]);
+        for (const char* e : kStructObjNames) if (headMatch(n, e)) kinds[i] = SM_KIND_STRUCT_OBJ;
+      }
     om.setClassKinds(kinds);
     std::vector<uint8_t> fl(labels.size(), 0);   // 바닥에 깔리는 것(바닥 조각 거르기에서 뺌)
     for (size_t i = 0; i < labels.size(); ++i) {
@@ -471,6 +498,7 @@ int sm_set_robot(sm_ctx* c, int32_t robot) {
     ObjParams op{};
     op.voxel = c->oparams.voxel;          // sm_set_cloud_params 로 바꾼 값은 둔다
     op.cloud_cap = c->oparams.cloud_cap;
+    op.aprime = c->oparams.aprime;        // sm_set_object_model 도 둔다
     robotParams(robot, &sp, &op);
     c->params = sp;
     c->oparams = op;
@@ -567,8 +595,15 @@ int sm_reset(sm_ctx* c) {
   if (!c) return -1;
   std::lock_guard<std::mutex> g(c->mu);
   c->slam = Slam2D(c->params);
-  c->om = ObjectMap(c->oparams);
+  {
+    ApText tm = c->om.textModel();     // A′ 글 모델은 판이 바뀌어도 그대로
+    c->om = ObjectMap(c->oparams);
+    c->om.setTextModel(std::move(tm));
+  }
   c->applyKinds();   // 종류·바닥에 깔리는 이름 표
+  c->det_emb_n = -1;
+  c->reenc.clear(); c->reenc_pub.clear(); c->reenc_bits.clear();
+  c->saved_ap_ver.clear();
   c->handled.clear();
   c->pending.clear();
   c->have_used = false;
@@ -600,6 +635,7 @@ int sm_reset(sm_ctx* c) {
   c->wallsp.reset();
   c->walls_rects.clear();
   c->walls_grid_ver = ~0ull;
+  c->wall_th = 0; c->wall_th_t = -1e300; c->walls_full_t = -1e300;
   c->graph.reset();
   c->obj_meta.clear();
   c->slam.setMethod(c->pose_mode == SM_POSE_ODOM ? 'O' : c->params.method);
@@ -700,13 +736,41 @@ void refreshWalls(sm_ctx* c) {
   const bool grid_changed = c->walls_grid_ver != c->grid8_ver;   // 다른 곳(그래프 갱신)이 격자 사본을 먼저 새로 만들었어도 놓치지 않게 버전으로 본다
   std::vector<scenemap::WallRect> rects;
   for (const MapObject& o : c->om.objects()) {
-    if (!o.confirmed || o.held_by >= 0 || o.state == SM_GONE) continue;
+    if (!c->om.exportable(o) || o.held_by >= 0 || o.state == SM_GONE) continue;
     if (o.lo[2] > 0.4) continue;
+    if (o.ap && o.ap->wall_like) continue;   // A′: 벽 선 위 세운 얇은 평면(벽 조각) — 벽을 지우지 않음
+    if (c->om.kindOf(o.cls) == SM_KIND_STRUCT_OBJ) continue;   // 문·창·계단은 벽 선 자리(지우면 벽이 끊김)
     const double dx = o.hi[0] - o.lo[0], dy = o.hi[1] - o.lo[1];
     if (dx > 5.0 || dy > 5.0) continue;   // 방 크기 덩어리는 물체가 아니라 벽·바닥 오인식
     rects.push_back({o.lo[0] - 0.1, o.lo[1] - 0.1, o.hi[0] + 0.1, o.hi[1] + 0.1});
   }
   const bool rects_changed = !(rects == c->walls_rects);
+  const double now = c->st.last_image_stamp;
+  static const bool axis_only = std::getenv("SM_WALLS_AXIS") != nullptr;
+  bool th_changed = false;
+  if (!axis_only && c->grid8 && (grid_changed || rects_changed) && now - c->wall_th_t >= kWallAngleEvery) {
+    const scenemap::WallGrid wg{c->grid8->data(), gr.width(), gr.height(), double(gr.res()), gr.x0() * double(gr.res()), gr.y0() * double(gr.res())};
+    const double th = scenemap::wallAngle(wg, &rects);
+    c->wall_th_t = now;
+    // 흔들림 막기: 1° 넘게 바뀔 때만 새 θ(축 ↔ 기울어짐이 바뀌면 증분 추출기를 비움)
+    if (std::abs(th - c->wall_th) > kWallAngleHyst) {
+      const bool was_axis = std::abs(c->wall_th) <= scenemap::kAlignTol, is_axis = std::abs(th) <= scenemap::kAlignTol;
+      if (was_axis != is_axis) { c->walls.reset(); c->wallsp.reset(); }
+      c->wall_th = th;
+      th_changed = true;
+    }
+  }
+  if (std::abs(c->wall_th) > scenemap::kAlignTol) {
+    if (c->wallsp && !th_changed && !rects_changed && (!grid_changed || now - c->walls_full_t < kWallAlignedEvery)) return;
+    const scenemap::WallGrid wg{c->grid8->data(), gr.width(), gr.height(), double(gr.res()), gr.x0() * double(gr.res()), gr.y0() * double(gr.res())};
+    c->wallsp = std::make_shared<const std::vector<scenemap::WallSeg>>(
+        scenemap::wallSegmentsAtAngle(wg, c->wall_th, scenemap::kMinLen, scenemap::kMaxThick, 0.6, &rects));
+    c->walls_rects = std::move(rects);
+    c->walls_x0 = gr.x0(); c->walls_y0 = gr.y0();
+    c->walls_grid_ver = c->grid8_ver;
+    c->walls_full_t = now;
+    return;
+  }
   const bool same = c->wallsp && c->walls_x0 == gr.x0() && c->walls_y0 == gr.y0();
   if (same && !grid_changed && !rects_changed) return;
   int dx0, dy0, dx1, dy1;
@@ -740,13 +804,13 @@ void updateGraph(sm_ctx* c, double stamp, bool objects) {
   if (objects) {
     std::vector<ObjIn> v;
     for (const MapObject& o : c->om.objects()) {
-      if (!o.confirmed) continue;
+      if (!c->om.exportable(o)) continue;
       ObjIn q;
       q.id = o.id;
       q.name = o.cls >= 0 && size_t(o.cls) < c->labels.size() ? c->labels[o.cls] : std::string("?");
       for (int k = 0; k < 3; ++k) { q.pos[k] = o.pos[k]; q.lo[k] = o.lo[k]; q.hi[k] = o.hi[k]; }
       q.state = o.held_by >= 0 ? SM_HELD : o.state;
-      q.movable = c->om.kindOf(o.cls) != SM_KIND_STATIC;
+      q.movable = c->om.kindOf(o.cls) != SM_KIND_STATIC && c->om.kindOf(o.cls) != SM_KIND_STRUCT_OBJ;
       v.push_back(std::move(q));
     }
     c->graph.updateObjects(v);
@@ -818,6 +882,9 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   std::vector<ObsPoints> pts;
   bool host_rgb = false;
   uint64_t epoch = 0;
+  ObjFrame F;
+  bool ap_frame = false;              // A′ keyframe(검출 있음): 끝에서 통째 다시 담기 요청을 만듦
+  std::vector<double> wsegs;
   {
   std::lock_guard<std::mutex> g(c->mu);
   c->st.last_image_stamp = im->stamp;
@@ -855,11 +922,13 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   poseDiag(c, im->stamp);
   if (c->slog) slamLog(c, im->stamp);
   streamMap(c);
-  if (!dets) { c->last_assoc.clear(); c->last_view_upd.clear(); c->last_view_q.clear(); updateGraph(c, im->stamp, false); return 0; }   // 검출 없음: 지도(slam2d)만
+  c->reenc.clear();
+  c->reenc_pub.clear();
+  c->reenc_bits.clear();
+  if (!dets) { c->last_assoc.clear(); c->last_view_upd.clear(); c->last_view_q.clear(); updateGraph(c, im->stamp, false); c->det_emb_n = -1; return 0; }   // 검출 없음: 지도(slam2d)만
   // 물체 지도: map ← 카메라 = slam 자세 ∘ 순기구학 머리 카메라(objmap_eval 과 같은 계산)
   const Pose2 P = c->slam.pose();
   const double cs = std::cos(P.th), sn = std::sin(P.th);
-  ObjFrame F;
   F.stamp = im->stamp;
   F.w = im->w;
   F.h = im->h;
@@ -894,6 +963,36 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
     F.self_caps = self_caps.data();
     F.n_self_caps = int(self_caps.size());
   }
+  if (c->oparams.aprime) {   // A′: 검출 임베딩·벽 선분(기하 구조물 거르기)
+    if (c->det_emb_n == dets->n && c->det_emb_dim > 0) { F.emb = c->det_emb.data(); F.emb_dim = c->det_emb_dim; }
+    refreshGrid8(c);
+    refreshWalls(c);
+    if (c->wallsp) {
+      const auto& W = *c->wallsp;
+      for (const scenemap::WallSeg& w : W) wsegs.insert(wsegs.end(), {w.ax, w.ay, w.bx, w.by});
+      // 창·유리문 자리 잇기: 같은 직선(나란하고 수직 거리 < 0.1 m) 위 두 벽 선분 사이 틈이 ap.bridge_max 안이면 그 틈도 벽으로(창은 깊이가
+      // 지나가 점유가 없어 벽 선분이 끊김) — 기하 구조물 거르기의 '벽 너머' 판정에만 씀
+      for (size_t i = 0; i < W.size(); ++i)
+        for (size_t j = i + 1; j < W.size(); ++j) {
+          const double ux = W[i].bx - W[i].ax, uy = W[i].by - W[i].ay, li = std::hypot(ux, uy);
+          const double vx = W[j].bx - W[j].ax, vy = W[j].by - W[j].ay, lj = std::hypot(vx, vy);
+          if (li < 1e-6 || lj < 1e-6 || std::fabs(ux * vy - uy * vx) / (li * lj) > 0.03) continue;
+          const double nx = -uy / li, ny = ux / li;
+          if (std::fabs((W[j].ax - W[i].ax) * nx + (W[j].ay - W[i].ay) * ny) > 0.1) continue;
+          // i 직선 위 좌표로 두 구간, 사이 틈
+          auto at = [&](double x, double y) { return ((x - W[i].ax) * ux + (y - W[i].ay) * uy) / li; };
+          double a0 = 0, a1 = li, b0 = at(W[j].ax, W[j].ay), b1 = at(W[j].bx, W[j].by);
+          if (b0 > b1) std::swap(b0, b1);
+          const double lo = a1 <= b0 ? a1 : b1, hi = a1 <= b0 ? b0 : a0;   // a 가 앞이면 틈 [a1, b0], 뒤면 [b1, a0]
+          if (hi - lo <= 0 || hi - lo > c->om.params().ap.bridge_max) continue;
+          wsegs.insert(wsegs.end(), {W[i].ax + ux / li * lo, W[i].ay + uy / li * lo, W[i].ax + ux / li * hi, W[i].ay + uy / li * hi});
+        }
+    }
+    F.wall_segs = wsegs.data();
+    F.n_wall_segs = int(wsegs.size() / 4);
+    ap_frame = F.emb != nullptr;
+  }
+  c->det_emb_n = -1;
   const auto to = TClock::now();
   c->om.update(F);
   const auto tv = TClock::now();
@@ -954,7 +1053,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   c->addT(kStViewPrep, usBetween(tv, TClock::now()));
   updateGraph(c, im->stamp, true);
   }  // 잠금 끝: 자르기(장치 → 호스트 복사)는 잠금 밖에서
-  if (cand.empty() && pts.empty()) return 0;
+  if (cand.empty() && pts.empty() && !ap_frame) return 0;
   // 구름 점 색: 남긴 화소에서만(sgrt 는 장치에서 모아 그 색만 내려받음). 영상이 없으면 회색
   size_t npt = 0;
   for (const ObsPoints& q : pts) npt += q.px.size() / 2;
@@ -1008,6 +1107,15 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
     if (vc.det >= 0 && vc.det < int(c->last_view_upd.size())) c->last_view_upd[vc.det] = 1;
   }
   c->addT(kStCloud, usBetween(ta, TClock::now()));
+  if (ap_frame) {   // A′: 이번 구름이 쌓인 뒤 통째 다시 담기 요청(투영 마스크)
+    F.dets = nullptr;
+    c->om.buildReencode(F, dets->img_w, dets->img_h, dets->mask_w, dets->mask_h, dets->mask_sx, dets->mask_sy, dets->mask_ox, dets->mask_oy,
+                        &c->reenc);
+    for (const ReencReq& r : c->reenc) {
+      c->reenc_pub.push_back(sm_reenc_req{r.id, {r.box[0], r.box[1], r.box[2], r.box[3]}, r.kappa});
+      c->reenc_bits.insert(c->reenc_bits.end(), r.bits.begin(), r.bits.end());
+    }
+  }
   return 0;
 }
 
@@ -1066,7 +1174,7 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
     }
     s->voxel = c->om.params().voxel;
     for (const MapObject& o : c->om.objects()) {
-      if (!o.confirmed) continue;
+      if (!c->om.exportable(o)) continue;
       s->names.push_back(o.cls >= 0 && size_t(o.cls) < c->labels.size() ? c->labels[o.cls] : std::string("?"));
       sm_object e{};
       e.id = o.id;
@@ -1077,9 +1185,9 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
       e.state = o.held_by >= 0 ? SM_HELD : o.state;
       e.handled = std::find(c->handled.begin(), c->handled.end(), o.id) != c->handled.end();
       const int kind = c->om.kindOf(o.cls);
-      e.structural = kind == SM_KIND_STATIC || std::max({o.ext[0], o.ext[1], o.ext[2]}) > c->oparams.big;
+      e.structural = kind == SM_KIND_STATIC || kind == SM_KIND_STRUCT_OBJ || std::max({o.ext[0], o.ext[1], o.ext[2]}) > c->oparams.big;
       s->objs.push_back(e);
-      s->movable.push_back(kind != SM_KIND_STATIC);
+      s->movable.push_back(kind != SM_KIND_STATIC && kind != SM_KIND_STRUCT_OBJ);
       s->clouds.push_back(o.cloud);
       auto it = c->views.find(o.id);
       s->views.push_back(it != c->views.end() ? it->second.v : nullptr);
@@ -1343,6 +1451,86 @@ double sm_snap_reachable(const sm_snapshot_t* s, const double from[2], const dou
   return -1;
 }
 
+namespace {
+// A′ 저장: objects/O<id>_emb.f16 = μ(768 × FP16, L2 — 예전 형식 그대로), objects/O<id>_views.f16 = 상위 K 모습(K × 768 FP16, κ 큰 순,
+// 통째 먼저). 노드 metadata(scene.json·view.json objects[]) 에 "emb"·"name_post"·"pos_sd" — README "A′ 저장 형식"
+struct ApFile { uint32_t id; std::vector<uint16_t> mu, views; };
+
+std::string jf(double v) { char b[32]; std::snprintf(b, sizeof b, "%.4g", v); return b; }
+std::string jesc(const std::string& t) {
+  std::string o;
+  for (char ch : t) { if (ch == '"' || ch == '\\') o += '\\'; o += ch; }
+  return o;
+}
+
+void apSaveMeta(sm_ctx* c, const sm_snapshot_t* s, std::vector<std::string>* meta, std::vector<ApFile>* files) {
+  std::unordered_map<uint32_t, const MapObject*> by;
+  for (const MapObject& o : c->om.objects()) by[o.id] = &o;
+  for (size_t i = 0; i < s->objs.size(); ++i) {
+    auto it = by.find(s->objs[i].id);
+    if (it == by.end() || !it->second->ap) continue;
+    const MapObject& o = *it->second;
+    const ApState& a = *o.ap;
+    std::vector<float> mu;
+    double conf = 0;
+    if (!apMu(a, &mu, &conf)) continue;
+    const std::string b = "objects/O" + std::to_string(o.id);
+    std::string m = "\"emb\":{\"path\":\"" + b + "_emb.f16\",\"views\":\"" + b + "_views.f16\",\"dim\":" + std::to_string(mu.size()) +
+                    ",\"n_views\":" + std::to_string(a.views.size()) + ",\"conf\":" + jf(conf) + ",\"kappa_sum\":" + jf(a.k_whole > 0 ? a.k_whole : a.k_frag) +
+                    ",\"source\":\"" + (a.k_whole > 0 ? "whole" : "frag") + "\",\"n_whole\":" + std::to_string(a.n_whole) + ",\"kappa\":[";
+    for (size_t k = 0; k < a.views.size(); ++k) m += (k ? "," : "") + jf(a.views[k].kappa);
+    m += "],\"whole\":[";
+    for (size_t k = 0; k < a.views.size(); ++k) m += std::string(k ? "," : "") + (a.views[k].whole ? "1" : "0");
+    m += "]}";
+    if (!a.post.empty()) {   // 이름 사후 상위 5·이름 확률·엔트로피(nat)·상위어로 올렸나·바깥 관측 있나
+      std::vector<int> ord(a.post.size());
+      for (size_t k = 0; k < ord.size(); ++k) ord[k] = int(k);
+      std::partial_sort(ord.begin(), ord.begin() + std::min<size_t>(5, ord.size()), ord.end(),
+                        [&](int x, int y) { return a.post[size_t(x)] > a.post[size_t(y)]; });
+      m += ",\"name_post\":{\"top\":[";
+      for (size_t k = 0; k < std::min<size_t>(5, ord.size()); ++k) {
+        const int l = ord[k];
+        m += std::string(k ? "," : "") + "[\"" + jesc(size_t(l) < c->labels.size() ? c->labels[size_t(l)] : "?") + "\"," + jf(a.post[size_t(l)]) + "]";
+      }
+      m += "],\"p\":" + jf(a.name_p) + ",\"entropy\":" + jf(a.name_H) + ",\"rolled\":" + (a.rolled ? "true" : "false") +
+           ",\"external\":" + (a.L_ext.empty() ? "false" : "true") + "}";
+    }
+    m += ",\"pos_sd\":[" + jf(std::sqrt(a.P[0])) + "," + jf(std::sqrt(a.P[1])) + "," + jf(std::sqrt(a.P[2])) + "]";
+    std::string& dst = (*meta)[i];
+    dst = dst.empty() ? m : dst + "," + m;
+    auto sv = c->saved_ap_ver.find(o.id);
+    if (sv != c->saved_ap_ver.end() && sv->second == a.ver) continue;
+    c->saved_ap_ver[o.id] = a.ver;
+    ApFile f;
+    f.id = o.id;
+    f.mu.resize(mu.size());
+    apToF16(mu.data(), f.mu.data(), int(mu.size()));
+    for (const ApView& v : a.views) f.views.insert(f.views.end(), v.z.begin(), v.z.end());
+    files->push_back(std::move(f));
+  }
+}
+
+void apWriteFiles(const char* dir, const std::vector<ApFile>& files) {
+  if (files.empty()) return;
+  const std::string od = std::string(dir) + "/objects";
+  std::error_code ec;
+  std::filesystem::create_directories(od, ec);
+  auto put = [&](const std::string& path, const std::vector<uint16_t>& v) {
+    const std::string tmp = path + ".tmp";
+    FILE* fp = std::fopen(tmp.c_str(), "wb");
+    if (!fp) return;
+    std::fwrite(v.data(), 2, v.size(), fp);
+    std::fclose(fp);
+    std::rename(tmp.c_str(), path.c_str());
+  };
+  for (const ApFile& f : files) {
+    const std::string b = od + "/O" + std::to_string(f.id);
+    put(b + "_emb.f16", f.mu);
+    put(b + "_views.f16", f.views);
+  }
+}
+}  // namespace
+
 int sm_save_dsg(sm_ctx* c, const char* dir) { return sm_save_dsg_ex(c, dir, nullptr); }
 
 int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
@@ -1351,6 +1539,7 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
   sm_snapshot_t* s = nullptr;
   if (sm_snapshot(c, &s) != 0) return -1;
   SaveInput in;
+  std::vector<ApFile> apw;
   in.stamp = s->pose.stamp;
   in.pose[0] = s->pose.x; in.pose[1] = s->pose.y; in.pose[2] = s->pose.yaw;
   in.objs = s->objs.data();
@@ -1374,6 +1563,7 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
       c->saved_dir = dir;
       c->saved_ver.clear();
       c->saved_cloud_ver.clear();
+      c->saved_ap_ver.clear();
       c->clean_objects = true;
     }
     for (size_t i = 0; i < s->objs.size(); ++i) {
@@ -1391,10 +1581,12 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
       auto it = c->obj_meta.find(s->objs[i].id);
       if (it != c->obj_meta.end()) in.obj_meta[i] = it->second;
     }
+    if (c->oparams.aprime) apSaveMeta(c, s, &in.obj_meta, &apw);
   }
   SaveOut out;
   std::unique_lock<std::mutex> sl(c->save_mu);   // 저장 하나씩(노드 조각 캐시)
   in.json_cache = &c->jcache;
+  apWriteFiles(dir, apw);   // scene.json·view.json 이 가리키기 전에
   const int rc = saveScene(in, dir, &out);
   sl.unlock();
   {
@@ -1673,6 +1865,105 @@ int sm_set_object_meta(sm_ctx* c, uint32_t id, const char* json) {
   std::lock_guard<std::mutex> g(c->mu);
   if (!json || !*json) c->obj_meta.erase(id);
   else c->obj_meta[id] = json;
+  return 0;
+}
+
+// ---- A′ ----
+int sm_set_object_model(sm_ctx* c, int32_t aprime) {
+  if (!c) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  c->oparams.aprime = aprime != 0;
+  c->om.paramsMut().aprime = aprime != 0;
+  c->applyKinds();
+  if (aprime) {   // 큰 가구(소파 ≈ 4 m²)의 구름이 접촉 판정에 쓰이므로 한도를 넉넉히
+    c->oparams.cloud_cap = std::max(c->oparams.cloud_cap, 8000);
+    c->om.setCloudParams(0, c->oparams.cloud_cap);
+  }
+  ObjectMap::envOverrides(&c->om.paramsMut());
+  return 0;
+}
+
+int sm_set_text_model(sm_ctx* c, const float* text, const int32_t* row_label, int32_t rows, int32_t dim, float scale, float bias) {
+  if (!c || !text || !row_label || rows <= 0 || dim <= 0) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  ApText t = c->om.textModel();
+  // 벽에 붙는 납작한 물체(벽 선 위 얇은 평면이어도 남김)
+  static const char* const kFlat[] = {"picture frame", "picture", "painting", "poster", "tv", "television", "monitor", "whiteboard", "clock", "sign", "mirror"};
+  t.flat_ok.assign(c->labels.size(), 0);
+  for (size_t i = 0; i < c->labels.size(); ++i)
+    for (const char* e : kFlat) t.flat_ok[i] = t.flat_ok[i] || headMatch(normName(c->labels[i]), e);
+  t.dim = dim;
+  t.text.assign(text, text + size_t(rows) * dim);
+  t.row_label.assign(row_label, row_label + rows);
+  t.scale = scale;
+  t.bias = bias;
+  t.n_labels = int(c->labels.size());
+  c->om.setTextModel(std::move(t));
+  return 0;
+}
+
+int sm_set_label_stats(sm_ctx* c, const float* log_prior, const float* mu, const float* sd, const int32_t* parent, int32_t n, int32_t object_label) {
+  if (!c || n < 0) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  ApText t = c->om.textModel();
+  t.n_labels = int(c->labels.size());
+  if (log_prior) t.log_prior.assign(log_prior, log_prior + n); else t.log_prior.clear();
+  if (mu && sd) { t.ls_mu.assign(mu, mu + n); t.ls_sd.assign(sd, sd + n); } else { t.ls_mu.clear(); t.ls_sd.clear(); }
+  if (parent) t.parent.assign(parent, parent + n); else t.parent.clear();
+  t.object_label = object_label;
+  c->om.setTextModel(std::move(t));
+  return 0;
+}
+
+int sm_set_det_embeddings(sm_ctx* c, const float* emb, int32_t n, int32_t dim) {
+  if (!c || n < 0 || dim <= 0 || (n > 0 && !emb)) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  c->det_emb.assign(emb, emb + size_t(n) * dim);
+  c->det_emb_n = n;
+  c->det_emb_dim = dim;
+  return 0;
+}
+
+int sm_reencode_requests(sm_ctx* c, const sm_reenc_req** reqs, const uint32_t** bits) {
+  if (!c) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  if (reqs) *reqs = c->reenc_pub.data();
+  if (bits) *bits = c->reenc_bits.data();
+  return int(c->reenc_pub.size());
+}
+
+int sm_set_object_embeddings(sm_ctx* c, const uint32_t* ids, const float* emb, int32_t n, int32_t dim) {
+  if (!c || n < 0 || (n > 0 && (!ids || !emb)) || dim <= 0) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  for (int i = 0; i < n; ++i) {
+    const ReencReq* r = nullptr;
+    for (const ReencReq& q : c->reenc) if (q.id == ids[i]) { r = &q; break; }
+    if (!r) continue;   // 요청 뒤 합쳐져 없어진 물체 등
+    c->om.addWholeView(ids[i], emb + size_t(i) * dim, dim, r->kappa, c->st.last_image_stamp, r->cam);
+  }
+  return 0;
+}
+
+int sm_observe_object_name(sm_ctx* c, uint32_t id, const char* name, float log_lr) {
+  if (!c || !name) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  int lab = -1;
+  for (size_t i = 0; i < c->labels.size(); ++i) if (c->labels[i] == name) { lab = int(i); break; }
+  if (lab < 0) return -2;
+  bool found = false;
+  for (const MapObject& o : c->om.objects()) found = found || (o.id == id && o.ap);
+  if (!found) return -3;
+  c->om.observeName(id, lab, log_lr);
+  return 0;
+}
+
+int sm_get_aprime_stats(sm_ctx* c, int64_t out[16]) {
+  if (!c || !out) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  const ApStats& a = c->om.apStats();
+  const long v[16] = {a.n_obs, a.n_wall, a.n_wall_name, a.n_ceil, a.n_floor, a.n_name_struct, a.n_assoc, a.n_new, a.n_merge, a.n_obj_struct,
+                      a.n_reenc_req, a.n_reenc_done, a.n_through, 0, 0, 0};
+  for (int i = 0; i < 16; ++i) out[i] = v[i];
   return 0;
 }
 

@@ -255,25 +255,53 @@ double wallAngle(const WallGrid& g) {
   return best;
 }
 
+namespace {
+// 가구 지운 격자 src(g 와 같은 배치)를 −θ 돌려 축에 맞는 벽을 뽑고 원래 격자에 다시 맞춘 뒤 θ 돌려 돌려준다(아래)
+std::vector<WallSeg> rotatedSegments(const WallGrid& g, const int8_t* src, double th, double min_len, double max_thick, double overlap);
+
+// ignore 영역(원래 좌표 축 상자)의 점유 칸을 빈 칸으로 지운 격자. 영역이 없으면 g.cells 그대로
+const int8_t* maskIgnore(const WallGrid& g, const std::vector<WallRect>* ignore, std::vector<int8_t>* masked) {
+  if (!ignore || ignore->empty()) return g.cells;
+  masked->assign(g.cells, g.cells + size_t(g.w) * g.h);
+  for (const WallRect& r : *ignore) {
+    const int cx0 = std::max(0, int(std::floor((r.x0 - g.ox) / g.res))), cx1 = std::min(g.w - 1, int(std::floor((r.x1 - g.ox) / g.res)));
+    const int cy0 = std::max(0, int(std::floor((r.y0 - g.oy) / g.res))), cy1 = std::min(g.h - 1, int(std::floor((r.y1 - g.oy) / g.res)));
+    for (int y = cy0; y <= cy1; ++y) for (int x = cx0; x <= cx1; ++x) if ((*masked)[size_t(y) * g.w + x] >= kOccMin) (*masked)[size_t(y) * g.w + x] = 0;
+  }
+  return masked->data();
+}
+}  // namespace
+
 std::vector<WallSeg> wallSegmentsAligned(const WallGrid& g, double min_len, double max_thick, double overlap,
                                          const std::vector<WallRect>* ignore, double* angle_out) {
   if (g.w <= 0 || g.h <= 0) { if (angle_out) *angle_out = 0; return {}; }
   // ignore 영역은 원래 좌표 축에 맞는 상자라 먼저 지운다(각 판정에도 가구가 안 끼게)
   std::vector<int8_t> masked;
-  const int8_t* src = g.cells;
-  if (ignore && !ignore->empty()) {
-    masked.assign(g.cells, g.cells + size_t(g.w) * g.h);
-    for (const WallRect& r : *ignore) {
-      const int cx0 = std::max(0, int(std::floor((r.x0 - g.ox) / g.res))), cx1 = std::min(g.w - 1, int(std::floor((r.x1 - g.ox) / g.res)));
-      const int cy0 = std::max(0, int(std::floor((r.y0 - g.oy) / g.res))), cy1 = std::min(g.h - 1, int(std::floor((r.y1 - g.oy) / g.res)));
-      for (int y = cy0; y <= cy1; ++y) for (int x = cx0; x <= cx1; ++x) if (masked[size_t(y) * g.w + x] >= kOccMin) masked[size_t(y) * g.w + x] = 0;
-    }
-    src = masked.data();
-  }
+  const int8_t* src = maskIgnore(g, ignore, &masked);
   const WallGrid gm{src, g.w, g.h, g.res, g.ox, g.oy};
   const double th = wallAngle(gm);
   if (angle_out) *angle_out = th;
   if (std::abs(th) <= kAlignTol) return wallSegments(g, min_len, max_thick, overlap, ignore);   // 축에 맞는 지도: 예전과 같은 결과
+  return rotatedSegments(g, src, th, min_len, max_thick, overlap);
+}
+
+double wallAngle(const WallGrid& g, const std::vector<WallRect>* ignore) {
+  std::vector<int8_t> masked;
+  const WallGrid gm{maskIgnore(g, ignore, &masked), g.w, g.h, g.res, g.ox, g.oy};
+  return wallAngle(gm);
+}
+
+std::vector<WallSeg> wallSegmentsAtAngle(const WallGrid& g, double th, double min_len, double max_thick, double overlap,
+                                         const std::vector<WallRect>* ignore) {
+  if (g.w <= 0 || g.h <= 0) return {};
+  if (std::abs(th) <= kAlignTol) return wallSegments(g, min_len, max_thick, overlap, ignore);
+  std::vector<int8_t> masked;
+  const int8_t* src = maskIgnore(g, ignore, &masked);
+  return rotatedSegments(g, src, th, min_len, max_thick, overlap);
+}
+
+namespace {
+std::vector<WallSeg> rotatedSegments(const WallGrid& g, const int8_t* src, double th, double min_len, double max_thick, double overlap) {
   // 돌린 좌표 u = R(−θ)·p (지도 좌표 p 를 −θ 돌림). 원래 지도의 네 모서리를 돌려 새 격자 범위를 잡는다.
   const double c = std::cos(th), s = std::sin(th), res = g.res;
   double u0 = 1e300, v0 = 1e300, u1 = -1e300, v1 = -1e300;
@@ -426,6 +454,7 @@ std::vector<WallSeg> wallSegmentsAligned(const WallGrid& g, double min_len, doub
   }
   return segs;
 }
+}  // namespace
 
 void rayDistances(const WallGrid& g, const double pose[3], float* out, int n, double max_range) {
   const double x = pose[0], y = pose[1], yaw = pose[2];

@@ -38,7 +38,9 @@
 #include <vector>
 
 #include "scenemap.h"
+#include "scenemap/bestview.hpp"
 #include "scenemap/cloud.hpp"
+#include "scenemap/objprob.hpp"
 #include "scenemap/scan.hpp"
 
 namespace scenemap {
@@ -126,6 +128,30 @@ struct ObjParams {
   double move_v = 0.3, move_min_d = 0.25;
   double move_max_cam_w = 0.6;    // 카메라 광축이 이보다 빨리(rad/s) 돌면 그 keyframe 은 움직임 근거로 안 씀(자세 오차가 물체를 쓸어 감).
                                   // 상자가 영상 가장자리에 닿은 관측(잘림)도 안 씀
+  // ---- A′(10-05, objprob.hpp): 이름 없는 같은 것 판정·기하 구조물 거르기·물체 임베딩 vMF·이름 사후. 끄면(기본) 위 규칙 그대로.
+  // 켜려면 검출마다 임베딩(ObjFrame.emb)이 있어야 한다(capi sm_set_object_model·sm_set_det_embeddings)
+  bool aprime = false;
+  bool ap_name_struct_skip = false; // true: 검출 하나의 이름(cls)이 구조물이면 버림(옛 규칙). 끔(기본): FastSAM 조각의 이름은 자주 틀려
+                                    // (소파 조각 → partition·baseboard) 기하·합친 물체의 이름 사후로만 거름
+  ApParams ap;
+  KappaParams kap;
+  double ap_q_pos = 1e-4;         // 칼만: 물체 자리 과정 잡음(m²/s, 가만히 있는 물체)
+  double ap_r0 = 0.02, ap_r1 = 0.01;   // 관측 중심 잡음 σ = r0 + r1·깊이(m) — 조각·잘림이면 반 폭을 더함
+};
+
+// A′ 진단 셈(ObjectMap::apStats)
+struct ApStats {
+  long n_through = 0, n_obs = 0, n_wall = 0, n_wall_name = 0, n_ceil = 0, n_floor = 0, n_name_struct = 0;
+  long n_assoc = 0, n_new = 0, n_merge = 0, n_obj_struct = 0, n_reenc_req = 0, n_reenc_done = 0;
+};
+
+// A′ 통째 다시 담기 요청(검출 마스크 격자와 같은 배치의 마스크)
+struct ReencReq {
+  uint32_t id = 0;
+  float box[4] = {0, 0, 0, 0};    // 검출 영상 화소
+  float kappa = 0;
+  double cam[6] = {0, 0, 0, 0, 0, 1};
+  std::vector<uint32_t> bits;     // ceil(mask_w·mask_h / 32) 단어
 };
 
 struct ObjEvent {
@@ -164,10 +190,12 @@ struct MapObject {
   double max_det_z = 0;           // 이 물체를 검출한 가장 먼 카메라 깊이(사라짐 판정은 이 거리 안에서만)
   double gone_t = 0;              // 사라짐 판정 시각
   bool appeared = false;          // 전에 본 자리에 새로 나타남(옮겨짐 잇기 후보)
+  ApStatePtr ap;                  // A′ 상태(임베딩·이름 사후·칼만 분산) — aprime 일 때만
 };
 
 // 이름 번호의 종류
-enum ClassKind : uint8_t { kKindObject = 0, kKindStructure = 1, kKindStatic = 2 };
+// kKindStructObj(A′ 만): 문·창·계단 — 지우지 않고 노드(구조 물체: structural·안 옮김)로 내보냄. 벽·바닥·천장만 kKindStructure(지움)
+enum ClassKind : uint8_t { kKindObject = 0, kKindStructure = 1, kKindStatic = 2, kKindStructObj = 3 };
 
 // 한 keyframe 의 검출 k → 물체(update 가 채움, lastAssoc()). obj_id 0 = 물체에 안 붙음(점 부족·손에 든 것 등)
 struct DetAssoc {
@@ -192,6 +220,11 @@ struct ObjFrame {
   double base_xy[2] = {0, 0};         // map 기준 베이스 위치(몸 점 거르기)
   const Capsule* self_caps = nullptr; // map 기준 로봇 팔 캡슐(순기구학) — 이 안 깊이 점은 버림. NULL = 안 거름(R1)
   int n_self_caps = 0;
+  // A′: 검출마다 SigLIP 임베딩(dets->n × emb_dim, L2 정규화), 벽 선분(map, ax ay bx by — 기하 구조물 거르기)
+  const float* emb = nullptr;
+  int emb_dim = 0;
+  const double* wall_segs = nullptr;
+  int n_wall_segs = 0;
 };
 
 // 마지막 update 에서 물체에 붙은 관측의 점 구름 후보(관측 안에서 복셀마다 하나, map 좌표). 색은 호출자가 영상에서 골라
@@ -231,6 +264,28 @@ class ObjectMap {
     if (cap > 0) p_.cloud_cap = cap;
   }
   const ObjParams& params() const { return p_; }
+  ObjParams& paramsMut() { return p_; }
+  // ---- A′ ----
+  void setTextModel(ApText t) { text_ = std::move(t); }
+  const ApText& textModel() const { return text_; }
+  const ApStats& apStats() const { return aps_; }
+  double ceilingEstimate() const { return ceil_est_; }
+  // 통째 다시 담기 요청: 이번 keyframe 에 본 물체 중 아직 통째가 없거나(합친 뒤) 지금 모습이 훨씬 좋은 것. 구름을 지금 영상에 투영
+  // (깊이로 가림 확인)해 검출 마스크 격자(mw × mh, 화소 = 칸 × s + o)에 칠한다. 이 keyframe 의 update·addPoints 뒤에 부른다
+  void buildReencode(const ObjFrame& f, int img_w, int img_h, int mw, int mh, float msx, float msy, float mox, float moy,
+                     std::vector<ReencReq>* out);
+  // 통째 임베딩 하나(z: dim, L2) — 조각 벡터 대신 μ·이름에 쓰임
+  void addWholeView(uint32_t id, const float* z, int dim, double kappa, double stamp, const double cam[6]);
+  // 노드로 내보낼 물체인가: 확정 + (A′ export_named 면) 이름이 정해졌고 구조물 이름이 아님
+  bool exportable(const MapObject& m) const {
+    if (!m.confirmed) return false;
+    if (!p_.aprime || !p_.ap.export_named || !m.ap) return true;
+    if (m.ap->post.empty()) return false;
+    if (text_.object_label >= 0 && m.cls == text_.object_label) return false;
+    return kindOf(m.cls) != kKindStructure;   // 문·창·계단(kKindStructObj)은 내보냄
+  }
+  // 바깥 이름 관측(confirm_object 등): 라벨 lab 에 로그 우도비 log_lr 를 더하고 이름을 다시 셈(영상 모습이 와도 남음)
+  void observeName(uint32_t id, int lab, double log_lr);
 
  private:
   void event(double t, const MapObject& o, int kind);
@@ -243,6 +298,20 @@ class ObjectMap {
   double firstView(double x, double y, double range) const;   // range(수평 m) 이하에서 처음 본 시각(없으면 1e300)
   void relink(double t);
   void remapId(uint32_t from, uint32_t to);
+  // A′
+  void apMergePass(double t);
+  void apRename(MapObject& m);
+  bool apStructObject(MapObject& m);
+  bool labelRelated(int a, int b) const;
+  ApPair apPairObj(MapObject& a, MapObject& b);
+  const std::vector<uint64_t>& apContactIdx(MapObject& m);
+  ApText text_;
+  ApStats aps_;
+  std::vector<uint8_t> smask_;        // 라벨이 구조물 종류인가(apMergePass)
+  std::vector<double> ceil_obs_;      // 천장 추정: 얇은 수평 관측(중앙 높이 > 1.8 m)의 높이(최근 400)
+  double ceil_est_ = 0;               // 0 = 아직 모름
+  std::vector<double> wsegs_;         // 마지막 keyframe 의 벽 선분(창 자리 이음 포함) — 물체 기하 판정
+  double cam_w_ = 0;
   ObjParams p_;
   std::vector<MapObject> objs_;
   std::vector<ObjEvent> ev_;

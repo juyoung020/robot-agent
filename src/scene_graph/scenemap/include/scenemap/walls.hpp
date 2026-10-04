@@ -45,9 +45,13 @@ std::vector<WallSeg> wallSegments(const WallGrid& g, double min_len = kMinLen, d
 constexpr double kAlignTol = 1.0 * 3.14159265358979323846 / 180.0;
 constexpr double kAlignGain = 1.08;   // wallAngle: θ 의 투영 점수가 0° 점수의 이 배수보다 작으면 0 을 돌려준다(축에 맞는 지도)
 double wallAngle(const WallGrid& g);
+double wallAngle(const WallGrid& g, const std::vector<WallRect>* ignore);   // ignore 영역을 지운 격자로
 std::vector<WallSeg> wallSegmentsAligned(const WallGrid& g, double min_len = kMinLen, double max_thick = kMaxThick,
                                          double overlap = 0.6, const std::vector<WallRect>* ignore = nullptr,
                                          double* angle_out = nullptr);
+// wallSegmentsAligned 와 같되 방향 θ 를 호출자가 준다(wallAngle 을 다시 재지 않음 — capi 가 θ 를 가끔만 재서 들고 있음). |θ| ≤ kAlignTol 이면 wallSegments
+std::vector<WallSeg> wallSegmentsAtAngle(const WallGrid& g, double th, double min_len = kMinLen, double max_thick = kMaxThick,
+                                         double overlap = 0.6, const std::vector<WallRect>* ignore = nullptr);
 
 // 실시간 갱신용: 비트 격자와 작업 버퍼를 들고 있다가, 격자에서 바뀐 행만 다시 비트로 만든다.
 // update(g, y_lo, y_hi): 격자 행 y(아래→위, sm_grid 의 y) y_lo..y_hi(끝 포함)가 바뀌었다. y_lo > y_hi 면 전부(처음·격자 크기가 바뀜).
