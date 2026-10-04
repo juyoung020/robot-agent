@@ -25,7 +25,7 @@
 
 | 사람이 | 에이전트가 하는 일 | 좋은 답의 모양 |
 |---|---|---|
-| "컵 어디 있어?" | 물체 기억 조회 → 방·옆 기준물·최근성 계산 → 한국어 답 | "부엌 식탁 위에 있어요 (12분 전에 봤어요)" |
+| "컵 어디 있어?" | 물체 기억 조회 → 방·가까운 기준물·최근성 → 한국어 답(위·안 같은 말은 위치·크기를 보고 LLM 이 고름) | "부엌 식탁 위에 있어요 (12분 전에 봤어요)" |
 | (기억에 없음) | 없다고 정직하게 + 다음 행동 제안 | "아직 컵을 본 적이 없어요. 부엌부터 찾아볼까요?" |
 | (오래됐거나 옮겨짐 표시) | 확신도 낮춰 말함 | "2시간 전엔 거실 소파 옆에 있었는데, 그 뒤로는 못 봤어요" |
 | (컵이 여러 개) | 후보를 나눠 말하거나 되묻기 | "컵이 2개 있어요: 부엌 식탁 위, 거실 탁자 위. 어느 쪽이요?" |
@@ -136,9 +136,9 @@ skillspec (Rust, 순수 함수, 의존성 0)
 | `router.rs` | 의도 분류 `Where / Command / Status / Cancel / Chat` — 규칙(한국어 어미·동사 사전) 먼저, 애매하면 T1 에 맡김 | |
 | `memview.rs` | `sm_snapshot` FFI 래퍼 `MemSnapshot`(수명 안전): `find`, `near`, `objects`, `movable`, `view`, `reachable`, `pose`. 오프라인용 `scene.json`(Spark-DSG) 읽기 구현도 같은 trait `Memory` | behavior-2026 `graph.rs` `SceneQuery` |
 | `rooms.rs` | 방 추론(3.5절) `RoomMap::room_at(x,y) -> Option<RoomLabel>` | |
-| `landmark.rs` | 옆 기준물·관계: `on / in / next to / near` 계산(3.6절) | |
+| `landmark.rs` | 가까운 기준물(고정 가구) 고르기 — 이름·거리·상대 높이만, 관계 계산 없음(3.6절) | |
 | `lexicon.rs` | 한국어 ↔ 라벨: `컵/머그잔/텀블러 → cup`, `쓰레기통/휴지통 → trash can`, 방 `부엌/주방 → kitchen` … 표(TOML) + 표에 없으면 LLM 질의 1회 | |
-| `answer.rs` | 한국어 답 틀: `{방} {기준물} {관계}에 있어요 ({최근성})`, 최근성 `방금/N분 전/N시간 전/오늘 아침`, 확신도 문구 | |
+| `answer.rs` | 한국어 답 틀: `{방} {기준물} … ({최근성})` — 기준물과의 말(위·안·옆)은 LLM 이 위치·크기로 고름, 최근성 `방금/N분 전/N시간 전/오늘 아침`, 확신도 문구 | |
 | `task/plan.rs` | `TaskPlan{goal, steps: Vec<Step>, version}` 검증(스킬 enum·칸 수·id 존재·전제조건) | `plan.rs` 체크리스트 |
 | `task/machine.rs` | 단계 상태 기계(3.4절), 예산·재시도·복구 표 | `planner.rs` 자동 증거 |
 | `task/verify.rs` | `visible(id)`, `held(id)`, `placed(id, target)`, `at(target)` — 기억·그리퍼·검출로 | `Core::evidence` |
@@ -213,11 +213,10 @@ Pending ─▶ Approach(move to) ─▶ Acquire(보이나?) ─▶ Execute(VLA s
 - `RoomMap` 은 `(x, y) → RoomLabel{id, name_ko, name_en, source: gt/bddl/rule/user}`. 답에서 `source=rule` 이면 "부엌 쪽" 처럼 흐리게 말한다.
 - scenemap 팀 코드에 요청: `sm_set_rooms(ctx, grid, names)` 로 받아 DSG ROOMS 층과 `scene.json` 에 같이 저장(뷰어 sgview 에도 보이게). 그 전까지는 `ragent` 쪽에서만 붙인다.
 
-### 3.6 기준물·관계 (`landmark.rs`)
+### 3.6 기준물 (`landmark.rs`)
 
-- 후보 = 고정 물체(`sm_snap_movable == 0`) 중 대상에서 1.5 m 안.
-- 관계: 대상 중심 xy 가 가구 상자 안 + 대상 바닥 ≈ 가구 윗면(±0.08 m) → `on`, 상자 안이고 아래 → `in`, 그 밖 0.6 m 안 → `next to`, 그 밖 → `near`.
-- 고르는 순서: `on/in` > 가장 가까운 `next to`. 한국어: `식탁 위`, `서랍 안`, `소파 옆`, `냉장고 근처`.
+- **물체 간 전치사 관계(on/in/next to/near)는 계산·저장하지 않는다** — 장면 그래프에서도 뺐다(MAP_STATE_PLAN 3 절, 10-05 다시 확인). 위치·크기가 있으므로 "위에 / 안에 / 옆에" 는 LLM 이 추론한다.
+- 기준물 = 고정 물체(`sm_snap_movable == 0`) 중 대상에서 1.5 m 안의 가장 가까운 것. 도구 결과에는 기준물 id·이름·거리·대상과의 상대 높이(m)만 넣는다.
 - 최근성: `now - last_seen`. 확신도: `state`(seen/moved/gone) × 경과 시간 × `n_obs` — `gone` 이면 "있었는데 지금은 없어요".
 
 ### 3.7 맥락 예산 (16k, Qwen3.5-9B)
@@ -275,7 +274,7 @@ Pending ─▶ Approach(move to) ─▶ Acquire(보이나?) ─▶ Execute(VLA s
 | M1 | 기억에 없음 | 검출 못 함·안 가 봄 |
 | M2 | 기억이 낡음 | 옮겨졌는데 갱신 안 됨 |
 | M3 | 이름 못 이음 | 한국어 ↔ 라벨 사전 빈칸 |
-| M4 | 방·기준물 틀림 | 방 지도·관계 계산 |
+| M4 | 방·기준물 틀림 | 방 지도·기준물 고르기 |
 | L1 | 도구 호출 형식 오류 | 9B JSON 깨짐 |
 | L2 | 잘못된 계획 | 순서·물체 고르기 |
 | L3 | 증거와 반대 판단 | 자동 확인 무시 |
