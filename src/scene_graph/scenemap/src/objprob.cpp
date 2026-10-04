@@ -359,6 +359,7 @@ void apMerge(ApState& a, const ApState& b, const ApParams& p) {
   a.cidx_ver = ~0u;
   a.n_wall_obs += b.n_wall_obs;
   a.n_ap_obs += b.n_ap_obs;
+  a.n_struct_look += b.n_struct_look;
   a.wall_like = a.wall_like && b.wall_like;
 }
 

@@ -36,6 +36,8 @@ struct ApText {
   std::vector<float> ls_mu, ls_sd;   // log(가장 긴 변 m) 가우스, sd ≤ 0 = 안 씀
   std::vector<int32_t> parent;    // 상위어 라벨 번호(-1 = 없음)
   int object_label = -1;          // 상위어도 못 정할 때 이름(-1 = 최댓값 그대로)
+  // 구조 물체 모양 묶음(capi 가 이름으로 채움): 1 = 문·창(얇은 판), 2 = 계단·난간, 3 = 기둥 — 크기 확인(so_*)에 씀. 0 = 그 밖
+  std::vector<uint8_t> so_shape;
   std::vector<uint8_t> flat_ok;   // 벽에 붙는 납작한 물체 라벨(액자·TV·화이트보드·시계·간판 — capi 가 이름으로 채움): 벽 선 위 얇은 평면이어도 남김
   bool ready() const { return dim > 0 && n_labels > 0 && !text.empty(); }
 };
@@ -99,6 +101,24 @@ struct ApParams {
   // 벽 선 위 아주 얇은 평면(문짝·창유리 — 시뮬 깊이는 유리에서 맺힘): 두께 < obj_flat_thick, 세움, 점의 obj_flat_frac 이상이 (창 자리를
   // 이은) 벽 선 obj_flat_d 안, 납작한 물체 이름(flat_ok) 사후 < flat_keep_p 면 구조물
   double obj_flat_thick = 0.012, obj_flat_d = 0.10, obj_flat_frac = 0.7, flat_keep_p = 0.5;
+  // 구조 물체 크기 확인: 문·창·기둥 이름이어도 이 모양 밖이면 보호(지우지 않음)를 안 함 — 벽 조각이 door·window·pillar 로 불려 남던 것.
+  // 문·창: 얇은 판(수평 짧은 폭 ≤ so_dw_thick), 수평 긴 폭 ≤ so_dw_w, 높이 ≤ so_max_h. 기둥: 수평 두 폭 ≤ so_pillar. 계단·난간: 긴 폭 ≤ so_stairs.
+  // (BEHAVIOR 정답: 문 0.94–1.6 × 2.06–2.34 m, 창 1.0–1.66 × 2.45 m, 계단 2.1 × 3.1 m). 조각(벽 선 위 평면)은 수평 폭만 봄
+  double so_dw_w = 2.2, so_dw_thick = 0.45, so_max_h = 2.8, so_pillar = 1.0, so_stairs = 6.0;
+  double so_dw_min = 0.3;         // 문·창 이름인데 수평 긴 폭이 이보다 작으면(문틀·창틀 모서리 조각) 구조물로 지움 — 관측 so_min_obs 번 넘게 쌓인 뒤에도
+  int so_min_obs = 12;
+  double so_hide_k = 1.5;         // 크기 밖이 이 배 넘으면(문·창 3.3 m) 벽 모양 근거 없이도 숨김
+  // 벽에 붙은 큰 덩어리: 합친 물체 점의 wallhug_frac 이상이 벽 선분 wall_d 안이고 수평 긴 폭 ≥ wallhug_w 면 벽(평면이 아니어도 — 벽 모서리 L 자)
+  double wallhug_frac = 0.75, wallhug_w = 2.0;
+  // 구조물 같은 조각(구조물 확률 ≥ 0.5 인 얇은 세운 평면 — 이름만으로는 아님: 계단 조각이 빠졌음)은 구조물 사후 < 0.5 인 물체에 붙지 않음(벽이 액자를 키우지 않게).
+  // 물체끼리 병합도: 한쪽이 구조물 같은 관측이 절반 넘고 다른 쪽 구조물 사후 < 0.5 면 막음
+  bool struct_look_block = true;
+  // 납작한 벽걸이 이름(flat_ok: 액자·TV·포스터·화이트보드 …) 크기: 붙이거나 합친 뒤 수평 폭(상자 x·y 중 큰 것)이 flat_max_w 를 넘으면 안 붙임(넘는 관측 버림)
+  double flat_max_w = 2.2;
+  double big_vinl = 0.5;          // 크기 밖 문·창·기둥·벽걸이 이름 물체: 세운 평면 안쪽 비율이 이 이상이면 벽
+  // 벽 선 없이 벽: 얇은 세운 평면이 높고(높이 10~90 % ≥ tall_h, 또는 바닥 tall_floor 안에서 천장 추정 − tall_ceil 까지) 넓으면(수평 폭 ≥ tall_w) 벽.
+  // 구조물 확률 < tall_ps 면 수평 폭 ≥ tall_w_any 일 때만(옷장·냉장고 앞판 보호). 문·창 이름이고 그 크기면 남김
+  double tall_h = 1.7, tall_floor = 0.3, tall_ceil = 0.4, tall_w = 1.5, tall_ps = 0.3, tall_w_any = 3.0;
   double geo_w = 3.0;             // 그 모양일 때 문·창·계단·납작한 물체 라벨에 더하는 로그 우도(나머지 0) — 문짝 조각이 커튼·가방으로 불리던 것
   // 천장(정답 없이 잰 높이): 얇은 수평 관측의 중앙 높이(1.8 m 넘는 것)들의 중앙값 = 천장 추정. 물체 점의 ceil_frac 이상이 (천장 − ceil_band)
   // 위이고 수평 폭 ≥ ceil_wide 면 천장 덩어리(천장 등 같은 작은 것은 남김)
@@ -126,6 +146,7 @@ struct ApState {
   std::vector<ApView> views;            // κ 큰 순 상위 topk
   std::vector<std::array<double, 7>> cams;  // 쓴 시점(자리 xyz + 광축 + 시각), 최근 32 — 같은 시각(한 영상의 조각들)은 서로 덜 세지 않음
   int n_wall_obs = 0, n_ap_obs = 0;     // 벽 선 위 세운 평면 관측 수 / 관측 수
+  int n_struct_look = 0;                // 구조물 같은 관측 수(struct_look_block)
   double whole_kappa = 0;               // 가장 좋은 통째 κ
   bool need_whole = true;               // 합친 뒤·아직 통째 없음
   // 접촉 색인(구름 version 이 바뀌면 다시)
@@ -144,6 +165,8 @@ struct ApState {
   uint32_t geo_ver = ~0u;               // 물체 기하 판정을 한 구름 version
   int8_t geo = 0;                       // 1 = 벽·문 평면, 2 = 천장(구름 평면 맞춤)
   bool drop = false;                    // 구조물로 판정됨(지움)
+  bool hide = false;                    // 벽 크기 덩어리(문·창·벽걸이 이름이지만 크기 밖): 기억에 두고 계속 받되 노드로 안 내보냄
+  float maj = 0, minr = 0, hgt = 0, fw = 0, vinl = 0;   // 구름 모양(geo_ver 때 잼): 수평 긴·짧은 폭(5~95 백분위, 주방향), 높이, 벽 선분 가까운 점 비율
 };
 using ApStatePtr = std::shared_ptr<ApState>;
 

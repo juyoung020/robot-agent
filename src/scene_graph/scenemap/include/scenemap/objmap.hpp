@@ -143,6 +143,9 @@ struct ObjParams {
 struct ApStats {
   long n_through = 0, n_obs = 0, n_wall = 0, n_wall_name = 0, n_ceil = 0, n_floor = 0, n_name_struct = 0;
   long n_assoc = 0, n_new = 0, n_merge = 0, n_obj_struct = 0, n_reenc_req = 0, n_reenc_done = 0;
+  long n_blocked = 0;     // 벽 같은 조각·납작한 이름 크기 밖이라 안 붙이고 버린 관측
+  long n_wall_tall = 0;   // 벽 선 없이 높고 넓은 세운 평면이라 벽
+  long n_so_big = 0;   // 문·창·기둥 이름 조각이지만 그 모양보다 커서 보호 안 함
 };
 
 // objprob 통째 다시 담기 요청(검출 마스크 격자와 같은 배치의 마스크)
@@ -280,7 +283,7 @@ class ObjectMap {
   bool exportable(const MapObject& m) const {
     if (!m.confirmed) return false;
     if (!p_.objprob || !p_.ap.export_named || !m.ap) return true;
-    if (m.ap->post.empty()) return false;
+    if (m.ap->post.empty() || m.ap->hide) return false;
     if (text_.object_label >= 0 && m.cls == text_.object_label) return false;
     return kindOf(m.cls) != kKindStructure;   // 문·창·계단(kKindStructObj)은 내보냄
   }
@@ -308,6 +311,10 @@ class ObjectMap {
   ApText text_;
   ApStats aps_;
   std::vector<uint8_t> smask_;        // 라벨이 구조물 종류인가(apMergePass)
+  // 이름(사후 최대)이 납작한 벽걸이(액자·TV …)인가
+  bool flatNamed(const MapObject& m) const {
+    return m.ap && m.ap->name_lab >= 0 && size_t(m.ap->name_lab) < text_.flat_ok.size() && text_.flat_ok[size_t(m.ap->name_lab)];
+  }
   std::vector<double> ceil_obs_;      // 천장 추정: 얇은 수평 관측(중앙 높이 > 1.8 m)의 높이(최근 400)
   double ceil_est_ = 0;               // 0 = 아직 모름
   std::vector<double> wsegs_;         // 마지막 keyframe 의 벽 선분(창 자리 이음 포함) — 물체 기하 판정

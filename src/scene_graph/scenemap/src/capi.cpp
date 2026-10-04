@@ -1892,6 +1892,13 @@ int sm_set_text_model(sm_ctx* c, const float* text, const int32_t* row_label, in
   t.flat_ok.assign(c->labels.size(), 0);
   for (size_t i = 0; i < c->labels.size(); ++i)
     for (const char* e : kFlat) t.flat_ok[i] = t.flat_ok[i] || headMatch(normName(c->labels[i]), e);
+  t.so_shape.assign(c->labels.size(), 0);   // 구조 물체 모양 묶음(크기 확인)
+  for (size_t i = 0; i < c->labels.size(); ++i) {
+    const std::string n = normName(c->labels[i]);
+    for (const char* e : {"door", "doorway", "door frame", "window"}) if (headMatch(n, e)) t.so_shape[i] = 1;
+    for (const char* e : {"staircase", "stairs", "stair", "railing"}) if (headMatch(n, e)) t.so_shape[i] = 2;
+    for (const char* e : {"pillar", "column"}) if (headMatch(n, e)) t.so_shape[i] = 3;
+  }
   t.dim = dim;
   t.text.assign(text, text + size_t(rows) * dim);
   t.row_label.assign(row_label, row_label + rows);
@@ -1962,7 +1969,7 @@ int sm_get_objprob_stats(sm_ctx* c, int64_t out[16]) {
   std::lock_guard<std::mutex> g(c->mu);
   const ApStats& a = c->om.apStats();
   const long v[16] = {a.n_obs, a.n_wall, a.n_wall_name, a.n_ceil, a.n_floor, a.n_name_struct, a.n_assoc, a.n_new, a.n_merge, a.n_obj_struct,
-                      a.n_reenc_req, a.n_reenc_done, a.n_through, 0, 0, 0};
+                      a.n_reenc_req, a.n_reenc_done, a.n_through, a.n_so_big, a.n_wall_tall, a.n_blocked};
   for (int i = 0; i < 16; ++i) out[i] = v[i];
   return 0;
 }

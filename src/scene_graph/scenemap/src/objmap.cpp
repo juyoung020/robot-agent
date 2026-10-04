@@ -71,6 +71,7 @@ struct Obs {
   const float* z = nullptr;       // SigLIP 임베딩(검출 k)
   double kappa = 0;               // vMF 집중도(viewKappa)
   bool wall_like = false;         // 벽 선 위 세운 얇은 평면(작아서 구조물로 안 버린 것)
+  bool struct_look = false;       // 구조물 같은 조각(구조물 확률 ≥ 0.5 인 얇은 세운 평면) — 구조물 아닌 물체에 안 붙음
   bool sec = false;               // 같은 물체에 붙은 이번 영상의 다른 조각(첫 조각에 합쳐 갱신 — 짝·모습만)
   double ps = -1;                 // 이 조각의 (지울) 구조물 확률(라벨 위 p(c|z) 의 벽·바닥·천장 … 합, 임베딩 없으면 −1)
   double pso = 0;                 // 이 조각의 구조 물체(문·창·계단) 확률
@@ -184,7 +185,14 @@ void ObjectMap::envOverrides(ObjParams* p) {
                     {"ap_name_veto", &p->ap.name_veto, nullptr, nullptr},  {"ap_through_d", &p->ap.through_d, nullptr, nullptr},  {"ap_bridge_max", &p->ap.bridge_max, nullptr, nullptr},  {"ap_frame_group", nullptr, nullptr, &p->ap.frame_group},  {"ap_struct_obj_min_views", nullptr, &p->ap.struct_obj_min_views, nullptr},
                     {"ap_plane_inl", &p->ap.plane_inl, nullptr, nullptr},  {"ap_obj_plane_inl", &p->ap.obj_plane_inl, nullptr, nullptr},  {"ap_ransac_tau0", &p->ap.ransac_tau0, nullptr, nullptr},
                     {"ap_ransac_tau_k", &p->ap.ransac_tau_k, nullptr, nullptr},  {"ap_obj_tau", &p->ap.obj_tau, nullptr, nullptr},
-                    {"ap_ransac_iters", nullptr, &p->ap.ransac_iters, nullptr}};
+                    {"ap_ransac_iters", nullptr, &p->ap.ransac_iters, nullptr},
+                    {"ap_so_dw_w", &p->ap.so_dw_w, nullptr, nullptr},  {"ap_so_dw_thick", &p->ap.so_dw_thick, nullptr, nullptr},
+                    {"ap_so_max_h", &p->ap.so_max_h, nullptr, nullptr},  {"ap_so_pillar", &p->ap.so_pillar, nullptr, nullptr},
+                    {"ap_so_stairs", &p->ap.so_stairs, nullptr, nullptr},  {"ap_wallhug_frac", &p->ap.wallhug_frac, nullptr, nullptr},
+                    {"ap_wallhug_w", &p->ap.wallhug_w, nullptr, nullptr},
+                    {"ap_struct_look_block", nullptr, nullptr, &p->ap.struct_look_block},  {"ap_flat_max_w", &p->ap.flat_max_w, nullptr, nullptr},
+                    {"ap_tall_h", &p->ap.tall_h, nullptr, nullptr},  {"ap_tall_w", &p->ap.tall_w, nullptr, nullptr},  {"ap_tall_ps", &p->ap.tall_ps, nullptr, nullptr},
+                    {"ap_tall_w_any", &p->ap.tall_w_any, nullptr, nullptr},  {"ap_big_vinl", &p->ap.big_vinl, nullptr, nullptr},  {"ap_so_dw_min", &p->ap.so_dw_min, nullptr, nullptr},  {"ap_so_hide_k", &p->ap.so_hide_k, nullptr, nullptr}};
   std::string s(e);
   size_t a = 0;
   while (a < s.size()) {
@@ -601,13 +609,17 @@ void ObjectMap::update(const ObjFrame& f) {
   for (size_t l = 0; l < gmask.size(); ++l) gmask[l] = smask[l] || omask[l];
   std::vector<float> llz;
   auto apObsStructural = [&](Obs& o) -> bool {
+    double qsh[4] = {0, 0, 0, 0};   // 구조 물체 모양 묶음별 확률(문·창 / 계단 / 기둥)
     if (o.z && text_.ready() && text_.dim == f.emb_dim) {
       apLabelLogLik(text_, o.z, &llz);
       double q = 0, qo = 0;
       for (size_t l = 0; l < llz.size() && l < smask.size(); ++l) {
         if (llz[l] <= -1e29f) continue;
         if (smask[l]) q += std::exp(llz[l]);
-        if (omask[l]) qo += std::exp(llz[l]);
+        if (omask[l]) {
+          qo += std::exp(llz[l]);
+          qsh[l < text_.so_shape.size() ? text_.so_shape[l] & 3 : 0] += std::exp(llz[l]);
+        }
       }
       o.ps = q;
       o.pso = qo;
@@ -615,8 +627,8 @@ void ObjectMap::update(const ObjFrame& f) {
         if (llz[l] > -1e29f && std::exp(llz[l]) > o.top_p) { o.top_p = std::exp(llz[l]); o.top_lab = int(l); }
     }
     const int nc = int(o.cxyz.size() / 3);
-    if (nc < 8) return false;
     const ApParams& A = p_.ap;
+    if (nc < 8) return false;
     double cen[3] = {0, 0, 0};
     for (int i = 0; i < nc; ++i) for (int k = 0; k < 3; ++k) cen[k] += o.cxyz[size_t(3 * i + k)];
     const double dc = std::hypot(cen[0] / nc - f.T_mc[3], cen[1] / nc - f.T_mc[7], cen[2] / nc - f.T_mc[11]);
@@ -643,7 +655,17 @@ void ObjectMap::update(const ObjFrame& f) {
     }
     if (nz > A.wall_vert) return false;
     // 얇은 세운 평면이고 모습도 구조물 쪽이면 벽 조각 후보(벽 선분이 아직 없어도) — 그 물체 자리로 벽을 지우지 않음
-    if (o.ps >= 0.5) o.wall_like = true;
+    if (o.ps >= 0.5) o.wall_like = o.struct_look = true;
+    // 문·창·기둥 이름이고 그 모양 크기 안인가(아래 두 벽 규칙의 예외)
+    const int sh = int(std::max_element(qsh + 1, qsh + 4) - qsh);
+    const bool so_keep = o.pso >= 0.5 && (sh == 1 ? pl.hspan <= A.so_dw_w && pl.zhi - pl.zlo <= A.so_max_h : sh == 3 ? pl.hspan <= A.so_pillar : pl.hspan <= A.so_stairs);
+    // 벽 선 없이 벽: 높고 넓은 세운 평면(가구가 벽 아래를 가리거나 문 둘레라 벽 선이 없는 곳)
+    {
+      const double cz = ceil_est_ > 0 ? ceil_est_ : A.ceil_z + 0.4;
+      const bool tall = pl.zhi - pl.zlo >= A.tall_h || (pl.zlo <= A.tall_floor && pl.zhi >= cz - A.tall_ceil);
+      const bool wide = pl.hspan >= (o.ps >= A.tall_ps ? A.tall_w : A.tall_w_any);
+      if (tall && wide && !so_keep) { ++aps_.n_wall_tall; return true; }
+    }
     if (!f.wall_segs || f.n_wall_segs <= 0) return false;
     const int stp = std::max(1, nc / 64);
     int near = 0, tot = 0;
@@ -653,7 +675,10 @@ void ObjectMap::update(const ObjFrame& f) {
       near += dm <= A.wall_d;
     }
     if (near < A.wall_frac * tot) return false;
-    if (o.pso >= 0.5) return false;   // 문·창 조각(벽 선 위 평면이지만 지우지 않음)
+    if (o.pso >= 0.5) {   // 문·창 조각(벽 선 위 평면이지만 지우지 않음) — 그 모양 크기 안일 때만
+      if (so_keep) return false;
+      ++aps_.n_so_big;
+    }
     if (std::max(pl.hspan, pl.zhi - pl.zlo) >= A.wall_big) { ++aps_.n_wall; return true; }
     if (o.ps >= A.struct_p) { ++aps_.n_wall_name; return true; }
     o.wall_like = true;
@@ -846,6 +871,7 @@ void ObjectMap::update(const ObjFrame& f) {
       const int stp = std::max(1, nc / std::max(8, A.contact_samples));
       for (int i = 0; i < nc; i += stp) sp.insert(sp.end(), {o.cxyz[3 * i], o.cxyz[3 * i + 1], o.cxyz[3 * i + 2]});
       double best = A.same_p;
+      bool blocked = false;
       for (int b = 0; b < int(objs_.size()); ++b) {
         MapObject& m = objs_[b];
         if (m.held_by >= 0 || !m.ap) continue;
@@ -856,15 +882,21 @@ void ObjectMap::update(const ObjFrame& f) {
         }
         if (g2 > A.gate * A.gate) continue;
         if (o.ps >= 0 && !m.ap->post.empty() && apGroupProb(*m.ap, gmask) >= A.guard_obj && o.ps + o.pso <= A.guard_obs) continue;   // 구조물 막기(문·창 포함)
+        // 벽 같은 조각 → 구조물 아닌 물체, 납작한 벽걸이 이름 크기 밖(액자 + 벽): 붙이지 않음. 붙을 만했으면(P ≥ same_p) 그 조각은 버림(새 물체 아님)
+        const bool blk = (A.struct_look_block && o.struct_look && !m.ap->post.empty() && apGroupProb(*m.ap, gmask) < 0.5) ||
+                         (flatNamed(m) && std::max(std::max(o.hi[0], m.hi[0]) - std::min(o.lo[0], m.lo[0]),
+                                                   std::max(o.hi[1], m.hi[1]) - std::min(o.lo[1], m.lo[1])) > A.flat_max_w);
         if (A.name_veto > 0 && o.top_lab >= 0 && o.top_p >= A.name_veto && m.ap->top_lab >= 0 && m.ap->top_p >= A.name_veto &&
             !labelRelated(o.top_lab, m.ap->top_lab))
           continue;   // 이름 충돌
         const double cs = o.z ? apCosMax(*m.ap, o.z, f.emb_dim) : -2.0;
         const ApPair q = pairFeatures(o.lo, o.hi, o.pos, sp.data(), int(sp.size() / 3), m.lo, m.hi, m.pos, apContactIdx(m), cs, A);
         if (q.f[0] >= 0.3 || q.p >= 0.2) touched[b] = 1;
+        if (blk) { blocked = blocked || q.p >= A.same_p; continue; }
         if (q.p > best) { best = q.p; obs_to[a] = b; }
       }
       if (obs_to[a] >= 0) { obj_hit[obs_to[a]] = 1; ++aps_.n_assoc; }
+      else if (blocked) { obs_to[a] = -2; ++aps_.n_blocked; }   // 버림
     }
     // 한 물체에 붙은 조각 합치기: 가장 큰(점 많은) 조각을 대표로, 상자 = 합집합, 중심 = 점 수 가중 평균
     std::vector<int> head(objs_.size(), -1);
@@ -899,6 +931,7 @@ void ObjectMap::update(const ObjFrame& f) {
     as.n_valid = o.n;
     as.area_px = float(o.n) * o.sk * o.sk;
     as.depth_med = float(o.zmed);
+    if (obs_to[a] == -2) continue;   // 벽 같은 조각·크기 밖(버림)
     if (obs_to[a] >= 0) {
       MapObject& m = objs_[obs_to[a]];
       as.obj_id = m.id;
@@ -906,6 +939,7 @@ void ObjectMap::update(const ObjFrame& f) {
         if (o.z) apAddView(*m.ap, &text_, p_.ap, o.z, f.emb_dim, o.kappa, f.stamp, cam6, false);
         ++m.ap->n_ap_obs;
         if (o.wall_like) ++m.ap->n_wall_obs;
+        if (o.struct_look) ++m.ap->n_struct_look;
         m.ap->wall_like = 2 * m.ap->n_wall_obs >= m.ap->n_ap_obs;
         if (o.sec) continue;   // 갱신은 대표 조각(합친 상자)으로 한 번
       }
@@ -1044,6 +1078,7 @@ void ObjectMap::update(const ObjFrame& f) {
       if (o.z) apAddView(*m.ap, &text_, p_.ap, o.z, f.emb_dim, o.kappa, f.stamp, cam6, false);
       m.ap->n_ap_obs = 1;
       m.ap->n_wall_obs = o.wall_like;
+      m.ap->n_struct_look = o.struct_look;
       m.ap->wall_like = o.wall_like;
       ++aps_.n_new;
     }
@@ -1053,7 +1088,7 @@ void ObjectMap::update(const ObjFrame& f) {
     // objprob: 같은 영상의 뒤 조각이 이 새 물체에 붙을 수 있게(아직 구름이 없으니 상자·임베딩으로만) — 앞 관측이 만든 새 물체도 후보
     if (ap && p_.ap.frame_group)
       for (int b2 = a + 1; b2 < int(obs.size()); ++b2) {
-        if (obs_to[b2] >= 0) continue;
+        if (obs_to[b2] != -1) continue;
         const Obs& q = obs[b2];
         double g2 = 0;
         for (int k = 0; k < 3; ++k) {
@@ -1286,7 +1321,14 @@ void ObjectMap::apMergePass(double t) {
       if (!a.ap->post.empty() && !b.ap->post.empty()) {   // 구조물 막기(한쪽은 구조물, 다른 쪽은 아님)
         const double sa = apGroupProb(*a.ap, smask_), sb = apGroupProb(*b.ap, smask_);
         if ((sa >= A.guard_obj && sb <= A.guard_obs) || (sb >= A.guard_obj && sa <= A.guard_obs)) continue;
+        if (A.struct_look_block) {   // 벽 같은 관측이 절반 넘는 것 ↔ 구조물 아닌 물체
+          const bool la = 2 * a.ap->n_struct_look > a.ap->n_ap_obs, lb = 2 * b.ap->n_struct_look > b.ap->n_ap_obs;
+          if ((la && !lb && sb < 0.5) || (lb && !la && sa < 0.5)) continue;
+        }
       }
+      if ((flatNamed(a) || flatNamed(b)) &&
+          std::max(std::max(a.hi[0], b.hi[0]) - std::min(a.lo[0], b.lo[0]), std::max(a.hi[1], b.hi[1]) - std::min(a.lo[1], b.lo[1])) > A.flat_max_w)
+        continue;   // 납작한 벽걸이 이름 크기 밖
       const ApPair q = apPairObj(a, b);
       static const bool log_m = std::getenv("SM_AP_LOG") != nullptr;
       if (log_m && q.p > 0.2)
@@ -1352,6 +1394,7 @@ bool ObjectMap::apStructObject(MapObject& m) {
   if (!m.ap || m.held_by >= 0) return false;
   ApState& s = *m.ap;
   const ApParams& A = p_.ap;
+  s.hide = false;
   // 기하(구름이 바뀌었을 때만 다시)
   if (s.geo_ver != m.cloud.version && m.cloud.size() >= 30) {
     s.geo_ver = m.cloud.version;
@@ -1362,6 +1405,7 @@ bool ObjectMap::apStructObject(MapObject& m) {
     s.geo = 0;
     const double nz = std::fabs(pl.n[2]);
     const bool plane = pl.ok && pl.inl >= A.obj_plane_inl;   // 지배 평면
+    s.vinl = pl.ok && nz < A.wall_vert ? float(pl.inl) : 0.f;   // 세운 평면 안쪽 비율(크기 밖 이름 물체를 벽으로 볼 때)
     if (plane && pl.thick < A.obj_thick) {
       if (nz < A.wall_vert && (pl.hspan >= A.obj_wall_span || (pl.zhi >= A.obj_wall_top && pl.zhi - pl.zlo >= A.obj_wall_h))) s.geo = 1;
       else if (nz > A.horiz && pl.zmed > A.ceil_z) s.geo = 2;
@@ -1371,6 +1415,39 @@ bool ObjectMap::apStructObject(MapObject& m) {
       int up = 0;
       for (int i = 0; i < n; ++i) up += P[size_t(3 * i + 2)] > ceil_est_ - A.ceil_band;
       if (up >= A.ceil_frac * n && std::max(m.hi[0] - m.lo[0], m.hi[1] - m.lo[1]) >= A.ceil_wide) s.geo = 2;
+    }
+    // 모양(크기 확인·벽에 붙은 덩어리): 수평 주방향 긴·짧은 폭(5~95 백분위), 높이, 벽 선분 wall_d 안 점 비율
+    if (n > 0) {
+      double mx = 0, my = 0;
+      for (int i = 0; i < n; ++i) { mx += P[size_t(3 * i)]; my += P[size_t(3 * i + 1)]; }
+      mx /= n; my /= n;
+      double sxx = 0, sxy = 0, syy = 0;
+      for (int i = 0; i < n; ++i) {
+        const double dx = P[size_t(3 * i)] - mx, dy = P[size_t(3 * i + 1)] - my;
+        sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
+      }
+      const double th = 0.5 * std::atan2(2 * sxy, sxx - syy), c = std::cos(th), sn = std::sin(th);
+      std::vector<double> u(static_cast<size_t>(n)), v(static_cast<size_t>(n)), z(static_cast<size_t>(n));
+      int nw = 0;
+      for (int i = 0; i < n; ++i) {
+        const double dx = P[size_t(3 * i)] - mx, dy = P[size_t(3 * i + 1)] - my;
+        u[size_t(i)] = dx * c + dy * sn;
+        v[size_t(i)] = -dx * sn + dy * c;
+        z[size_t(i)] = P[size_t(3 * i + 2)];
+        double dm = 1e9;
+        for (size_t k = 0; k + 3 < wsegs_.size() && dm > A.wall_d; k += 4) dm = std::min(dm, segDist(P[size_t(3 * i)], P[size_t(3 * i + 1)], &wsegs_[k]));
+        nw += dm <= A.wall_d;
+      }
+      auto pct = [](std::vector<double>& x, double q) {
+        const size_t k = std::min(x.size() - 1, size_t(q * double(x.size() - 1) + 0.5));
+        std::nth_element(x.begin(), x.begin() + long(k), x.end());
+        return x[k];
+      };
+      const double su = pct(u, 0.95) - pct(u, 0.05), sv = pct(v, 0.95) - pct(v, 0.05);
+      s.maj = float(std::max(su, sv));
+      s.minr = float(std::min(su, sv));
+      s.hgt = float(pct(z, 0.95) - pct(z, 0.05));
+      s.fw = float(double(nw) / n);
     }
     // 벽 선 위 아주 얇은 평면(문짝·창유리)
     if (!s.geo && plane && pl.thick < A.obj_flat_thick && nz < A.wall_vert && !wsegs_.empty() && n > 0) {
@@ -1385,7 +1462,24 @@ bool ObjectMap::apStructObject(MapObject& m) {
   }
   double qso = 0;   // 구조 물체(문·창·계단) 사후 — 벽 크기 평면·벽 선 위 평면이어도 남김
   for (size_t l = 0; l < s.post.size(); ++l) if (kindOf(int(l)) == kKindStructObj) qso += s.post[l];
-  if (qso >= 0.5 && s.geo != 2) return false;
+  if (qso >= 0.5 && s.geo != 2) {   // 그 모양 크기 안일 때만 남김(벽 조각이 door·window·pillar 로 불린 것은 아래 규칙으로)
+    double qsh[4] = {0, 0, 0, 0};
+    for (size_t l = 0; l < s.post.size(); ++l)
+      if (kindOf(int(l)) == kKindStructObj) qsh[l < text_.so_shape.size() ? text_.so_shape[l] & 3 : 0] += s.post[l];
+    const int sh = int(std::max_element(qsh + 1, qsh + 4) - qsh);
+    const bool fits = sh == 1   ? s.maj <= A.so_dw_w && s.minr <= A.so_dw_thick && s.hgt <= A.so_max_h
+                      : sh == 3 ? s.maj <= A.so_pillar
+                                : s.maj <= A.so_stairs;
+    if (sh == 1 && s.maj < A.so_dw_min && int(m.n_obs) >= A.so_min_obs) return true;   // 문·창 이름인 가는 조각(문틀·창틀 모서리) — 문·창 노드 아님
+    if (fits) return false;
+    // 너무 큼: 벽 조각 모양(평면·천장·벽에 붙음·세운 평면이 반 넘음)이면 숨김(노드로 안 내보냄). 지우지 않는 까닭: 지우면 그 자리의 다음 벽
+    // 조각들이 새 작은 문·창 물체가 되어 다시 남음 — 숨긴 덩어리가 계속 받아 둔다
+    const double lim = sh == 1 ? A.so_dw_w : sh == 3 ? A.so_pillar : A.so_stairs;
+    s.hide = s.geo != 0 || (s.fw >= A.wallhug_frac && s.maj >= A.wallhug_w) || s.vinl >= A.big_vinl || s.maj > A.so_hide_k * lim;
+    return false;
+  }
+  if (flatNamed(m) && s.maj > A.flat_max_w && (s.geo != 0 || s.fw >= 0.5 || s.vinl >= A.big_vinl)) { s.hide = true; return false; }   // 납작한 벽걸이 이름인데 벽 크기
+  if (s.fw >= A.wallhug_frac && s.maj >= A.wallhug_w) { s.hide = true; return false; }   // 벽에 붙은 큰 덩어리(벽 모서리 L 자 등)
   if (s.geo == 3) {   // 납작한 물체 이름(액자·TV …)이면 남김(문·창은 위에서 남김)
     double q = qso;
     for (size_t l = 0; l < s.post.size() && l < text_.flat_ok.size(); ++l) if (text_.flat_ok[l]) q += s.post[l];
