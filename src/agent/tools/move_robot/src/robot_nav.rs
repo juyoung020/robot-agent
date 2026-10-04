@@ -100,11 +100,25 @@ impl Default for NavState {
 }
 
 impl NavState {
+    /// 로봇별 몸 크기([`nav::Body`])를 넣은 새 상태. R1Pro 면 [`NavState::default`] 와 같다.
+    pub fn with_body(body: &nav::Body) -> NavState {
+        let mut n = NavState::default();
+        n.dwa.fp = body.fp;
+        n.params.robot_r = body.robot_r;
+        n.params.start_free_r = body.start_free_r;
+        n.params.start_min_clear = body.start_min_clear;
+        n
+    }
+
     /// 매 스텝: base_qvel(로봇 기준)로 map 자세를 앞으로
     pub fn integrate(&mut self, v: [f64; 3], dt: f64) {
         self.now += dt;
         if self.skip_integrate {
+            // 지도 자세가 막 들어온 스텝: 자세는 그 자세 그대로 두지만(이 스텝의 움직임이 이미 들어 있음) 로봇은 이 스텝에도
+            // 움직였으므로 이동 거리(odo_m)는 센다. 전에는 여기서 거리까지 건너뛰어 keyframe 6 스텝마다 1 스텝씩(1/6 ≈ 16 %)
+            // path_m·moved_m 이 짧았다(LIMO 11.0 m 대 정답 13.1 m).
             self.skip_integrate = false;
+            self.odo_m += v[0].hypot(v[1]) * dt;
             return;
         }
         let (s, c) = self.pose[2].sin_cos();
@@ -911,4 +925,23 @@ impl Robot {
 
 fn can_turn_now(dp: &DwaParams, cm: &Costmap, xy: [f64; 2], yaw: f64, target: f64) -> bool {
     dp.fp.turn_clear(cm, xy[0], xy[1], yaw, target) >= TURN_MIN_CLEAR
+}
+
+#[cfg(test)]
+mod odo_tests {
+    use super::NavState;
+
+    /// 지도 자세가 들어온 다음 스텝(skip_integrate)에도 이동 거리는 센다: 0.3 m/s × 60 스텝 @ 30 Hz = 0.6 m,
+    /// 6 스텝마다 지도가 들어와도 같다(전에는 5/6 = 0.5 m).
+    #[test]
+    fn odo_counts_map_steps() {
+        let mut n = NavState::default();
+        for k in 0..60 {
+            if k % 6 == 0 {
+                n.skip_integrate = true;
+            }
+            n.integrate([0.3, 0.0, 0.0], 1.0 / 30.0);
+        }
+        assert!((n.odo_m - 0.6).abs() < 1e-9, "odo_m {}", n.odo_m);
+    }
 }

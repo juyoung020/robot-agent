@@ -289,6 +289,80 @@ impl Default for Footprint {
     }
 }
 
+// ---------------------------------------------------------------- 로봇별 몸 크기
+
+/// 로봇별 몸 크기: DWA·회전·안전 정지의 몸통 모양([`Footprint`])과 전역 계획의 부풀림 원([`NavParams`] 의 robot_r,
+/// start_free_r, start_min_clear). 환경 변수 `MOVE_ROBOT_FOOTPRINT` 로 고른다([`Body::from_env`]), 없으면 R1Pro(옛 값 그대로).
+#[derive(Clone, Debug)]
+pub struct Body {
+    pub name: String,
+    pub fp: Footprint,
+    /// 계획 부풀림 반경 = 몸통 외접원 + 여유(R1: 0.37 + 0.03)
+    pub robot_r: f64,
+    /// 출발 둘레(카메라가 못 보는 발밑) — 부풀림 + 0.05(R1 0.45)
+    pub start_free_r: f64,
+    /// 출발 둘레에서 지나갈 수 있는 최소 장애물 거리 — 부풀림 − 0.07(R1 0.33)
+    pub start_min_clear: f64,
+}
+
+/// LIMO + OMX-F 몸통 길이 × 폭(m, base_link 중심 대칭 사각형). OmniGibson limo_omx 충돌 모양을 base_link 기준으로 잰 범위
+/// (시뮬 headless, 10-04): base_link 껍질 x −0.163..0.159 · y ±0.095(사양 322 mm 길이), 바퀴 y ±0.109(사양 폭 220 mm),
+/// 홈 자세로 접은 팔(omx_link2·3)이 뒤로 x −0.180 까지(바닥 위 0.23–0.30 m). 앞뒤 중 큰 쪽 0.18 로 대칭 → 0.36 × 0.22.
+pub const LIMO_LEN: f64 = 0.36;
+pub const LIMO_WID: f64 = 0.22;
+
+impl Body {
+    /// R1Pro(기본): 원 0.37, 부풀림 0.40 — 바뀌기 전과 같은 값
+    pub fn r1pro() -> Body {
+        let p = NavParams::default();
+        Body { name: "r1pro".into(), fp: Footprint::default(), robot_r: p.robot_r, start_free_r: p.start_free_r, start_min_clear: p.start_min_clear }
+    }
+    /// 사각형 길이 × 폭(m): 부풀림은 R1 과 같은 규칙(외접원 + 0.03, 출발 둘레 + 0.05, 최소 여유 − 0.07)
+    pub fn rect(name: &str, len: f64, wid: f64) -> Body {
+        Self::from_fp(name, Footprint::new(len / 2.0, wid / 2.0))
+    }
+    pub fn circle(name: &str, r: f64) -> Body {
+        Self::from_fp(name, Footprint::circle(r))
+    }
+    fn from_fp(name: &str, fp: Footprint) -> Body {
+        let rr = fp.circum() + 0.03;
+        Body { name: name.into(), fp, robot_r: rr, start_free_r: rr + 0.05, start_min_clear: rr - 0.07 }
+    }
+    pub fn limo_omx() -> Body {
+        Self::rect("limo_omx", LIMO_LEN, LIMO_WID)
+    }
+    /// `r1pro` | `limo_omx` | `rect:<길이>x<폭>` | `circle:<반경>` (m). 비었거나 모르면 None
+    pub fn parse(s: &str) -> Option<Body> {
+        let s = s.trim();
+        let num = |t: &str| t.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.05 && *v < 3.0);
+        match s {
+            "" => None,
+            "r1pro" | "r1" => Some(Self::r1pro()),
+            "limo_omx" | "limo" => Some(Self::limo_omx()),
+            _ => {
+                if let Some(r) = s.strip_prefix("circle:") {
+                    num(r).map(|r| Self::circle(s, r))
+                } else if let Some(lw) = s.strip_prefix("rect:") {
+                    let (l, w) = lw.split_once(['x', ','])?;
+                    Some(Self::rect(s, num(l)?, num(w)?))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+    /// 환경 변수 `MOVE_ROBOT_FOOTPRINT`(없으면 R1Pro). 모르는 값이면 경고하고 R1Pro
+    pub fn from_env() -> Body {
+        match std::env::var("MOVE_ROBOT_FOOTPRINT") {
+            Ok(v) if !v.trim().is_empty() => Self::parse(&v).unwrap_or_else(|| {
+                eprintln!("[move_robot] MOVE_ROBOT_FOOTPRINT={v:?} 모름 (r1pro | limo_omx | rect:LxW | circle:R) — R1Pro 로");
+                Self::r1pro()
+            }),
+            _ => Self::r1pro(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------- 지역 제어(DWA)
 
 #[derive(Clone, Debug)]

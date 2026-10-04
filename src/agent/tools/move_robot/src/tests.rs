@@ -483,3 +483,25 @@ fn gt_pose_is_used_for_one_tick_only_and_reset_forgets_it() {
     r.tick(&m.plant.proprio(), &mut a);
     assert!((r.nav.odo_m - 0.3).abs() < 1e-12);
 }
+
+#[test]
+fn body_footprint_per_robot() {
+    use crate::nav::Body;
+    // R1Pro(기본·환경 변수 없음)는 바뀌기 전과 같은 값
+    let r1 = Body::r1pro();
+    let d = robot_nav::NavState::default();
+    let n = robot_nav::NavState::with_body(&r1);
+    assert!(n.dwa.fp.round && n.dwa.fp.hl == d.dwa.fp.hl && n.dwa.fp.hw == d.dwa.fp.hw && n.dwa.fp.hl == 0.37);
+    assert_eq!((n.params.robot_r, n.params.start_free_r, n.params.start_min_clear), (0.40, 0.45, 0.33));
+    assert_eq!(Body::parse("").map(|b| b.name), None);
+    assert_eq!(Body::parse("r1pro").unwrap().robot_r, 0.40);
+    // LIMO: 사각형, 부풀림 = 외접원 + 0.03
+    let l = Body::parse("limo_omx").unwrap();
+    assert!(!l.fp.round && (l.fp.hl - 0.18).abs() < 1e-12 && (l.fp.hw - 0.11).abs() < 1e-12);
+    assert!((l.robot_r - (0.18f64.hypot(0.11) + 0.03)).abs() < 1e-12);
+    assert!(l.start_min_clear > 0.1 && l.start_free_r > l.robot_r);
+    let r = Body::parse("rect:0.5x0.4").unwrap();
+    assert!((r.fp.hl - 0.25).abs() < 1e-12 && (r.fp.hw - 0.2).abs() < 1e-12);
+    assert!(Body::parse("circle:0.3").unwrap().fp.round);
+    assert!(Body::parse("rect:0.5").is_none() && Body::parse("rect:x").is_none() && Body::parse("tank").is_none() && Body::parse("circle:9").is_none());
+}

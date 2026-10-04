@@ -569,7 +569,17 @@ impl Default for Robot {
 
 impl Robot {
     pub fn new(hz: f64) -> Robot {
-        Robot { safety: Safety::default(), dt: 1.0 / hz, hold: [0.0; ACTION_DIM], state: None, active: None, result: None, ticks: 0, nav: Default::default(), gt_pose: None }
+        Robot { safety: Safety::default(), dt: 1.0 / hz, hold: [0.0; ACTION_DIM], state: None, active: None, result: None, ticks: 0, nav: robot_nav::NavState::with_body(&Self::body()), gt_pose: None }
+    }
+
+    /// 몸 크기: `MOVE_ROBOT_FOOTPRINT`(r1pro 기본 | limo_omx | rect:LxW | circle:R). R1Pro 가 아니면 한 번 알린다.
+    fn body() -> nav::Body {
+        let b = nav::Body::from_env();
+        if b.name != "r1pro" {
+            eprintln!("[move_robot] body {}: footprint {:.3} x {:.3} m{}, plan radius {:.3} m", b.name, 2.0 * b.fp.hl, 2.0 * b.fp.hw,
+                      if b.fp.round { " (circle)" } else { "" }, b.robot_r);
+        }
+        b
     }
 
     pub fn busy(&self) -> bool {
