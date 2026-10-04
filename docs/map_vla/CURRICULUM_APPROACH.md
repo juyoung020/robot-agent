@@ -1,5 +1,7 @@
 # 커리큘럼 1: 이동 — "컵으로 가" (approach)
 
+> **2026-10-04: 커리큘럼을 BEHAVIOR Challenge 2026 기준으로 다시 짜는 중이다** → [CURRICULUM_BEHAVIOR2026.md](CURRICULUM_BEHAVIOR2026.md). 이 문서의 A0–A2 는 B0(회귀 시험·기준선)으로 남고, A3–A5 는 실제 BEHAVIOR 집을 쓰는 B1–B2 로 바뀐다(그 문서 3절). 학습은 환경 개선(E0–E7)을 먼저 한 뒤 다시 연다.
+
 작성 2026-10-03. **설계 문서**다. 코드는 아직 없다. 집기·놓기(pick & place)까지 가르칠 것이고, 그 첫 단계로 **물체 앞까지 가서 카메라로 정면에 두는 것**부터 학습한다.
 정책 전체 구조는 [POLICY.md](POLICY.md), 입력은 [VLA_INPUT.md](VLA_INPUT.md), GPU 학습 고리는 [GPU_TRAINING.md](GPU_TRAINING.md), 지표를 보는 화면은 [TRAIN_VIEWER.md](TRAIN_VIEWER.md).
 
