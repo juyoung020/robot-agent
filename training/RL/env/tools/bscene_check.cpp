@@ -1,5 +1,5 @@
 // BEHAVIOR 장면 묶음 확인(CPU, E2 "장면 바름"): bscene_host 로 묶음을 만들고 표를 다른 길로 다시 잰다.
-//   bscene_check [RASC 폴더] [--only 장면,...]
+//   bscene_check [RASC 폴더] [--only 장면,...] [--dump-combos PATH]   (집기·놓기 거르개 확인은 pnp_check)
 // 1. 시작 자세: 몸통(환경과 같은 SAT·sin/cos)이 정적 상자·과제 물체 상자에 안 닿음 — 모든 판
 // 2. 닿음: 창 안 다익스트라(같은 칸 규칙)로 목표 쪽 칸까지 길이 Entry::path 와 같음 + 독립 확인 — RASC TRAV_OPEN_DOOR 칸만으로 4 이웃 BFS(상자와
 //    무관한 BEHAVIOR 의 다닐 곳)에서 시작 칸 → 목표 쪽 칸 이어짐 비율
@@ -20,8 +20,10 @@ using namespace bsc;
 
 int main(int argc, char** argv) {
   BuildOpt opt;
+  std::string dump;
   for (int a = 1; a < argc; ++a) {
-    if (!std::strcmp(argv[a], "--only") && a + 1 < argc) {
+    if (!std::strcmp(argv[a], "--dump-combos") && a + 1 < argc) dump = argv[++a];
+    else if (!std::strcmp(argv[a], "--only") && a + 1 < argc) {
       std::string v = argv[++a];
       size_t p = 0;
       while (p <= v.size()) { size_t q = v.find(',', p); if (q == std::string::npos) q = v.size(); opt.only.push_back(v.substr(p, q - p)); p = q + 1; }
@@ -32,6 +34,11 @@ int main(int argc, char** argv) {
   std::string err;
   if (!build_scenes(opt, b, &err)) { std::printf("build failed: %s\n", err.c_str()); return 1; }
   std::printf("%s", stats_text(b).c_str());
+  if (!dump.empty()) {   // 지시문 표 입력(training/embed/pnp_instr.py)
+    if (!dump_combos(b, dump, &err)) { std::printf("%s\n", err.c_str()); return 1; }
+    std::printf("wrote %zu combos to %s\n", b.combos.size(), dump.c_str());
+    return 0;
+  }
   long bad = 0;
   // 5. 확신도 표
   {
@@ -58,6 +65,12 @@ int main(int argc, char** argv) {
           const Entry& e = b.ent[b.host.loff[si][l][sp] + k];
           ++n;
           if (!body_free_host(S, e, e.sx, e.sy, e.syaw)) ++start_bad;
+          if (l == L_OBJ) {   // 집기·놓기 판: 대신 쓸 시작이 환경 spawn_ok 를 지남(나머지 거르개 확인은 pnp_check)
+            if (!env::spawn_ok(b.host, e, e.sx, e.sy, e.syaw, e.fset, 0)) ++path_bad;
+            auto inw = [](float x, float y) { return std::fabs(x) < WIN_HALF && std::fabs(y) < WIN_HALF; };
+            if (!inw(e.sx, e.sy) || !inw(e.gx, e.gy)) ++win_bad;
+            continue;
+          }
           window_dijkstra(S, e.wx, e.wy, e.sx, e.sy, dist);
           float best = -1.f;
           int bc = -1;
@@ -122,7 +135,7 @@ int main(int argc, char** argv) {
             }
           }
         }
-    std::printf("%-26s entries %6ld | start pose collides %ld | path != Entry.path %ld (max err %.1e) | room != RASC %ld | outside window %ld | "
+    std::printf("%-26s entries %6ld | start pose collides %ld | B1 path != Entry.path or pick-place fallback spawn fails spawn_ok %ld (max err %.1e) | room != RASC %ld | outside window %ld | "
                 "B1 goal pose collides %ld | connected on RASC TRAV_OPEN_DOOR (independent 4-nbr BFS) %ld / %ld\n",
                 S.name.c_str(), n, start_bad, path_bad, path_err, room_bad, win_bad, goal_free_bad, trav_ok, trav_n);
     bad += start_bad + path_bad + room_bad + win_bad + goal_free_bad;

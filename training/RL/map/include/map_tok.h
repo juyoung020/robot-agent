@@ -199,6 +199,7 @@ struct TokScratch {   // 판 하나의 작업 공간(GPU 공유 메모리). 광�
   float sk[KSLOT];        // 칸 순서 열쇠(수평 거리), 안 넣는 칸 −1
   float tk[KSLOT];        // 목표 후보 열쇠, 아님 −1
   float wy[N_WAY];        // 경유 지점 결과(레인 0 이 씀, 끝에 out 으로)
+  float tk2[KSLOT];       // 둘째 목표(BEHAVIOR 놓을 곳) 후보 열쇠, 아님 −1
   union {
     WayScratch w;                            // 1) 경유 지점 BFS(창 옮기기 전)
     struct {
@@ -387,7 +388,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
     for (int q = 0; q < PER; ++q) {
       const int b = lane + q * nl;
       if (b >= KSLOT) break;
-      if (!((cm >> b) & 1)) { ts.sk[b] = -1.f; ts.tk[b] = -1.f; continue; }
+      if (!((cm >> b) & 1)) { ts.sk[b] = -1.f; ts.tk[b] = -1.f; ts.tk2[b] = -1.f; continue; }
       const Slot& S = m.slot[b];
 #ifdef __CUDA_ARCH__
       {  // 칸 기록(100 B)을 L1 로 미리 — 3) 이 광선 뒤에 다시 읽음
@@ -400,6 +401,15 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
       ts.sk[b] = sqrtf(dx * dx + dy * dy);
       const float tx = S.pos[0] - tcx, ty = S.pos[1] - tcy, d2 = tx * tx + ty * ty;
       ts.tk[b] = (S.cls == (beh ? P.cls : (int)C_CUP) && S.state != S_GONE && d2 < thr * thr) ? d2 : -1.f;
+      ts.tk2[b] = -1.f;
+      if (beh && (bxp->bm->goal & 2)) {   // 놓을 곳(prim 1): 같은 이름의 확정 칸 중 짝 문턱 안
+        const Prim& P1 = m.prim[1];
+        float e1[3];
+        for (int a = 0; a < 3; ++a) e1[a] = P1.hi[a] - P1.lo[a];
+        const float th1 = maxf(MP::da_min, MP::da_k * max3(e1));
+        const float ux = S.pos[0] - 0.5f * (P1.lo[0] + P1.hi[0]), uy = S.pos[1] - 0.5f * (P1.lo[1] + P1.hi[1]), u2 = ux * ux + uy * uy;
+        ts.tk2[b] = (S.cls == P1.cls && S.state != S_GONE && u2 < th1 * th1) ? u2 : -1.f;
+      }
     }
   }
   for (int k = lane; k < nseg; k += nl) {
@@ -408,11 +418,14 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
   }
   sync();
   // 1b) 목표 칸(모든 레인이 같은 값) → 다음 경유 지점(목표 칸이 있을 때만 BFS). 작업 공간은 창 옮기기 전의 union 자리
-  int tgt = -1, nslot = 0;
+  int tgt = -1, tgt2 = -1, nslot = 0;
   for (int b = 0; b < KSLOT; ++b) {
     nslot += ts.sk[b] >= 0.f;
     if (ts.tk[b] >= 0.f && (tgt < 0 || ts.tk[b] < ts.tk[tgt])) tgt = b;
   }
+  if (beh)
+    for (int b = 0; b < KSLOT; ++b)
+      if (ts.tk2[b] >= 0.f && b != tgt && (tgt2 < 0 || ts.tk2[b] < ts.tk2[tgt2])) tgt2 = b;
   if (tgt >= 0) {
     waypoint<NLC>(occ, m.slot[tgt].pos[0], m.slot[tgt].pos[1], px, py, c, s, ts.w, ts.wy, lane, nl, sync, tbug);
   } else if (lane == 0) {
@@ -517,7 +530,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
       }
       const int ok = beh ? broom_local(*bxp, S.pos[0], S.pos[1]) : room_of(m, S.pos[0], S.pos[1]);
       v[T_SAMEROOM] = (rrk >= 0 && ok == rrk) ? (uint16_t)0x3c00u : (uint16_t)0u;
-      v[T_TARGET] = b == tgt ? (uint16_t)0x3c00u : (uint16_t)0u;
+      v[T_TARGET] = (b == tgt || b == tgt2) ? (uint16_t)0x3c00u : (uint16_t)0u;   // BEHAVIOR 집기·놓기: 집을 물체 + 놓을 곳
       // 이름: 라벨 표 1위(지도 이름 = 틀린 이름 그대로)의 확신도 = 생김새(출처 참 물체 종류, 유령 = NCLS)와 이름 벡터의 코사인·1위 − 2위(vla_vocab.h).
       // 1위 − 2위가 낮으면 상위어 행(VLA_INPUT 3절 "확신 낮으면 상위어")
       if (beh) {   // BEHAVIOR: 종류 = 이름 표 행. 생김새 = 우리 렌더의 상자(행 1, 가정 — 종류별 생김새 행은 아직 없음), 유령 = NCLS

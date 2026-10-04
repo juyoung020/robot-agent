@@ -320,6 +320,7 @@ struct BMapEnv {
   float wx, wy;                  // 창 가운데(세계)
   int c0, r0;                    // 창 칸 (0, 0) = 장면 칸 (c0, r0)
   int nroom, ndoor, room_cells, kind;
+  int goal;                      // 목표 물체 prim 비트(POLICY 1.3 objects:[…] — 칸의 "목표인지"): 0 = 집을 물체, 1 = 놓을 곳(바닥이 아닐 때)
   int16_t sbox[N_PRIM];          // prim 의 정적 상자 번호(−1 = 과제 물체)
   int16_t pad16;
   int8_t lut[32];                // 장면 방 번호 → 창 방 번호(−1 = 창에 없음)
@@ -626,6 +627,7 @@ DEV void make_scene_beh(MapCore& m, const EnvView& e, const bsc::SceneSet& ss, B
   const bsc::Entry& E = ss.ent[e.bent];
   const bsc::SceneDev& d = ss.sc[e.bscene];
   bm.on = 1; bm.scene = e.bscene; bm.ent = e.bent; bm.nprim = E.nprim; bm.kind = e.bkind;
+  bm.goal = 1 | ((E.list == bsc::L_OBJ && E.dkind != bsc::DK_FLOOR && E.nprim > 1) ? 2 : 0);
   bm.wx = e.bwx; bm.wy = e.bwy;
   bm.c0 = (int)floorf((e.bwx - bsc::WIN_HALF - d.ox) / bsc::CELL + 0.5f);
   bm.r0 = (int)floorf((e.bwy - bsc::WIN_HALF - d.oy) / bsc::CELL + 0.5f);

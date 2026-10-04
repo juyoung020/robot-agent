@@ -27,6 +27,9 @@ add_executable(env_verify tools/env_verify.cu)
 target_link_libraries(env_verify env bscene_host)
 add_executable(bscene_check tools/bscene_check.cpp)
 target_link_libraries(bscene_check env bscene_host)
+# 집기·놓기 판 고르기 확인(10,000 판, 거르개를 원본 RASC 값에서 다시 잼) + 음성 대조
+add_executable(pnp_check tools/pnp_check.cu)
+target_link_libraries(pnp_check env bscene_host)
 add_executable(env_bench tools/env_bench.cu)
 target_link_libraries(env_bench env bscene_host)
 

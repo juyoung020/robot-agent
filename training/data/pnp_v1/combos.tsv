@@ -1,0 +1,61 @@
+# ntpl 12 ntpl_train 10
+# combos for the pick-and-place instruction table: idx obj_row src_row dst_row rel (-2 = floor, <= -1000 = floor of room category -1000-row; rel 2 ontop, 3 inside). en names after '|'
+0 42 -2 -1035 2 | battery | floor | living room floor
+1 42 -2 448 2 | battery | floor | furniture
+2 82 -2 19 3 | broken glass | floor | trash can
+3 101 -2 -1018 2 | candy cane | floor | kitchen floor
+4 101 -2 -1012 2 | candy cane | floor | dining room floor
+5 101 -2 138 2 | candy cane | floor | coffee table
+6 101 -2 213 3 | candy cane | floor | gift box
+7 101 -2 440 2 | candy cane | floor | wreath
+8 101 -2 448 2 | candy cane | floor | furniture
+9 101 435 -1035 2 | candy cane | wicker basket | living room floor
+10 101 435 -1018 2 | candy cane | wicker basket | kitchen floor
+11 101 435 -1012 2 | candy cane | wicker basket | dining room floor
+12 101 435 -1011 2 | candy cane | wicker basket | corridor floor
+13 101 435 138 2 | candy cane | wicker basket | coffee table
+14 101 435 213 3 | candy cane | wicker basket | gift box
+15 101 435 440 2 | candy cane | wicker basket | wreath
+16 101 435 448 2 | candy cane | wicker basket | furniture
+17 128 -2 -1035 2 | cigar lighter | floor | living room floor
+18 128 -2 -1018 2 | cigar lighter | floor | kitchen floor
+19 128 -2 -1011 2 | cigar lighter | floor | corridor floor
+20 128 -2 267 2 | cigar lighter | floor | newspaper
+21 174 -2 -1032 2 | die | floor | childs room floor
+22 174 -2 9 2 | die | floor | straight chair
+23 174 -2 389 2 | die | floor | teddy
+24 174 -2 546 2 | die | floor | lamp
+25 239 -2 307 2 | insectifuge atomizer | floor | pot plant
+26 250 435 -1035 2 | leek | wicker basket | living room floor
+27 250 435 -1027 2 | leek | wicker basket | entryway floor
+28 250 435 -1018 2 | leek | wicker basket | kitchen floor
+29 250 435 -1012 2 | leek | wicker basket | dining room floor
+30 250 435 138 2 | leek | wicker basket | coffee table
+31 250 435 448 2 | leek | wicker basket | furniture
+32 279 -2 -1011 2 | pen | floor | corridor floor
+33 279 -2 110 3 | pen | floor | carryall
+34 279 -2 448 2 | pen | floor | furniture
+35 280 -2 -1003 2 | pencil | floor | bedroom floor
+36 280 -2 110 3 | pencil | floor | carryall
+37 280 -2 448 2 | pencil | floor | furniture
+38 337 -2 448 2 | scraper | floor | furniture
+39 339 -2 -1003 2 | scrub brush | floor | bedroom floor
+40 339 -2 363 2 | scrub brush | floor | stand
+41 339 -2 364 2 | scrub brush | floor | nightstand
+42 365 -2 -1032 2 | stapler | floor | childs room floor
+43 365 -2 364 2 | stapler | floor | nightstand
+44 377 435 -1035 2 | sweet corn | wicker basket | living room floor
+45 377 435 -1027 2 | sweet corn | wicker basket | entryway floor
+46 377 435 -1018 2 | sweet corn | wicker basket | kitchen floor
+47 377 435 -1012 2 | sweet corn | wicker basket | dining room floor
+48 377 435 138 2 | sweet corn | wicker basket | coffee table
+49 377 435 448 2 | sweet corn | wicker basket | furniture
+50 412 40 -1003 2 | toothbrush | basket | bedroom floor
+51 412 40 40 3 | toothbrush | basket | basket
+52 412 40 364 2 | toothbrush | basket | nightstand
+53 412 40 448 2 | toothbrush | basket | furniture
+54 422 -2 448 2 | trowel | floor | furniture
+55 423 40 -1003 2 | tube of toothpaste | basket | bedroom floor
+56 423 40 40 3 | tube of toothpaste | basket | basket
+57 423 40 364 2 | tube of toothpaste | basket | nightstand
+58 423 40 448 2 | tube of toothpaste | basket | furniture

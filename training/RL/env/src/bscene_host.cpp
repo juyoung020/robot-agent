@@ -9,6 +9,7 @@
 #include <cstring>
 #include <dirent.h>
 #include <map>
+#include <tuple>
 #include <queue>
 #include <thread>
 
@@ -195,7 +196,8 @@ void obb_aabb(const SBox& b, float lo[2], float hi[2]) {
   lo[0] = b.cx - ex; hi[0] = b.cx + ex; lo[1] = b.cy - ey; hi[1] = b.cy + ey;
 }
 
-struct TObj { int k; float lo[3], hi[3]; int16_t name; };   // 인스턴스의 과제 물체(세계 AABB)
+struct TObj { int k; float lo[3], hi[3]; int16_t name; uint32_t flags; };
+struct PE { Entry e; bool in; std::vector<uint32_t> rb, rb_in; };   // 집기·놓기 엔트리 후보(엄격 지남, 창 닿는 칸 비트)   // 인스턴스의 과제 물체(세계 AABB, 과제 안 번호 k)
 
 bool trav_bit(const rasc::Scene& s, int layer, int r, int c) { return s.free_cell(layer, r, c); }
 
@@ -242,6 +244,40 @@ std::string default_vla_dir() {
   std::string f = __FILE__;   // .../training/RL/env/src/bscene_host.cpp
   const size_t p = f.rfind("/training/RL/env/");
   return p == std::string::npos ? "training/data/vla_v1" : f.substr(0, p) + "/training/data/vla_v1";
+}
+std::string default_pnp_dir() {
+  std::string f = __FILE__;
+  const size_t p = f.rfind("/training/RL/env/");
+  return p == std::string::npos ? "training/data/pnp_v1" : f.substr(0, p) + "/training/data/pnp_v1";
+}
+PnpFilter pnp_filter_default() {   // 문서 CURRICULUM_BEHAVIOR2026.md B3–B5 거르개 표(E0 5.3절) — b1kconv limits_default 와 같은 값
+  PnpFilter f{};
+  f.pick_z[0] = 0.50f; f.pick_z[1] = 0.45f;
+  f.place_top[0] = 0.52f; f.place_top[1] = 0.48f;
+  f.max_mass[0] = 0.40f; f.max_mass[1] = 0.25f;
+  f.max_w[0] = 0.06f; f.max_w[1] = 0.04f;
+  f.threshold[0] = 0.025f; f.threshold[1] = 0.02f;
+  f.topdown_z = 0.25f; f.edge_dist = 0.10f;
+  f.reach_low = std::max(0.11f + 0.27f, 0.21f + 0.17f);   // max(옆 가장자리 0.11 + 옆 0.27, 앞 0.21 + 앞 0.17) = 0.38
+  f.reach_high = 0.11f + 0.10f;                           // 옆 가장자리 0.11 + edge_dist 0.10 = 0.21
+  f.inside_margin = 0.05f; f.min_side = 0.15f; f.min_top = 0.05f;
+  f.free_margin = 0.02f; f.stance_r = 0.6f; f.floor_spot_r0 = 0.6f; f.floor_spot_r1 = 4.0f;
+  return f;
+}
+bool dump_combos(const SceneBuild& b, const std::string& path, std::string* err) {
+  FILE* f = std::fopen(path.c_str(), "w");
+  if (!f) { *err = "cannot write " + path; return false; }
+  std::fprintf(f, "# combos for the pick-and-place instruction table: idx obj_row src_row dst_row rel (-2 = floor, <= -1000 = floor of room category -1000-row; rel 2 ontop, 3 inside). en names after '|'\n");
+  for (size_t k = 0; k < b.combos.size(); ++k) {
+    const auto& c = b.combos[k];
+    auto nm = [&](int r) {
+      if (r <= -1000) { for (auto& sc : b.sc) { auto it = sc.sem_name.find(-1000 - r); if (it != sc.sem_name.end()) return it->second + " floor"; } return std::string("floor"); }
+      return r == -2 ? std::string("floor") : (r >= 0 && r < (int)b.name_en.size() ? b.name_en[r] : std::string("?"));
+    };
+    std::fprintf(f, "%zu %d %d %d %d | %s | %s | %s\n", k, c.obj, c.src, c.dst, c.rel, nm(c.obj).c_str(), nm(c.src).c_str(), nm(c.dst).c_str());
+  }
+  std::fclose(f);
+  return true;
 }
 std::string default_rasc_dir() {
   const char* h = std::getenv("HOME");
@@ -310,7 +346,7 @@ bool body_free_host(const SceneBuild::Sc& s, const Entry& e, float x, float y, f
 
 namespace {
 
-bool build_one(const std::string& path, const Names& nm, const BuildOpt& opt, SceneBuild::Sc& S, std::vector<Entry>& ents, SceneStats& st,
+bool build_one(const std::string& path, const Names& nm, const BuildOpt& opt, const PnpFilter& filt, SceneBuild::Sc& S, std::vector<Entry>& ents, SceneStats& st,
                int scene_idx, std::string* err) {
   const auto t0 = std::chrono::steady_clock::now();
   rasc::Scene s;
@@ -324,7 +360,9 @@ bool build_one(const std::string& path, const Names& nm, const BuildOpt& opt, Sc
   S.threshold = s.limits[0].threshold;
   // 1. 정적 상자. 벽은 상자(메시 아님)라 문 구멍이 막혀 있다 → 벽 상자에서 문 열린 자리를 잘라 내고 문 위(인방)만 남긴다.
   //    바닥 덮개(잔디·포장·차도처럼 윗면 ≤ 0.2 m 이고 넓이 > 1 m²)는 바닥으로 보고 뺀다(다닐 곳 = RASC 바닥 높이 칸)
+  int cur_obj = -1;
   auto push = [&](const SBox& b, uint8_t base, int16_t name) {
+    S.bobj.push_back(cur_obj);
     uint8_t kind = base;
     if (b.z0 < H_COLL) kind |= BK_COLL;
     if (b.z1 > 0.05f && b.z0 < 0.50f) kind |= BK_BAND;
@@ -334,6 +372,7 @@ bool build_one(const std::string& path, const Names& nm, const BuildOpt& opt, Sc
   };
   for (size_t k = 0; k < s.boxes.n; ++k) {
     const RascBoxRec& r = s.boxes[k];
+    cur_obj = (int)r.obj;
     ++st.nbox_in;
     if (r.flags & (RASC_F_DOOR | RASC_F_CARPET | RASC_F_VISUAL_ONLY)) continue;
     if (r.zmax < 0.03f || r.half[0] <= 0.f || r.half[1] <= 0.f) continue;
@@ -468,6 +507,41 @@ bool build_one(const std::string& path, const Names& nm, const BuildOpt& opt, Sc
         inter += a && bb; uni += a || bb; agree += a == bb;
       }
     }
+  // 로봇 중심 칸 성분(8 이웃, 대각은 양 옆이 빈 칸일 때, 이웃 바닥 높이 차 ≤ 문턱) — 느슨·엄격 문턱(RASC LIMITS)
+  auto label = [&](float thr, std::vector<uint16_t>& comp) {
+    comp.assign((size_t)W * H, 0);
+    const int tmm = (int)std::lround(thr * 1000.f);
+    auto fz = [&](int i) { const int16_t v = S.floor_mm[i]; return v == INT16_MIN ? 0 : (int)v; };
+    int n = 0;
+    std::vector<int> q;
+    const int dx[8] = {1, -1, 0, 0, 1, 1, -1, -1}, dy[8] = {0, 0, 1, -1, 1, -1, 1, -1};
+    for (int i0 = 0; i0 < W * H; ++i0) {
+      if (!S.freeg[i0] || comp[i0]) continue;
+      if (n == 65535) { comp[i0] = 0; continue; }
+      ++n;
+      comp[i0] = (uint16_t)n;
+      q.assign(1, i0);
+      while (!q.empty()) {
+        const int u = q.back();
+        q.pop_back();
+        const int uc = u % W, ur = u / W;
+        for (int k = 0; k < 8; ++k) {
+          const int nc = uc + dx[k], nr = ur + dy[k];
+          if (nc < 0 || nr < 0 || nc >= W || nr >= H) continue;
+          const int v = nr * W + nc;
+          if (!S.freeg[v] || comp[v]) continue;
+          if (k >= 4 && (!S.freeg[ur * W + nc] || !S.freeg[nr * W + uc])) continue;
+          if (std::abs(fz(v) - fz(u)) > tmm) continue;
+          comp[v] = (uint16_t)n;
+          q.push_back(v);
+        }
+      }
+    }
+  };
+  label(s.limits[0].threshold, S.comp);
+  label(s.limits[1].threshold, S.comp_in);
+  d.comp = S.comp.data();
+  d.comp_in = S.comp_in.data();
   st.cells = (long)W * H;
   st.occ_iou = uni ? (double)inter / uni : 0;
   st.occ_agree = nroomc ? (double)agree / nroomc : 0;
@@ -527,6 +601,7 @@ bool build_one(const std::string& path, const Names& nm, const BuildOpt& opt, Sc
     }
   };
   std::vector<float> dist;
+  std::vector<std::vector<std::vector<PE>>> blocks[2];   // [split] 인스턴스 → 집을 물체 → 짝
   for (int ii : order) {
     const RascInstRec& in = s.insts[ii];
     const RascTaskRec& tk = s.tasks[in.task];
@@ -552,63 +627,327 @@ bool build_one(const std::string& path, const Names& nm, const BuildOpt& opt, Sc
       }
       bool hit = false;
       t.name = (int16_t)name_of_synset(nm, s.str(o.syn), &hit);
+      t.flags = o.flags;
       if (hit) ++st.name_hit; else ++st.name_miss;
       tobjs.push_back(t);
     }
     const float sxw = in.robot_pos[0], syw = in.robot_pos[1], syaw = in.robot_yaw;
-    // ---- 물체 표 ----
-    const RascPnpRange& pr = s.pnp_ranges[ii];
-    bool any_pick = false, any_reach = false;
-    for (uint32_t q = 0; q < pr.n_pick; ++q) {
-      const RascPickRec& pk = s.picks[pr.pick_off + q];
-      if (!(pk.obj & RASC_PNP_TASKOBJ)) continue;
-      any_pick = true;
-      if (pk.comp == RASC_NONE16 || pk.comp != pr.robot_comp) continue;
-      any_reach = true;
-      const int k = (int)(pk.obj & ~RASC_PNP_TASKOBJ) - (int)tk.obj_off;   // TaskObjRec 전역 번호 → 과제 안 번호
-      int ti = -1;
-      for (size_t t = 0; t < tobjs.size(); ++t) if (tobjs[t].k == k) ti = (int)t;
-      if (ti < 0) continue;
-      const bool inner = (pk.flags & RASC_PK_INNER) && pk.comp_inner != RASC_NONE16 && pk.comp_inner == pr.robot_comp_inner;
-      ++st.obj_try;
-      if ((int)lst[L_OBJ][split].size() >= opt.cap_obj) { ++st.rej_cap; continue; }
-      const TObj& T = tobjs[ti];
-      const float tcx = 0.5f * (T.lo[0] + T.hi[0]), tcy = 0.5f * (T.lo[1] + T.hi[1]);
-      if (!fits(sxw, syw, tcx, tcy)) { ++st.rej_window; continue; }
-      Entry e{};
-      e.scene = (int16_t)scene_idx; e.list = L_OBJ; e.split = (int16_t)split; e.inst = ii; e.task = (int16_t)in.task;
-      snap(0.5f * (sxw + tcx), 0.5f * (syw + tcy), e.wx, e.wy);
-      e.sx = sxw - e.wx; e.sy = syw - e.wy; e.syaw = syaw;
-      e.gx = tcx - e.wx; e.gy = tcy - e.wy; e.gz = 0.5f * (T.lo[2] + T.hi[2]);
-      for (int a = 0; a < 3; ++a) e.ext[a] = T.hi[a] - T.lo[a];
-      e.groom = (int16_t)room_at(d, tcx, tcy);
-      BPrim& P0 = e.prim[0];
-      for (int a = 0; a < 3; ++a) { P0.lo[a] = T.lo[a] - (a == 0 ? e.wx : a == 1 ? e.wy : 0.f); P0.hi[a] = T.hi[a] - (a == 0 ? e.wx : a == 1 ? e.wy : 0.f); }
-      P0.name = T.name; P0.sbox = -1;
-      e.nprim = 1;
-      add_prims(e, tobjs, k, -1, e.gx, e.gy);
-      if (!body_free_host(S, e, e.sx, e.sy, e.syaw)) { ++st.rej_start; continue; }
-      window_dijkstra(S, e.wx, e.wy, e.sx, e.sy, dist);
-      float best = -1.f, bst = -1.f;
-      for (int c = 0; c < WIN * WIN; ++c) {
-        if (dist[c] < 0.f) continue;
-        const float cx = ((float)(c % WIN) + 0.5f) * CELL - WIN_HALF, cy = ((float)(c / WIN) + 0.5f) * CELL - WIN_HALF;
-        const float df = dist_pt_rect(P0.lo, P0.hi, cx, cy);
-        if (df <= R_APP && (best < 0.f || dist[c] < best)) best = dist[c];
-        if (df <= 0.6f && (bst < 0.f || dist[c] < bst) && stance_ok(S, e, cx, cy)) bst = dist[c];
+    // ---- 집기·놓기 표(B2–B5, 문서 B3–B5 거르개) ----
+    // RASC PICKS(바깥 = 느슨 한도를 지난 집을 물체, PK_INNER = 엄격)·PAIRS(같은 성분)에 환경 거르개를 더한다: 관절체·닫힌 곳 안 빼기,
+    // 창(12.8 m)에 집을 물체·놓을 곳이 들어감, 잡는 자세 칸(잡는 점 작업 공간 + 몸통 안 닿음), 놓을 곳 가장자리에 닿는 칸(같은 성분),
+    // 놓을 면 빈 넓이, 대신 쓸 시작 칸. 엄격 = 엄격 한도(RASC INNER) + 엄격 문턱 성분까지 같음
+    {
+      const RascPnpRange& pr = s.pnp_ranges[ii];
+      bool any_pick = false, any_reach = false;
+      std::vector<std::vector<PE>> per_pick;
+      SceneSet tmp{};
+      tmp.sc[scene_idx] = d;
+      for (uint32_t q = 0; q < pr.n_pick; ++q) {
+        const uint32_t pidx = pr.pick_off + q;
+        const RascPickRec& pk = s.picks[pidx];
+        if (!(pk.obj & RASC_PNP_TASKOBJ)) { ++st.pk_scene; continue; }   // 장면 물체 집을 것(v3 에 없음)
+        any_pick = true;
+        const int k = (int)(pk.obj & ~RASC_PNP_TASKOBJ) - (int)tk.obj_off;
+        int ti = -1;
+        for (size_t t = 0; t < tobjs.size(); ++t) if (tobjs[t].k == k) ti = (int)t;
+        if (ti < 0) continue;
+        ++st.pk_cand;
+        const TObj& T = tobjs[ti];
+        if (!(opt.nofilter & NF_ARTIC) && (T.flags & (RASC_F_ARTICULATED | RASC_F_FIXED_BASE))) { ++st.rj_artic; continue; }
+        if (!(opt.nofilter & NF_IN_CLOSED) && (pk.flags & RASC_PK_IN_CLOSED)) { ++st.rj_closed; continue; }
+        const bool pick_in = (pk.flags & RASC_PK_INNER) != 0;
+        const float tcx = 0.5f * (T.lo[0] + T.hi[0]), tcy = 0.5f * (T.lo[1] + T.hi[1]);
+        std::vector<PE> cand;
+        // 잡는 자세 칸(장면 칸 번호, 물체 바닥 자국에서 거리 순): 물체 둘레 창(물체 가운데)에서 한 번 — 짝마다 같음
+        struct StC { float df; int si; };
+        std::vector<StC> stance;
+        {
+          Entry pe{};
+          pe.scene = (int16_t)scene_idx;
+          snap(tcx, tcy, pe.wx, pe.wy);
+          pe.gx = tcx - pe.wx; pe.gy = tcy - pe.wy; pe.gz = 0.5f * (T.lo[2] + T.hi[2]);
+          for (int a = 0; a < 3; ++a) pe.ext[a] = T.hi[a] - T.lo[a];
+          BPrim& Q0 = pe.prim[0];
+          for (int a = 0; a < 3; ++a) { Q0.lo[a] = T.lo[a] - (a == 0 ? pe.wx : a == 1 ? pe.wy : 0.f); Q0.hi[a] = T.hi[a] - (a == 0 ? pe.wx : a == 1 ? pe.wy : 0.f); }
+          Q0.name = T.name; Q0.sbox = -1;
+          pe.nprim = 1;
+          add_prims(pe, tobjs, k, -1, pe.gx, pe.gy);
+          const int pc0 = (int)std::lround((pe.wx - WIN_HALF - d.ox) / CELL), pr0 = (int)std::lround((pe.wy - WIN_HALF - d.oy) / CELL);
+          const int rr = (int)std::ceil((filt.stance_r + 0.5f * std::max(pe.ext[0], pe.ext[1])) / CELL) + 1;
+          for (int j = WIN / 2 - rr; j <= WIN / 2 + rr; ++j)
+            for (int i2 = WIN / 2 - rr; i2 <= WIN / 2 + rr; ++i2) {
+              const int sc = pc0 + i2, sr = pr0 + j;
+              if (sc < 0 || sr < 0 || sc >= W || sr >= H || !S.comp[(size_t)sr * W + sc]) continue;
+              const float x = ((float)i2 + 0.5f) * CELL - WIN_HALF, y = ((float)j + 0.5f) * CELL - WIN_HALF;
+              const float df = dist_pt_rect(Q0.lo, Q0.hi, x, y);
+              if (df > filt.stance_r) continue;
+              if (!(opt.nofilter & NF_STANCE) && !stance_ok(S, pe, x, y)) continue;
+              stance.push_back({df, sr * W + sc});
+            }
+          std::sort(stance.begin(), stance.end(), [](const StC& a, const StC& b2) { return a.df != b2.df ? a.df < b2.df : a.si < b2.si; });
+        }
+        if (stance.empty()) { ++st.rj_stance; continue; }
+        for (uint32_t r2 = 0; r2 < pr.n_pair; ++r2) {
+          const RascPairRec& pa = s.pairs[pr.pair_off + r2];
+          if (pa.pick != pidx) continue;
+          ++st.pr_cand;
+          if (!(pa.reachable & 1)) { ++st.rj_reach; continue; }   // 집을 것·놓을 곳이 같은 TRAV 성분(느슨 문턱)
+          const RascPlaceRec& D = s.places[pa.dst];
+          Entry e{};
+          e.scene = (int16_t)scene_idx; e.list = L_OBJ; e.split = (int16_t)split; e.inst = ii; e.task = (int16_t)in.task;
+          e.dkind = (int16_t)D.kind; e.rel = pa.rel; e.pick_rec = (int32_t)pidx; e.dst_rec = (int32_t)pa.dst; e.src_rec = (int32_t)pk.src_place;
+          e.dst_room = (int16_t)(D.room == RASC_NONE16 ? -1 : D.room);
+          // 놓을 곳 상자(세계): 장면 물체면 그 정적 상자, 과제 물체면 그 상자
+          int dbox = -1, dti = -1;
+          float dlo[3] = {0, 0, 0}, dhi[3] = {0, 0, 0};
+          if (D.kind != DK_FLOOR) {
+            if (D.obj & RASC_PNP_TASKOBJ) {
+              const int dk = (int)(D.obj & ~RASC_PNP_TASKOBJ) - (int)tk.obj_off;
+              for (size_t t = 0; t < tobjs.size(); ++t) if (tobjs[t].k == dk) dti = (int)t;
+              if (dti < 0) continue;
+              for (int a = 0; a < 3; ++a) { dlo[a] = tobjs[dti].lo[a]; dhi[a] = tobjs[dti].hi[a]; }
+              e.dst_name = tobjs[dti].name;
+            } else {
+              for (size_t bk = 0; bk < S.bobj.size() && dbox < 0; ++bk) if (S.bobj[bk] == (int)D.obj && (S.bkind[bk] & BK_FURN)) dbox = (int)bk;
+              const RascObjRec& O = s.objs[D.obj];
+              if (std::strstr(s.str(s.cats[O.cat].name), "baseboard")) { ++st.rj_struct; continue; }   // 구조물(걸레받이) 받침 빼기
+              for (int a = 0; a < 3; ++a) { dlo[a] = O.aabb_min[a]; dhi[a] = O.aabb_max[a]; }
+              e.dst_name = (int16_t)name_of_category(nm, s.str(s.cats[O.cat].name));
+            }
+          } else {   // 바닥: 그 방 종류(room_categories 줄 번호 sem)로 −1000 − sem (지시문 "the kitchen floor")
+            e.dst_name = (int16_t)(D.room != RASC_NONE16 && D.room < s.rooms.n ? -1000 - (int)s.rooms[D.room].sem : -2);
+            if (D.room != RASC_NONE16 && D.room < s.rooms.n) {
+              std::string rn = s.str(s.rooms[D.room].name);
+              const size_t u = rn.rfind('_');
+              if (u != std::string::npos) rn = rn.substr(0, u);
+              for (auto& ch : rn) if (ch == '_') ch = ' ';
+              S.sem_name[s.rooms[D.room].sem] = rn;
+            }
+          }
+          // 출발 받침 이름
+          if (pk.src_place == RASC_NONE32) e.src_name = -2;
+          else {
+            const RascPlaceRec& Sp = s.places[pk.src_place];
+            if (Sp.kind == DK_FLOOR) e.src_name = -2;
+            else if (Sp.obj & RASC_PNP_TASKOBJ) {
+              const int sk = (int)(Sp.obj & ~RASC_PNP_TASKOBJ) - (int)tk.obj_off;
+              e.src_name = -2;
+              for (size_t t = 0; t < tobjs.size(); ++t) if (tobjs[t].k == sk) e.src_name = tobjs[t].name;
+            } else e.src_name = (int16_t)name_of_category(nm, s.str(s.cats[s.objs[Sp.obj].cat].name));
+          }
+          // 창: 면·용기 = 집을 것과 놓을 곳 가운데, 바닥 = 집을 것 가운데
+          const float dcx = D.kind == DK_FLOOR ? tcx : D.center[0], dcy = D.kind == DK_FLOOR ? tcy : D.center[1];
+          if (!fits(tcx, tcy, dcx, dcy)) { ++st.rj_win; continue; }
+          snap(0.5f * (tcx + dcx), 0.5f * (tcy + dcy), e.wx, e.wy);
+          e.gx = tcx - e.wx; e.gy = tcy - e.wy; e.gz = 0.5f * (T.lo[2] + T.hi[2]);
+          for (int a = 0; a < 3; ++a) e.ext[a] = T.hi[a] - T.lo[a];
+          e.groom = (int16_t)room_at(d, tcx, tcy);
+          BPrim& P0 = e.prim[0];
+          for (int a = 0; a < 3; ++a) { P0.lo[a] = T.lo[a] - (a == 0 ? e.wx : a == 1 ? e.wy : 0.f); P0.hi[a] = T.hi[a] - (a == 0 ? e.wx : a == 1 ? e.wy : 0.f); }
+          P0.name = T.name; P0.sbox = -1;
+          e.nprim = 1;
+          if (D.kind != DK_FLOOR) {
+            BPrim& P1 = e.prim[e.nprim++];
+            if (dbox >= 0) {
+              float lo2[2], hi2[2];
+              obb_aabb(S.box[dbox], lo2, hi2);
+              P1.lo[0] = lo2[0] - e.wx; P1.lo[1] = lo2[1] - e.wy; P1.lo[2] = S.box[dbox].z0;
+              P1.hi[0] = hi2[0] - e.wx; P1.hi[1] = hi2[1] - e.wy; P1.hi[2] = S.box[dbox].z1;
+              P1.sbox = (int16_t)dbox;
+            } else {
+              P1.lo[0] = dlo[0] - e.wx; P1.lo[1] = dlo[1] - e.wy; P1.lo[2] = dlo[2];
+              P1.hi[0] = dhi[0] - e.wx; P1.hi[1] = dhi[1] - e.wy; P1.hi[2] = dhi[2];
+              P1.sbox = -1;
+            }
+            P1.name = e.dst_name;
+            for (int a = 0; a < 3; ++a) { e.dlo[a] = P1.lo[a]; e.dhi[a] = P1.hi[a]; }
+          }
+          add_prims(e, tobjs, k, dbox, e.gx, e.gy);
+          if (dti >= 0) {   // 과제 물체 놓을 곳이 add_prims 에 또 들어갔으면 빼기
+            for (int p2 = 2; p2 < e.nprim; ++p2)
+              if (e.prim[p2].sbox < 0 && e.prim[p2].lo[0] == e.prim[1].lo[0] && e.prim[p2].lo[1] == e.prim[1].lo[1] && e.prim[p2].hi[2] == e.prim[1].hi[2]) {
+                for (int p3 = p2; p3 + 1 < e.nprim; ++p3) e.prim[p3] = e.prim[p3 + 1];
+                --e.nprim;
+                break;
+              }
+          }
+          // 놓을 면 빈 넓이(면·용기): 받침 사각형 − 그 위(안)에 있는 물체 바닥 자국 ≥ (물체 가로 + 2m)(세로 + 2m)
+          if (D.kind != DK_FLOOR && !(opt.nofilter & NF_FREE_AREA)) {
+            const float cs = std::cos(D.yaw), sn = std::sin(D.yaw);
+            const float area = 4.f * D.half[0] * D.half[1];
+            float occ_a = 0.f;
+            auto occupant = [&](const float lo[3], const float hi[3]) {
+              const float ox = 0.5f * (lo[0] + hi[0]) - D.center[0], oy = 0.5f * (lo[1] + hi[1]) - D.center[1];
+              const float lx = cs * ox + sn * oy, ly = -sn * ox + cs * oy;
+              if (std::fabs(lx) > D.half[0] || std::fabs(ly) > D.half[1]) return;
+              const bool on = D.kind == DK_ONTOP ? (lo[2] >= D.top - 0.05f && lo[2] <= D.top + 0.05f) : (lo[2] >= D.top - 0.6f && lo[2] < D.top);
+              if (on) occ_a += std::min((hi[0] - lo[0]) * (hi[1] - lo[1]), area);
+            };
+            for (size_t t = 0; t < tobjs.size(); ++t) if ((int)t != ti && (int)t != dti) occupant(tobjs[t].lo, tobjs[t].hi);
+            for (size_t ob = 0; ob < s.objs.n; ++ob) {
+              const RascObjRec& O = s.objs[ob];
+              if ((O.flags & (RASC_F_WALL | RASC_F_FLOOR | RASC_F_CEILING | RASC_F_DOOR | RASC_F_WINDOW | RASC_F_CARPET)) || (int)ob == (int)D.obj) continue;
+              occupant(O.aabb_min, O.aabb_max);
+            }
+            const float need = (e.ext[0] + 2.f * filt.free_margin) * (e.ext[1] + 2.f * filt.free_margin);
+            if (area - occ_a < need) { ++st.rj_area; continue; }
+          }
+          // 놓을 곳 가장자리에 닿는 칸(같은 성분) — 잡는 자세 칸은 위에서(물체마다 한 번)
+          const int c0 = (int)std::lround((e.wx - WIN_HALF - d.ox) / CELL), r0 = (int)std::lround((e.wy - WIN_HALF - d.oy) / CELL);
+          auto cell_of = [&](int c) { const int sc = c0 + c % WIN, sr = r0 + c / WIN; return (sc < 0 || sr < 0 || sc >= W || sr >= H) ? -1 : sr * W + sc; };
+          auto cxy = [&](int c, float& x, float& y) { x = ((float)(c % WIN) + 0.5f) * CELL - WIN_HALF; y = ((float)(c / WIN) + 0.5f) * CELL - WIN_HALF; };
+          auto win_cell = [&](int si) { const int c = si % W - c0, r = si / W - r0; return (c < 0 || r < 0 || c >= WIN || r >= WIN) ? -1 : r * WIN + c; };
+          const bool dst_high = D.kind != DK_FLOOR && D.top > filt.topdown_z;
+          const float dreach = dst_high ? filt.reach_high : filt.reach_low;
+          // 찾을 창 칸 범위(놓을 곳 상자 ± 닿는 거리, 바닥이면 집을 것 ± floor_spot_r1)
+          int i0, i1, j0, j1;
+          {
+            float lo0, lo1, hi0, hi1;
+            if (D.kind == DK_FLOOR) { lo0 = e.gx - filt.floor_spot_r1; hi0 = e.gx + filt.floor_spot_r1; lo1 = e.gy - filt.floor_spot_r1; hi1 = e.gy + filt.floor_spot_r1; }
+            else { lo0 = e.prim[1].lo[0] - dreach; hi0 = e.prim[1].hi[0] + dreach; lo1 = e.prim[1].lo[1] - dreach; hi1 = e.prim[1].hi[1] + dreach; }
+            i0 = std::max(0, (int)std::floor((lo0 + WIN_HALF) / CELL)); i1 = std::min(WIN - 1, (int)std::floor((hi0 + WIN_HALF) / CELL));
+            j0 = std::max(0, (int)std::floor((lo1 + WIN_HALF) / CELL)); j1 = std::min(WIN - 1, (int)std::floor((hi1 + WIN_HALF) / CELL));
+          }
+          // 바닥 놓기: 그 방, 집을 것에서 floor_spot_r0–r1, 3 × 3 칸이 같은 성분인 칸, 해시 순서
+          std::vector<int> spot_cells;
+          if (D.kind == DK_FLOOR) {
+            for (int j = j0; j <= j1; ++j)
+              for (int i2 = i0; i2 <= i1; ++i2) {
+                const int c = j * WIN + i2, si = cell_of(c);
+                if (si < 0 || !S.comp[si] || (int)S.room[si] - 1 != (int)D.room) continue;
+                float x, y;
+                cxy(c, x, y);
+                const float dd = std::hypot(x - e.gx, y - e.gy);
+                if (dd < filt.floor_spot_r0 || dd > filt.floor_spot_r1 || !in_win(x, y, WIN_MARGIN)) continue;
+                bool all = true;
+                for (int a = -1; a <= 1 && all; ++a) for (int b2 = -1; b2 <= 1 && all; ++b2) { const int sj = si + a * W + b2; all = sj >= 0 && sj < W * H && S.comp[sj] == S.comp[si]; }
+                if (all) spot_cells.push_back(c);
+              }
+            std::sort(spot_cells.begin(), spot_cells.end(), [&](int a, int b2) {
+              const uint64_t ha = hmix(((uint64_t)pidx << 24) ^ (uint64_t)a), hb = hmix(((uint64_t)pidx << 24) ^ (uint64_t)b2);
+              return ha != hb ? ha < hb : a < b2;
+            });
+          }
+          // 창 안 BFS(로봇 중심 칸, 8 이웃·대각은 양 옆, 이웃 바닥 높이 차 ≤ 문턱) → 창 칸 비트
+          auto wfree = [&](int i2, int j2) { const int c = j2 * WIN + i2; const int si = (i2 < 0 || j2 < 0 || i2 >= WIN || j2 >= WIN) ? -1 : cell_of(c); return si >= 0 && S.freeg[si]; };
+          auto wfz = [&](int i2, int j2) { const int16_t v = S.floor_mm[cell_of(j2 * WIN + i2)]; return v == INT16_MIN ? 0 : (int)v; };
+          auto bfs = [&](int start, float thr, std::vector<uint32_t>& bits) {
+            bits.assign(WIN * WIN / 32, 0u);
+            const int tmm = (int)std::lround(thr * 1000.f);
+            std::vector<int> q(1, start);
+            bits[start >> 5] |= 1u << (start & 31);
+            const int dx[8] = {1, -1, 0, 0, 1, 1, -1, -1}, dy[8] = {0, 0, 1, -1, 1, -1, 1, -1};
+            for (size_t h = 0; h < q.size(); ++h) {
+              const int u = q[h], ui = u % WIN, uj = u / WIN;
+              for (int k2 = 0; k2 < 8; ++k2) {
+                const int ni = ui + dx[k2], nj = uj + dy[k2], v = nj * WIN + ni;
+                if (!wfree(ni, nj) || ((bits[v >> 5] >> (v & 31)) & 1u)) continue;
+                if (k2 >= 4 && (!wfree(ni, uj) || !wfree(ui, nj))) continue;
+                if (std::abs(wfz(ni, nj) - wfz(ui, uj)) > tmm) continue;
+                bits[v >> 5] |= 1u << (v & 31);
+                q.push_back(v);
+              }
+            }
+          };
+          auto has = [](const std::vector<uint32_t>& bits, int c) { return (bits[c >> 5] >> (c & 31)) & 1u; };
+          auto dst_in = [&](const std::vector<uint32_t>& bits) -> int {   // 놓을 곳에 닿는 칸 하나(없으면 −1)
+            if (D.kind == DK_FLOOR) {
+              for (int c : spot_cells) if (has(bits, c)) return c;
+              return -1;
+            }
+            for (int j = j0; j <= j1; ++j)
+              for (int i2 = i0; i2 <= i1; ++i2) {
+                const int c = j * WIN + i2;
+                if (!has(bits, c)) continue;
+                float x, y;
+                cxy(c, x, y);
+                const float df = dbox >= 0 ? dist_pt_obb(S.box[dbox], x + e.wx, y + e.wy) : dist_pt_rect(e.prim[1].lo, e.prim[1].hi, x, y);
+                if (df > 0.f && df <= dreach) return c;
+              }
+            return -1;
+          };
+          int stc = -1, dc = -1, stc_in = -1, dc_in = -1;
+          const bool want_in = pick_in && (D.flags & 1) && (pa.reachable & 2);
+          std::vector<uint32_t> rb, rb_in, cur, tried(WIN * WIN / 32, 0u), tried_in(WIN * WIN / 32, 0u);
+          for (auto& sc2 : stance) {
+            const int wc = win_cell(sc2.si);
+            if (wc < 0) continue;
+            {   // 이 짝의 물체(놓을 곳이 과제 물체면 그것도)로 다시: 잡는 자세가 그대로 되는가
+              float x, y;
+              cxy(wc, x, y);
+              if (!(opt.nofilter & NF_STANCE) && !stance_ok(S, e, x, y)) continue;
+            }
+            if (stc < 0 && !has(tried, wc)) {
+              bfs(wc, filt.threshold[0], cur);
+              const int d2 = (opt.nofilter & NF_DST_REACH) ? wc : dst_in(cur);
+              if (d2 >= 0) { stc = wc; dc = d2; rb = cur; }
+              else for (int w = 0; w < WIN * WIN / 32; ++w) tried[w] |= cur[w];
+            }
+            if (want_in && stc_in < 0 && !has(tried_in, wc)) {
+              bfs(wc, filt.threshold[1], cur);
+              const int d2 = dst_in(cur);
+              if (d2 >= 0) { stc_in = wc; dc_in = d2; rb_in = cur; }
+              else for (int w = 0; w < WIN * WIN / 32; ++w) tried_in[w] |= cur[w];
+            }
+            if (stc >= 0 && (!want_in || stc_in >= 0)) break;
+          }
+          if (stc < 0) { ++st.rj_stance; continue; }
+          if (D.kind == DK_FLOOR && dc < 0) { ++st.rj_floor; continue; }
+          const bool inner = want_in && stc_in >= 0;
+          const int use_st = inner ? stc_in : stc, use_dc = inner ? dc_in : dc;
+          e.comp = S.comp[cell_of(use_st)];
+          e.comp_in = S.comp_in[cell_of(use_st)];
+          e.fset = inner ? 1 : 0;
+          if (D.kind == DK_FLOOR) {
+            float x, y;
+            cxy(use_dc, x, y);
+            e.dlo[0] = x - 0.2f; e.dlo[1] = y - 0.2f; e.dlo[2] = 0.f;
+            e.dhi[0] = x + 0.2f; e.dhi[1] = y + 0.2f; e.dhi[2] = 0.02f;
+          }
+          // 대신 쓸 시작: 창 칸을 해시 순열로, 환경과 같은 spawn_ok(엄격 판이면 엄격 비트로), yaw 4 개
+          bool sp_ok = false;
+          {
+            std::vector<uint32_t> pool2 = rb;   // 임시 비트 묶음: 0 = 느슨, 512 = 엄격
+            pool2.resize(2 * WIN * WIN / 32, 0u);
+            if (inner) std::copy(rb_in.begin(), rb_in.end(), pool2.begin() + WIN * WIN / 32);
+            tmp.rbits = pool2.data();
+            e.rb = 0;
+            e.rb_in = inner ? WIN * WIN / 32 : -1;
+            const uint32_t a = (uint32_t)(hmix(((uint64_t)pidx << 20) ^ (uint64_t)pa.dst) | 1u) & (WIN * WIN - 1), bb = (uint32_t)hmix((uint64_t)pidx * 31u + pa.dst) & (WIN * WIN - 1);
+            const std::vector<uint32_t>& mine = inner ? rb_in : rb;
+            for (uint32_t q2 = 0; q2 < (uint32_t)(WIN * WIN) && !sp_ok; ++q2) {
+              const int c = (int)((a * q2 + bb) & (WIN * WIN - 1));   // 2^14 의 전주기 순열(a 홀수)
+              if (!has(mine, c)) continue;
+              float x, y;
+              cxy(c, x, y);
+              for (int yk = 0; yk < 4 && !sp_ok; ++yk) {
+                const float yaw = -kPi + kHalfPi * (float)yk + 0.3f;
+                if (env::spawn_ok(tmp, e, x, y, yaw, e.fset, 0)) { e.sx = x; e.sy = y; e.syaw = yaw; sp_ok = true; }
+              }
+            }
+            tmp.rbits = nullptr;
+          }
+          if (!sp_ok) { ++st.rj_spawn; continue; }
+          cand.push_back({e, inner, rb, rb_in});
+        }
+        if (cand.empty()) continue;
+        any_reach = true;
+        // 엄격 먼저, 그 안은 해시 순서, 상한
+        std::stable_sort(cand.begin(), cand.end(), [&](const PE& a, const PE& b2) {
+          if (a.in != b2.in) return a.in;
+          return hmix((uint64_t)a.e.dst_rec * 977u + pidx) < hmix((uint64_t)b2.e.dst_rec * 977u + pidx);
+        });
+        if ((int)cand.size() > opt.cap_pairs) { st.rj_cap += (int)cand.size() - opt.cap_pairs; cand.resize(opt.cap_pairs); }
+        per_pick.push_back(cand);
       }
-      if (best < 0.f) { ++st.rej_unreach; continue; }
-      if (bst < 0.f) { ++st.rej_stance; continue; }   // B3 성공 자세(잡는 점 작업 공간 + 몸통 안 닿음)가 닿는 칸에 없음
-      e.path = best;
-      lst[L_OBJ][split].push_back(e);
-      inner_flag[split].push_back(inner ? 1 : 0);
-      ++st.obj_ok;
-      st.obj_inner += inner;
-      st.path_sum[L_OBJ] += best;
-      st.ratio_sum[L_OBJ] += best / std::max(0.1f, std::hypot(e.gx - e.sx, e.gy - e.sy));
+      st.inst_pick += any_pick;
+      st.inst_pick_reach += any_reach;
+      if (!per_pick.empty()) {
+        // 엄격 짝이 있는 집을 물체를 앞에
+        std::stable_sort(per_pick.begin(), per_pick.end(), [](const std::vector<PE>& a, const std::vector<PE>& b2) { return a[0].in && !b2[0].in; });
+        blocks[split].push_back(std::move(per_pick));
+      }
     }
-    st.inst_pick += any_pick;
-    st.inst_pick_reach += any_reach;
     // ---- 방 표(B1) ----
     if ((int)lst[L_ROOM][split].size() < opt.cap_room) {
       const int rs = room_at(d, sxw, syw);
@@ -670,13 +1009,44 @@ bool build_one(const std::string& path, const Names& nm, const BuildOpt& opt, Sc
       }
     }
   }
-  // 엄격 판을 앞으로(물체 표), 그 안은 처음 순서 그대로
+  // 집기·놓기 표 이어 붙이기: split 마다 엄격 가능한 인스턴스 먼저(그 안은 해시 순서)
   for (int sp = 0; sp < 2; ++sp) {
-    std::vector<Entry> a, b;
-    for (size_t k = 0; k < lst[L_OBJ][sp].size(); ++k) (inner_flag[sp][k] ? a : b).push_back(lst[L_OBJ][sp][k]);
-    st.ent_in[sp] = (int)a.size();
-    a.insert(a.end(), b.begin(), b.end());
-    lst[L_OBJ][sp] = a;
+    std::stable_sort(blocks[sp].begin(), blocks[sp].end(), [](const std::vector<std::vector<PE>>& a, const std::vector<std::vector<PE>>& b2) {
+      return a[0][0].in && !b2[0][0].in;
+    });
+    for (auto& blk : blocks[sp]) {
+      PnpInst I{};
+      I.pick_off = (int)S.ppick.size(); I.scene = scene_idx; I.split = sp;
+      for (auto& v : blk) {
+        PnpPick P{};
+        P.ent_off = (int)lst[L_OBJ][sp].size();   // 장면·split 안 번호(build_scenes 가 고침)
+        for (auto& pe : v) {
+          Entry e2 = pe.e;
+          e2.rb = (int)S.rbits.size();                          // 장면 안 자리(build_scenes 가 고침)
+          S.rbits.insert(S.rbits.end(), pe.rb.begin(), pe.rb.end());
+          e2.rb_in = -1;
+          if (pe.in) { e2.rb_in = (int)S.rbits.size(); S.rbits.insert(S.rbits.end(), pe.rb_in.begin(), pe.rb_in.end()); }
+          lst[L_OBJ][sp].push_back(e2);
+          P.n_in += pe.in; ++st.pr_ok; st.pr_ok_in += pe.in;
+        }
+        P.n = (int)v.size();
+        S.ppick.push_back(P);
+        ++I.npick;
+        I.npick_in += P.n_in > 0;
+        ++st.pk_ok;
+        st.pk_ok_in += P.n_in > 0;
+      }
+      S.pinst.push_back(I);
+      S.pinst_split.push_back((uint8_t)sp);
+    }
+  }
+  // 집기·놓기: 받침 수(서로 다른 RASC 받침), 엄격
+  {
+    std::vector<int> seen(s.places.n, 0);
+    for (int sp = 0; sp < 2; ++sp)
+      for (auto& e : lst[L_OBJ][sp]) { seen[e.dst_rec] |= 1 | (e.fset ? 2 : 0); }
+    for (int v : seen) { st.sup_ok += (v & 1) != 0; st.sup_ok_in += (v & 2) != 0; }
+    for (auto& I : S.pinst) { ++st.inst_ok; st.inst_ok_in += I.npick_in > 0; }
   }
   for (int l = 0; l < 2; ++l)
     for (int sp = 0; sp < 2; ++sp) {
@@ -711,6 +1081,34 @@ bool build_scenes(const BuildOpt& opt0, SceneBuild& out, std::string* err) {
   }
   closedir(dp);
   std::sort(files.begin(), files.end());
+  // 거르개 표: RASC LIMITS(b1kconv 가 쓴 값)를 읽고, 모든 장면이 같은지·문서 표(기본값)와 같은지 본다
+  out.filt = pnp_filter_default();
+  {
+    bool first = true;
+    for (auto& f : files) {
+      rasc::Scene s2;
+      std::string e2;
+      rasc::load(s2, f.second.c_str(), &e2);
+      PnpFilter g = out.filt;
+      for (int k = 0; k < 2; ++k) {
+        const RascLimitsRec& L = s2.limits[k];
+        g.pick_z[k] = L.pick_z; g.place_top[k] = L.place_top; g.max_mass[k] = L.max_mass; g.max_w[k] = L.max_w; g.threshold[k] = L.threshold;
+      }
+      const RascLimitsRec& L0 = s2.limits[0];
+      g.topdown_z = L0.topdown_z; g.edge_dist = L0.edge_dist; g.inside_margin = L0.inside_margin; g.min_side = L0.min_side; g.min_top = L0.min_top;
+      g.reach_low = std::max(L0.edge_side + L0.reach_side, L0.edge_front + L0.reach_front);
+      g.reach_high = L0.edge_side + L0.edge_dist;
+      if (first) {
+        const PnpFilter dflt = pnp_filter_default();
+        if (std::memcmp(&g, &dflt, sizeof g) && !opt.quiet) std::fprintf(stderr, "bscene: RASC LIMITS differ from the documented filter table defaults — using the RASC values\n");
+        out.filt = g;
+        first = false;
+      } else if (std::memcmp(&g, &out.filt, sizeof g)) {
+        *err = f.second + ": LIMITS differ between scenes";
+        return false;
+      }
+    }
+  }
   if (files.empty() || files.size() > (size_t)MAXSC) { *err = "no RASC scenes (or too many) in " + opt.dir; return false; }
   const int ns = (int)files.size();
   out.sc.assign(ns, SceneBuild::Sc{});
@@ -720,7 +1118,7 @@ bool build_scenes(const BuildOpt& opt0, SceneBuild& out, std::string* err) {
   std::vector<int> ok(ns, 0);
   std::vector<std::thread> th;
   for (int i = 0; i < ns; ++i)
-    th.emplace_back([&, i] { ok[i] = build_one(files[i].second, nm, opt, out.sc[i], ents[i], out.stats[i], i, &errs[i]); });
+    th.emplace_back([&, i] { ok[i] = build_one(files[i].second, nm, opt, out.filt, out.sc[i], ents[i], out.stats[i], i, &errs[i]); });
   for (auto& t : th) t.join();
   for (int i = 0; i < ns; ++i) if (!ok[i]) { *err = files[i].second + ": " + errs[i]; return false; }
   // 표 이어 붙이기·범위
@@ -743,8 +1141,87 @@ bool build_scenes(const BuildOpt& opt0, SceneBuild& out, std::string* err) {
     SceneBuild::Sc& S = out.sc[i];
     S.d.bstart = S.bstart.data(); S.d.bitem = S.bitem.data(); S.d.box = S.box.data(); S.d.bkind = S.bkind.data(); S.d.bname = S.bname.data();
     S.d.room = S.room.data(); S.d.occ = S.occ.data(); S.d.rtype = S.rtype.data(); S.d.door = S.door.data();
+    S.d.comp = S.comp.data(); S.d.comp_in = S.comp_in.data();
     H.sc[i] = S.d;
   }
+  // 집기·놓기 표 이어 붙이기(장면 안 번호 → 전체 번호), [장면][split] 인스턴스 범위
+  out.pinst.clear();
+  out.ppick.clear();
+  for (int i = 0; i < ns; ++i) {
+    SceneBuild::Sc& S = out.sc[i];
+    for (int sp = 0; sp < 2; ++sp) { H.ioff[i][sp] = (int)out.pinst.size(); H.icnt[i][sp] = 0; H.icnt_in[i][sp] = 0; }
+    for (int sp = 0; sp < 2; ++sp) {
+      H.ioff[i][sp] = (int)out.pinst.size();
+      for (size_t k = 0; k < S.pinst.size(); ++k) {
+        if (S.pinst_split[k] != sp) continue;
+        PnpInst I = S.pinst[k];
+        const int po = (int)out.ppick.size();
+        for (int q = 0; q < I.npick; ++q) {
+          PnpPick P = S.ppick[I.pick_off + q];
+          P.ent_off += H.loff[i][L_OBJ][sp];
+          out.ppick.push_back(P);
+        }
+        I.pick_off = po;
+        out.pinst.push_back(I);
+        ++H.icnt[i][sp];
+        H.icnt_in[i][sp] += I.npick_in > 0;
+      }
+    }
+  }
+  H.pinst = out.pinst.data();
+  H.ppick = out.ppick.data();
+  out.rbits.clear();
+  {
+    size_t k = 0;
+    for (int i = 0; i < ns; ++i) {
+      const int base = (int)out.rbits.size();
+      out.rbits.insert(out.rbits.end(), out.sc[i].rbits.begin(), out.sc[i].rbits.end());
+      const size_t n_i = ents[i].size();
+      for (size_t q = 0; q < n_i; ++q) {
+        Entry& e = out.ent[k + q];
+        if (e.list != L_OBJ) { e.rb = -1; e.rb_in = -1; continue; }
+        e.rb += base;
+        if (e.rb_in >= 0) e.rb_in += base;
+      }
+      k += n_i;
+    }
+  }
+  H.rbits = out.rbits.data();
+  // 지시문 조합: (집을 것, 출발, 놓을 곳, 술어) 이름 행. pnp_v1/combos.tsv 가 있으면 그 번호(지시문 표 행 = 조합 × ntpl + 문장)
+  {
+    std::map<std::tuple<int, int, int, int>, int> key;
+    for (auto& e : out.ent)
+      if (e.list == L_OBJ) key[std::make_tuple((int)e.prim[0].name, (int)e.src_name, (int)e.dst_name, (int)e.rel)] = 0;
+    out.combos.clear();
+    for (auto& kv : key) out.combos.push_back(SceneBuild::Combo{(int16_t)std::get<0>(kv.first), (int16_t)std::get<1>(kv.first), (int16_t)std::get<2>(kv.first), (int16_t)std::get<3>(kv.first)});
+    const std::string pd = opt.pnp_dir.empty() ? default_pnp_dir() : opt.pnp_dir;
+    std::map<std::tuple<int, int, int, int>, int> tab;
+    FILE* f = std::fopen((pd + "/combos.tsv").c_str(), "r");
+    out.ntpl = 0; out.ntpl_train = 0;
+    if (f) {
+      char line[512];
+      while (std::fgets(line, sizeof line, f)) {
+        int idx, a, b2, c, r;
+        if (line[0] == '#') { std::sscanf(line, "# ntpl %d ntpl_train %d", &out.ntpl, &out.ntpl_train); continue; }
+        if (std::sscanf(line, "%d %d %d %d %d", &idx, &a, &b2, &c, &r) == 5) tab[std::make_tuple(a, b2, c, r)] = idx;
+      }
+      std::fclose(f);
+    }
+    out.combo_missing = 0;
+    for (auto& e : out.ent) {
+      if (e.list != L_OBJ) { e.combo = -1; continue; }
+      auto it = tab.find(std::make_tuple((int)e.prim[0].name, (int)e.src_name, (int)e.dst_name, (int)e.rel));
+      e.combo = (it == tab.end() || out.ntpl <= 0) ? -1 : it->second;
+      out.combo_missing += e.combo < 0;
+    }
+    H.ntpl = out.ntpl; H.ntpl_train = out.ntpl_train;
+  }
+  for (int i = 0; i < ns; ++i)
+    for (int sp = 0; sp < 2; ++sp) {   // 물체 표의 엄격 판 수(통계)
+      int n = 0;
+      for (int k = 0; k < H.lcnt[i][L_OBJ][sp]; ++k) n += out.ent[H.loff[i][L_OBJ][sp] + k].fset;
+      H.lcnt_in[i][L_OBJ][sp] = n;
+    }
   H.ent = out.ent.data(); H.nent = (int)out.ent.size();
   H.conf1 = out.conf1.data(); H.conf2 = out.conf2.data(); H.sim3 = out.sim3.data(); H.hyper = out.hyper.data(); H.nname = out.nname;
   if (H.nent == 0) { *err = "no entries built"; return false; }
@@ -775,7 +1252,12 @@ bool upload(SceneBuild& b, std::string* err) {
     d.occ = (const uint32_t*)put(S.occ.data(), S.occ.size() * 4);
     d.rtype = (const int8_t*)put(S.rtype.data(), S.rtype.size());
     d.door = (const SDoor*)put(S.door.data(), S.door.size() * sizeof(SDoor));
+    d.comp = (const uint16_t*)put(S.comp.data(), S.comp.size() * 2);
+    d.comp_in = (const uint16_t*)put(S.comp_in.data(), S.comp_in.size() * 2);
   }
+  D.pinst = (const PnpInst*)put(b.pinst.data(), b.pinst.size() * sizeof(PnpInst));
+  D.rbits = (const uint32_t*)put(b.rbits.data(), b.rbits.size() * 4);
+  D.ppick = (const PnpPick*)put(b.ppick.data(), b.ppick.size() * sizeof(PnpPick));
   D.ent = (const Entry*)put(b.ent.data(), b.ent.size() * sizeof(Entry));
   D.conf1 = (const float*)put(b.conf1.data(), b.conf1.size() * 4);
   D.conf2 = (const float*)put(b.conf2.data(), b.conf2.size() * 4);
@@ -810,6 +1292,16 @@ std::string stats_text(const SceneBuild& b) {
     o += buf;
   }
   std::snprintf(buf, sizeof buf, "entries %zu (%.1f MB), names %d\n", b.ent.size(), b.ent.size() * sizeof(Entry) / 1e6, b.nname);
+  o += buf;
+  o += "pick-and-place filter (doc B3-B5 table; loose / strict): instances passing, objects (instance x object), supports (distinct), pairs | candidates and rejections\n";
+  for (auto& st : b.stats) {
+    std::snprintf(buf, sizeof buf,
+                  "  %-26s inst %5d / %5d (of %5d) | objects %5d / %5d (cand %5d, scene-level %d) | supports %5d / %5d | pairs %6d / %6d (cand %6d) | rej artic %d closed %d struct %d comp %d window %d stance %d floor %d area %d spawn %d cap %d\n",
+                  st.name.c_str(), st.inst_ok, st.inst_ok_in, st.inst, st.pk_ok, st.pk_ok_in, st.pk_cand, st.pk_scene, st.sup_ok, st.sup_ok_in, st.pr_ok, st.pr_ok_in,
+                  st.pr_cand, st.rj_artic, st.rj_closed, st.rj_struct, st.rj_reach, st.rj_win, st.rj_stance, st.rj_floor, st.rj_area, st.rj_spawn, st.rj_cap);
+    o += buf;
+  }
+  std::snprintf(buf, sizeof buf, "  instruction combos %zu, entries without an instruction row %d (ntpl %d, train %d)\n", b.combos.size(), b.combo_missing, b.ntpl, b.ntpl_train);
   o += buf;
   return o;
 }

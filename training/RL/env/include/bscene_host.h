@@ -17,6 +17,7 @@
 //      확신도 conf1·conf2[생김새 7][이름] = name128·app128 코사인(vla_vocab_gen.py 와 같은 정의, 어휘 = 상위어·평가용 뺀 행).
 #pragma once
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -32,7 +33,20 @@ struct BuildOpt {
   int cap_obj = 4096;              // (장면, 물체 표, split)
   int rooms_per_inst = 2;          // 인스턴스 하나에서 B1 목표 방 수
   bool quiet = false;
+  int cap_pairs = 16;              // 집을 물체 하나의 놓을 곳 상한(엄격 먼저, 그다음 해시 순서)
+  int nofilter = 0;                // NoFilter 비트(호스트 거르개 끄기 — 음성 대조만)
+  std::string pnp_dir;             // 지시문 표 폴더(기본: 저장소 training/data/pnp_v1). combos.tsv 가 없으면 지시문 번호 −1
 };
+
+// 집기·놓기 거르개 표(문서 CURRICULUM_BEHAVIOR2026.md B3–B5 표가 원본). RASC 값(b1kconv 가 쓴 LIMITS)과 환경만의 값
+struct PnpFilter {
+  float pick_z[2], place_top[2], max_mass[2], max_w[2], threshold[2];   // [0] 느슨, [1] 엄격 (RASC LIMITS 와 같아야 함)
+  float topdown_z, edge_dist, reach_low, reach_high, inside_margin, min_side, min_top;   // RASC LIMITS (공통)
+  float free_margin;     // 놓을 면 빈 넓이 ≥ (물체 가로 + 2·이 값)·(세로 + 2·이 값) (환경)
+  float stance_r;        // 잡는 자세 칸을 찾는 반경(물체 바닥 자국에서, 환경)
+  float floor_spot_r0, floor_spot_r1;   // 바닥에 놓기: 집을 물체에서 이 거리 안의 그 방 빈 칸(환경)
+};
+PnpFilter pnp_filter_default();         // 문서 표 값(E0, 5.3절)
 
 struct SceneStats {               // 확인·보고용(잰 값)
   std::string name;
@@ -45,6 +59,9 @@ struct SceneStats {               // 확인·보고용(잰 값)
   int rej_start = 0, rej_window = 0, rej_unreach = 0, rej_cap = 0;   // 뺀 까닭: 시작 충돌, 창에 안 들어감, 창 안 길 없음, 상한
   int room_try = 0, room_ok = 0, room_nocand = 0, room_unreach = 0;
   int ent[2][2] = {{0, 0}, {0, 0}}, ent_in[2] = {0, 0};   // [표][split], 물체 표 엄격 [split]
+  // 집기·놓기(문서 B3–B5 거르개): 집을 물체(인스턴스 × 물체) 후보/지남, 놓을 곳(서로 다른 RASC 받침) 지남, 짝, 엄격; 뺀 까닭
+  int pk_scene = 0, pk_cand = 0, pk_ok = 0, pk_ok_in = 0, sup_ok = 0, sup_ok_in = 0, pr_cand = 0, pr_ok = 0, pr_ok_in = 0, inst_ok = 0, inst_ok_in = 0;
+  int rj_artic = 0, rj_closed = 0, rj_struct = 0, rj_reach = 0, rj_win = 0, rj_stance = 0, rj_dst = 0, rj_area = 0, rj_spawn = 0, rj_cap = 0, rj_floor = 0;
   double path_sum[2] = {0, 0};     // 표마다 경로 합(평균용)
   double ratio_sum[2] = {0, 0};    // 경로 / 직선
   int name_hit = 0, name_miss = 0; // 과제 물체 이름 찾음 / 못 찾음(상위어로)
@@ -68,6 +85,13 @@ struct SceneBuild {
     std::vector<uint8_t> freeg;              // 로봇 중심 설 수 있음(호스트 계획·확인용, 장치에 안 올림)
     std::vector<int16_t> floor_mm;           // RASC FLOOR_Z
     std::vector<std::string> room_names;
+    std::vector<int> bobj;                   // 상자 → RASC 물체 번호(호스트)
+    std::vector<uint16_t> comp, comp_in;     // 로봇 중심 칸 성분(느슨·엄격 문턱), 0 = 설 수 없음
+    std::vector<PnpInst> pinst;              // 이 장면의 집기·놓기 인스턴스(장면 안 번호, build_scenes 가 이어 붙임)
+    std::vector<PnpPick> ppick;
+    std::vector<uint8_t> pinst_split;
+    std::vector<uint32_t> rbits;             // 창 닿는 칸 비트(장면 안)
+    std::map<int, std::string> sem_name;     // 방 종류(sem) → 이름(지시문 "the kitchen floor")
     float threshold = 0.025f;
   };
   std::vector<Sc> sc;
@@ -81,7 +105,16 @@ struct SceneBuild {
   std::vector<void*> dbuf;                   // 장치 버퍼(free_dev 가 풂)
   std::vector<SceneStats> stats;
   size_t dev_bytes = 0;
+  std::vector<PnpInst> pinst;                // 이어 붙인 집기·놓기 표
+  std::vector<PnpPick> ppick;
+  std::vector<uint32_t> rbits;
+  struct Combo { int16_t obj, src, dst, rel; };
+  std::vector<Combo> combos;                 // 엔트리에 나온 (집을 것, 출발, 놓을 곳, 술어) — 정렬 순서 = combos.tsv
+  int combo_missing = 0;                     // combos.tsv 에 없는 조합의 엔트리 수
+  int ntpl = 0, ntpl_train = 0;
+  PnpFilter filt{};
 };
+bool dump_combos(const SceneBuild& b, const std::string& path, std::string* err);   // combos.tsv 쓰기(지시문 표 만들기 입력)
 
 bool build_scenes(const BuildOpt& opt, SceneBuild& out, std::string* err);   // RASC·이름 표 읽고 묶음·표 만듦(호스트)
 bool upload(SceneBuild& b, std::string* err);                                // 장치에 올림(b.dev)
@@ -89,6 +122,7 @@ void free_dev(SceneBuild& b);
 std::string stats_text(const SceneBuild& b);                                 // 사람이 읽는 표
 std::string default_vla_dir();                                               // 이 파일 기준 저장소 training/data/vla_v1
 std::string default_rasc_dir();                                              // $HOME/ra_b1k
+std::string default_pnp_dir();                                               // 저장소 training/data/pnp_v1
 
 // 확인 도구가 쓰는 호스트 계산(같은 규칙)
 bool body_free_host(const SceneBuild::Sc& s, const Entry& e, float x, float y, float yaw);   // 창 좌표 자세에서 몸통이 정적·과제 물체 상자에 안 닿음

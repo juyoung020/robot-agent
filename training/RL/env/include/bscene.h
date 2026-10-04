@@ -27,7 +27,9 @@ constexpr int MAXBD = 16;          // 창 안 문 수 상한
 
 enum BoxKind { BK_WALL = 1, BK_FURN = 2, BK_WINDOW = 4, BK_COLL = 8, BK_BAND = 16 };   // BK_COLL: z0 < H_COLL, BK_BAND: z 범위가 지도 높이 띠 [0.05, 0.50] 와 겹침
 enum EntKind { EK_NONE = 0, EK_B1 = 1, EK_B2 = 2, EK_B3 = 3 };                      // 판 단계: B1 집 안 이동, B2 찾기, B3 다가가기
-enum ListKind { L_ROOM = 0, L_OBJ = 1 };                                             // B1 은 방 표, B2·B3 는 물체 표
+enum ListKind { L_ROOM = 0, L_OBJ = 1 };                                             // B1 은 방 표, B2–B5 는 집기·놓기 표(L_OBJ = 짝 하나 = 판 하나)
+enum DstKind { DK_ONTOP = 1, DK_INSIDE = 2, DK_FLOOR = 3 };                           // 놓을 곳(RASC PlaceRec kind)
+enum NoFilter { NF_SPAWN_REACH = 1, NF_SPAWN_FREE = 2, NF_FREE_AREA = 4, NF_IN_CLOSED = 8, NF_ARTIC = 16, NF_DST_REACH = 32, NF_STANCE = 64 };   // 음성 대조용 거르개 끄기
 
 struct SBox { float cx, cy, hx, hy, c, s, z0, z1; };   // 세계 회전 상자(yaw 의 cos·sin), 32 B
 struct SDoor { float x, y; int16_t ra, rb; };          // 문 가운데(세계), 양쪽 방(장면 방 번호, 없으면 −1)
@@ -48,6 +50,8 @@ struct SceneDev {
   int nroom;
   const SDoor* door;
   int ndoor;
+  const uint16_t* comp;       // [H][W] 로봇 중심 칸의 이어진 성분(0 = 설 수 없음), 바닥 높이 차 ≤ 느슨 문턱만 이음
+  const uint16_t* comp_in;    // 같은 것, 엄격 문턱
 };
 
 struct BPrim { float lo[3], hi[3]; int16_t name; int16_t sbox; };   // 창 좌표 축 정렬 상자, 이름 표 행, 정적 상자 번호(−1 = 과제 물체, 움직이는 상자)
@@ -61,8 +65,20 @@ struct Entry {            // 판 하나의 시작 조건(호스트가 미리 만
   float gx, gy, gz;       // 목표: B1 = 가구 앞 바닥 점(gz 0), B2·B3 = 목표 물체 상자 가운데(창 좌표)
   float path;             // 시작 → 목표(B1: 점 0.5 m 안, 물체: 팔 닿는 원 안)까지 참 장면 최단 경로 m(호스트 8 이웃 다익스트라, 창 안)
   float ext[3];           // 목표 물체 상자 크기(B1 은 목표 가구)
-  BPrim prim[NPRIM];      // 0 = 목표(B1 은 목표 가구, B2·B3 은 목표 물체), 다음 과제 물체, 다음 창 안 가구
+  BPrim prim[NPRIM];      // 0 = 목표(B1 은 목표 가구, B2–B5 는 집을 물체), 집기·놓기 표는 1 = 놓을 곳(바닥이 아니면), 다음 과제 물체, 창 안 가구
+  // ---- 집기·놓기 표(L_OBJ) 만: 짝 = (집을 물체, 출발 받침, 놓을 곳). sx·sy·syaw 는 대신 쓸 시작(무작위 시작을 못 찾을 때) ----
+  int16_t dkind, rel;     // DstKind, RASC 술어(ontop / inside)
+  int16_t src_name, dst_name;   // 이름 표 행(−2 = 바닥, 놓을 곳 ≤ −1000 = 방 종류 −1000−값의 바닥)
+  int16_t fset, dst_room; // fset 1 = 엄격 거르개도 지남, 놓을 곳 방
+  uint16_t comp, comp_in; // 잡는 자세 칸의 성분(시작 칸이 같아야 함) — 느슨/엄격 문턱
+  int32_t combo;          // 지시문 조합 번호(training/data/pnp_v1, 없으면 −1)
+  int32_t pick_rec, dst_rec, src_rec;   // RASC PICKS·PLACES 번호(확인 도구용)
+  int32_t rb, rb_in;      // 창 안 닿는 칸 비트(창 128² 칸 = 낱말 512) 자리: 잡는 자세 칸에서 창 안 BFS(느슨/엄격 문턱), −1 없음
+  float dlo[3], dhi[3];   // 놓을 자리(창 좌표 축 정렬): 면·용기 = 상자, 바닥 = 고른 0.4 m 자리
 };
+// 집기·놓기 판 고르기 표(호스트가 만듦): 인스턴스 → 집을 물체 → 짝(Entry). 각 단계에서 엄격 판을 앞에 둠
+struct PnpPick { int ent_off, n, n_in; };
+struct PnpInst { int pick_off, npick, npick_in, scene, split; };
 
 struct SceneSet {         // 장치 메모리에 하나(커널은 포인터로 읽음). CPU 참조판은 같은 구조체를 호스트 포인터로
   SceneDev sc[MAXSC];
@@ -71,6 +87,11 @@ struct SceneSet {         // 장치 메모리에 하나(커널은 포인터로 �
   int nent;
   int loff[MAXSC][2][2], lcnt[MAXSC][2][2];   // [장면][ListKind][split] → ent 안 범위
   int lcnt_in[MAXSC][2][2];                   // 그 범위 앞쪽의 안 한도(엄격) 판 수 — 물체 표는 엄격 판을 앞에 둔다
+  const PnpInst* pinst;                       // 집기·놓기: 인스턴스 목록, [장면][split] 범위(엄격 가능한 것이 앞)
+  const PnpPick* ppick;
+  int ioff[MAXSC][2], icnt[MAXSC][2], icnt_in[MAXSC][2];
+  int ntpl, ntpl_train;                       // 지시문 조합마다 문장 수(앞 ntpl_train = 학습, 나머지 = 평가용 heldout)
+  const uint32_t* rbits;                      // Entry::rb·rb_in 이 가리키는 창 닿는 칸 비트 묶음
   // 이름 표(vla_v1): 생김새 행 a(0..6) × 이름 행 n 의 확신도(bscene_host 가 name128·app128 로 계산), 비슷한 다른 이름 3, 상위어
   const float* conf1;     // [7][nname]
   const float* conf2;
@@ -85,10 +106,11 @@ struct BCurr {
   uint32_t scene_mask;    // 쓸 장면 비트(SceneSet 번호)
   int split;              // 0 학습 인스턴스, 1 공개 평가, 2 둘 다
   float yaw_jit;          // 시작 yaw 흔들기 ±rad (기본 0 = 인스턴스 그대로)
-  int strict;             // 1 = 물체 표(B2·B3)를 안 한도(RASC inner: E0 엄격 폭·무게·높이 + 엄격 문턱 성분) 판만, 0 = 바깥 한도(느슨, 기본)
-  int pad[2];
+  int strict;             // 1 = 집기·놓기 표(B2–B5)를 엄격 거르개 판만, 0 = 느슨(기본). 판마다 쓴 거르개를 상태에 적음(I_B_FSET)
+  int nofilter;           // NoFilter 비트(시작 고르기 거르개 끄기 — 음성 대조만)
+  int eval_instr;         // 1 = 지시문을 평가용(heldout) 문장에서
 };
-constexpr BCurr kBCurrDefault = {0.34f, 0.33f, 0xffu, 0, 0.f, 0, {0, 0}};
+constexpr BCurr kBCurrDefault = {0.34f, 0.33f, 0xffu, 0, 0.f, 0, 0, 0};
 
 // 지도 → 환경(앞 스텝의 지도 값): 정책이 아는 지도(자라는 지도)의 거리장과 목표 확정 여부
 struct NavFb {

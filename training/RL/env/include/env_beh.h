@@ -24,7 +24,7 @@ struct KB {
 };
 DEV float seed_r_of(int kind) { return kind == bsc::EK_B1 ? KB::seed_b1 : KB::seed_obj; }
 
-struct BState { float wx, wy, px, py, tz, ex[3], dist; int kind, scene, ent, room; };
+struct BState { float wx, wy, px, py, tz, ex[3], dist; int kind, scene, ent, room, fset, instr; };
 DEV void load_b(const Soa& s, int i, BState& b) {
   const int N = s.N;
   b.wx = s.f[F_B_WX * N + i]; b.wy = s.f[F_B_WY * N + i]; b.px = s.f[F_B_PX * N + i]; b.py = s.f[F_B_PY * N + i];
@@ -32,6 +32,7 @@ DEV void load_b(const Soa& s, int i, BState& b) {
   for (int a = 0; a < 3; ++a) b.ex[a] = s.f[(F_B_EX0 + a) * N + i];
   b.dist = s.f[F_B_DIST * N + i];
   b.kind = s.iv[I_B_KIND * N + i]; b.scene = s.iv[I_B_SCENE * N + i]; b.ent = s.iv[I_B_ENT * N + i]; b.room = s.iv[I_B_ROOM * N + i];
+  b.fset = s.iv[I_B_FSET * N + i]; b.instr = s.iv[I_B_INSTR * N + i];
 }
 DEV void store_b(const Soa& s, int i, const BState& b) {
   const int N = s.N;
@@ -40,17 +41,17 @@ DEV void store_b(const Soa& s, int i, const BState& b) {
   for (int a = 0; a < 3; ++a) s.f[(F_B_EX0 + a) * N + i] = b.ex[a];
   s.f[F_B_DIST * N + i] = b.dist;
   s.iv[I_B_KIND * N + i] = b.kind; s.iv[I_B_SCENE * N + i] = b.scene; s.iv[I_B_ENT * N + i] = b.ent; s.iv[I_B_ROOM * N + i] = b.room;
+  s.iv[I_B_FSET * N + i] = b.fset; s.iv[I_B_INSTR * N + i] = b.instr;
 }
 
-// 판 리셋: 단계 → (장면, split) → 시작 조건 하나. 고를 것이 없는 목록이면 다른 목록으로(B1 ↔ B3). 아무것도 없으면 kind 0(호스트가 미리 막음)
+// 판 리셋 B1: (장면, split) → 방 표에서 시작 조건 하나(로봇 시작 = 인스턴스 값)
 DEV int pick_entry(const bsc::SceneSet& ss, const bsc::BCurr& cu, int list, uint64_t& rng) {
   int cand = 0;
   for (int sc = 0; sc < ss.nsc; ++sc) {
     if (!((cu.scene_mask >> sc) & 1u)) continue;
     for (int sp = 0; sp < 2; ++sp) {
       if (cu.split != 2 && cu.split != sp) continue;
-      const int n = (list == bsc::L_OBJ && cu.strict) ? ss.lcnt_in[sc][list][sp] : ss.lcnt[sc][list][sp];
-      cand += n > 0;
+      cand += ss.lcnt[sc][list][sp] > 0;
     }
   }
   if (cand == 0) return -1;
@@ -60,7 +61,7 @@ DEV int pick_entry(const bsc::SceneSet& ss, const bsc::BCurr& cu, int list, uint
     if (!((cu.scene_mask >> sc) & 1u)) continue;
     for (int sp = 0; sp < 2; ++sp) {
       if (cu.split != 2 && cu.split != sp) continue;
-      const int n = (list == bsc::L_OBJ && cu.strict) ? ss.lcnt_in[sc][list][sp] : ss.lcnt[sc][list][sp];
+      const int n = ss.lcnt[sc][list][sp];
       if (n <= 0) continue;
       if (k-- == 0) {
         int j = (int)(rand01(rng) * (float)n);
@@ -71,19 +72,101 @@ DEV int pick_entry(const bsc::SceneSet& ss, const bsc::BCurr& cu, int list, uint
   }
   return -1;
 }
+DEV int rand_below(uint64_t& rng, int n) { int k = (int)(rand01(rng) * (float)n); return k >= n ? n - 1 : k; }
+// 판 리셋 B2–B5(집기·놓기, 사용자 규칙): 모든 인스턴스(쓰는 장면·split) 중 거르개를 지나는 짝이 있는 것 하나(고르게) → 그 인스턴스의 집을 물체 하나
+// (고르게) → 그 물체의 놓을 곳 하나(고르게). 엄격이면 엄격을 지나는 것만(표에서 앞쪽)
+DEV int pick_pnp(const bsc::SceneSet& ss, const bsc::BCurr& cu, uint64_t& rng) {
+  int tot = 0;
+  for (int sc = 0; sc < ss.nsc; ++sc) {
+    if (!((cu.scene_mask >> sc) & 1u)) continue;
+    for (int sp = 0; sp < 2; ++sp) if (cu.split == 2 || cu.split == sp) tot += cu.strict ? ss.icnt_in[sc][sp] : ss.icnt[sc][sp];
+  }
+  if (tot == 0) return -1;
+  int k = rand_below(rng, tot), inst = -1;
+  for (int sc = 0; sc < ss.nsc && inst < 0; ++sc) {
+    if (!((cu.scene_mask >> sc) & 1u)) continue;
+    for (int sp = 0; sp < 2 && inst < 0; ++sp) {
+      if (cu.split != 2 && cu.split != sp) continue;
+      const int n = cu.strict ? ss.icnt_in[sc][sp] : ss.icnt[sc][sp];
+      if (k < n) inst = ss.ioff[sc][sp] + k; else k -= n;
+    }
+  }
+  const bsc::PnpInst& I = ss.pinst[inst];
+  const int pk = I.pick_off + rand_below(rng, cu.strict ? I.npick_in : I.npick);
+  const bsc::PnpPick& P = ss.ppick[pk];
+  return P.ent_off + rand_below(rng, cu.strict ? P.n_in : P.n);
+}
+// 시작 자리 거르개(집기·놓기): 창 가장자리 0.8 m 안쪽, 로봇 중심 칸이 **창 안에서** 잡는 자세 칸에 닿음(이웃 바닥 높이 차 ≤ 문턱, 엄격이면 엄격 문턱 —
+// 호스트 BFS 비트), 집을 물체에서 ≥ spawn_min_d, 그 yaw 로 몸통이 정적 상자·과제 물체에 안 닿음
+struct KP {
+  static constexpr float win_margin = 0.8f, spawn_min_d = 1.0f;   // (가정)
+  static constexpr int spawn_tries = 64;
+};
+DEV int pnp_cell(const bsc::SceneDev& d, const bsc::Entry& E, float x, float y) {   // 창 좌표 → 장면 칸 번호(밖 −1)
+  const int c0 = (int)floorf((E.wx - bsc::WIN_HALF - d.ox) * bsc::INV_CELL + 0.5f), r0 = (int)floorf((E.wy - bsc::WIN_HALF - d.oy) * bsc::INV_CELL + 0.5f);
+  const int c = c0 + (int)floorf(x * bsc::INV_CELL) + bsc::WIN / 2, r = r0 + (int)floorf(y * bsc::INV_CELL) + bsc::WIN / 2;
+  return (c < 0 || r < 0 || c >= d.W || r >= d.H) ? -1 : r * d.W + c;
+}
+DEV bool body_free_beh(const bsc::SceneSet& ss, const bsc::Entry& E, float x, float y, float yaw) {
+  float s, co;
+  sincosf_d(yaw, &s, &co);
+  if (bsc::body_hits_scene(ss.sc[E.scene], x + E.wx, y + E.wy, s, co, K::half_len, K::half_wid)) return false;
+  for (int p = 0; p < E.nprim; ++p) {
+    const bsc::BPrim& P = E.prim[p];
+    if (P.sbox >= 0 || !(P.lo[2] < bsc::H_COLL)) continue;
+    if (bsc::rect_hits_aabb(x, y, s, co, K::half_len, K::half_wid, P.lo, P.hi)) return false;
+  }
+  return true;
+}
+DEV bool spawn_ok(const bsc::SceneSet& ss, const bsc::Entry& E, float x, float y, float yaw, int strict, int nofilter) {
+  if (!(absf(x) <= bsc::WIN_HALF - KP::win_margin && absf(y) <= bsc::WIN_HALF - KP::win_margin)) return false;
+  const bsc::SceneDev& d = ss.sc[E.scene];
+  const int ci = pnp_cell(d, E, x, y);
+  if (ci < 0 || d.comp[ci] == 0) return false;
+  if (!(nofilter & bsc::NF_SPAWN_REACH)) {   // 창 안에서 잡는 자세 칸에 닿는 칸(호스트가 BFS 로 만든 비트)
+    const int off = strict ? E.rb_in : E.rb;
+    if (off < 0) return false;
+    const int wc = ((int)floorf(y * bsc::INV_CELL) + bsc::WIN / 2) * bsc::WIN + (int)floorf(x * bsc::INV_CELL) + bsc::WIN / 2;
+    if (!((ss.rbits[off + (wc >> 5)] >> (wc & 31)) & 1u)) return false;
+  }
+  const float dx = x - E.gx, dy = y - E.gy;
+  if (dx * dx + dy * dy < KP::spawn_min_d * KP::spawn_min_d) return false;
+  return (nofilter & bsc::NF_SPAWN_FREE) || body_free_beh(ss, E, x, y, yaw);
+}
+
 DEV void reset_beh(Core& c, BState& b, const bsc::SceneSet& ss, const bsc::BCurr& cu) {
   const float u = rand01(c.rng);
   int kind = u < cu.p1 ? bsc::EK_B1 : (u < cu.p1 + cu.p2 ? bsc::EK_B2 : bsc::EK_B3);
-  int e = pick_entry(ss, cu, kind == bsc::EK_B1 ? bsc::L_ROOM : bsc::L_OBJ, c.rng);
+  int e = kind == bsc::EK_B1 ? pick_entry(ss, cu, bsc::L_ROOM, c.rng) : pick_pnp(ss, cu, c.rng);
   if (e < 0) {   // 그 목록이 비면 다른 목록
     kind = kind == bsc::EK_B1 ? bsc::EK_B3 : bsc::EK_B1;
-    e = pick_entry(ss, cu, kind == bsc::EK_B1 ? bsc::L_ROOM : bsc::L_OBJ, c.rng);
+    e = kind == bsc::EK_B1 ? pick_entry(ss, cu, bsc::L_ROOM, c.rng) : pick_pnp(ss, cu, c.rng);
   }
   if (e < 0) { e = 0; kind = ss.ent[0].list == bsc::L_ROOM ? bsc::EK_B1 : bsc::EK_B3; }   // 설정이 아무것도 못 고름(호스트가 미리 막음) — 첫 판
   const bsc::Entry& E = ss.ent[e];
-  c.x = E.sx; c.y = E.sy;
-  c.yaw = cu.yaw_jit > 0.f ? wrap_pi(E.syaw + rand_range(c.rng, -cu.yaw_jit, cu.yaw_jit)) : E.syaw;
   c.tx = E.gx; c.ty = E.gy;
+  if (kind == bsc::EK_B1) {   // B1: 인스턴스 로봇 시작
+    c.x = E.sx; c.y = E.sy;
+    c.yaw = cu.yaw_jit > 0.f ? wrap_pi(E.syaw + rand_range(c.rng, -cu.yaw_jit, cu.yaw_jit)) : E.syaw;
+    b.fset = -1;
+    b.instr = -1;
+  } else {    // 집기·놓기: 무작위 시작(거르개를 지나는 칸·무작위 yaw), 못 찾으면 표의 대신 쓸 시작
+    bool ok = false;
+    float x = 0.f, y = 0.f, yaw = 0.f;
+    const float R = bsc::WIN_HALF - KP::win_margin;
+    for (int t = 0; t < KP::spawn_tries && !ok; ++t) {
+      x = rand_range(c.rng, -R, R);
+      y = rand_range(c.rng, -R, R);
+      yaw = rand_range(c.rng, -kPi, kPi);
+      ok = spawn_ok(ss, E, x, y, yaw, cu.strict, cu.nofilter);
+    }
+    if (!ok) { x = E.sx; y = E.sy; yaw = E.syaw; }
+    c.x = x; c.y = y; c.yaw = yaw;
+    b.fset = cu.strict ? 1 : 0;
+    const int nt = cu.eval_instr ? ss.ntpl - ss.ntpl_train : ss.ntpl_train;
+    const int t = rand_below(c.rng, nt > 0 ? nt : 1);
+    b.instr = (E.combo >= 0 && nt > 0) ? E.combo * ss.ntpl + (cu.eval_instr ? ss.ntpl_train : 0) + t : -1;
+  }
   c.rhx = bsc::WIN_HALF; c.rhy = bsc::WIN_HALF;   // 창 반 변(상자 방 값 자리 — 지도 완성도 계산만 씀)
   c.nf = 0;
   b.wx = E.wx; b.wy = E.wy;
@@ -103,7 +186,9 @@ DEV void reset_beh(Core& c, BState& b, const bsc::SceneSet& ss, const bsc::BCurr
   c.ok_ticks = 0;
   c.seen = 0;
   const float slack = kind == bsc::EK_B1 ? KB::slack_b1 : kind == bsc::EK_B2 ? KB::slack_b2 : KB::slack_b3;
-  c.max_steps = (int)ceilf((E.path / 0.3f + slack) * 10.f);
+  // 시간 예산: B1 = 참 최단 경로 / 0.3 m/s + 여유, 집기·놓기 = 직선 × 1.5 / 0.3 m/s + 여유(무작위 시작이라 경로를 미리 모름 — 가정)
+  const float plen = kind == bsc::EK_B1 ? E.path : 1.5f * b.dist;
+  c.max_steps = (int)ceilf((plen / 0.3f + slack) * 10.f);
   c.ep += 1;
 }
 

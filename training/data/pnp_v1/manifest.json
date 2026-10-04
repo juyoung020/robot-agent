@@ -1,0 +1,45 @@
+{
+ "name": "pnp_instr",
+ "version": "v1",
+ "created": "2026-10-04",
+ "dim": 128,
+ "combos": 59,
+ "ntpl": 12,
+ "ntpl_train": 10,
+ "templates": {
+  "en_train": [
+   "pick up the {o} from the {s} and put it {p} the {d}",
+   "take the {o} off the {s} and place it {p} the {d}",
+   "move the {o} from the {s} {q} the {d}",
+   "grab the {o} on the {s} and set it {p} the {d}",
+   "put the {o} that is on the {s} {q} the {d}",
+   "bring the {o} from the {s} and leave it {p} the {d}"
+  ],
+  "en_heldout": [
+   "could you get the {o} off the {s} and drop it {p} the {d}"
+  ],
+  "ko_train": [
+   "{s}에 있는 {o}{eul} 집어서 {d}{dp}",
+   "{o}{eul} {s}에서 들어 {d}{dp}",
+   "{s} 위의 {o}{eul} {d}{dm} 옮겨줘",
+   "{o} 좀 {s}에서 가져와서 {d}{dp}"
+  ],
+  "ko_heldout": [
+   "{s}에 놓인 {o}{eul} 집어 {d}{dp2}"
+  ]
+ },
+ "space": "embed P (runs/sb32_pe_300k/head.pt), EN = PE-Core-L-14-336 text no template, KO = runs/ko_small_v2 pe_l14 head (as vla_v1 instr)",
+ "names": "training/data/vla_v1 names.jsonl rows",
+ "coherence": {
+  "same_combo_mean": 0.7218587398529053,
+  "same_combo_min": 0.20857547223567963,
+  "other_combo_mean": 0.35515910387039185,
+  "other_combo_max": 0.9834409952163696
+ },
+ "files": {
+  "combos.tsv": "39a7e9300dba49547f5f8d3efd254983e8410ef69cf58f957794e16bb8f87175",
+  "instr.jsonl": "eaaa699188ed0c47aa4e808a555ce9eaae9804d40ee58a60fc888b2c3e2576a8",
+  "instr128.f16": "554a402cb79c19b786b209c053d69effb1e2efaf3f22eae34716c7e228b28b07"
+ },
+ "sha": "b600e0d7f2acf04d"
+}

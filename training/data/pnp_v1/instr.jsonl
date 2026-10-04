@@ -1,0 +1,708 @@
+{"text": "pick up the battery from the floor and put it on the living room floor", "lang": "en", "heldout": false, "combo": 0, "tpl": 0, "obj": "battery", "i": 0}
+{"text": "take the electric battery off the floor and place it on the living room floor", "lang": "en", "heldout": false, "combo": 0, "tpl": 1, "obj": "electric battery", "i": 1}
+{"text": "move the battery from the floor onto the living room floor", "lang": "en", "heldout": false, "combo": 0, "tpl": 2, "obj": "battery", "i": 2}
+{"text": "grab the electric battery on the floor and set it on the living room floor", "lang": "en", "heldout": false, "combo": 0, "tpl": 3, "obj": "electric battery", "i": 3}
+{"text": "put the battery that is on the floor onto the living room floor", "lang": "en", "heldout": false, "combo": 0, "tpl": 4, "obj": "battery", "i": 4}
+{"text": "bring the electric battery from the floor and leave it on the living room floor", "lang": "en", "heldout": false, "combo": 0, "tpl": 5, "obj": "electric battery", "i": 5}
+{"text": "바닥에 있는 배터리를 집어서 거실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 0, "tpl": 6, "obj": "battery", "i": 6}
+{"text": "배터리를 바닥에서 들어 거실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 0, "tpl": 7, "obj": "electric battery", "i": 7}
+{"text": "바닥 위의 배터리를 거실 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 0, "tpl": 8, "obj": "battery", "i": 8}
+{"text": "배터리 좀 바닥에서 가져와서 거실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 0, "tpl": 9, "obj": "electric battery", "i": 9}
+{"text": "could you get the battery off the floor and drop it on the living room floor", "lang": "en", "heldout": true, "combo": 0, "tpl": 10, "obj": "battery", "i": 10}
+{"text": "바닥에 놓인 배터리를 집어 거실 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 0, "tpl": 11, "obj": "battery", "i": 11}
+{"text": "pick up the battery from the floor and put it on the furniture", "lang": "en", "heldout": false, "combo": 1, "tpl": 0, "obj": "battery", "i": 12}
+{"text": "take the electric battery off the floor and place it on the furniture", "lang": "en", "heldout": false, "combo": 1, "tpl": 1, "obj": "electric battery", "i": 13}
+{"text": "move the battery from the floor onto the furniture", "lang": "en", "heldout": false, "combo": 1, "tpl": 2, "obj": "battery", "i": 14}
+{"text": "grab the electric battery on the floor and set it on the furniture", "lang": "en", "heldout": false, "combo": 1, "tpl": 3, "obj": "electric battery", "i": 15}
+{"text": "put the battery that is on the floor onto the furniture", "lang": "en", "heldout": false, "combo": 1, "tpl": 4, "obj": "battery", "i": 16}
+{"text": "bring the electric battery from the floor and leave it on the furniture", "lang": "en", "heldout": false, "combo": 1, "tpl": 5, "obj": "electric battery", "i": 17}
+{"text": "바닥에 있는 배터리를 집어서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 1, "tpl": 6, "obj": "battery", "i": 18}
+{"text": "배터리를 바닥에서 들어 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 1, "tpl": 7, "obj": "electric battery", "i": 19}
+{"text": "바닥 위의 배터리를 가구로 옮겨줘", "lang": "ko", "heldout": false, "combo": 1, "tpl": 8, "obj": "battery", "i": 20}
+{"text": "배터리 좀 바닥에서 가져와서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 1, "tpl": 9, "obj": "electric battery", "i": 21}
+{"text": "could you get the battery off the floor and drop it on the furniture", "lang": "en", "heldout": true, "combo": 1, "tpl": 10, "obj": "battery", "i": 22}
+{"text": "바닥에 놓인 배터리를 집어 가구 위에 올려줘", "lang": "ko", "heldout": true, "combo": 1, "tpl": 11, "obj": "battery", "i": 23}
+{"text": "pick up the broken glass from the floor and put it in the trash can", "lang": "en", "heldout": false, "combo": 2, "tpl": 0, "obj": "broken glass", "i": 24}
+{"text": "take the broken glass off the floor and place it in the trash can", "lang": "en", "heldout": false, "combo": 2, "tpl": 1, "obj": "broken glass", "i": 25}
+{"text": "move the broken glass from the floor into the trash can", "lang": "en", "heldout": false, "combo": 2, "tpl": 2, "obj": "broken glass", "i": 26}
+{"text": "grab the broken glass on the floor and set it in the trash can", "lang": "en", "heldout": false, "combo": 2, "tpl": 3, "obj": "broken glass", "i": 27}
+{"text": "put the broken glass that is on the floor into the trash can", "lang": "en", "heldout": false, "combo": 2, "tpl": 4, "obj": "broken glass", "i": 28}
+{"text": "bring the broken glass from the floor and leave it in the trash can", "lang": "en", "heldout": false, "combo": 2, "tpl": 5, "obj": "broken glass", "i": 29}
+{"text": "바닥에 있는 깨진 유리를 집어서 쓰레기통 안에 넣어", "lang": "ko", "heldout": false, "combo": 2, "tpl": 6, "obj": "broken glass", "i": 30}
+{"text": "깨진 유리를 바닥에서 들어 쓰레기통 안에 넣어", "lang": "ko", "heldout": false, "combo": 2, "tpl": 7, "obj": "broken glass", "i": 31}
+{"text": "바닥 위의 깨진 유리를 쓰레기통으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 2, "tpl": 8, "obj": "broken glass", "i": 32}
+{"text": "깨진 유리 좀 바닥에서 가져와서 쓰레기통 안에 넣어", "lang": "ko", "heldout": false, "combo": 2, "tpl": 9, "obj": "broken glass", "i": 33}
+{"text": "could you get the broken glass off the floor and drop it in the trash can", "lang": "en", "heldout": true, "combo": 2, "tpl": 10, "obj": "broken glass", "i": 34}
+{"text": "바닥에 놓인 깨진 유리를 집어 쓰레기통 안에 넣어줘", "lang": "ko", "heldout": true, "combo": 2, "tpl": 11, "obj": "broken glass", "i": 35}
+{"text": "pick up the candy cane from the floor and put it on the kitchen floor", "lang": "en", "heldout": false, "combo": 3, "tpl": 0, "obj": "candy cane", "i": 36}
+{"text": "take the candy cane off the floor and place it on the kitchen floor", "lang": "en", "heldout": false, "combo": 3, "tpl": 1, "obj": "candy cane", "i": 37}
+{"text": "move the candy cane from the floor onto the kitchen floor", "lang": "en", "heldout": false, "combo": 3, "tpl": 2, "obj": "candy cane", "i": 38}
+{"text": "grab the candy cane on the floor and set it on the kitchen floor", "lang": "en", "heldout": false, "combo": 3, "tpl": 3, "obj": "candy cane", "i": 39}
+{"text": "put the candy cane that is on the floor onto the kitchen floor", "lang": "en", "heldout": false, "combo": 3, "tpl": 4, "obj": "candy cane", "i": 40}
+{"text": "bring the candy cane from the floor and leave it on the kitchen floor", "lang": "en", "heldout": false, "combo": 3, "tpl": 5, "obj": "candy cane", "i": 41}
+{"text": "바닥에 있는 캔디 케인을 집어서 부엌 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 3, "tpl": 6, "obj": "candy cane", "i": 42}
+{"text": "캔디 케인을 바닥에서 들어 부엌 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 3, "tpl": 7, "obj": "candy cane", "i": 43}
+{"text": "바닥 위의 캔디 케인을 부엌 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 3, "tpl": 8, "obj": "candy cane", "i": 44}
+{"text": "캔디 케인 좀 바닥에서 가져와서 부엌 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 3, "tpl": 9, "obj": "candy cane", "i": 45}
+{"text": "could you get the candy cane off the floor and drop it on the kitchen floor", "lang": "en", "heldout": true, "combo": 3, "tpl": 10, "obj": "candy cane", "i": 46}
+{"text": "바닥에 놓인 캔디 케인을 집어 부엌 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 3, "tpl": 11, "obj": "candy cane", "i": 47}
+{"text": "pick up the candy cane from the floor and put it on the dining room floor", "lang": "en", "heldout": false, "combo": 4, "tpl": 0, "obj": "candy cane", "i": 48}
+{"text": "take the candy cane off the floor and place it on the dining room floor", "lang": "en", "heldout": false, "combo": 4, "tpl": 1, "obj": "candy cane", "i": 49}
+{"text": "move the candy cane from the floor onto the dining room floor", "lang": "en", "heldout": false, "combo": 4, "tpl": 2, "obj": "candy cane", "i": 50}
+{"text": "grab the candy cane on the floor and set it on the dining room floor", "lang": "en", "heldout": false, "combo": 4, "tpl": 3, "obj": "candy cane", "i": 51}
+{"text": "put the candy cane that is on the floor onto the dining room floor", "lang": "en", "heldout": false, "combo": 4, "tpl": 4, "obj": "candy cane", "i": 52}
+{"text": "bring the candy cane from the floor and leave it on the dining room floor", "lang": "en", "heldout": false, "combo": 4, "tpl": 5, "obj": "candy cane", "i": 53}
+{"text": "바닥에 있는 캔디 케인을 집어서 식당 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 4, "tpl": 6, "obj": "candy cane", "i": 54}
+{"text": "캔디 케인을 바닥에서 들어 식당 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 4, "tpl": 7, "obj": "candy cane", "i": 55}
+{"text": "바닥 위의 캔디 케인을 식당 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 4, "tpl": 8, "obj": "candy cane", "i": 56}
+{"text": "캔디 케인 좀 바닥에서 가져와서 식당 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 4, "tpl": 9, "obj": "candy cane", "i": 57}
+{"text": "could you get the candy cane off the floor and drop it on the dining room floor", "lang": "en", "heldout": true, "combo": 4, "tpl": 10, "obj": "candy cane", "i": 58}
+{"text": "바닥에 놓인 캔디 케인을 집어 식당 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 4, "tpl": 11, "obj": "candy cane", "i": 59}
+{"text": "pick up the candy cane from the floor and put it on the coffee table", "lang": "en", "heldout": false, "combo": 5, "tpl": 0, "obj": "candy cane", "i": 60}
+{"text": "take the candy cane off the floor and place it on the coffee table", "lang": "en", "heldout": false, "combo": 5, "tpl": 1, "obj": "candy cane", "i": 61}
+{"text": "move the candy cane from the floor onto the coffee table", "lang": "en", "heldout": false, "combo": 5, "tpl": 2, "obj": "candy cane", "i": 62}
+{"text": "grab the candy cane on the floor and set it on the coffee table", "lang": "en", "heldout": false, "combo": 5, "tpl": 3, "obj": "candy cane", "i": 63}
+{"text": "put the candy cane that is on the floor onto the coffee table", "lang": "en", "heldout": false, "combo": 5, "tpl": 4, "obj": "candy cane", "i": 64}
+{"text": "bring the candy cane from the floor and leave it on the coffee table", "lang": "en", "heldout": false, "combo": 5, "tpl": 5, "obj": "candy cane", "i": 65}
+{"text": "바닥에 있는 캔디 케인을 집어서 커피 테이블 위에 놓아", "lang": "ko", "heldout": false, "combo": 5, "tpl": 6, "obj": "candy cane", "i": 66}
+{"text": "캔디 케인을 바닥에서 들어 커피 테이블 위에 놓아", "lang": "ko", "heldout": false, "combo": 5, "tpl": 7, "obj": "candy cane", "i": 67}
+{"text": "바닥 위의 캔디 케인을 커피 테이블으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 5, "tpl": 8, "obj": "candy cane", "i": 68}
+{"text": "캔디 케인 좀 바닥에서 가져와서 커피 테이블 위에 놓아", "lang": "ko", "heldout": false, "combo": 5, "tpl": 9, "obj": "candy cane", "i": 69}
+{"text": "could you get the candy cane off the floor and drop it on the coffee table", "lang": "en", "heldout": true, "combo": 5, "tpl": 10, "obj": "candy cane", "i": 70}
+{"text": "바닥에 놓인 캔디 케인을 집어 커피 테이블 위에 올려줘", "lang": "ko", "heldout": true, "combo": 5, "tpl": 11, "obj": "candy cane", "i": 71}
+{"text": "pick up the candy cane from the floor and put it in the gift box", "lang": "en", "heldout": false, "combo": 6, "tpl": 0, "obj": "candy cane", "i": 72}
+{"text": "take the candy cane off the floor and place it in the gift box", "lang": "en", "heldout": false, "combo": 6, "tpl": 1, "obj": "candy cane", "i": 73}
+{"text": "move the candy cane from the floor into the gift box", "lang": "en", "heldout": false, "combo": 6, "tpl": 2, "obj": "candy cane", "i": 74}
+{"text": "grab the candy cane on the floor and set it in the gift box", "lang": "en", "heldout": false, "combo": 6, "tpl": 3, "obj": "candy cane", "i": 75}
+{"text": "put the candy cane that is on the floor into the gift box", "lang": "en", "heldout": false, "combo": 6, "tpl": 4, "obj": "candy cane", "i": 76}
+{"text": "bring the candy cane from the floor and leave it in the gift box", "lang": "en", "heldout": false, "combo": 6, "tpl": 5, "obj": "candy cane", "i": 77}
+{"text": "바닥에 있는 캔디 케인을 집어서 선물 상자 안에 넣어", "lang": "ko", "heldout": false, "combo": 6, "tpl": 6, "obj": "candy cane", "i": 78}
+{"text": "캔디 케인을 바닥에서 들어 선물 상자 안에 넣어", "lang": "ko", "heldout": false, "combo": 6, "tpl": 7, "obj": "candy cane", "i": 79}
+{"text": "바닥 위의 캔디 케인을 선물 상자로 옮겨줘", "lang": "ko", "heldout": false, "combo": 6, "tpl": 8, "obj": "candy cane", "i": 80}
+{"text": "캔디 케인 좀 바닥에서 가져와서 선물 상자 안에 넣어", "lang": "ko", "heldout": false, "combo": 6, "tpl": 9, "obj": "candy cane", "i": 81}
+{"text": "could you get the candy cane off the floor and drop it in the gift box", "lang": "en", "heldout": true, "combo": 6, "tpl": 10, "obj": "candy cane", "i": 82}
+{"text": "바닥에 놓인 캔디 케인을 집어 선물 상자 안에 넣어줘", "lang": "ko", "heldout": true, "combo": 6, "tpl": 11, "obj": "candy cane", "i": 83}
+{"text": "pick up the candy cane from the floor and put it on the wreath", "lang": "en", "heldout": false, "combo": 7, "tpl": 0, "obj": "candy cane", "i": 84}
+{"text": "take the candy cane off the floor and place it on the wreath", "lang": "en", "heldout": false, "combo": 7, "tpl": 1, "obj": "candy cane", "i": 85}
+{"text": "move the candy cane from the floor onto the wreath", "lang": "en", "heldout": false, "combo": 7, "tpl": 2, "obj": "candy cane", "i": 86}
+{"text": "grab the candy cane on the floor and set it on the wreath", "lang": "en", "heldout": false, "combo": 7, "tpl": 3, "obj": "candy cane", "i": 87}
+{"text": "put the candy cane that is on the floor onto the wreath", "lang": "en", "heldout": false, "combo": 7, "tpl": 4, "obj": "candy cane", "i": 88}
+{"text": "bring the candy cane from the floor and leave it on the wreath", "lang": "en", "heldout": false, "combo": 7, "tpl": 5, "obj": "candy cane", "i": 89}
+{"text": "바닥에 있는 캔디 케인을 집어서 화환 위에 놓아", "lang": "ko", "heldout": false, "combo": 7, "tpl": 6, "obj": "candy cane", "i": 90}
+{"text": "캔디 케인을 바닥에서 들어 화환 위에 놓아", "lang": "ko", "heldout": false, "combo": 7, "tpl": 7, "obj": "candy cane", "i": 91}
+{"text": "바닥 위의 캔디 케인을 화환으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 7, "tpl": 8, "obj": "candy cane", "i": 92}
+{"text": "캔디 케인 좀 바닥에서 가져와서 화환 위에 놓아", "lang": "ko", "heldout": false, "combo": 7, "tpl": 9, "obj": "candy cane", "i": 93}
+{"text": "could you get the candy cane off the floor and drop it on the wreath", "lang": "en", "heldout": true, "combo": 7, "tpl": 10, "obj": "candy cane", "i": 94}
+{"text": "바닥에 놓인 캔디 케인을 집어 화환 위에 올려줘", "lang": "ko", "heldout": true, "combo": 7, "tpl": 11, "obj": "candy cane", "i": 95}
+{"text": "pick up the candy cane from the floor and put it on the furniture", "lang": "en", "heldout": false, "combo": 8, "tpl": 0, "obj": "candy cane", "i": 96}
+{"text": "take the candy cane off the floor and place it on the furniture", "lang": "en", "heldout": false, "combo": 8, "tpl": 1, "obj": "candy cane", "i": 97}
+{"text": "move the candy cane from the floor onto the furniture", "lang": "en", "heldout": false, "combo": 8, "tpl": 2, "obj": "candy cane", "i": 98}
+{"text": "grab the candy cane on the floor and set it on the furniture", "lang": "en", "heldout": false, "combo": 8, "tpl": 3, "obj": "candy cane", "i": 99}
+{"text": "put the candy cane that is on the floor onto the furniture", "lang": "en", "heldout": false, "combo": 8, "tpl": 4, "obj": "candy cane", "i": 100}
+{"text": "bring the candy cane from the floor and leave it on the furniture", "lang": "en", "heldout": false, "combo": 8, "tpl": 5, "obj": "candy cane", "i": 101}
+{"text": "바닥에 있는 캔디 케인을 집어서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 8, "tpl": 6, "obj": "candy cane", "i": 102}
+{"text": "캔디 케인을 바닥에서 들어 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 8, "tpl": 7, "obj": "candy cane", "i": 103}
+{"text": "바닥 위의 캔디 케인을 가구로 옮겨줘", "lang": "ko", "heldout": false, "combo": 8, "tpl": 8, "obj": "candy cane", "i": 104}
+{"text": "캔디 케인 좀 바닥에서 가져와서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 8, "tpl": 9, "obj": "candy cane", "i": 105}
+{"text": "could you get the candy cane off the floor and drop it on the furniture", "lang": "en", "heldout": true, "combo": 8, "tpl": 10, "obj": "candy cane", "i": 106}
+{"text": "바닥에 놓인 캔디 케인을 집어 가구 위에 올려줘", "lang": "ko", "heldout": true, "combo": 8, "tpl": 11, "obj": "candy cane", "i": 107}
+{"text": "pick up the candy cane from the wicker basket and put it on the living room floor", "lang": "en", "heldout": false, "combo": 9, "tpl": 0, "obj": "candy cane", "i": 108}
+{"text": "take the candy cane off the wicker basket and place it on the living room floor", "lang": "en", "heldout": false, "combo": 9, "tpl": 1, "obj": "candy cane", "i": 109}
+{"text": "move the candy cane from the wicker basket onto the living room floor", "lang": "en", "heldout": false, "combo": 9, "tpl": 2, "obj": "candy cane", "i": 110}
+{"text": "grab the candy cane on the wicker basket and set it on the living room floor", "lang": "en", "heldout": false, "combo": 9, "tpl": 3, "obj": "candy cane", "i": 111}
+{"text": "put the candy cane that is on the wicker basket onto the living room floor", "lang": "en", "heldout": false, "combo": 9, "tpl": 4, "obj": "candy cane", "i": 112}
+{"text": "bring the candy cane from the wicker basket and leave it on the living room floor", "lang": "en", "heldout": false, "combo": 9, "tpl": 5, "obj": "candy cane", "i": 113}
+{"text": "비커 바구니에 있는 캔디 케인을 집어서 거실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 9, "tpl": 6, "obj": "candy cane", "i": 114}
+{"text": "캔디 케인을 비커 바구니에서 들어 거실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 9, "tpl": 7, "obj": "candy cane", "i": 115}
+{"text": "비커 바구니 위의 캔디 케인을 거실 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 9, "tpl": 8, "obj": "candy cane", "i": 116}
+{"text": "캔디 케인 좀 비커 바구니에서 가져와서 거실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 9, "tpl": 9, "obj": "candy cane", "i": 117}
+{"text": "could you get the candy cane off the wicker basket and drop it on the living room floor", "lang": "en", "heldout": true, "combo": 9, "tpl": 10, "obj": "candy cane", "i": 118}
+{"text": "비커 바구니에 놓인 캔디 케인을 집어 거실 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 9, "tpl": 11, "obj": "candy cane", "i": 119}
+{"text": "pick up the candy cane from the wicker basket and put it on the kitchen floor", "lang": "en", "heldout": false, "combo": 10, "tpl": 0, "obj": "candy cane", "i": 120}
+{"text": "take the candy cane off the wicker basket and place it on the kitchen floor", "lang": "en", "heldout": false, "combo": 10, "tpl": 1, "obj": "candy cane", "i": 121}
+{"text": "move the candy cane from the wicker basket onto the kitchen floor", "lang": "en", "heldout": false, "combo": 10, "tpl": 2, "obj": "candy cane", "i": 122}
+{"text": "grab the candy cane on the wicker basket and set it on the kitchen floor", "lang": "en", "heldout": false, "combo": 10, "tpl": 3, "obj": "candy cane", "i": 123}
+{"text": "put the candy cane that is on the wicker basket onto the kitchen floor", "lang": "en", "heldout": false, "combo": 10, "tpl": 4, "obj": "candy cane", "i": 124}
+{"text": "bring the candy cane from the wicker basket and leave it on the kitchen floor", "lang": "en", "heldout": false, "combo": 10, "tpl": 5, "obj": "candy cane", "i": 125}
+{"text": "비커 바구니에 있는 캔디 케인을 집어서 부엌 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 10, "tpl": 6, "obj": "candy cane", "i": 126}
+{"text": "캔디 케인을 비커 바구니에서 들어 부엌 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 10, "tpl": 7, "obj": "candy cane", "i": 127}
+{"text": "비커 바구니 위의 캔디 케인을 부엌 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 10, "tpl": 8, "obj": "candy cane", "i": 128}
+{"text": "캔디 케인 좀 비커 바구니에서 가져와서 부엌 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 10, "tpl": 9, "obj": "candy cane", "i": 129}
+{"text": "could you get the candy cane off the wicker basket and drop it on the kitchen floor", "lang": "en", "heldout": true, "combo": 10, "tpl": 10, "obj": "candy cane", "i": 130}
+{"text": "비커 바구니에 놓인 캔디 케인을 집어 부엌 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 10, "tpl": 11, "obj": "candy cane", "i": 131}
+{"text": "pick up the candy cane from the wicker basket and put it on the dining room floor", "lang": "en", "heldout": false, "combo": 11, "tpl": 0, "obj": "candy cane", "i": 132}
+{"text": "take the candy cane off the wicker basket and place it on the dining room floor", "lang": "en", "heldout": false, "combo": 11, "tpl": 1, "obj": "candy cane", "i": 133}
+{"text": "move the candy cane from the wicker basket onto the dining room floor", "lang": "en", "heldout": false, "combo": 11, "tpl": 2, "obj": "candy cane", "i": 134}
+{"text": "grab the candy cane on the wicker basket and set it on the dining room floor", "lang": "en", "heldout": false, "combo": 11, "tpl": 3, "obj": "candy cane", "i": 135}
+{"text": "put the candy cane that is on the wicker basket onto the dining room floor", "lang": "en", "heldout": false, "combo": 11, "tpl": 4, "obj": "candy cane", "i": 136}
+{"text": "bring the candy cane from the wicker basket and leave it on the dining room floor", "lang": "en", "heldout": false, "combo": 11, "tpl": 5, "obj": "candy cane", "i": 137}
+{"text": "비커 바구니에 있는 캔디 케인을 집어서 식당 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 11, "tpl": 6, "obj": "candy cane", "i": 138}
+{"text": "캔디 케인을 비커 바구니에서 들어 식당 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 11, "tpl": 7, "obj": "candy cane", "i": 139}
+{"text": "비커 바구니 위의 캔디 케인을 식당 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 11, "tpl": 8, "obj": "candy cane", "i": 140}
+{"text": "캔디 케인 좀 비커 바구니에서 가져와서 식당 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 11, "tpl": 9, "obj": "candy cane", "i": 141}
+{"text": "could you get the candy cane off the wicker basket and drop it on the dining room floor", "lang": "en", "heldout": true, "combo": 11, "tpl": 10, "obj": "candy cane", "i": 142}
+{"text": "비커 바구니에 놓인 캔디 케인을 집어 식당 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 11, "tpl": 11, "obj": "candy cane", "i": 143}
+{"text": "pick up the candy cane from the wicker basket and put it on the corridor floor", "lang": "en", "heldout": false, "combo": 12, "tpl": 0, "obj": "candy cane", "i": 144}
+{"text": "take the candy cane off the wicker basket and place it on the corridor floor", "lang": "en", "heldout": false, "combo": 12, "tpl": 1, "obj": "candy cane", "i": 145}
+{"text": "move the candy cane from the wicker basket onto the corridor floor", "lang": "en", "heldout": false, "combo": 12, "tpl": 2, "obj": "candy cane", "i": 146}
+{"text": "grab the candy cane on the wicker basket and set it on the corridor floor", "lang": "en", "heldout": false, "combo": 12, "tpl": 3, "obj": "candy cane", "i": 147}
+{"text": "put the candy cane that is on the wicker basket onto the corridor floor", "lang": "en", "heldout": false, "combo": 12, "tpl": 4, "obj": "candy cane", "i": 148}
+{"text": "bring the candy cane from the wicker basket and leave it on the corridor floor", "lang": "en", "heldout": false, "combo": 12, "tpl": 5, "obj": "candy cane", "i": 149}
+{"text": "비커 바구니에 있는 캔디 케인을 집어서 복도 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 12, "tpl": 6, "obj": "candy cane", "i": 150}
+{"text": "캔디 케인을 비커 바구니에서 들어 복도 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 12, "tpl": 7, "obj": "candy cane", "i": 151}
+{"text": "비커 바구니 위의 캔디 케인을 복도 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 12, "tpl": 8, "obj": "candy cane", "i": 152}
+{"text": "캔디 케인 좀 비커 바구니에서 가져와서 복도 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 12, "tpl": 9, "obj": "candy cane", "i": 153}
+{"text": "could you get the candy cane off the wicker basket and drop it on the corridor floor", "lang": "en", "heldout": true, "combo": 12, "tpl": 10, "obj": "candy cane", "i": 154}
+{"text": "비커 바구니에 놓인 캔디 케인을 집어 복도 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 12, "tpl": 11, "obj": "candy cane", "i": 155}
+{"text": "pick up the candy cane from the wicker basket and put it on the coffee table", "lang": "en", "heldout": false, "combo": 13, "tpl": 0, "obj": "candy cane", "i": 156}
+{"text": "take the candy cane off the wicker basket and place it on the coffee table", "lang": "en", "heldout": false, "combo": 13, "tpl": 1, "obj": "candy cane", "i": 157}
+{"text": "move the candy cane from the wicker basket onto the coffee table", "lang": "en", "heldout": false, "combo": 13, "tpl": 2, "obj": "candy cane", "i": 158}
+{"text": "grab the candy cane on the wicker basket and set it on the coffee table", "lang": "en", "heldout": false, "combo": 13, "tpl": 3, "obj": "candy cane", "i": 159}
+{"text": "put the candy cane that is on the wicker basket onto the coffee table", "lang": "en", "heldout": false, "combo": 13, "tpl": 4, "obj": "candy cane", "i": 160}
+{"text": "bring the candy cane from the wicker basket and leave it on the coffee table", "lang": "en", "heldout": false, "combo": 13, "tpl": 5, "obj": "candy cane", "i": 161}
+{"text": "비커 바구니에 있는 캔디 케인을 집어서 커피 테이블 위에 놓아", "lang": "ko", "heldout": false, "combo": 13, "tpl": 6, "obj": "candy cane", "i": 162}
+{"text": "캔디 케인을 비커 바구니에서 들어 커피 테이블 위에 놓아", "lang": "ko", "heldout": false, "combo": 13, "tpl": 7, "obj": "candy cane", "i": 163}
+{"text": "비커 바구니 위의 캔디 케인을 커피 테이블으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 13, "tpl": 8, "obj": "candy cane", "i": 164}
+{"text": "캔디 케인 좀 비커 바구니에서 가져와서 커피 테이블 위에 놓아", "lang": "ko", "heldout": false, "combo": 13, "tpl": 9, "obj": "candy cane", "i": 165}
+{"text": "could you get the candy cane off the wicker basket and drop it on the coffee table", "lang": "en", "heldout": true, "combo": 13, "tpl": 10, "obj": "candy cane", "i": 166}
+{"text": "비커 바구니에 놓인 캔디 케인을 집어 커피 테이블 위에 올려줘", "lang": "ko", "heldout": true, "combo": 13, "tpl": 11, "obj": "candy cane", "i": 167}
+{"text": "pick up the candy cane from the wicker basket and put it in the gift box", "lang": "en", "heldout": false, "combo": 14, "tpl": 0, "obj": "candy cane", "i": 168}
+{"text": "take the candy cane off the wicker basket and place it in the gift box", "lang": "en", "heldout": false, "combo": 14, "tpl": 1, "obj": "candy cane", "i": 169}
+{"text": "move the candy cane from the wicker basket into the gift box", "lang": "en", "heldout": false, "combo": 14, "tpl": 2, "obj": "candy cane", "i": 170}
+{"text": "grab the candy cane on the wicker basket and set it in the gift box", "lang": "en", "heldout": false, "combo": 14, "tpl": 3, "obj": "candy cane", "i": 171}
+{"text": "put the candy cane that is on the wicker basket into the gift box", "lang": "en", "heldout": false, "combo": 14, "tpl": 4, "obj": "candy cane", "i": 172}
+{"text": "bring the candy cane from the wicker basket and leave it in the gift box", "lang": "en", "heldout": false, "combo": 14, "tpl": 5, "obj": "candy cane", "i": 173}
+{"text": "비커 바구니에 있는 캔디 케인을 집어서 선물 상자 안에 넣어", "lang": "ko", "heldout": false, "combo": 14, "tpl": 6, "obj": "candy cane", "i": 174}
+{"text": "캔디 케인을 비커 바구니에서 들어 선물 상자 안에 넣어", "lang": "ko", "heldout": false, "combo": 14, "tpl": 7, "obj": "candy cane", "i": 175}
+{"text": "비커 바구니 위의 캔디 케인을 선물 상자로 옮겨줘", "lang": "ko", "heldout": false, "combo": 14, "tpl": 8, "obj": "candy cane", "i": 176}
+{"text": "캔디 케인 좀 비커 바구니에서 가져와서 선물 상자 안에 넣어", "lang": "ko", "heldout": false, "combo": 14, "tpl": 9, "obj": "candy cane", "i": 177}
+{"text": "could you get the candy cane off the wicker basket and drop it in the gift box", "lang": "en", "heldout": true, "combo": 14, "tpl": 10, "obj": "candy cane", "i": 178}
+{"text": "비커 바구니에 놓인 캔디 케인을 집어 선물 상자 안에 넣어줘", "lang": "ko", "heldout": true, "combo": 14, "tpl": 11, "obj": "candy cane", "i": 179}
+{"text": "pick up the candy cane from the wicker basket and put it on the wreath", "lang": "en", "heldout": false, "combo": 15, "tpl": 0, "obj": "candy cane", "i": 180}
+{"text": "take the candy cane off the wicker basket and place it on the wreath", "lang": "en", "heldout": false, "combo": 15, "tpl": 1, "obj": "candy cane", "i": 181}
+{"text": "move the candy cane from the wicker basket onto the wreath", "lang": "en", "heldout": false, "combo": 15, "tpl": 2, "obj": "candy cane", "i": 182}
+{"text": "grab the candy cane on the wicker basket and set it on the wreath", "lang": "en", "heldout": false, "combo": 15, "tpl": 3, "obj": "candy cane", "i": 183}
+{"text": "put the candy cane that is on the wicker basket onto the wreath", "lang": "en", "heldout": false, "combo": 15, "tpl": 4, "obj": "candy cane", "i": 184}
+{"text": "bring the candy cane from the wicker basket and leave it on the wreath", "lang": "en", "heldout": false, "combo": 15, "tpl": 5, "obj": "candy cane", "i": 185}
+{"text": "비커 바구니에 있는 캔디 케인을 집어서 화환 위에 놓아", "lang": "ko", "heldout": false, "combo": 15, "tpl": 6, "obj": "candy cane", "i": 186}
+{"text": "캔디 케인을 비커 바구니에서 들어 화환 위에 놓아", "lang": "ko", "heldout": false, "combo": 15, "tpl": 7, "obj": "candy cane", "i": 187}
+{"text": "비커 바구니 위의 캔디 케인을 화환으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 15, "tpl": 8, "obj": "candy cane", "i": 188}
+{"text": "캔디 케인 좀 비커 바구니에서 가져와서 화환 위에 놓아", "lang": "ko", "heldout": false, "combo": 15, "tpl": 9, "obj": "candy cane", "i": 189}
+{"text": "could you get the candy cane off the wicker basket and drop it on the wreath", "lang": "en", "heldout": true, "combo": 15, "tpl": 10, "obj": "candy cane", "i": 190}
+{"text": "비커 바구니에 놓인 캔디 케인을 집어 화환 위에 올려줘", "lang": "ko", "heldout": true, "combo": 15, "tpl": 11, "obj": "candy cane", "i": 191}
+{"text": "pick up the candy cane from the wicker basket and put it on the furniture", "lang": "en", "heldout": false, "combo": 16, "tpl": 0, "obj": "candy cane", "i": 192}
+{"text": "take the candy cane off the wicker basket and place it on the furniture", "lang": "en", "heldout": false, "combo": 16, "tpl": 1, "obj": "candy cane", "i": 193}
+{"text": "move the candy cane from the wicker basket onto the furniture", "lang": "en", "heldout": false, "combo": 16, "tpl": 2, "obj": "candy cane", "i": 194}
+{"text": "grab the candy cane on the wicker basket and set it on the furniture", "lang": "en", "heldout": false, "combo": 16, "tpl": 3, "obj": "candy cane", "i": 195}
+{"text": "put the candy cane that is on the wicker basket onto the furniture", "lang": "en", "heldout": false, "combo": 16, "tpl": 4, "obj": "candy cane", "i": 196}
+{"text": "bring the candy cane from the wicker basket and leave it on the furniture", "lang": "en", "heldout": false, "combo": 16, "tpl": 5, "obj": "candy cane", "i": 197}
+{"text": "비커 바구니에 있는 캔디 케인을 집어서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 16, "tpl": 6, "obj": "candy cane", "i": 198}
+{"text": "캔디 케인을 비커 바구니에서 들어 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 16, "tpl": 7, "obj": "candy cane", "i": 199}
+{"text": "비커 바구니 위의 캔디 케인을 가구로 옮겨줘", "lang": "ko", "heldout": false, "combo": 16, "tpl": 8, "obj": "candy cane", "i": 200}
+{"text": "캔디 케인 좀 비커 바구니에서 가져와서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 16, "tpl": 9, "obj": "candy cane", "i": 201}
+{"text": "could you get the candy cane off the wicker basket and drop it on the furniture", "lang": "en", "heldout": true, "combo": 16, "tpl": 10, "obj": "candy cane", "i": 202}
+{"text": "비커 바구니에 놓인 캔디 케인을 집어 가구 위에 올려줘", "lang": "ko", "heldout": true, "combo": 16, "tpl": 11, "obj": "candy cane", "i": 203}
+{"text": "pick up the cigar lighter from the floor and put it on the living room floor", "lang": "en", "heldout": false, "combo": 17, "tpl": 0, "obj": "cigar lighter", "i": 204}
+{"text": "take the cigarette lighter off the floor and place it on the living room floor", "lang": "en", "heldout": false, "combo": 17, "tpl": 1, "obj": "cigarette lighter", "i": 205}
+{"text": "move the pocket lighter from the floor onto the living room floor", "lang": "en", "heldout": false, "combo": 17, "tpl": 2, "obj": "pocket lighter", "i": 206}
+{"text": "grab the cigar lighter on the floor and set it on the living room floor", "lang": "en", "heldout": false, "combo": 17, "tpl": 3, "obj": "cigar lighter", "i": 207}
+{"text": "put the cigarette lighter that is on the floor onto the living room floor", "lang": "en", "heldout": false, "combo": 17, "tpl": 4, "obj": "cigarette lighter", "i": 208}
+{"text": "bring the pocket lighter from the floor and leave it on the living room floor", "lang": "en", "heldout": false, "combo": 17, "tpl": 5, "obj": "pocket lighter", "i": 209}
+{"text": "바닥에 있는 시카라 연장을 집어서 거실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 17, "tpl": 6, "obj": "cigar lighter", "i": 210}
+{"text": "담배 연장기를 바닥에서 들어 거실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 17, "tpl": 7, "obj": "cigarette lighter", "i": 211}
+{"text": "바닥 위의 주머니 연장기를 거실 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 17, "tpl": 8, "obj": "pocket lighter", "i": 212}
+{"text": "시카라 연장 좀 바닥에서 가져와서 거실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 17, "tpl": 9, "obj": "cigar lighter", "i": 213}
+{"text": "could you get the cigar lighter off the floor and drop it on the living room floor", "lang": "en", "heldout": true, "combo": 17, "tpl": 10, "obj": "cigar lighter", "i": 214}
+{"text": "바닥에 놓인 시카라 연장을 집어 거실 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 17, "tpl": 11, "obj": "cigar lighter", "i": 215}
+{"text": "pick up the cigar lighter from the floor and put it on the kitchen floor", "lang": "en", "heldout": false, "combo": 18, "tpl": 0, "obj": "cigar lighter", "i": 216}
+{"text": "take the cigarette lighter off the floor and place it on the kitchen floor", "lang": "en", "heldout": false, "combo": 18, "tpl": 1, "obj": "cigarette lighter", "i": 217}
+{"text": "move the pocket lighter from the floor onto the kitchen floor", "lang": "en", "heldout": false, "combo": 18, "tpl": 2, "obj": "pocket lighter", "i": 218}
+{"text": "grab the cigar lighter on the floor and set it on the kitchen floor", "lang": "en", "heldout": false, "combo": 18, "tpl": 3, "obj": "cigar lighter", "i": 219}
+{"text": "put the cigarette lighter that is on the floor onto the kitchen floor", "lang": "en", "heldout": false, "combo": 18, "tpl": 4, "obj": "cigarette lighter", "i": 220}
+{"text": "bring the pocket lighter from the floor and leave it on the kitchen floor", "lang": "en", "heldout": false, "combo": 18, "tpl": 5, "obj": "pocket lighter", "i": 221}
+{"text": "바닥에 있는 시카라 연장을 집어서 부엌 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 18, "tpl": 6, "obj": "cigar lighter", "i": 222}
+{"text": "담배 연장기를 바닥에서 들어 부엌 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 18, "tpl": 7, "obj": "cigarette lighter", "i": 223}
+{"text": "바닥 위의 주머니 연장기를 부엌 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 18, "tpl": 8, "obj": "pocket lighter", "i": 224}
+{"text": "시카라 연장 좀 바닥에서 가져와서 부엌 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 18, "tpl": 9, "obj": "cigar lighter", "i": 225}
+{"text": "could you get the cigar lighter off the floor and drop it on the kitchen floor", "lang": "en", "heldout": true, "combo": 18, "tpl": 10, "obj": "cigar lighter", "i": 226}
+{"text": "바닥에 놓인 시카라 연장을 집어 부엌 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 18, "tpl": 11, "obj": "cigar lighter", "i": 227}
+{"text": "pick up the cigar lighter from the floor and put it on the corridor floor", "lang": "en", "heldout": false, "combo": 19, "tpl": 0, "obj": "cigar lighter", "i": 228}
+{"text": "take the cigarette lighter off the floor and place it on the corridor floor", "lang": "en", "heldout": false, "combo": 19, "tpl": 1, "obj": "cigarette lighter", "i": 229}
+{"text": "move the pocket lighter from the floor onto the corridor floor", "lang": "en", "heldout": false, "combo": 19, "tpl": 2, "obj": "pocket lighter", "i": 230}
+{"text": "grab the cigar lighter on the floor and set it on the corridor floor", "lang": "en", "heldout": false, "combo": 19, "tpl": 3, "obj": "cigar lighter", "i": 231}
+{"text": "put the cigarette lighter that is on the floor onto the corridor floor", "lang": "en", "heldout": false, "combo": 19, "tpl": 4, "obj": "cigarette lighter", "i": 232}
+{"text": "bring the pocket lighter from the floor and leave it on the corridor floor", "lang": "en", "heldout": false, "combo": 19, "tpl": 5, "obj": "pocket lighter", "i": 233}
+{"text": "바닥에 있는 시카라 연장을 집어서 복도 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 19, "tpl": 6, "obj": "cigar lighter", "i": 234}
+{"text": "담배 연장기를 바닥에서 들어 복도 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 19, "tpl": 7, "obj": "cigarette lighter", "i": 235}
+{"text": "바닥 위의 주머니 연장기를 복도 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 19, "tpl": 8, "obj": "pocket lighter", "i": 236}
+{"text": "시카라 연장 좀 바닥에서 가져와서 복도 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 19, "tpl": 9, "obj": "cigar lighter", "i": 237}
+{"text": "could you get the cigar lighter off the floor and drop it on the corridor floor", "lang": "en", "heldout": true, "combo": 19, "tpl": 10, "obj": "cigar lighter", "i": 238}
+{"text": "바닥에 놓인 시카라 연장을 집어 복도 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 19, "tpl": 11, "obj": "cigar lighter", "i": 239}
+{"text": "pick up the cigar lighter from the floor and put it on the newspaper", "lang": "en", "heldout": false, "combo": 20, "tpl": 0, "obj": "cigar lighter", "i": 240}
+{"text": "take the cigarette lighter off the floor and place it on the newspaper", "lang": "en", "heldout": false, "combo": 20, "tpl": 1, "obj": "cigarette lighter", "i": 241}
+{"text": "move the pocket lighter from the floor onto the newspaper", "lang": "en", "heldout": false, "combo": 20, "tpl": 2, "obj": "pocket lighter", "i": 242}
+{"text": "grab the cigar lighter on the floor and set it on the newspaper", "lang": "en", "heldout": false, "combo": 20, "tpl": 3, "obj": "cigar lighter", "i": 243}
+{"text": "put the cigarette lighter that is on the floor onto the newspaper", "lang": "en", "heldout": false, "combo": 20, "tpl": 4, "obj": "cigarette lighter", "i": 244}
+{"text": "bring the pocket lighter from the floor and leave it on the newspaper", "lang": "en", "heldout": false, "combo": 20, "tpl": 5, "obj": "pocket lighter", "i": 245}
+{"text": "바닥에 있는 시카라 연장을 집어서 신문 위에 놓아", "lang": "ko", "heldout": false, "combo": 20, "tpl": 6, "obj": "cigar lighter", "i": 246}
+{"text": "담배 연장기를 바닥에서 들어 신문 위에 놓아", "lang": "ko", "heldout": false, "combo": 20, "tpl": 7, "obj": "cigarette lighter", "i": 247}
+{"text": "바닥 위의 주머니 연장기를 신문으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 20, "tpl": 8, "obj": "pocket lighter", "i": 248}
+{"text": "시카라 연장 좀 바닥에서 가져와서 신문 위에 놓아", "lang": "ko", "heldout": false, "combo": 20, "tpl": 9, "obj": "cigar lighter", "i": 249}
+{"text": "could you get the cigar lighter off the floor and drop it on the newspaper", "lang": "en", "heldout": true, "combo": 20, "tpl": 10, "obj": "cigar lighter", "i": 250}
+{"text": "바닥에 놓인 시카라 연장을 집어 신문 위에 올려줘", "lang": "ko", "heldout": true, "combo": 20, "tpl": 11, "obj": "cigar lighter", "i": 251}
+{"text": "pick up the die from the floor and put it on the childs room floor", "lang": "en", "heldout": false, "combo": 21, "tpl": 0, "obj": "die", "i": 252}
+{"text": "take the dice off the floor and place it on the childs room floor", "lang": "en", "heldout": false, "combo": 21, "tpl": 1, "obj": "dice", "i": 253}
+{"text": "move the die from the floor onto the childs room floor", "lang": "en", "heldout": false, "combo": 21, "tpl": 2, "obj": "die", "i": 254}
+{"text": "grab the dice on the floor and set it on the childs room floor", "lang": "en", "heldout": false, "combo": 21, "tpl": 3, "obj": "dice", "i": 255}
+{"text": "put the die that is on the floor onto the childs room floor", "lang": "en", "heldout": false, "combo": 21, "tpl": 4, "obj": "die", "i": 256}
+{"text": "bring the dice from the floor and leave it on the childs room floor", "lang": "en", "heldout": false, "combo": 21, "tpl": 5, "obj": "dice", "i": 257}
+{"text": "바닥에 있는 주사위를 집어서 아이 방 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 21, "tpl": 6, "obj": "die", "i": 258}
+{"text": "주사위를 바닥에서 들어 아이 방 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 21, "tpl": 7, "obj": "dice", "i": 259}
+{"text": "바닥 위의 주사위를 아이 방 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 21, "tpl": 8, "obj": "die", "i": 260}
+{"text": "주사위 좀 바닥에서 가져와서 아이 방 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 21, "tpl": 9, "obj": "dice", "i": 261}
+{"text": "could you get the die off the floor and drop it on the childs room floor", "lang": "en", "heldout": true, "combo": 21, "tpl": 10, "obj": "die", "i": 262}
+{"text": "바닥에 놓인 주사위를 집어 아이 방 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 21, "tpl": 11, "obj": "die", "i": 263}
+{"text": "pick up the die from the floor and put it on the straight chair", "lang": "en", "heldout": false, "combo": 22, "tpl": 0, "obj": "die", "i": 264}
+{"text": "take the dice off the floor and place it on the straight chair", "lang": "en", "heldout": false, "combo": 22, "tpl": 1, "obj": "dice", "i": 265}
+{"text": "move the die from the floor onto the straight chair", "lang": "en", "heldout": false, "combo": 22, "tpl": 2, "obj": "die", "i": 266}
+{"text": "grab the dice on the floor and set it on the straight chair", "lang": "en", "heldout": false, "combo": 22, "tpl": 3, "obj": "dice", "i": 267}
+{"text": "put the die that is on the floor onto the straight chair", "lang": "en", "heldout": false, "combo": 22, "tpl": 4, "obj": "die", "i": 268}
+{"text": "bring the dice from the floor and leave it on the straight chair", "lang": "en", "heldout": false, "combo": 22, "tpl": 5, "obj": "dice", "i": 269}
+{"text": "바닥에 있는 주사위를 집어서 직각 의자 위에 놓아", "lang": "ko", "heldout": false, "combo": 22, "tpl": 6, "obj": "die", "i": 270}
+{"text": "주사위를 바닥에서 들어 직각 의자 위에 놓아", "lang": "ko", "heldout": false, "combo": 22, "tpl": 7, "obj": "dice", "i": 271}
+{"text": "바닥 위의 주사위를 직각 의자로 옮겨줘", "lang": "ko", "heldout": false, "combo": 22, "tpl": 8, "obj": "die", "i": 272}
+{"text": "주사위 좀 바닥에서 가져와서 직각 의자 위에 놓아", "lang": "ko", "heldout": false, "combo": 22, "tpl": 9, "obj": "dice", "i": 273}
+{"text": "could you get the die off the floor and drop it on the straight chair", "lang": "en", "heldout": true, "combo": 22, "tpl": 10, "obj": "die", "i": 274}
+{"text": "바닥에 놓인 주사위를 집어 직각 의자 위에 올려줘", "lang": "ko", "heldout": true, "combo": 22, "tpl": 11, "obj": "die", "i": 275}
+{"text": "pick up the die from the floor and put it on the teddy", "lang": "en", "heldout": false, "combo": 23, "tpl": 0, "obj": "die", "i": 276}
+{"text": "take the dice off the floor and place it on the teddy", "lang": "en", "heldout": false, "combo": 23, "tpl": 1, "obj": "dice", "i": 277}
+{"text": "move the die from the floor onto the teddy", "lang": "en", "heldout": false, "combo": 23, "tpl": 2, "obj": "die", "i": 278}
+{"text": "grab the dice on the floor and set it on the teddy", "lang": "en", "heldout": false, "combo": 23, "tpl": 3, "obj": "dice", "i": 279}
+{"text": "put the die that is on the floor onto the teddy", "lang": "en", "heldout": false, "combo": 23, "tpl": 4, "obj": "die", "i": 280}
+{"text": "bring the dice from the floor and leave it on the teddy", "lang": "en", "heldout": false, "combo": 23, "tpl": 5, "obj": "dice", "i": 281}
+{"text": "바닥에 있는 주사위를 집어서 테디 베어 위에 놓아", "lang": "ko", "heldout": false, "combo": 23, "tpl": 6, "obj": "die", "i": 282}
+{"text": "주사위를 바닥에서 들어 테디 베어 위에 놓아", "lang": "ko", "heldout": false, "combo": 23, "tpl": 7, "obj": "dice", "i": 283}
+{"text": "바닥 위의 주사위를 테디 베어로 옮겨줘", "lang": "ko", "heldout": false, "combo": 23, "tpl": 8, "obj": "die", "i": 284}
+{"text": "주사위 좀 바닥에서 가져와서 테디 베어 위에 놓아", "lang": "ko", "heldout": false, "combo": 23, "tpl": 9, "obj": "dice", "i": 285}
+{"text": "could you get the die off the floor and drop it on the teddy", "lang": "en", "heldout": true, "combo": 23, "tpl": 10, "obj": "die", "i": 286}
+{"text": "바닥에 놓인 주사위를 집어 테디 베어 위에 올려줘", "lang": "ko", "heldout": true, "combo": 23, "tpl": 11, "obj": "die", "i": 287}
+{"text": "pick up the die from the floor and put it on the lamp", "lang": "en", "heldout": false, "combo": 24, "tpl": 0, "obj": "die", "i": 288}
+{"text": "take the dice off the floor and place it on the lamp", "lang": "en", "heldout": false, "combo": 24, "tpl": 1, "obj": "dice", "i": 289}
+{"text": "move the die from the floor onto the lamp", "lang": "en", "heldout": false, "combo": 24, "tpl": 2, "obj": "die", "i": 290}
+{"text": "grab the dice on the floor and set it on the lamp", "lang": "en", "heldout": false, "combo": 24, "tpl": 3, "obj": "dice", "i": 291}
+{"text": "put the die that is on the floor onto the lamp", "lang": "en", "heldout": false, "combo": 24, "tpl": 4, "obj": "die", "i": 292}
+{"text": "bring the dice from the floor and leave it on the lamp", "lang": "en", "heldout": false, "combo": 24, "tpl": 5, "obj": "dice", "i": 293}
+{"text": "바닥에 있는 주사위를 집어서 등 위에 놓아", "lang": "ko", "heldout": false, "combo": 24, "tpl": 6, "obj": "die", "i": 294}
+{"text": "주사위를 바닥에서 들어 등 위에 놓아", "lang": "ko", "heldout": false, "combo": 24, "tpl": 7, "obj": "dice", "i": 295}
+{"text": "바닥 위의 주사위를 등으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 24, "tpl": 8, "obj": "die", "i": 296}
+{"text": "주사위 좀 바닥에서 가져와서 등 위에 놓아", "lang": "ko", "heldout": false, "combo": 24, "tpl": 9, "obj": "dice", "i": 297}
+{"text": "could you get the die off the floor and drop it on the lamp", "lang": "en", "heldout": true, "combo": 24, "tpl": 10, "obj": "die", "i": 298}
+{"text": "바닥에 놓인 주사위를 집어 등 위에 올려줘", "lang": "ko", "heldout": true, "combo": 24, "tpl": 11, "obj": "die", "i": 299}
+{"text": "pick up the insectifuge atomizer from the floor and put it on the pot plant", "lang": "en", "heldout": false, "combo": 25, "tpl": 0, "obj": "insectifuge atomizer", "i": 300}
+{"text": "take the insectifuge atomizer off the floor and place it on the pot plant", "lang": "en", "heldout": false, "combo": 25, "tpl": 1, "obj": "insectifuge atomizer", "i": 301}
+{"text": "move the insectifuge atomizer from the floor onto the pot plant", "lang": "en", "heldout": false, "combo": 25, "tpl": 2, "obj": "insectifuge atomizer", "i": 302}
+{"text": "grab the insectifuge atomizer on the floor and set it on the pot plant", "lang": "en", "heldout": false, "combo": 25, "tpl": 3, "obj": "insectifuge atomizer", "i": 303}
+{"text": "put the insectifuge atomizer that is on the floor onto the pot plant", "lang": "en", "heldout": false, "combo": 25, "tpl": 4, "obj": "insectifuge atomizer", "i": 304}
+{"text": "bring the insectifuge atomizer from the floor and leave it on the pot plant", "lang": "en", "heldout": false, "combo": 25, "tpl": 5, "obj": "insectifuge atomizer", "i": 305}
+{"text": "바닥에 있는 곤충성 원자격화를 집어서 식물 위에 놓아", "lang": "ko", "heldout": false, "combo": 25, "tpl": 6, "obj": "insectifuge atomizer", "i": 306}
+{"text": "곤충성 원자격화를 바닥에서 들어 식물 위에 놓아", "lang": "ko", "heldout": false, "combo": 25, "tpl": 7, "obj": "insectifuge atomizer", "i": 307}
+{"text": "바닥 위의 곤충성 원자격화를 식물으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 25, "tpl": 8, "obj": "insectifuge atomizer", "i": 308}
+{"text": "곤충성 원자격화 좀 바닥에서 가져와서 식물 위에 놓아", "lang": "ko", "heldout": false, "combo": 25, "tpl": 9, "obj": "insectifuge atomizer", "i": 309}
+{"text": "could you get the insectifuge atomizer off the floor and drop it on the pot plant", "lang": "en", "heldout": true, "combo": 25, "tpl": 10, "obj": "insectifuge atomizer", "i": 310}
+{"text": "바닥에 놓인 곤충성 원자격화를 집어 식물 위에 올려줘", "lang": "ko", "heldout": true, "combo": 25, "tpl": 11, "obj": "insectifuge atomizer", "i": 311}
+{"text": "pick up the leek from the wicker basket and put it on the living room floor", "lang": "en", "heldout": false, "combo": 26, "tpl": 0, "obj": "leek", "i": 312}
+{"text": "take the leek off the wicker basket and place it on the living room floor", "lang": "en", "heldout": false, "combo": 26, "tpl": 1, "obj": "leek", "i": 313}
+{"text": "move the leek from the wicker basket onto the living room floor", "lang": "en", "heldout": false, "combo": 26, "tpl": 2, "obj": "leek", "i": 314}
+{"text": "grab the leek on the wicker basket and set it on the living room floor", "lang": "en", "heldout": false, "combo": 26, "tpl": 3, "obj": "leek", "i": 315}
+{"text": "put the leek that is on the wicker basket onto the living room floor", "lang": "en", "heldout": false, "combo": 26, "tpl": 4, "obj": "leek", "i": 316}
+{"text": "bring the leek from the wicker basket and leave it on the living room floor", "lang": "en", "heldout": false, "combo": 26, "tpl": 5, "obj": "leek", "i": 317}
+{"text": "비커 바구니에 있는 대파를 집어서 거실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 26, "tpl": 6, "obj": "leek", "i": 318}
+{"text": "대파를 비커 바구니에서 들어 거실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 26, "tpl": 7, "obj": "leek", "i": 319}
+{"text": "비커 바구니 위의 대파를 거실 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 26, "tpl": 8, "obj": "leek", "i": 320}
+{"text": "대파 좀 비커 바구니에서 가져와서 거실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 26, "tpl": 9, "obj": "leek", "i": 321}
+{"text": "could you get the leek off the wicker basket and drop it on the living room floor", "lang": "en", "heldout": true, "combo": 26, "tpl": 10, "obj": "leek", "i": 322}
+{"text": "비커 바구니에 놓인 대파를 집어 거실 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 26, "tpl": 11, "obj": "leek", "i": 323}
+{"text": "pick up the leek from the wicker basket and put it on the entryway floor", "lang": "en", "heldout": false, "combo": 27, "tpl": 0, "obj": "leek", "i": 324}
+{"text": "take the leek off the wicker basket and place it on the entryway floor", "lang": "en", "heldout": false, "combo": 27, "tpl": 1, "obj": "leek", "i": 325}
+{"text": "move the leek from the wicker basket onto the entryway floor", "lang": "en", "heldout": false, "combo": 27, "tpl": 2, "obj": "leek", "i": 326}
+{"text": "grab the leek on the wicker basket and set it on the entryway floor", "lang": "en", "heldout": false, "combo": 27, "tpl": 3, "obj": "leek", "i": 327}
+{"text": "put the leek that is on the wicker basket onto the entryway floor", "lang": "en", "heldout": false, "combo": 27, "tpl": 4, "obj": "leek", "i": 328}
+{"text": "bring the leek from the wicker basket and leave it on the entryway floor", "lang": "en", "heldout": false, "combo": 27, "tpl": 5, "obj": "leek", "i": 329}
+{"text": "비커 바구니에 있는 대파를 집어서 현관 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 27, "tpl": 6, "obj": "leek", "i": 330}
+{"text": "대파를 비커 바구니에서 들어 현관 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 27, "tpl": 7, "obj": "leek", "i": 331}
+{"text": "비커 바구니 위의 대파를 현관 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 27, "tpl": 8, "obj": "leek", "i": 332}
+{"text": "대파 좀 비커 바구니에서 가져와서 현관 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 27, "tpl": 9, "obj": "leek", "i": 333}
+{"text": "could you get the leek off the wicker basket and drop it on the entryway floor", "lang": "en", "heldout": true, "combo": 27, "tpl": 10, "obj": "leek", "i": 334}
+{"text": "비커 바구니에 놓인 대파를 집어 현관 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 27, "tpl": 11, "obj": "leek", "i": 335}
+{"text": "pick up the leek from the wicker basket and put it on the kitchen floor", "lang": "en", "heldout": false, "combo": 28, "tpl": 0, "obj": "leek", "i": 336}
+{"text": "take the leek off the wicker basket and place it on the kitchen floor", "lang": "en", "heldout": false, "combo": 28, "tpl": 1, "obj": "leek", "i": 337}
+{"text": "move the leek from the wicker basket onto the kitchen floor", "lang": "en", "heldout": false, "combo": 28, "tpl": 2, "obj": "leek", "i": 338}
+{"text": "grab the leek on the wicker basket and set it on the kitchen floor", "lang": "en", "heldout": false, "combo": 28, "tpl": 3, "obj": "leek", "i": 339}
+{"text": "put the leek that is on the wicker basket onto the kitchen floor", "lang": "en", "heldout": false, "combo": 28, "tpl": 4, "obj": "leek", "i": 340}
+{"text": "bring the leek from the wicker basket and leave it on the kitchen floor", "lang": "en", "heldout": false, "combo": 28, "tpl": 5, "obj": "leek", "i": 341}
+{"text": "비커 바구니에 있는 대파를 집어서 부엌 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 28, "tpl": 6, "obj": "leek", "i": 342}
+{"text": "대파를 비커 바구니에서 들어 부엌 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 28, "tpl": 7, "obj": "leek", "i": 343}
+{"text": "비커 바구니 위의 대파를 부엌 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 28, "tpl": 8, "obj": "leek", "i": 344}
+{"text": "대파 좀 비커 바구니에서 가져와서 부엌 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 28, "tpl": 9, "obj": "leek", "i": 345}
+{"text": "could you get the leek off the wicker basket and drop it on the kitchen floor", "lang": "en", "heldout": true, "combo": 28, "tpl": 10, "obj": "leek", "i": 346}
+{"text": "비커 바구니에 놓인 대파를 집어 부엌 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 28, "tpl": 11, "obj": "leek", "i": 347}
+{"text": "pick up the leek from the wicker basket and put it on the dining room floor", "lang": "en", "heldout": false, "combo": 29, "tpl": 0, "obj": "leek", "i": 348}
+{"text": "take the leek off the wicker basket and place it on the dining room floor", "lang": "en", "heldout": false, "combo": 29, "tpl": 1, "obj": "leek", "i": 349}
+{"text": "move the leek from the wicker basket onto the dining room floor", "lang": "en", "heldout": false, "combo": 29, "tpl": 2, "obj": "leek", "i": 350}
+{"text": "grab the leek on the wicker basket and set it on the dining room floor", "lang": "en", "heldout": false, "combo": 29, "tpl": 3, "obj": "leek", "i": 351}
+{"text": "put the leek that is on the wicker basket onto the dining room floor", "lang": "en", "heldout": false, "combo": 29, "tpl": 4, "obj": "leek", "i": 352}
+{"text": "bring the leek from the wicker basket and leave it on the dining room floor", "lang": "en", "heldout": false, "combo": 29, "tpl": 5, "obj": "leek", "i": 353}
+{"text": "비커 바구니에 있는 대파를 집어서 식당 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 29, "tpl": 6, "obj": "leek", "i": 354}
+{"text": "대파를 비커 바구니에서 들어 식당 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 29, "tpl": 7, "obj": "leek", "i": 355}
+{"text": "비커 바구니 위의 대파를 식당 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 29, "tpl": 8, "obj": "leek", "i": 356}
+{"text": "대파 좀 비커 바구니에서 가져와서 식당 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 29, "tpl": 9, "obj": "leek", "i": 357}
+{"text": "could you get the leek off the wicker basket and drop it on the dining room floor", "lang": "en", "heldout": true, "combo": 29, "tpl": 10, "obj": "leek", "i": 358}
+{"text": "비커 바구니에 놓인 대파를 집어 식당 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 29, "tpl": 11, "obj": "leek", "i": 359}
+{"text": "pick up the leek from the wicker basket and put it on the coffee table", "lang": "en", "heldout": false, "combo": 30, "tpl": 0, "obj": "leek", "i": 360}
+{"text": "take the leek off the wicker basket and place it on the coffee table", "lang": "en", "heldout": false, "combo": 30, "tpl": 1, "obj": "leek", "i": 361}
+{"text": "move the leek from the wicker basket onto the coffee table", "lang": "en", "heldout": false, "combo": 30, "tpl": 2, "obj": "leek", "i": 362}
+{"text": "grab the leek on the wicker basket and set it on the coffee table", "lang": "en", "heldout": false, "combo": 30, "tpl": 3, "obj": "leek", "i": 363}
+{"text": "put the leek that is on the wicker basket onto the coffee table", "lang": "en", "heldout": false, "combo": 30, "tpl": 4, "obj": "leek", "i": 364}
+{"text": "bring the leek from the wicker basket and leave it on the coffee table", "lang": "en", "heldout": false, "combo": 30, "tpl": 5, "obj": "leek", "i": 365}
+{"text": "비커 바구니에 있는 대파를 집어서 커피 테이블 위에 놓아", "lang": "ko", "heldout": false, "combo": 30, "tpl": 6, "obj": "leek", "i": 366}
+{"text": "대파를 비커 바구니에서 들어 커피 테이블 위에 놓아", "lang": "ko", "heldout": false, "combo": 30, "tpl": 7, "obj": "leek", "i": 367}
+{"text": "비커 바구니 위의 대파를 커피 테이블으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 30, "tpl": 8, "obj": "leek", "i": 368}
+{"text": "대파 좀 비커 바구니에서 가져와서 커피 테이블 위에 놓아", "lang": "ko", "heldout": false, "combo": 30, "tpl": 9, "obj": "leek", "i": 369}
+{"text": "could you get the leek off the wicker basket and drop it on the coffee table", "lang": "en", "heldout": true, "combo": 30, "tpl": 10, "obj": "leek", "i": 370}
+{"text": "비커 바구니에 놓인 대파를 집어 커피 테이블 위에 올려줘", "lang": "ko", "heldout": true, "combo": 30, "tpl": 11, "obj": "leek", "i": 371}
+{"text": "pick up the leek from the wicker basket and put it on the furniture", "lang": "en", "heldout": false, "combo": 31, "tpl": 0, "obj": "leek", "i": 372}
+{"text": "take the leek off the wicker basket and place it on the furniture", "lang": "en", "heldout": false, "combo": 31, "tpl": 1, "obj": "leek", "i": 373}
+{"text": "move the leek from the wicker basket onto the furniture", "lang": "en", "heldout": false, "combo": 31, "tpl": 2, "obj": "leek", "i": 374}
+{"text": "grab the leek on the wicker basket and set it on the furniture", "lang": "en", "heldout": false, "combo": 31, "tpl": 3, "obj": "leek", "i": 375}
+{"text": "put the leek that is on the wicker basket onto the furniture", "lang": "en", "heldout": false, "combo": 31, "tpl": 4, "obj": "leek", "i": 376}
+{"text": "bring the leek from the wicker basket and leave it on the furniture", "lang": "en", "heldout": false, "combo": 31, "tpl": 5, "obj": "leek", "i": 377}
+{"text": "비커 바구니에 있는 대파를 집어서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 31, "tpl": 6, "obj": "leek", "i": 378}
+{"text": "대파를 비커 바구니에서 들어 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 31, "tpl": 7, "obj": "leek", "i": 379}
+{"text": "비커 바구니 위의 대파를 가구로 옮겨줘", "lang": "ko", "heldout": false, "combo": 31, "tpl": 8, "obj": "leek", "i": 380}
+{"text": "대파 좀 비커 바구니에서 가져와서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 31, "tpl": 9, "obj": "leek", "i": 381}
+{"text": "could you get the leek off the wicker basket and drop it on the furniture", "lang": "en", "heldout": true, "combo": 31, "tpl": 10, "obj": "leek", "i": 382}
+{"text": "비커 바구니에 놓인 대파를 집어 가구 위에 올려줘", "lang": "ko", "heldout": true, "combo": 31, "tpl": 11, "obj": "leek", "i": 383}
+{"text": "pick up the pen from the floor and put it on the corridor floor", "lang": "en", "heldout": false, "combo": 32, "tpl": 0, "obj": "pen", "i": 384}
+{"text": "take the pen off the floor and place it on the corridor floor", "lang": "en", "heldout": false, "combo": 32, "tpl": 1, "obj": "pen", "i": 385}
+{"text": "move the pen from the floor onto the corridor floor", "lang": "en", "heldout": false, "combo": 32, "tpl": 2, "obj": "pen", "i": 386}
+{"text": "grab the pen on the floor and set it on the corridor floor", "lang": "en", "heldout": false, "combo": 32, "tpl": 3, "obj": "pen", "i": 387}
+{"text": "put the pen that is on the floor onto the corridor floor", "lang": "en", "heldout": false, "combo": 32, "tpl": 4, "obj": "pen", "i": 388}
+{"text": "bring the pen from the floor and leave it on the corridor floor", "lang": "en", "heldout": false, "combo": 32, "tpl": 5, "obj": "pen", "i": 389}
+{"text": "바닥에 있는 펜을 집어서 복도 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 32, "tpl": 6, "obj": "pen", "i": 390}
+{"text": "펜을 바닥에서 들어 복도 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 32, "tpl": 7, "obj": "pen", "i": 391}
+{"text": "바닥 위의 펜을 복도 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 32, "tpl": 8, "obj": "pen", "i": 392}
+{"text": "펜 좀 바닥에서 가져와서 복도 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 32, "tpl": 9, "obj": "pen", "i": 393}
+{"text": "could you get the pen off the floor and drop it on the corridor floor", "lang": "en", "heldout": true, "combo": 32, "tpl": 10, "obj": "pen", "i": 394}
+{"text": "바닥에 놓인 펜을 집어 복도 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 32, "tpl": 11, "obj": "pen", "i": 395}
+{"text": "pick up the pen from the floor and put it in the carryall", "lang": "en", "heldout": false, "combo": 33, "tpl": 0, "obj": "pen", "i": 396}
+{"text": "take the pen off the floor and place it in the carryall", "lang": "en", "heldout": false, "combo": 33, "tpl": 1, "obj": "pen", "i": 397}
+{"text": "move the pen from the floor into the carryall", "lang": "en", "heldout": false, "combo": 33, "tpl": 2, "obj": "pen", "i": 398}
+{"text": "grab the pen on the floor and set it in the carryall", "lang": "en", "heldout": false, "combo": 33, "tpl": 3, "obj": "pen", "i": 399}
+{"text": "put the pen that is on the floor into the carryall", "lang": "en", "heldout": false, "combo": 33, "tpl": 4, "obj": "pen", "i": 400}
+{"text": "bring the pen from the floor and leave it in the carryall", "lang": "en", "heldout": false, "combo": 33, "tpl": 5, "obj": "pen", "i": 401}
+{"text": "바닥에 있는 펜을 집어서 운반 안에 넣어", "lang": "ko", "heldout": false, "combo": 33, "tpl": 6, "obj": "pen", "i": 402}
+{"text": "펜을 바닥에서 들어 운반 안에 넣어", "lang": "ko", "heldout": false, "combo": 33, "tpl": 7, "obj": "pen", "i": 403}
+{"text": "바닥 위의 펜을 운반으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 33, "tpl": 8, "obj": "pen", "i": 404}
+{"text": "펜 좀 바닥에서 가져와서 운반 안에 넣어", "lang": "ko", "heldout": false, "combo": 33, "tpl": 9, "obj": "pen", "i": 405}
+{"text": "could you get the pen off the floor and drop it in the carryall", "lang": "en", "heldout": true, "combo": 33, "tpl": 10, "obj": "pen", "i": 406}
+{"text": "바닥에 놓인 펜을 집어 운반 안에 넣어줘", "lang": "ko", "heldout": true, "combo": 33, "tpl": 11, "obj": "pen", "i": 407}
+{"text": "pick up the pen from the floor and put it on the furniture", "lang": "en", "heldout": false, "combo": 34, "tpl": 0, "obj": "pen", "i": 408}
+{"text": "take the pen off the floor and place it on the furniture", "lang": "en", "heldout": false, "combo": 34, "tpl": 1, "obj": "pen", "i": 409}
+{"text": "move the pen from the floor onto the furniture", "lang": "en", "heldout": false, "combo": 34, "tpl": 2, "obj": "pen", "i": 410}
+{"text": "grab the pen on the floor and set it on the furniture", "lang": "en", "heldout": false, "combo": 34, "tpl": 3, "obj": "pen", "i": 411}
+{"text": "put the pen that is on the floor onto the furniture", "lang": "en", "heldout": false, "combo": 34, "tpl": 4, "obj": "pen", "i": 412}
+{"text": "bring the pen from the floor and leave it on the furniture", "lang": "en", "heldout": false, "combo": 34, "tpl": 5, "obj": "pen", "i": 413}
+{"text": "바닥에 있는 펜을 집어서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 34, "tpl": 6, "obj": "pen", "i": 414}
+{"text": "펜을 바닥에서 들어 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 34, "tpl": 7, "obj": "pen", "i": 415}
+{"text": "바닥 위의 펜을 가구로 옮겨줘", "lang": "ko", "heldout": false, "combo": 34, "tpl": 8, "obj": "pen", "i": 416}
+{"text": "펜 좀 바닥에서 가져와서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 34, "tpl": 9, "obj": "pen", "i": 417}
+{"text": "could you get the pen off the floor and drop it on the furniture", "lang": "en", "heldout": true, "combo": 34, "tpl": 10, "obj": "pen", "i": 418}
+{"text": "바닥에 놓인 펜을 집어 가구 위에 올려줘", "lang": "ko", "heldout": true, "combo": 34, "tpl": 11, "obj": "pen", "i": 419}
+{"text": "pick up the pencil from the floor and put it on the bedroom floor", "lang": "en", "heldout": false, "combo": 35, "tpl": 0, "obj": "pencil", "i": 420}
+{"text": "take the colored pencil off the floor and place it on the bedroom floor", "lang": "en", "heldout": false, "combo": 35, "tpl": 1, "obj": "colored pencil", "i": 421}
+{"text": "move the pencil from the floor onto the bedroom floor", "lang": "en", "heldout": false, "combo": 35, "tpl": 2, "obj": "pencil", "i": 422}
+{"text": "grab the colored pencil on the floor and set it on the bedroom floor", "lang": "en", "heldout": false, "combo": 35, "tpl": 3, "obj": "colored pencil", "i": 423}
+{"text": "put the pencil that is on the floor onto the bedroom floor", "lang": "en", "heldout": false, "combo": 35, "tpl": 4, "obj": "pencil", "i": 424}
+{"text": "bring the colored pencil from the floor and leave it on the bedroom floor", "lang": "en", "heldout": false, "combo": 35, "tpl": 5, "obj": "colored pencil", "i": 425}
+{"text": "바닥에 있는 연필을 집어서 침실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 35, "tpl": 6, "obj": "pencil", "i": 426}
+{"text": "연필을 바닥에서 들어 침실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 35, "tpl": 7, "obj": "colored pencil", "i": 427}
+{"text": "바닥 위의 연필을 침실 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 35, "tpl": 8, "obj": "pencil", "i": 428}
+{"text": "연필 좀 바닥에서 가져와서 침실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 35, "tpl": 9, "obj": "colored pencil", "i": 429}
+{"text": "could you get the pencil off the floor and drop it on the bedroom floor", "lang": "en", "heldout": true, "combo": 35, "tpl": 10, "obj": "pencil", "i": 430}
+{"text": "바닥에 놓인 연필을 집어 침실 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 35, "tpl": 11, "obj": "pencil", "i": 431}
+{"text": "pick up the pencil from the floor and put it in the carryall", "lang": "en", "heldout": false, "combo": 36, "tpl": 0, "obj": "pencil", "i": 432}
+{"text": "take the colored pencil off the floor and place it in the carryall", "lang": "en", "heldout": false, "combo": 36, "tpl": 1, "obj": "colored pencil", "i": 433}
+{"text": "move the pencil from the floor into the carryall", "lang": "en", "heldout": false, "combo": 36, "tpl": 2, "obj": "pencil", "i": 434}
+{"text": "grab the colored pencil on the floor and set it in the carryall", "lang": "en", "heldout": false, "combo": 36, "tpl": 3, "obj": "colored pencil", "i": 435}
+{"text": "put the pencil that is on the floor into the carryall", "lang": "en", "heldout": false, "combo": 36, "tpl": 4, "obj": "pencil", "i": 436}
+{"text": "bring the colored pencil from the floor and leave it in the carryall", "lang": "en", "heldout": false, "combo": 36, "tpl": 5, "obj": "colored pencil", "i": 437}
+{"text": "바닥에 있는 연필을 집어서 운반 안에 넣어", "lang": "ko", "heldout": false, "combo": 36, "tpl": 6, "obj": "pencil", "i": 438}
+{"text": "연필을 바닥에서 들어 운반 안에 넣어", "lang": "ko", "heldout": false, "combo": 36, "tpl": 7, "obj": "colored pencil", "i": 439}
+{"text": "바닥 위의 연필을 운반으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 36, "tpl": 8, "obj": "pencil", "i": 440}
+{"text": "연필 좀 바닥에서 가져와서 운반 안에 넣어", "lang": "ko", "heldout": false, "combo": 36, "tpl": 9, "obj": "colored pencil", "i": 441}
+{"text": "could you get the pencil off the floor and drop it in the carryall", "lang": "en", "heldout": true, "combo": 36, "tpl": 10, "obj": "pencil", "i": 442}
+{"text": "바닥에 놓인 연필을 집어 운반 안에 넣어줘", "lang": "ko", "heldout": true, "combo": 36, "tpl": 11, "obj": "pencil", "i": 443}
+{"text": "pick up the pencil from the floor and put it on the furniture", "lang": "en", "heldout": false, "combo": 37, "tpl": 0, "obj": "pencil", "i": 444}
+{"text": "take the colored pencil off the floor and place it on the furniture", "lang": "en", "heldout": false, "combo": 37, "tpl": 1, "obj": "colored pencil", "i": 445}
+{"text": "move the pencil from the floor onto the furniture", "lang": "en", "heldout": false, "combo": 37, "tpl": 2, "obj": "pencil", "i": 446}
+{"text": "grab the colored pencil on the floor and set it on the furniture", "lang": "en", "heldout": false, "combo": 37, "tpl": 3, "obj": "colored pencil", "i": 447}
+{"text": "put the pencil that is on the floor onto the furniture", "lang": "en", "heldout": false, "combo": 37, "tpl": 4, "obj": "pencil", "i": 448}
+{"text": "bring the colored pencil from the floor and leave it on the furniture", "lang": "en", "heldout": false, "combo": 37, "tpl": 5, "obj": "colored pencil", "i": 449}
+{"text": "바닥에 있는 연필을 집어서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 37, "tpl": 6, "obj": "pencil", "i": 450}
+{"text": "연필을 바닥에서 들어 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 37, "tpl": 7, "obj": "colored pencil", "i": 451}
+{"text": "바닥 위의 연필을 가구로 옮겨줘", "lang": "ko", "heldout": false, "combo": 37, "tpl": 8, "obj": "pencil", "i": 452}
+{"text": "연필 좀 바닥에서 가져와서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 37, "tpl": 9, "obj": "colored pencil", "i": 453}
+{"text": "could you get the pencil off the floor and drop it on the furniture", "lang": "en", "heldout": true, "combo": 37, "tpl": 10, "obj": "pencil", "i": 454}
+{"text": "바닥에 놓인 연필을 집어 가구 위에 올려줘", "lang": "ko", "heldout": true, "combo": 37, "tpl": 11, "obj": "pencil", "i": 455}
+{"text": "pick up the scraper from the floor and put it on the furniture", "lang": "en", "heldout": false, "combo": 38, "tpl": 0, "obj": "scraper", "i": 456}
+{"text": "take the scraper off the floor and place it on the furniture", "lang": "en", "heldout": false, "combo": 38, "tpl": 1, "obj": "scraper", "i": 457}
+{"text": "move the scraper from the floor onto the furniture", "lang": "en", "heldout": false, "combo": 38, "tpl": 2, "obj": "scraper", "i": 458}
+{"text": "grab the scraper on the floor and set it on the furniture", "lang": "en", "heldout": false, "combo": 38, "tpl": 3, "obj": "scraper", "i": 459}
+{"text": "put the scraper that is on the floor onto the furniture", "lang": "en", "heldout": false, "combo": 38, "tpl": 4, "obj": "scraper", "i": 460}
+{"text": "bring the scraper from the floor and leave it on the furniture", "lang": "en", "heldout": false, "combo": 38, "tpl": 5, "obj": "scraper", "i": 461}
+{"text": "바닥에 있는 스크래퍼를 집어서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 38, "tpl": 6, "obj": "scraper", "i": 462}
+{"text": "스크래퍼를 바닥에서 들어 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 38, "tpl": 7, "obj": "scraper", "i": 463}
+{"text": "바닥 위의 스크래퍼를 가구로 옮겨줘", "lang": "ko", "heldout": false, "combo": 38, "tpl": 8, "obj": "scraper", "i": 464}
+{"text": "스크래퍼 좀 바닥에서 가져와서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 38, "tpl": 9, "obj": "scraper", "i": 465}
+{"text": "could you get the scraper off the floor and drop it on the furniture", "lang": "en", "heldout": true, "combo": 38, "tpl": 10, "obj": "scraper", "i": 466}
+{"text": "바닥에 놓인 스크래퍼를 집어 가구 위에 올려줘", "lang": "ko", "heldout": true, "combo": 38, "tpl": 11, "obj": "scraper", "i": 467}
+{"text": "pick up the scrub brush from the floor and put it on the bedroom floor", "lang": "en", "heldout": false, "combo": 39, "tpl": 0, "obj": "scrub brush", "i": 468}
+{"text": "take the scrubbing brush off the floor and place it on the bedroom floor", "lang": "en", "heldout": false, "combo": 39, "tpl": 1, "obj": "scrubbing brush", "i": 469}
+{"text": "move the scrubber from the floor onto the bedroom floor", "lang": "en", "heldout": false, "combo": 39, "tpl": 2, "obj": "scrubber", "i": 470}
+{"text": "grab the scrub brush on the floor and set it on the bedroom floor", "lang": "en", "heldout": false, "combo": 39, "tpl": 3, "obj": "scrub brush", "i": 471}
+{"text": "put the scrubbing brush that is on the floor onto the bedroom floor", "lang": "en", "heldout": false, "combo": 39, "tpl": 4, "obj": "scrubbing brush", "i": 472}
+{"text": "bring the scrubber from the floor and leave it on the bedroom floor", "lang": "en", "heldout": false, "combo": 39, "tpl": 5, "obj": "scrubber", "i": 473}
+{"text": "바닥에 있는 스크러브 브러쉬를 집어서 침실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 39, "tpl": 6, "obj": "scrub brush", "i": 474}
+{"text": "스크러핑 브러쉬를 바닥에서 들어 침실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 39, "tpl": 7, "obj": "scrubbing brush", "i": 475}
+{"text": "바닥 위의 스크러버를 침실 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 39, "tpl": 8, "obj": "scrubber", "i": 476}
+{"text": "스크러브 브러쉬 좀 바닥에서 가져와서 침실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 39, "tpl": 9, "obj": "scrub brush", "i": 477}
+{"text": "could you get the scrub brush off the floor and drop it on the bedroom floor", "lang": "en", "heldout": true, "combo": 39, "tpl": 10, "obj": "scrub brush", "i": 478}
+{"text": "바닥에 놓인 스크러브 브러쉬를 집어 침실 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 39, "tpl": 11, "obj": "scrub brush", "i": 479}
+{"text": "pick up the scrub brush from the floor and put it on the stand", "lang": "en", "heldout": false, "combo": 40, "tpl": 0, "obj": "scrub brush", "i": 480}
+{"text": "take the scrubbing brush off the floor and place it on the stand", "lang": "en", "heldout": false, "combo": 40, "tpl": 1, "obj": "scrubbing brush", "i": 481}
+{"text": "move the scrubber from the floor onto the stand", "lang": "en", "heldout": false, "combo": 40, "tpl": 2, "obj": "scrubber", "i": 482}
+{"text": "grab the scrub brush on the floor and set it on the stand", "lang": "en", "heldout": false, "combo": 40, "tpl": 3, "obj": "scrub brush", "i": 483}
+{"text": "put the scrubbing brush that is on the floor onto the stand", "lang": "en", "heldout": false, "combo": 40, "tpl": 4, "obj": "scrubbing brush", "i": 484}
+{"text": "bring the scrubber from the floor and leave it on the stand", "lang": "en", "heldout": false, "combo": 40, "tpl": 5, "obj": "scrubber", "i": 485}
+{"text": "바닥에 있는 스크러브 브러쉬를 집어서 삼각대 위에 놓아", "lang": "ko", "heldout": false, "combo": 40, "tpl": 6, "obj": "scrub brush", "i": 486}
+{"text": "스크러핑 브러쉬를 바닥에서 들어 삼각대 위에 놓아", "lang": "ko", "heldout": false, "combo": 40, "tpl": 7, "obj": "scrubbing brush", "i": 487}
+{"text": "바닥 위의 스크러버를 삼각대로 옮겨줘", "lang": "ko", "heldout": false, "combo": 40, "tpl": 8, "obj": "scrubber", "i": 488}
+{"text": "스크러브 브러쉬 좀 바닥에서 가져와서 삼각대 위에 놓아", "lang": "ko", "heldout": false, "combo": 40, "tpl": 9, "obj": "scrub brush", "i": 489}
+{"text": "could you get the scrub brush off the floor and drop it on the stand", "lang": "en", "heldout": true, "combo": 40, "tpl": 10, "obj": "scrub brush", "i": 490}
+{"text": "바닥에 놓인 스크러브 브러쉬를 집어 삼각대 위에 올려줘", "lang": "ko", "heldout": true, "combo": 40, "tpl": 11, "obj": "scrub brush", "i": 491}
+{"text": "pick up the scrub brush from the floor and put it on the nightstand", "lang": "en", "heldout": false, "combo": 41, "tpl": 0, "obj": "scrub brush", "i": 492}
+{"text": "take the scrubbing brush off the floor and place it on the nightstand", "lang": "en", "heldout": false, "combo": 41, "tpl": 1, "obj": "scrubbing brush", "i": 493}
+{"text": "move the scrubber from the floor onto the nightstand", "lang": "en", "heldout": false, "combo": 41, "tpl": 2, "obj": "scrubber", "i": 494}
+{"text": "grab the scrub brush on the floor and set it on the nightstand", "lang": "en", "heldout": false, "combo": 41, "tpl": 3, "obj": "scrub brush", "i": 495}
+{"text": "put the scrubbing brush that is on the floor onto the nightstand", "lang": "en", "heldout": false, "combo": 41, "tpl": 4, "obj": "scrubbing brush", "i": 496}
+{"text": "bring the scrubber from the floor and leave it on the nightstand", "lang": "en", "heldout": false, "combo": 41, "tpl": 5, "obj": "scrubber", "i": 497}
+{"text": "바닥에 있는 스크러브 브러쉬를 집어서 나잇스탠드 위에 놓아", "lang": "ko", "heldout": false, "combo": 41, "tpl": 6, "obj": "scrub brush", "i": 498}
+{"text": "스크러핑 브러쉬를 바닥에서 들어 나잇스탠드 위에 놓아", "lang": "ko", "heldout": false, "combo": 41, "tpl": 7, "obj": "scrubbing brush", "i": 499}
+{"text": "바닥 위의 스크러버를 나잇스탠드로 옮겨줘", "lang": "ko", "heldout": false, "combo": 41, "tpl": 8, "obj": "scrubber", "i": 500}
+{"text": "스크러브 브러쉬 좀 바닥에서 가져와서 나잇스탠드 위에 놓아", "lang": "ko", "heldout": false, "combo": 41, "tpl": 9, "obj": "scrub brush", "i": 501}
+{"text": "could you get the scrub brush off the floor and drop it on the nightstand", "lang": "en", "heldout": true, "combo": 41, "tpl": 10, "obj": "scrub brush", "i": 502}
+{"text": "바닥에 놓인 스크러브 브러쉬를 집어 나잇스탠드 위에 올려줘", "lang": "ko", "heldout": true, "combo": 41, "tpl": 11, "obj": "scrub brush", "i": 503}
+{"text": "pick up the stapler from the floor and put it on the childs room floor", "lang": "en", "heldout": false, "combo": 42, "tpl": 0, "obj": "stapler", "i": 504}
+{"text": "take the stapling machine off the floor and place it on the childs room floor", "lang": "en", "heldout": false, "combo": 42, "tpl": 1, "obj": "stapling machine", "i": 505}
+{"text": "move the stapler from the floor onto the childs room floor", "lang": "en", "heldout": false, "combo": 42, "tpl": 2, "obj": "stapler", "i": 506}
+{"text": "grab the stapling machine on the floor and set it on the childs room floor", "lang": "en", "heldout": false, "combo": 42, "tpl": 3, "obj": "stapling machine", "i": 507}
+{"text": "put the stapler that is on the floor onto the childs room floor", "lang": "en", "heldout": false, "combo": 42, "tpl": 4, "obj": "stapler", "i": 508}
+{"text": "bring the stapling machine from the floor and leave it on the childs room floor", "lang": "en", "heldout": false, "combo": 42, "tpl": 5, "obj": "stapling machine", "i": 509}
+{"text": "바닥에 있는 스테이플러를 집어서 아이 방 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 42, "tpl": 6, "obj": "stapler", "i": 510}
+{"text": "스테이플러를 바닥에서 들어 아이 방 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 42, "tpl": 7, "obj": "stapling machine", "i": 511}
+{"text": "바닥 위의 스테이플러를 아이 방 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 42, "tpl": 8, "obj": "stapler", "i": 512}
+{"text": "스테이플러 좀 바닥에서 가져와서 아이 방 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 42, "tpl": 9, "obj": "stapling machine", "i": 513}
+{"text": "could you get the stapler off the floor and drop it on the childs room floor", "lang": "en", "heldout": true, "combo": 42, "tpl": 10, "obj": "stapler", "i": 514}
+{"text": "바닥에 놓인 스테이플러를 집어 아이 방 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 42, "tpl": 11, "obj": "stapler", "i": 515}
+{"text": "pick up the stapler from the floor and put it on the nightstand", "lang": "en", "heldout": false, "combo": 43, "tpl": 0, "obj": "stapler", "i": 516}
+{"text": "take the stapling machine off the floor and place it on the nightstand", "lang": "en", "heldout": false, "combo": 43, "tpl": 1, "obj": "stapling machine", "i": 517}
+{"text": "move the stapler from the floor onto the nightstand", "lang": "en", "heldout": false, "combo": 43, "tpl": 2, "obj": "stapler", "i": 518}
+{"text": "grab the stapling machine on the floor and set it on the nightstand", "lang": "en", "heldout": false, "combo": 43, "tpl": 3, "obj": "stapling machine", "i": 519}
+{"text": "put the stapler that is on the floor onto the nightstand", "lang": "en", "heldout": false, "combo": 43, "tpl": 4, "obj": "stapler", "i": 520}
+{"text": "bring the stapling machine from the floor and leave it on the nightstand", "lang": "en", "heldout": false, "combo": 43, "tpl": 5, "obj": "stapling machine", "i": 521}
+{"text": "바닥에 있는 스테이플러를 집어서 나잇스탠드 위에 놓아", "lang": "ko", "heldout": false, "combo": 43, "tpl": 6, "obj": "stapler", "i": 522}
+{"text": "스테이플러를 바닥에서 들어 나잇스탠드 위에 놓아", "lang": "ko", "heldout": false, "combo": 43, "tpl": 7, "obj": "stapling machine", "i": 523}
+{"text": "바닥 위의 스테이플러를 나잇스탠드로 옮겨줘", "lang": "ko", "heldout": false, "combo": 43, "tpl": 8, "obj": "stapler", "i": 524}
+{"text": "스테이플러 좀 바닥에서 가져와서 나잇스탠드 위에 놓아", "lang": "ko", "heldout": false, "combo": 43, "tpl": 9, "obj": "stapling machine", "i": 525}
+{"text": "could you get the stapler off the floor and drop it on the nightstand", "lang": "en", "heldout": true, "combo": 43, "tpl": 10, "obj": "stapler", "i": 526}
+{"text": "바닥에 놓인 스테이플러를 집어 나잇스탠드 위에 올려줘", "lang": "ko", "heldout": true, "combo": 43, "tpl": 11, "obj": "stapler", "i": 527}
+{"text": "pick up the sweet corn from the wicker basket and put it on the living room floor", "lang": "en", "heldout": false, "combo": 44, "tpl": 0, "obj": "sweet corn", "i": 528}
+{"text": "take the green corn off the wicker basket and place it on the living room floor", "lang": "en", "heldout": false, "combo": 44, "tpl": 1, "obj": "green corn", "i": 529}
+{"text": "move the sweet corn from the wicker basket onto the living room floor", "lang": "en", "heldout": false, "combo": 44, "tpl": 2, "obj": "sweet corn", "i": 530}
+{"text": "grab the green corn on the wicker basket and set it on the living room floor", "lang": "en", "heldout": false, "combo": 44, "tpl": 3, "obj": "green corn", "i": 531}
+{"text": "put the sweet corn that is on the wicker basket onto the living room floor", "lang": "en", "heldout": false, "combo": 44, "tpl": 4, "obj": "sweet corn", "i": 532}
+{"text": "bring the green corn from the wicker basket and leave it on the living room floor", "lang": "en", "heldout": false, "combo": 44, "tpl": 5, "obj": "green corn", "i": 533}
+{"text": "비커 바구니에 있는 달콤한 옥수수를 집어서 거실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 44, "tpl": 6, "obj": "sweet corn", "i": 534}
+{"text": "녹색 옥수수를 비커 바구니에서 들어 거실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 44, "tpl": 7, "obj": "green corn", "i": 535}
+{"text": "비커 바구니 위의 달콤한 옥수수를 거실 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 44, "tpl": 8, "obj": "sweet corn", "i": 536}
+{"text": "녹색 옥수수 좀 비커 바구니에서 가져와서 거실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 44, "tpl": 9, "obj": "green corn", "i": 537}
+{"text": "could you get the sweet corn off the wicker basket and drop it on the living room floor", "lang": "en", "heldout": true, "combo": 44, "tpl": 10, "obj": "sweet corn", "i": 538}
+{"text": "비커 바구니에 놓인 달콤한 옥수수를 집어 거실 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 44, "tpl": 11, "obj": "sweet corn", "i": 539}
+{"text": "pick up the sweet corn from the wicker basket and put it on the entryway floor", "lang": "en", "heldout": false, "combo": 45, "tpl": 0, "obj": "sweet corn", "i": 540}
+{"text": "take the green corn off the wicker basket and place it on the entryway floor", "lang": "en", "heldout": false, "combo": 45, "tpl": 1, "obj": "green corn", "i": 541}
+{"text": "move the sweet corn from the wicker basket onto the entryway floor", "lang": "en", "heldout": false, "combo": 45, "tpl": 2, "obj": "sweet corn", "i": 542}
+{"text": "grab the green corn on the wicker basket and set it on the entryway floor", "lang": "en", "heldout": false, "combo": 45, "tpl": 3, "obj": "green corn", "i": 543}
+{"text": "put the sweet corn that is on the wicker basket onto the entryway floor", "lang": "en", "heldout": false, "combo": 45, "tpl": 4, "obj": "sweet corn", "i": 544}
+{"text": "bring the green corn from the wicker basket and leave it on the entryway floor", "lang": "en", "heldout": false, "combo": 45, "tpl": 5, "obj": "green corn", "i": 545}
+{"text": "비커 바구니에 있는 달콤한 옥수수를 집어서 현관 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 45, "tpl": 6, "obj": "sweet corn", "i": 546}
+{"text": "녹색 옥수수를 비커 바구니에서 들어 현관 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 45, "tpl": 7, "obj": "green corn", "i": 547}
+{"text": "비커 바구니 위의 달콤한 옥수수를 현관 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 45, "tpl": 8, "obj": "sweet corn", "i": 548}
+{"text": "녹색 옥수수 좀 비커 바구니에서 가져와서 현관 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 45, "tpl": 9, "obj": "green corn", "i": 549}
+{"text": "could you get the sweet corn off the wicker basket and drop it on the entryway floor", "lang": "en", "heldout": true, "combo": 45, "tpl": 10, "obj": "sweet corn", "i": 550}
+{"text": "비커 바구니에 놓인 달콤한 옥수수를 집어 현관 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 45, "tpl": 11, "obj": "sweet corn", "i": 551}
+{"text": "pick up the sweet corn from the wicker basket and put it on the kitchen floor", "lang": "en", "heldout": false, "combo": 46, "tpl": 0, "obj": "sweet corn", "i": 552}
+{"text": "take the green corn off the wicker basket and place it on the kitchen floor", "lang": "en", "heldout": false, "combo": 46, "tpl": 1, "obj": "green corn", "i": 553}
+{"text": "move the sweet corn from the wicker basket onto the kitchen floor", "lang": "en", "heldout": false, "combo": 46, "tpl": 2, "obj": "sweet corn", "i": 554}
+{"text": "grab the green corn on the wicker basket and set it on the kitchen floor", "lang": "en", "heldout": false, "combo": 46, "tpl": 3, "obj": "green corn", "i": 555}
+{"text": "put the sweet corn that is on the wicker basket onto the kitchen floor", "lang": "en", "heldout": false, "combo": 46, "tpl": 4, "obj": "sweet corn", "i": 556}
+{"text": "bring the green corn from the wicker basket and leave it on the kitchen floor", "lang": "en", "heldout": false, "combo": 46, "tpl": 5, "obj": "green corn", "i": 557}
+{"text": "비커 바구니에 있는 달콤한 옥수수를 집어서 부엌 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 46, "tpl": 6, "obj": "sweet corn", "i": 558}
+{"text": "녹색 옥수수를 비커 바구니에서 들어 부엌 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 46, "tpl": 7, "obj": "green corn", "i": 559}
+{"text": "비커 바구니 위의 달콤한 옥수수를 부엌 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 46, "tpl": 8, "obj": "sweet corn", "i": 560}
+{"text": "녹색 옥수수 좀 비커 바구니에서 가져와서 부엌 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 46, "tpl": 9, "obj": "green corn", "i": 561}
+{"text": "could you get the sweet corn off the wicker basket and drop it on the kitchen floor", "lang": "en", "heldout": true, "combo": 46, "tpl": 10, "obj": "sweet corn", "i": 562}
+{"text": "비커 바구니에 놓인 달콤한 옥수수를 집어 부엌 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 46, "tpl": 11, "obj": "sweet corn", "i": 563}
+{"text": "pick up the sweet corn from the wicker basket and put it on the dining room floor", "lang": "en", "heldout": false, "combo": 47, "tpl": 0, "obj": "sweet corn", "i": 564}
+{"text": "take the green corn off the wicker basket and place it on the dining room floor", "lang": "en", "heldout": false, "combo": 47, "tpl": 1, "obj": "green corn", "i": 565}
+{"text": "move the sweet corn from the wicker basket onto the dining room floor", "lang": "en", "heldout": false, "combo": 47, "tpl": 2, "obj": "sweet corn", "i": 566}
+{"text": "grab the green corn on the wicker basket and set it on the dining room floor", "lang": "en", "heldout": false, "combo": 47, "tpl": 3, "obj": "green corn", "i": 567}
+{"text": "put the sweet corn that is on the wicker basket onto the dining room floor", "lang": "en", "heldout": false, "combo": 47, "tpl": 4, "obj": "sweet corn", "i": 568}
+{"text": "bring the green corn from the wicker basket and leave it on the dining room floor", "lang": "en", "heldout": false, "combo": 47, "tpl": 5, "obj": "green corn", "i": 569}
+{"text": "비커 바구니에 있는 달콤한 옥수수를 집어서 식당 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 47, "tpl": 6, "obj": "sweet corn", "i": 570}
+{"text": "녹색 옥수수를 비커 바구니에서 들어 식당 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 47, "tpl": 7, "obj": "green corn", "i": 571}
+{"text": "비커 바구니 위의 달콤한 옥수수를 식당 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 47, "tpl": 8, "obj": "sweet corn", "i": 572}
+{"text": "녹색 옥수수 좀 비커 바구니에서 가져와서 식당 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 47, "tpl": 9, "obj": "green corn", "i": 573}
+{"text": "could you get the sweet corn off the wicker basket and drop it on the dining room floor", "lang": "en", "heldout": true, "combo": 47, "tpl": 10, "obj": "sweet corn", "i": 574}
+{"text": "비커 바구니에 놓인 달콤한 옥수수를 집어 식당 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 47, "tpl": 11, "obj": "sweet corn", "i": 575}
+{"text": "pick up the sweet corn from the wicker basket and put it on the coffee table", "lang": "en", "heldout": false, "combo": 48, "tpl": 0, "obj": "sweet corn", "i": 576}
+{"text": "take the green corn off the wicker basket and place it on the coffee table", "lang": "en", "heldout": false, "combo": 48, "tpl": 1, "obj": "green corn", "i": 577}
+{"text": "move the sweet corn from the wicker basket onto the coffee table", "lang": "en", "heldout": false, "combo": 48, "tpl": 2, "obj": "sweet corn", "i": 578}
+{"text": "grab the green corn on the wicker basket and set it on the coffee table", "lang": "en", "heldout": false, "combo": 48, "tpl": 3, "obj": "green corn", "i": 579}
+{"text": "put the sweet corn that is on the wicker basket onto the coffee table", "lang": "en", "heldout": false, "combo": 48, "tpl": 4, "obj": "sweet corn", "i": 580}
+{"text": "bring the green corn from the wicker basket and leave it on the coffee table", "lang": "en", "heldout": false, "combo": 48, "tpl": 5, "obj": "green corn", "i": 581}
+{"text": "비커 바구니에 있는 달콤한 옥수수를 집어서 커피 테이블 위에 놓아", "lang": "ko", "heldout": false, "combo": 48, "tpl": 6, "obj": "sweet corn", "i": 582}
+{"text": "녹색 옥수수를 비커 바구니에서 들어 커피 테이블 위에 놓아", "lang": "ko", "heldout": false, "combo": 48, "tpl": 7, "obj": "green corn", "i": 583}
+{"text": "비커 바구니 위의 달콤한 옥수수를 커피 테이블으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 48, "tpl": 8, "obj": "sweet corn", "i": 584}
+{"text": "녹색 옥수수 좀 비커 바구니에서 가져와서 커피 테이블 위에 놓아", "lang": "ko", "heldout": false, "combo": 48, "tpl": 9, "obj": "green corn", "i": 585}
+{"text": "could you get the sweet corn off the wicker basket and drop it on the coffee table", "lang": "en", "heldout": true, "combo": 48, "tpl": 10, "obj": "sweet corn", "i": 586}
+{"text": "비커 바구니에 놓인 달콤한 옥수수를 집어 커피 테이블 위에 올려줘", "lang": "ko", "heldout": true, "combo": 48, "tpl": 11, "obj": "sweet corn", "i": 587}
+{"text": "pick up the sweet corn from the wicker basket and put it on the furniture", "lang": "en", "heldout": false, "combo": 49, "tpl": 0, "obj": "sweet corn", "i": 588}
+{"text": "take the green corn off the wicker basket and place it on the furniture", "lang": "en", "heldout": false, "combo": 49, "tpl": 1, "obj": "green corn", "i": 589}
+{"text": "move the sweet corn from the wicker basket onto the furniture", "lang": "en", "heldout": false, "combo": 49, "tpl": 2, "obj": "sweet corn", "i": 590}
+{"text": "grab the green corn on the wicker basket and set it on the furniture", "lang": "en", "heldout": false, "combo": 49, "tpl": 3, "obj": "green corn", "i": 591}
+{"text": "put the sweet corn that is on the wicker basket onto the furniture", "lang": "en", "heldout": false, "combo": 49, "tpl": 4, "obj": "sweet corn", "i": 592}
+{"text": "bring the green corn from the wicker basket and leave it on the furniture", "lang": "en", "heldout": false, "combo": 49, "tpl": 5, "obj": "green corn", "i": 593}
+{"text": "비커 바구니에 있는 달콤한 옥수수를 집어서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 49, "tpl": 6, "obj": "sweet corn", "i": 594}
+{"text": "녹색 옥수수를 비커 바구니에서 들어 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 49, "tpl": 7, "obj": "green corn", "i": 595}
+{"text": "비커 바구니 위의 달콤한 옥수수를 가구로 옮겨줘", "lang": "ko", "heldout": false, "combo": 49, "tpl": 8, "obj": "sweet corn", "i": 596}
+{"text": "녹색 옥수수 좀 비커 바구니에서 가져와서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 49, "tpl": 9, "obj": "green corn", "i": 597}
+{"text": "could you get the sweet corn off the wicker basket and drop it on the furniture", "lang": "en", "heldout": true, "combo": 49, "tpl": 10, "obj": "sweet corn", "i": 598}
+{"text": "비커 바구니에 놓인 달콤한 옥수수를 집어 가구 위에 올려줘", "lang": "ko", "heldout": true, "combo": 49, "tpl": 11, "obj": "sweet corn", "i": 599}
+{"text": "pick up the toothbrush from the basket and put it on the bedroom floor", "lang": "en", "heldout": false, "combo": 50, "tpl": 0, "obj": "toothbrush", "i": 600}
+{"text": "take the toothbrush off the basket and place it on the bedroom floor", "lang": "en", "heldout": false, "combo": 50, "tpl": 1, "obj": "toothbrush", "i": 601}
+{"text": "move the toothbrush from the basket onto the bedroom floor", "lang": "en", "heldout": false, "combo": 50, "tpl": 2, "obj": "toothbrush", "i": 602}
+{"text": "grab the toothbrush on the basket and set it on the bedroom floor", "lang": "en", "heldout": false, "combo": 50, "tpl": 3, "obj": "toothbrush", "i": 603}
+{"text": "put the toothbrush that is on the basket onto the bedroom floor", "lang": "en", "heldout": false, "combo": 50, "tpl": 4, "obj": "toothbrush", "i": 604}
+{"text": "bring the toothbrush from the basket and leave it on the bedroom floor", "lang": "en", "heldout": false, "combo": 50, "tpl": 5, "obj": "toothbrush", "i": 605}
+{"text": "바구니에 있는 칫솔을 집어서 침실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 50, "tpl": 6, "obj": "toothbrush", "i": 606}
+{"text": "칫솔을 바구니에서 들어 침실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 50, "tpl": 7, "obj": "toothbrush", "i": 607}
+{"text": "바구니 위의 칫솔을 침실 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 50, "tpl": 8, "obj": "toothbrush", "i": 608}
+{"text": "칫솔 좀 바구니에서 가져와서 침실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 50, "tpl": 9, "obj": "toothbrush", "i": 609}
+{"text": "could you get the toothbrush off the basket and drop it on the bedroom floor", "lang": "en", "heldout": true, "combo": 50, "tpl": 10, "obj": "toothbrush", "i": 610}
+{"text": "바구니에 놓인 칫솔을 집어 침실 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 50, "tpl": 11, "obj": "toothbrush", "i": 611}
+{"text": "pick up the toothbrush from the basket and put it in the basket", "lang": "en", "heldout": false, "combo": 51, "tpl": 0, "obj": "toothbrush", "i": 612}
+{"text": "take the toothbrush off the basket and place it in the basket", "lang": "en", "heldout": false, "combo": 51, "tpl": 1, "obj": "toothbrush", "i": 613}
+{"text": "move the toothbrush from the basket into the basket", "lang": "en", "heldout": false, "combo": 51, "tpl": 2, "obj": "toothbrush", "i": 614}
+{"text": "grab the toothbrush on the basket and set it in the basket", "lang": "en", "heldout": false, "combo": 51, "tpl": 3, "obj": "toothbrush", "i": 615}
+{"text": "put the toothbrush that is on the basket into the basket", "lang": "en", "heldout": false, "combo": 51, "tpl": 4, "obj": "toothbrush", "i": 616}
+{"text": "bring the toothbrush from the basket and leave it in the basket", "lang": "en", "heldout": false, "combo": 51, "tpl": 5, "obj": "toothbrush", "i": 617}
+{"text": "바구니에 있는 칫솔을 집어서 바구니 안에 넣어", "lang": "ko", "heldout": false, "combo": 51, "tpl": 6, "obj": "toothbrush", "i": 618}
+{"text": "칫솔을 바구니에서 들어 바구니 안에 넣어", "lang": "ko", "heldout": false, "combo": 51, "tpl": 7, "obj": "toothbrush", "i": 619}
+{"text": "바구니 위의 칫솔을 바구니로 옮겨줘", "lang": "ko", "heldout": false, "combo": 51, "tpl": 8, "obj": "toothbrush", "i": 620}
+{"text": "칫솔 좀 바구니에서 가져와서 바구니 안에 넣어", "lang": "ko", "heldout": false, "combo": 51, "tpl": 9, "obj": "toothbrush", "i": 621}
+{"text": "could you get the toothbrush off the basket and drop it in the basket", "lang": "en", "heldout": true, "combo": 51, "tpl": 10, "obj": "toothbrush", "i": 622}
+{"text": "바구니에 놓인 칫솔을 집어 바구니 안에 넣어줘", "lang": "ko", "heldout": true, "combo": 51, "tpl": 11, "obj": "toothbrush", "i": 623}
+{"text": "pick up the toothbrush from the basket and put it on the nightstand", "lang": "en", "heldout": false, "combo": 52, "tpl": 0, "obj": "toothbrush", "i": 624}
+{"text": "take the toothbrush off the basket and place it on the nightstand", "lang": "en", "heldout": false, "combo": 52, "tpl": 1, "obj": "toothbrush", "i": 625}
+{"text": "move the toothbrush from the basket onto the nightstand", "lang": "en", "heldout": false, "combo": 52, "tpl": 2, "obj": "toothbrush", "i": 626}
+{"text": "grab the toothbrush on the basket and set it on the nightstand", "lang": "en", "heldout": false, "combo": 52, "tpl": 3, "obj": "toothbrush", "i": 627}
+{"text": "put the toothbrush that is on the basket onto the nightstand", "lang": "en", "heldout": false, "combo": 52, "tpl": 4, "obj": "toothbrush", "i": 628}
+{"text": "bring the toothbrush from the basket and leave it on the nightstand", "lang": "en", "heldout": false, "combo": 52, "tpl": 5, "obj": "toothbrush", "i": 629}
+{"text": "바구니에 있는 칫솔을 집어서 나잇스탠드 위에 놓아", "lang": "ko", "heldout": false, "combo": 52, "tpl": 6, "obj": "toothbrush", "i": 630}
+{"text": "칫솔을 바구니에서 들어 나잇스탠드 위에 놓아", "lang": "ko", "heldout": false, "combo": 52, "tpl": 7, "obj": "toothbrush", "i": 631}
+{"text": "바구니 위의 칫솔을 나잇스탠드로 옮겨줘", "lang": "ko", "heldout": false, "combo": 52, "tpl": 8, "obj": "toothbrush", "i": 632}
+{"text": "칫솔 좀 바구니에서 가져와서 나잇스탠드 위에 놓아", "lang": "ko", "heldout": false, "combo": 52, "tpl": 9, "obj": "toothbrush", "i": 633}
+{"text": "could you get the toothbrush off the basket and drop it on the nightstand", "lang": "en", "heldout": true, "combo": 52, "tpl": 10, "obj": "toothbrush", "i": 634}
+{"text": "바구니에 놓인 칫솔을 집어 나잇스탠드 위에 올려줘", "lang": "ko", "heldout": true, "combo": 52, "tpl": 11, "obj": "toothbrush", "i": 635}
+{"text": "pick up the toothbrush from the basket and put it on the furniture", "lang": "en", "heldout": false, "combo": 53, "tpl": 0, "obj": "toothbrush", "i": 636}
+{"text": "take the toothbrush off the basket and place it on the furniture", "lang": "en", "heldout": false, "combo": 53, "tpl": 1, "obj": "toothbrush", "i": 637}
+{"text": "move the toothbrush from the basket onto the furniture", "lang": "en", "heldout": false, "combo": 53, "tpl": 2, "obj": "toothbrush", "i": 638}
+{"text": "grab the toothbrush on the basket and set it on the furniture", "lang": "en", "heldout": false, "combo": 53, "tpl": 3, "obj": "toothbrush", "i": 639}
+{"text": "put the toothbrush that is on the basket onto the furniture", "lang": "en", "heldout": false, "combo": 53, "tpl": 4, "obj": "toothbrush", "i": 640}
+{"text": "bring the toothbrush from the basket and leave it on the furniture", "lang": "en", "heldout": false, "combo": 53, "tpl": 5, "obj": "toothbrush", "i": 641}
+{"text": "바구니에 있는 칫솔을 집어서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 53, "tpl": 6, "obj": "toothbrush", "i": 642}
+{"text": "칫솔을 바구니에서 들어 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 53, "tpl": 7, "obj": "toothbrush", "i": 643}
+{"text": "바구니 위의 칫솔을 가구로 옮겨줘", "lang": "ko", "heldout": false, "combo": 53, "tpl": 8, "obj": "toothbrush", "i": 644}
+{"text": "칫솔 좀 바구니에서 가져와서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 53, "tpl": 9, "obj": "toothbrush", "i": 645}
+{"text": "could you get the toothbrush off the basket and drop it on the furniture", "lang": "en", "heldout": true, "combo": 53, "tpl": 10, "obj": "toothbrush", "i": 646}
+{"text": "바구니에 놓인 칫솔을 집어 가구 위에 올려줘", "lang": "ko", "heldout": true, "combo": 53, "tpl": 11, "obj": "toothbrush", "i": 647}
+{"text": "pick up the trowel from the floor and put it on the furniture", "lang": "en", "heldout": false, "combo": 54, "tpl": 0, "obj": "trowel", "i": 648}
+{"text": "take the trowel off the floor and place it on the furniture", "lang": "en", "heldout": false, "combo": 54, "tpl": 1, "obj": "trowel", "i": 649}
+{"text": "move the trowel from the floor onto the furniture", "lang": "en", "heldout": false, "combo": 54, "tpl": 2, "obj": "trowel", "i": 650}
+{"text": "grab the trowel on the floor and set it on the furniture", "lang": "en", "heldout": false, "combo": 54, "tpl": 3, "obj": "trowel", "i": 651}
+{"text": "put the trowel that is on the floor onto the furniture", "lang": "en", "heldout": false, "combo": 54, "tpl": 4, "obj": "trowel", "i": 652}
+{"text": "bring the trowel from the floor and leave it on the furniture", "lang": "en", "heldout": false, "combo": 54, "tpl": 5, "obj": "trowel", "i": 653}
+{"text": "바닥에 있는 모종삽을 집어서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 54, "tpl": 6, "obj": "trowel", "i": 654}
+{"text": "모종삽을 바닥에서 들어 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 54, "tpl": 7, "obj": "trowel", "i": 655}
+{"text": "바닥 위의 모종삽을 가구로 옮겨줘", "lang": "ko", "heldout": false, "combo": 54, "tpl": 8, "obj": "trowel", "i": 656}
+{"text": "모종삽 좀 바닥에서 가져와서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 54, "tpl": 9, "obj": "trowel", "i": 657}
+{"text": "could you get the trowel off the floor and drop it on the furniture", "lang": "en", "heldout": true, "combo": 54, "tpl": 10, "obj": "trowel", "i": 658}
+{"text": "바닥에 놓인 모종삽을 집어 가구 위에 올려줘", "lang": "ko", "heldout": true, "combo": 54, "tpl": 11, "obj": "trowel", "i": 659}
+{"text": "pick up the tube of toothpaste from the basket and put it on the bedroom floor", "lang": "en", "heldout": false, "combo": 55, "tpl": 0, "obj": "tube of toothpaste", "i": 660}
+{"text": "take the tube of toothpaste off the basket and place it on the bedroom floor", "lang": "en", "heldout": false, "combo": 55, "tpl": 1, "obj": "tube of toothpaste", "i": 661}
+{"text": "move the tube of toothpaste from the basket onto the bedroom floor", "lang": "en", "heldout": false, "combo": 55, "tpl": 2, "obj": "tube of toothpaste", "i": 662}
+{"text": "grab the tube of toothpaste on the basket and set it on the bedroom floor", "lang": "en", "heldout": false, "combo": 55, "tpl": 3, "obj": "tube of toothpaste", "i": 663}
+{"text": "put the tube of toothpaste that is on the basket onto the bedroom floor", "lang": "en", "heldout": false, "combo": 55, "tpl": 4, "obj": "tube of toothpaste", "i": 664}
+{"text": "bring the tube of toothpaste from the basket and leave it on the bedroom floor", "lang": "en", "heldout": false, "combo": 55, "tpl": 5, "obj": "tube of toothpaste", "i": 665}
+{"text": "바구니에 있는 치아파스트의 튜브를 집어서 침실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 55, "tpl": 6, "obj": "tube of toothpaste", "i": 666}
+{"text": "치아파스트의 튜브를 바구니에서 들어 침실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 55, "tpl": 7, "obj": "tube of toothpaste", "i": 667}
+{"text": "바구니 위의 치아파스트의 튜브를 침실 바닥으로 옮겨줘", "lang": "ko", "heldout": false, "combo": 55, "tpl": 8, "obj": "tube of toothpaste", "i": 668}
+{"text": "치아파스트의 튜브 좀 바구니에서 가져와서 침실 바닥 위에 놓아", "lang": "ko", "heldout": false, "combo": 55, "tpl": 9, "obj": "tube of toothpaste", "i": 669}
+{"text": "could you get the tube of toothpaste off the basket and drop it on the bedroom floor", "lang": "en", "heldout": true, "combo": 55, "tpl": 10, "obj": "tube of toothpaste", "i": 670}
+{"text": "바구니에 놓인 치아파스트의 튜브를 집어 침실 바닥 위에 올려줘", "lang": "ko", "heldout": true, "combo": 55, "tpl": 11, "obj": "tube of toothpaste", "i": 671}
+{"text": "pick up the tube of toothpaste from the basket and put it in the basket", "lang": "en", "heldout": false, "combo": 56, "tpl": 0, "obj": "tube of toothpaste", "i": 672}
+{"text": "take the tube of toothpaste off the basket and place it in the basket", "lang": "en", "heldout": false, "combo": 56, "tpl": 1, "obj": "tube of toothpaste", "i": 673}
+{"text": "move the tube of toothpaste from the basket into the basket", "lang": "en", "heldout": false, "combo": 56, "tpl": 2, "obj": "tube of toothpaste", "i": 674}
+{"text": "grab the tube of toothpaste on the basket and set it in the basket", "lang": "en", "heldout": false, "combo": 56, "tpl": 3, "obj": "tube of toothpaste", "i": 675}
+{"text": "put the tube of toothpaste that is on the basket into the basket", "lang": "en", "heldout": false, "combo": 56, "tpl": 4, "obj": "tube of toothpaste", "i": 676}
+{"text": "bring the tube of toothpaste from the basket and leave it in the basket", "lang": "en", "heldout": false, "combo": 56, "tpl": 5, "obj": "tube of toothpaste", "i": 677}
+{"text": "바구니에 있는 치아파스트의 튜브를 집어서 바구니 안에 넣어", "lang": "ko", "heldout": false, "combo": 56, "tpl": 6, "obj": "tube of toothpaste", "i": 678}
+{"text": "치아파스트의 튜브를 바구니에서 들어 바구니 안에 넣어", "lang": "ko", "heldout": false, "combo": 56, "tpl": 7, "obj": "tube of toothpaste", "i": 679}
+{"text": "바구니 위의 치아파스트의 튜브를 바구니로 옮겨줘", "lang": "ko", "heldout": false, "combo": 56, "tpl": 8, "obj": "tube of toothpaste", "i": 680}
+{"text": "치아파스트의 튜브 좀 바구니에서 가져와서 바구니 안에 넣어", "lang": "ko", "heldout": false, "combo": 56, "tpl": 9, "obj": "tube of toothpaste", "i": 681}
+{"text": "could you get the tube of toothpaste off the basket and drop it in the basket", "lang": "en", "heldout": true, "combo": 56, "tpl": 10, "obj": "tube of toothpaste", "i": 682}
+{"text": "바구니에 놓인 치아파스트의 튜브를 집어 바구니 안에 넣어줘", "lang": "ko", "heldout": true, "combo": 56, "tpl": 11, "obj": "tube of toothpaste", "i": 683}
+{"text": "pick up the tube of toothpaste from the basket and put it on the nightstand", "lang": "en", "heldout": false, "combo": 57, "tpl": 0, "obj": "tube of toothpaste", "i": 684}
+{"text": "take the tube of toothpaste off the basket and place it on the nightstand", "lang": "en", "heldout": false, "combo": 57, "tpl": 1, "obj": "tube of toothpaste", "i": 685}
+{"text": "move the tube of toothpaste from the basket onto the nightstand", "lang": "en", "heldout": false, "combo": 57, "tpl": 2, "obj": "tube of toothpaste", "i": 686}
+{"text": "grab the tube of toothpaste on the basket and set it on the nightstand", "lang": "en", "heldout": false, "combo": 57, "tpl": 3, "obj": "tube of toothpaste", "i": 687}
+{"text": "put the tube of toothpaste that is on the basket onto the nightstand", "lang": "en", "heldout": false, "combo": 57, "tpl": 4, "obj": "tube of toothpaste", "i": 688}
+{"text": "bring the tube of toothpaste from the basket and leave it on the nightstand", "lang": "en", "heldout": false, "combo": 57, "tpl": 5, "obj": "tube of toothpaste", "i": 689}
+{"text": "바구니에 있는 치아파스트의 튜브를 집어서 나잇스탠드 위에 놓아", "lang": "ko", "heldout": false, "combo": 57, "tpl": 6, "obj": "tube of toothpaste", "i": 690}
+{"text": "치아파스트의 튜브를 바구니에서 들어 나잇스탠드 위에 놓아", "lang": "ko", "heldout": false, "combo": 57, "tpl": 7, "obj": "tube of toothpaste", "i": 691}
+{"text": "바구니 위의 치아파스트의 튜브를 나잇스탠드로 옮겨줘", "lang": "ko", "heldout": false, "combo": 57, "tpl": 8, "obj": "tube of toothpaste", "i": 692}
+{"text": "치아파스트의 튜브 좀 바구니에서 가져와서 나잇스탠드 위에 놓아", "lang": "ko", "heldout": false, "combo": 57, "tpl": 9, "obj": "tube of toothpaste", "i": 693}
+{"text": "could you get the tube of toothpaste off the basket and drop it on the nightstand", "lang": "en", "heldout": true, "combo": 57, "tpl": 10, "obj": "tube of toothpaste", "i": 694}
+{"text": "바구니에 놓인 치아파스트의 튜브를 집어 나잇스탠드 위에 올려줘", "lang": "ko", "heldout": true, "combo": 57, "tpl": 11, "obj": "tube of toothpaste", "i": 695}
+{"text": "pick up the tube of toothpaste from the basket and put it on the furniture", "lang": "en", "heldout": false, "combo": 58, "tpl": 0, "obj": "tube of toothpaste", "i": 696}
+{"text": "take the tube of toothpaste off the basket and place it on the furniture", "lang": "en", "heldout": false, "combo": 58, "tpl": 1, "obj": "tube of toothpaste", "i": 697}
+{"text": "move the tube of toothpaste from the basket onto the furniture", "lang": "en", "heldout": false, "combo": 58, "tpl": 2, "obj": "tube of toothpaste", "i": 698}
+{"text": "grab the tube of toothpaste on the basket and set it on the furniture", "lang": "en", "heldout": false, "combo": 58, "tpl": 3, "obj": "tube of toothpaste", "i": 699}
+{"text": "put the tube of toothpaste that is on the basket onto the furniture", "lang": "en", "heldout": false, "combo": 58, "tpl": 4, "obj": "tube of toothpaste", "i": 700}
+{"text": "bring the tube of toothpaste from the basket and leave it on the furniture", "lang": "en", "heldout": false, "combo": 58, "tpl": 5, "obj": "tube of toothpaste", "i": 701}
+{"text": "바구니에 있는 치아파스트의 튜브를 집어서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 58, "tpl": 6, "obj": "tube of toothpaste", "i": 702}
+{"text": "치아파스트의 튜브를 바구니에서 들어 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 58, "tpl": 7, "obj": "tube of toothpaste", "i": 703}
+{"text": "바구니 위의 치아파스트의 튜브를 가구로 옮겨줘", "lang": "ko", "heldout": false, "combo": 58, "tpl": 8, "obj": "tube of toothpaste", "i": 704}
+{"text": "치아파스트의 튜브 좀 바구니에서 가져와서 가구 위에 놓아", "lang": "ko", "heldout": false, "combo": 58, "tpl": 9, "obj": "tube of toothpaste", "i": 705}
+{"text": "could you get the tube of toothpaste off the basket and drop it on the furniture", "lang": "en", "heldout": true, "combo": 58, "tpl": 10, "obj": "tube of toothpaste", "i": 706}
+{"text": "바구니에 놓인 치아파스트의 튜브를 집어 가구 위에 올려줘", "lang": "ko", "heldout": true, "combo": 58, "tpl": 11, "obj": "tube of toothpaste", "i": 707}
