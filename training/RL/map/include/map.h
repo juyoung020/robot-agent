@@ -229,6 +229,13 @@ constexpr int NPART = (NT + 31) / 32;
 
 // 블록 안 작업 공간(GPU 공유 메모리, CPU 지역 변수)
 struct Scratch {
+  // ---- 앞 부분(geo ~ hit)은 물체 단계(obj_absence)까지만 쓴다. GPU 는 그 뒤(격자 표시 동안) 이 자리에 점유 비트를 비동기로 옮겨 두고
+  //      격자 갱신이 바뀐 낱말을 고쳐 쓴다 — 벽 단계(WallScratch::occ, 같은 자리 = 0)가 전역에서 다시 읽지 않게
+  alignas(16) DetGeo geo[N_PRIM];   // 보임 점과 무관한 판정의 기하(검출이 다시 씀)
+  Det det[MAXDET];
+  float key[MAXDET * KSLOT];        // 짝 열쇠(관측 × 칸), 짝 아님 = -1
+  int obs_to[MAXDET], hit[KSLOT];
+  // ---- 뒤 부분은 격자 갱신·끝까지 쓴다
   union {
     struct { uint32_t hitb[NWORD], missb[NWORD]; };   // 격자 표시(phase_mark 부터)
     struct {                                           // 열 끝(phase_cast → phase_mark 앞까지). 열 방향은 열 번호로 다시 구함
@@ -242,17 +249,15 @@ struct Scratch {
   float partf[NPART];               // 짝 후보 열쇠(CPU 일반판)
   int part2[NPART];                 // 둘째 부분합: 새로 본 방 칸 중 방 1·2 (방 1 | 방 2 << 16)
   int pcand[N_PRIM];                // 보임 점과 무관한 검출 판정을 넘은 물체(후보)
-  DetGeo geo[N_PRIM];               // 그 판정의 기하(검출이 다시 씀)
   float tc, ts, to[3];              // 참 yaw 의 cos·sin, 참 카메라 위치
   int found[N_PRIM];                // 완성도: 참 물체마다 확정 칸이 있나
-  Det det[MAXDET];
-  float key[MAXDET * KSLOT];        // 짝 열쇠(관측 × 칸), 짝 아님 = -1
-  int obs_to[MAXDET], hit[KSLOT];
   int nd, more;
   int flags;                        // phase_begin 결과(B_KF, B_RESET)
   int occ_chg;                      // 이번 keyframe 에 점유 비트가 바뀐 낱말이 있나(벽 선분 다시 할지)
   float ec, es;                     // 믿는 yaw 의 cos·sin
 };
+static_assert(offsetof(Scratch, hitb) >= sizeof(uint32_t) * NWORD, "occupancy copy (offset 0) must fit in the dead object-phase region");
+DEV uint32_t* scr_occ(Scratch& sh) { return reinterpret_cast<uint32_t*>(&sh); }   // 점유 비트 사본(GPU, 격자 표시 뒤) = WallScratch::occ
 
 struct EnvView { float x, y, yaw, v, w, tx, ty, rhx, rhy; float q[env::N_Q]; int ep; };
 DEV EnvView read_env(const env::Soa& s, int i) {
@@ -1215,8 +1220,26 @@ constexpr int MARK_CPT = (NCOL + NT - 1) / NT;   // 스레드마다 열 수(GPU)
 constexpr int MARK_CPT = NCOL;                   // CPU(nt 1)
 #endif
 DEV void mark_cell(Scratch& sh, uint32_t* bits, float wx, float wy) { mark(bits, (int)floorf(wx * INV_RES), (int)floorf(wy * INV_RES)); }
+// GPU: 점유 비트 2 KB 를 Scratch 앞(물체 단계가 끝난 자리, scr_occ)으로 비동기 복사(cp.async, L2 경유). 격자 표시 동안 오고,
+// phase_mark 끝의 기다림 + 블록 동기 뒤 격자 갱신이 바뀐 낱말을 고쳐 쓴다. 벽 단계는 이 사본을 쓴다(전역 다시 읽기 없음)
+DEV void occ_copy_issue(Scratch& sh, const uint32_t* occ, int tid, int nt) {
+#ifdef __CUDA_ARCH__
+  const uint32_t base = (uint32_t)__cvta_generic_to_shared(scr_occ(sh));
+  for (int k = tid; k < NWORD / 4; k += nt)
+    asm volatile("cp.async.cg.shared.global [%0], [%1], 16;" ::"r"(base + 16u * (uint32_t)k), "l"(occ + 4 * k) : "memory");
+  asm volatile("cp.async.commit_group;" ::: "memory");
+#else
+  (void)sh; (void)occ; (void)tid; (void)nt;
+#endif
+}
+DEV void occ_copy_wait() {
+#ifdef __CUDA_ARCH__
+  asm volatile("cp.async.wait_all;" ::: "memory");
+#endif
+}
 template <class Sync>
-DEV void phase_mark(const MapCore& m, Scratch& sh, const int16_t* L, const uint32_t* seen, int tid, int nt, const Sync& sync) {
+DEV void phase_mark(const MapCore& m, Scratch& sh, const int16_t* L, const uint32_t* seen, const uint32_t* occ, int tid, int nt, const Sync& sync) {
+  occ_copy_issue(sh, occ, tid, nt);
   const float ec = sh.ec, es = sh.es;
   int8_t ty[MARK_CPT];
   float tt[MARK_CPT], t0[MARK_CPT], t1[MARK_CPT];
@@ -1271,6 +1294,7 @@ DEV void phase_mark(const MapCore& m, Scratch& sh, const int16_t* L, const uint3
     }
     mark(ty[j] == 1 ? sh.hitb : sh.missb, x1, y1);
   }
+  occ_copy_wait();   // 이 스레드의 복사 끝(다음 블록 동기 뒤 모두에게 보임)
 }
 
 // ---- 5. 격자 갱신(모든 스레드, 낱말마다 한 스레드): 맞음 우선, 정수 덧셈 + 자르기, 본 적 표시, 방 안 새로 본 칸 수 ------------
@@ -1309,7 +1333,7 @@ DEV void phase_apply(const MapCore& m, Scratch& sh, int16_t* L, uint32_t* seen, 
         hh[j] = sh.hitb[w];
         aa[j] = hh[j] | (sh.missb[w] & ~hh[j]);
         oo[j] = seen[w];
-        oc[j] = occ[w];
+        oc[j] = scr_occ(sh)[w];   // 점유 비트는 공유 사본에서(phase_mark 의 복사)
         lv[j] = (aa[j] & bit) ? (int)L[(size_t)w * 32 + lane] : 0;
       }
       __syncwarp();
@@ -1328,6 +1352,7 @@ DEV void phase_apply(const MapCore& m, Scratch& sh, int16_t* L, uint32_t* seen, 
           seen[w] = oo[j] | aa[j];
           const uint32_t no = (oc[j] & ~aa[j]) | ob;
           occ[w] = no;
+          scr_occ(sh)[w] = no;
           if (no != oc[j]) sh.occ_chg = 1;
         }
       }
@@ -1410,7 +1435,7 @@ DEV void write_metrics(const MapCore& m, const EnvView& e, float* met, int N, in
 // 묶기(행을 차례로)는 가로 = 스레드 0, 세로 = 스레드 32(CPU 는 스레드 0 이 둘 다).
 // 선분은 반 칸 정수 좌표(창 원점 기준): 세계 x = (X2 / 2 + GX0)·RES. 장치 배열 segs[판][가로|세로][MAXSEG][4] (int16)
 struct WallScratch {
-  uint32_t occ[NWORD];          // 행 y(아래 → 위) 우선, 무시 영역 지움
+  alignas(16) uint32_t occ[NWORD];   // 행 y(아래 → 위) 우선, 무시 영역 지움. Scratch 앞의 점유 비트 사본(scr_occ)과 같은 자리
   uint32_t occT[NWORD];         // 열 x 마다 4 낱말, 비트 = 파이썬 행 iy(위 → 아래)
   uint16_t run[2][NRUN];        // 구간 a | b << 8 (칸)
   uint16_t off[2][GW + 1];      // 행마다 구간 시작 번호(NRUN 에서 자름)
@@ -1443,6 +1468,44 @@ DEV int row_runs(const uint32_t* w, uint16_t* out, int cap) {
     x = b + 1;
   }
   return n;
+}
+// 같은 결과를 비트 연산으로(GPU): 구간 시작 st = 1 이고 앞 칸이 0, 길이 ≥ 5 의 시작 = st 이고 뒤 4 칸도 1(x5). 시작마다 끝은 다음 0 칸
+DEV int row_runs_bits(const uint32_t* w, uint16_t* out, int cap) {
+  static_assert(MP::wall_min_run == 5, "x5 mask below assumes runs of 5");
+  uint32_t v[4];
+  for (int k = 0; k < 4; ++k) v[k] = w[k];
+  uint32_t sel[4];
+  int n = 0;
+  for (int k = 0; k < 4; ++k) {
+    const uint32_t prev = (v[k] << 1) | (k ? v[k - 1] >> 31 : 0u);   // 비트 x = 칸 x−1
+    const uint32_t nx = k < 3 ? v[k + 1] : 0u;
+    uint32_t x5 = v[k];
+    for (int j = 1; j <= 4; ++j) x5 &= (v[k] >> j) | (nx << (32 - j));   // 비트 x = 칸 x+j
+    sel[k] = v[k] & ~prev & x5;
+    n += popc32(sel[k]);
+  }
+  if (!out) return n;
+  int q = 0;
+  for (int k = 0; k < 4 && q < cap; ++k) {
+    uint32_t b = sel[k];
+    while (b && q < cap) {
+      const int a = k * 32 + ctz32(b);
+      b &= b - 1u;
+      int kk = a >> 5;
+      uint32_t inv = ~v[kk] & (~0u << (a & 31));
+      while (!inv && ++kk < 4) inv = ~v[kk];
+      const int e = (kk >= 4 ? GW : kk * 32 + ctz32(inv)) - 1;
+      out[q++] = (uint16_t)(a | (e << 8));
+    }
+  }
+  return n;
+}
+DEV int row_runs_dev(const uint32_t* w, uint16_t* out, int cap) {   // GPU 는 비트판, CPU 참조판은 위 고리판(같은 결과를 map_verify 가 비교)
+#ifdef __CUDA_ARCH__
+  return row_runs_bits(w, out, cap);
+#else
+  return row_runs(w, out, cap);
+#endif
 }
 // 묶기 한 방향(P 0 가로, 1 세로) — walls.cpp groupRuns + emit 와 같은 순서. 선분을 segs(MAXSEG 칸)에 쓰고 개수를 돌려준다
 DEV int wall_group(WallScratch& ws, int P, int16_t* segs) {
@@ -1523,11 +1586,17 @@ DEV uint32_t wall_rect(const Slot& S) {
   if (cx0 > cx1 || cy0 > cy1) return 0xffffffffu;
   return (uint32_t)cx0 | ((uint32_t)cx1 << 8) | ((uint32_t)cy0 << 16) | ((uint32_t)cy1 << 24);
 }
+// occ_ready: ws.occ 에 이미 점유 비트가 있음(GPU keyframe: phase_mark 의 복사 + phase_apply 의 고침). 아니면 전역에서 읽는다
 template <class Sync>
-DEV void phase_walls(MapCore& m, WallScratch& ws, const uint32_t* occ_g, int16_t* segs_g, int occ_chg, int tid, int nt, const Sync& sync) {
+DEV void phase_walls(MapCore& m, WallScratch& ws, const uint32_t* occ_g, int16_t* segs_g, int occ_chg, int occ_ready, int tid, int nt, const Sync& sync) {
   // 무시 영역: 확정·안 든·사라짐 아님·바닥이 0.4 m 아래·한 변 ≤ 5 m 물체 상자 + 0.1 m(칸 순서로 모음).
   // 점유 비트도 무시 영역도 지난 계산과 같으면 선분이 같다 → 건너뜀(결과 같음)
-  for (int w = tid; w < NWORD; w += nt) ws.occ[w] = occ_g[w];   // 건너뛸지 모르지만 미리 읽음(지연을 겹침)
+#ifdef __CUDA_ARCH__
+  if (!occ_ready)
+#else
+  (void)occ_ready;
+#endif
+    for (int w = tid; w < NWORD; w += nt) ws.occ[w] = occ_g[w];   // 건너뛸지 모르지만 미리 읽음(지연을 겹침)
 #ifdef __CUDA_ARCH__
   static_assert(KSLOT <= 32, "rect gather uses one warp");
   if (tid < 32) {
@@ -1609,7 +1678,7 @@ DEV void phase_walls(MapCore& m, WallScratch& ws, const uint32_t* occ_g, int16_t
 #endif
   sync();
   PROF_MARK(PW4);
-  for (int r = tid; r < 2 * GW; r += nt) ws.cnt[r / GW][r % GW] = (uint8_t)row_runs(wall_row(ws, r / GW, r % GW), nullptr, 0);
+  for (int r = tid; r < 2 * GW; r += nt) ws.cnt[r / GW][r % GW] = (uint8_t)row_runs_dev(wall_row(ws, r / GW, r % GW), nullptr, 0);
   sync();
   PROF_MARK(PW5);
   // 행마다 구간 시작 번호(누적, NRUN 에서 자름)와 구간 있는 행 비트. GPU: 워프 P 가 방향 P(레인마다 행 4)
@@ -1654,7 +1723,7 @@ DEV void phase_walls(MapCore& m, WallScratch& ws, const uint32_t* occ_g, int16_t
   PROF_MARK(PW6);
   for (int r = tid; r < 2 * GW; r += nt) {
     const int P = r / GW, rr = r % GW;
-    if (ws.cnt[P][rr]) row_runs(wall_row(ws, P, rr), &ws.run[P][ws.off[P][rr]], ws.off[P][rr + 1] - ws.off[P][rr]);
+    if (ws.cnt[P][rr]) row_runs_dev(wall_row(ws, P, rr), &ws.run[P][ws.off[P][rr]], ws.off[P][rr + 1] - ws.off[P][rr]);
   }
   sync();
   PROF_MARK(PW7);
@@ -1701,7 +1770,7 @@ DEV void map_keyframe(MapCore& m, Scratch& sh, const EnvView& e, int16_t* L, uin
   sync();
   PROF_MARK(P_ABSENCE);
   obj_complete(m, sh, tid, nt);
-  phase_mark(m, sh, L, seen, tid, nt, sync);
+  phase_mark(m, sh, L, seen, occ, tid, nt, sync);
   sync();
   PROF_MARK(P_MARK);
   phase_apply(m, sh, L, seen, occ, tid, nt);
@@ -1723,7 +1792,7 @@ DEV void map_rest(MapCore& m, KfShared& u, const EnvView& e, const MapGrid& g, f
   if (flags & (B_KF | B_WALL)) {
     const int chg = (flags & B_KF) ? u.sh.occ_chg : 0;   // ws 가 sh 를 덮기 전에 읽음
     sync();
-    phase_walls(m, u.ws, g.occ, g.segs, chg, tid, nt, sync);
+    phase_walls(m, u.ws, g.occ, g.segs, chg, flags & B_KF, tid, nt, sync);
     PROF_MARK(P_WALLS);
   }
   if (tid == 0) write_metrics(m, e, met, N, i);

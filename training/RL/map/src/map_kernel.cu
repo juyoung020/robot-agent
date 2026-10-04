@@ -33,9 +33,18 @@ __global__ void __launch_bounds__(BEGIN_NT) map_begin_kernel(env::Soa s, MapCore
 // 2 단계(목록의 판 하나 = 블록 하나, NT 스레드): keyframe 갱신. 블록 수는 N 으로 고정하고 목록 길이 밖 블록은 바로 끝난다(호스트 동기 없음).
 // 블록이 대략 번호 순서로 SM 에 올라가므로, 한 물결(SM 수 × 상주 블록) 뒤 판의 MapCore 를 L2 로 미리 당긴다(값은 안 바뀜).
 constexpr int PF_AHEAD = 1024;
+// read_env 가 읽는 SoA 값의 자리(미리 당기기용): x, y, yaw, v, w, tx, ty, rhx, rhy, q[N_Q], ep
+constexpr int ENV_PF_N = 9 + env::N_Q + 1;
+__device__ __forceinline__ const void* env_pf_addr(const env::Soa& s, int i, int k) {
+  const int N = s.N;
+  constexpr int F[9] = {env::F_X, env::F_Y, env::F_YAW, env::F_V, env::F_W, env::F_TX, env::F_TY, env::F_RHX, env::F_RHY};
+  if (k < 9) return s.f + (size_t)F[k] * N + i;
+  if (k < 9 + env::N_Q) return s.f + (size_t)(env::F_Q0 + k - 9) * N + i;
+  return s.iv + (size_t)env::I_EP * N + i;
+}
 __global__ void __launch_bounds__(NT, 10) map_kf_kernel(env::Soa s, MapCore* core, int16_t* L, uint32_t* seen, uint32_t* occ,
                                                         int16_t* segs, float* met, const uint32_t* list, const int* count, int bug) {
-  __shared__ MapCore m;
+  __shared__ __align__(16) MapCore m;
   __shared__ KfShared u;
   const int j = blockIdx.x, tid = threadIdx.x, N = s.N;
   const int n = *count;
@@ -44,21 +53,27 @@ __global__ void __launch_bounds__(NT, 10) map_kf_kernel(env::Soa s, MapCore* cor
   const uint32_t ent = list[j];
   constexpr uint32_t IMASK = (1u << LIST_SHIFT) - 1u;
   const int i = (int)(ent & IMASK), flags = (int)(ent >> LIST_SHIFT);
-  if (tid < (int)((sizeof(MapCore) + 127) / 128) && j + PF_AHEAD < n)
-    asm volatile("prefetch.global.L2 [%0];" ::"l"(reinterpret_cast<const char*>(&core[list[j + PF_AHEAD] & IMASK]) + tid * 128));
+  if (j + PF_AHEAD < n) {   // 한 물결 뒤 판: MapCore 와 환경 SoA 값(판마다 따로 떨어진 줄)을 L2 로
+    const uint32_t ia = list[j + PF_AHEAD] & IMASK;
+    if (tid < (int)((sizeof(MapCore) + 127) / 128))
+      asm volatile("prefetch.global.L2 [%0];" ::"l"(reinterpret_cast<const char*>(&core[ia]) + tid * 128));
+    else if (tid >= 32 && tid < 32 + ENV_PF_N)
+      asm volatile("prefetch.global.L2 [%0];" ::"l"(env_pf_addr(s, (int)ia, tid - 32)));
+  }
   if (tid < (int)(sizeof(uint32_t) * NWORD / 128) && (flags & (B_KF | B_WALL)))   // 벽 단계가 읽을 점유 비트 2 KB 를 L2 로 미리
     asm volatile("prefetch.global.L2 [%0];" ::"l"(reinterpret_cast<const char*>(occ + (size_t)i * NWORD) + tid * 128));
-  const uint32_t* src = reinterpret_cast<const uint32_t*>(&core[i]);
-  uint32_t* dst = reinterpret_cast<uint32_t*>(&m);
-  for (int k = tid; k < CORE_WORDS; k += NT) dst[k] = src[k];
+  static_assert(sizeof(MapCore) % 16 == 0, "MapCore copied in 16-byte pieces");
+  const uint4* src = reinterpret_cast<const uint4*>(&core[i]);
+  uint4* dst = reinterpret_cast<uint4*>(&m);
+  for (int k = tid; k < (int)(sizeof(MapCore) / 16); k += NT) dst[k] = src[k];
   const EnvView e = read_env(s, i);   // 코어 읽기와 겹침
   __syncthreads();
   PROF_MARK(P_LOAD);
   const MapGrid g{L + (size_t)i * NCELL, seen + (size_t)i * NWORD, occ + (size_t)i * NWORD, segs + (size_t)i * SEGW};
   map_rest(m, u, e, g, met, N, i, tid, NT, bug, flags, BlockSync{});
   __syncthreads();
-  uint32_t* out = reinterpret_cast<uint32_t*>(&core[i]);
-  for (int k = tid; k < CORE_WORDS; k += NT) out[k] = dst[k];
+  uint4* out = reinterpret_cast<uint4*>(&core[i]);
+  for (int k = tid; k < (int)(sizeof(MapCore) / 16); k += NT) out[k] = dst[k];
   PROF_MARK(P_STORE);
 }
 
@@ -74,7 +89,7 @@ __global__ void __launch_bounds__(TOK_NL * TOK_EPB) map_tok_kernel(int N, const 
   const int i = live ? i0 : N - 1;   // 남는 레인도 같은 동기를 지나도록 마지막 판을 읽기만 함
   const HalfSync hs{0xffffu << (16 * (sub & 1))};
   PROF_START();
-  make_tokens(core[i], occ + (size_t)i * NWORD, segs + (size_t)i * SEGW, tprev + (size_t)i * KSLOT, ts[sub], lane, TOK_NL, live, hs);
+  make_tokens_n<TOK_NL>(core[i], occ + (size_t)i * NWORD, segs + (size_t)i * SEGW, tprev + (size_t)i * KSLOT, ts[sub], lane, TOK_NL, live, hs);
   hs();
   PROF_MARK(TK_ROOM);
   if (!live) return;

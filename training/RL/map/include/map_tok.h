@@ -89,23 +89,38 @@ DEV uint16_t f2h(float f) {
 // ---- 벽 상태 56(walls.cpp wallStateVector) ----------------------------------------------------------------------------
 // 광선(rayDistances): 격자 DDA(Amanatides–Woo, walls.cpp 와 같은 꼴: 처음 경계 t 를 구하고 칸마다 tdx·tdy 를 더함, tx < ty 일 때만 x),
 // 첫 점유 칸에 들어간 거리(시작 칸이 점유면 0), wall_range 넘으면 wall_range. walls.cpp 는 double, 여기는 float.
-// 광선은 로봇 둘레 행 TOK_SROWS 개(8 의 배수에서 시작, 로봇 행 ± 41 = 4 m 를 덮음)만 읽는다. tok_stage 가 그 행을 옮긴다(CPU·GPU 같은 함수).
-constexpr int TOK_SROWS = 96;
-DEV int tok_row0(float ey) {
-  const int cy = (int)floorf((ey - (float)GX0 * RES) / RES);
-  const int r0 = ((cy - 42) >> 3) * 8;
+// 광선은 4 m(wall_range) 안 칸만 닿는다: 칸마다 t 가 RES 이상 늘므로 시작 칸에서 행·열로 41 칸까지. 그래서 로봇 칸 둘레 행 TOK_SROWS(84) 개 ×
+// 열 96 개(시작 열 − 41 부터, 낱말 3)만 공유 메모리(GPU)·지역 배열(CPU)로 옮겨 읽는다(CPU·GPU 같은 함수). 창 밖 칸은 닿지 않으므로 결과는 전체 격자와 같다.
+constexpr int TOK_SROWS = 84, TOK_SWORDS = 3, TOK_REACH = 41;
+DEV int tok_cell(float v) { return (int)floorf((v - (float)GX0 * RES) / RES); }   // wall_ray 의 시작 칸과 같은 식
+DEV int tok_row0(float ey) {   // 짝수 행에서 시작(32 B 조각 맞춤), 로봇 행 − 41 ~ + 41 을 덮음
+  const int cy = tok_cell(ey);
+  const int r0 = (cy - TOK_REACH) & ~1;
   return r0 < 0 ? 0 : r0 > GW - TOK_SROWS ? GW - TOK_SROWS : r0;
 }
-DEV void tok_stage(const uint32_t* occ_full, int row0, uint32_t* so, int lane, int nl) {
+DEV int tok_col0(float ex) { return tok_cell(ex) - TOK_REACH; }   // 창 첫 열(음수·창 밖일 수 있음 — 그 칸은 0)
+DEV uint32_t tok_word(const uint32_t w[4], int b) {   // 한 행(낱말 4)의 열 b ~ b+31 비트(창 밖 0)
+  const int wi = b >> 5, sh = b & 31;
+  const uint32_t lo = (wi >= 0 && wi < 4) ? w[wi] : 0u, hi = (wi + 1 >= 0 && wi + 1 < 4) ? w[wi + 1] : 0u;
 #ifdef __CUDA_ARCH__
-  const uint4* src = reinterpret_cast<const uint4*>(occ_full) + row0;
-  uint4* dst = reinterpret_cast<uint4*>(so);
-  for (int k = lane; k < TOK_SROWS; k += nl) dst[k] = src[k];
+  return __funnelshift_r(lo, hi, sh);
 #else
-  for (int k = lane; k < TOK_SROWS * 4; k += nl) so[k] = occ_full[row0 * 4 + k];
+  return sh ? (lo >> sh) | (hi << (32 - sh)) : lo;
 #endif
 }
-DEV float wall_ray(const uint32_t* so, int row0, float x, float y, float th) {
+DEV void tok_stage(const uint32_t* occ_full, int row0, int col0, uint32_t* so, int lane, int nl) {
+  for (int k = lane; k < TOK_SROWS; k += nl) {
+    uint32_t w[4];
+#ifdef __CUDA_ARCH__
+    const uint4 v = reinterpret_cast<const uint4*>(occ_full)[row0 + k];
+    w[0] = v.x; w[1] = v.y; w[2] = v.z; w[3] = v.w;
+#else
+    for (int q = 0; q < 4; ++q) w[q] = occ_full[(row0 + k) * 4 + q];
+#endif
+    for (int q = 0; q < TOK_SWORDS; ++q) so[k * TOK_SWORDS + q] = tok_word(w, col0 + 32 * q);
+  }
+}
+DEV float wall_ray(const uint32_t* so, int row0, int col0, float x, float y, float th) {
   constexpr float OX = (float)GX0 * RES;
   float s, c;
   sincosf_d(th, &s, &c);
@@ -117,8 +132,9 @@ DEV float wall_ray(const uint32_t* so, int row0, float x, float y, float th) {
   float ty = s != 0.f ? ((sy > 0 ? (float)(cy + 1) - fy : fy - (float)cy) * RES) / absf(s) : kInf;
   float t = 0.f;
   while (t <= MP::wall_range) {
-    if ((unsigned)cx < (unsigned)GW && (unsigned)(cy - row0) < (unsigned)TOK_SROWS &&
-        ((so[(cy - row0) * 4 + (cx >> 5)] >> (cx & 31)) & 1u))
+    const unsigned lx = (unsigned)(cx - col0), ly = (unsigned)(cy - row0);
+    if ((unsigned)cx < (unsigned)GW && ly < (unsigned)TOK_SROWS && lx < 32u * TOK_SWORDS &&
+        ((so[ly * TOK_SWORDS + (lx >> 5)] >> (lx & 31)) & 1u))
       return maxf(t, 0.f);
     if (tx < ty) { t = tx; tx = tx + tdx; cx += sx; } else { t = ty; ty = ty + tdy; cy += sy; }
   }
@@ -140,23 +156,26 @@ DEV const int16_t* seg_at(const int16_t* segs, const MapCore& m, int k) {   // �
   return k < m.nseg_h ? segs + 4 * k : segs + 4 * (MAXSEG + k - m.nseg_h);
 }
 
-struct TokScratch {   // 판 하나의 작업 공간(GPU 공유 메모리)
+struct TokScratch {   // 판 하나의 작업 공간(GPU 공유 메모리). 광선 거리·칸의 지난 자리는 그 일을 맡은 레인의 레지스터(make_tokens)
   float sd[2 * MAXSEG];   // 선분 거리
   float sk[KSLOT];        // 칸 순서 열쇠(수평 거리), 안 넣는 칸 −1
   float tk[KSLOT];        // 목표 후보 열쇠, 아님 −1
-  float ray[16];          // 광선 거리 m
-  TPrev tp[KSLOT];        // 확정 칸의 지난 자리(미리 읽음)
   union {
-    uint32_t so[TOK_SROWS * 4];   // 로봇 둘레 행의 점유 비트(광선이 읽음). 광선 뒤에는 out 이 덮어씀
+    uint32_t so[TOK_SROWS * TOK_SWORDS];   // 로봇 둘레 창의 점유 비트(광선이 읽음). 광선 뒤에는 out 이 덮어씀
     MapTok out;
   };
 };
 
 // 판 하나의 토큰. 레인 lane / nl 개가 나눠 하고 sync 로 맞춘다(CPU: lane 0, nl 1). write = false 면 tprev 를 쓰지 않음(GPU 남는 레인)
 // occ: 판의 점유 비트 전체. 로봇 둘레 행을 ts.so 로 옮긴 뒤 광선을 쏘고, out 은 그다음 동기부터 쓴다(so 와 같은 자리)
-template <class Sync>
-DEV void make_tokens(const MapCore& m, const uint32_t* occ, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
-                     bool write, const Sync& sync) {
+// NLC: nl 의 최솟값(컴파일 때). 레인마다 맡는 칸·광선 수가 (16 + NLC − 1) / NLC 이하라 지난 자리·광선 거리를 레지스터 배열에 둔다(GPU NLC = 16 → 하나씩)
+template <int NLC, class Sync>
+DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
+                       bool write, const Sync& sync) {
+  constexpr int PER = (KSLOT + NLC - 1) / NLC;
+  static_assert(KSLOT == 16, "rays and slots share the per-lane count");
+  TPrev tpl[PER];
+  float ray[PER];
   MapTok& o = ts.out;
   float s, c;
   sincosf_d(m.eyaw, &s, &c);
@@ -172,7 +191,10 @@ DEV void make_tokens(const MapCore& m, const uint32_t* occ, const int16_t* segs,
     for (int a = 0; a < 3; ++a) pext[a] = P.hi[a] - P.lo[a];
     const float thr = maxf(MP::da_min, MP::da_k * max3(pext));
     const int cm = m.conf_mask;
-    for (int b = lane; b < KSLOT; b += nl) {
+#pragma unroll
+    for (int q = 0; q < PER; ++q) {
+      const int b = lane + q * nl;
+      if (b >= KSLOT) break;
       if (!((cm >> b) & 1)) { ts.sk[b] = -1.f; ts.tk[b] = -1.f; continue; }
       const Slot& S = m.slot[b];
 #ifdef __CUDA_ARCH__
@@ -181,7 +203,7 @@ DEV void make_tokens(const MapCore& m, const uint32_t* occ, const int16_t* segs,
         for (int q = 0; q < (int)sizeof(Slot); q += 32) asm volatile("prefetch.global.L1 [%0];" ::"l"(sp + q));
       }
 #endif
-      ts.tp[b] = tprev[b];
+      tpl[q] = tprev[b];
       const float dx = S.pos[0] - px, dy = S.pos[1] - py;
       ts.sk[b] = sqrtf(dx * dx + dy * dy);
       const float tx = S.pos[0] - tcx, ty = S.pos[1] - tcy, d2 = tx * tx + ty * ty;
@@ -192,15 +214,23 @@ DEV void make_tokens(const MapCore& m, const uint32_t* occ, const int16_t* segs,
     float r[4];
     ts.sd[k] = wall_seg_robot(seg_at(segs, m, k), px, py, c, s, r);
   }
-  const int row0 = tok_row0(py);
-  tok_stage(occ, row0, ts.so, lane, nl);
+  const int row0 = tok_row0(py), col0 = tok_col0(px);
+  tok_stage(occ, row0, col0, ts.so, lane, nl);
   sync();
   PROF_MARK(TK_STAGE);
-  // 2) 광선 16
-  for (int i = lane; i < 16; i += nl) ts.ray[i] = wall_ray(ts.so, row0, px, py, m.eyaw + kTwoPi * (float)i * (1.0f / 16.f));
+  // 2) 광선 16(레인마다 레지스터에)
+#pragma unroll
+  for (int q = 0; q < PER; ++q) {
+    const int i = lane + q * nl;
+    if (i < 16) ray[q] = wall_ray(ts.so, row0, col0, px, py, m.eyaw + kTwoPi * (float)i * (1.0f / 16.f));
+  }
   sync();
   PROF_MARK(TK_A);
-  for (int i = lane; i < 16; i += nl) o.wall[i] = f2h(ts.ray[i] / MP::wall_range);
+#pragma unroll
+  for (int q = 0; q < PER; ++q) {
+    const int i = lane + q * nl;
+    if (i < 16) o.wall[i] = f2h(ray[q] / MP::wall_range);
+  }
   int tgt = -1, nslot = 0;
   for (int b = 0; b < KSLOT; ++b) {
     nslot += ts.sk[b] >= 0.f;
@@ -224,10 +254,13 @@ DEV void make_tokens(const MapCore& m, const uint32_t* occ, const int16_t* segs,
   // 4) 물체 칸
   const int t_kf = m.t - m.since;   // 마지막 keyframe 시각
   const int tag_now = m.t & 0xffff, tag_prev = (m.t - 1) & 0xffff;
-  for (int b = lane; b < KSLOT; b += nl) {
+#pragma unroll
+  for (int q = 0; q < PER; ++q) {
+    const int b = lane + q * nl;
+    if (b >= KSLOT) break;
     if (ts.sk[b] < 0.f) continue;
     const Slot& S = m.slot[b];
-    const TPrev tp = ts.tp[b];
+    const TPrev tp = tpl[q];
     {
       const float kb = b == tgt ? -1.f : ts.sk[b];
       int rank = 0;
@@ -326,6 +359,13 @@ DEV void make_tokens(const MapCore& m, const uint32_t* occ, const int16_t* segs,
     o.flags = (int16_t)(m.kf_flag ? 1 : 0);
     for (int q = 0; q < 8; ++q) o.pad[q] = 0;
   }
+}
+
+// 예전 꼴(레인 수를 실행 때만 앎): 아무 nl ≥ 1 에서 같은 결과
+template <class Sync>
+DEV void make_tokens(const MapCore& m, const uint32_t* occ, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
+                     bool write, const Sync& sync) {
+  make_tokens_n<1>(m, occ, segs, tprev, ts, lane, nl, write, sync);
 }
 
 }  // namespace gmap
