@@ -223,6 +223,7 @@ struct sm_snapshot_t {
   std::vector<BestViewPtr> views;   // objs[i] 의 best view(없으면 null)
   std::vector<uint8_t> movable;     // objs[i]: 1 = 옮길 수 있는 물체, 0 = 가구·가전·붙박이
   std::vector<ObjCloud> clouds;     // objs[i] 의 점 구름(점 배열은 공유)
+  std::vector<sm_inspect> insp;     // objs[i] 의 살펴본 정도(sm_set_inspect 켰을 때만, 아니면 비어 있음)
   double voxel = 0.02;
   // reachable 용 부풀린 장애물(처음 부를 때 만듦)
   mutable std::once_flag inflate_once;
@@ -486,6 +487,8 @@ sm_ctx* sm_create(const char* config_json) {
     c->oparams.grip_closed = float(gc);
     sm_reset(c);
   }
+  double ins;
+  if (cfgNumber(j, "inspect", &ins)) sm_set_inspect(c, ins != 0);
   return c;
 }
 
@@ -499,6 +502,7 @@ int sm_set_robot(sm_ctx* c, int32_t robot) {
     op.voxel = c->oparams.voxel;          // sm_set_cloud_params 로 바꾼 값은 둔다
     op.cloud_cap = c->oparams.cloud_cap;
     op.objprob = c->oparams.objprob;        // sm_set_object_model 도 둔다
+    op.insp = c->oparams.insp;              // sm_set_inspect 도 둔다
     robotParams(robot, &sp, &op);
     c->params = sp;
     c->oparams = op;
@@ -1189,6 +1193,10 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
       s->objs.push_back(e);
       s->movable.push_back(kind != SM_KIND_STATIC && kind != SM_KIND_STRUCT_OBJ);
       s->clouds.push_back(o.cloud);
+      if (c->oparams.insp.on) {
+        const InspectParams& ip = c->om.params().insp;
+        s->insp.push_back(sm_inspect{o.id, o.insp.closest, o.insp.nViews(), inspTopSeen(o.insp, o.lo, o.hi, ip)});
+      }
       auto it = c->views.find(o.id);
       s->views.push_back(it != c->views.end() ? it->second.v : nullptr);
     }
@@ -1229,6 +1237,31 @@ int sm_snap_objects(const sm_snapshot_t* s, const sm_object** out) {
   *out = s->objs.data();
   return int(s->objs.size());
 }
+
+int sm_snap_inspect(const sm_snapshot_t* s, const sm_inspect** out) {
+  if (!s || !out) return -1;
+  if (s->insp.size() != s->objs.size()) { *out = nullptr; return -2; }   // 꺼짐
+  *out = s->insp.data();
+  return int(s->insp.size());
+}
+
+namespace {
+// 살펴본 정도 → 노드 metadata 멤버(scene.json·view.json objects[]·스트림 view)
+void inspMeta(const sm_snapshot_t* s, std::vector<std::string>* meta) {
+  if (s->insp.size() != s->objs.size()) return;
+  meta->resize(s->objs.size());
+  for (size_t i = 0; i < s->insp.size(); ++i) {
+    const sm_inspect& q = s->insp[i];
+    char b[160];
+    char cv[24], ts[24];
+    if (q.closest_view_m >= 0) std::snprintf(cv, sizeof cv, "%.3f", double(q.closest_view_m)); else std::snprintf(cv, sizeof cv, "null");
+    if (q.top_seen >= 0) std::snprintf(ts, sizeof ts, "%.4g", double(q.top_seen)); else std::snprintf(ts, sizeof ts, "null");
+    std::snprintf(b, sizeof b, "\"inspect\":{\"closest_view_m\":%s,\"n_views\":%d,\"top_seen\":%s}", cv, int(q.n_views), ts);
+    std::string& d = (*meta)[i];
+    d = d.empty() ? std::string(b) : d + "," + b;
+  }
+}
+}  // namespace
 
 // 이름 부분 일치(대소문자·'_'↔' ' 무시), 점수 = 일치 길이 비율 × 관측 신뢰도. 점수 순.
 int sm_snap_find(const sm_snapshot_t* s, const char* name, uint32_t* ids, float* scores, int cap) {
@@ -1582,6 +1615,7 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
       if (it != c->obj_meta.end()) in.obj_meta[i] = it->second;
     }
     if (c->oparams.objprob) apSaveMeta(c, s, &in.obj_meta, &apw);
+    inspMeta(s, &in.obj_meta);
   }
   SaveOut out;
   std::unique_lock<std::mutex> sl(c->save_mu);   // 저장 하나씩(노드 조각 캐시)
@@ -1860,6 +1894,14 @@ int sm_snap_place_path(const sm_snapshot_t* s, const double from[2], const doubl
   return int(path.size());
 }
 
+int sm_set_inspect(sm_ctx* c, int32_t on) {
+  if (!c) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  c->oparams.insp.on = on != 0;
+  c->om.paramsMut().insp.on = on != 0;
+  return 0;
+}
+
 int sm_set_object_meta(sm_ctx* c, uint32_t id, const char* json) {
   if (!c) return -1;
   std::lock_guard<std::mutex> g(c->mu);
@@ -2006,6 +2048,7 @@ int sm_stream_view(sm_ctx* c) {
   in.room_names = s->rnames;
   in.graph = s->graph;
   in.stream_lite = true;
+  inspMeta(s, &in.obj_meta);
   SaveOut out;
   out.png_ok.assign(s->objs.size(), 0);
   out.ply_ok.assign(s->objs.size(), 0);

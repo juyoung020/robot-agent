@@ -40,6 +40,7 @@
 #include "scenemap.h"
 #include "scenemap/bestview.hpp"
 #include "scenemap/cloud.hpp"
+#include "scenemap/inspect.hpp"
 #include "scenemap/objprob.hpp"
 #include "scenemap/scan.hpp"
 
@@ -137,6 +138,8 @@ struct ObjParams {
   KappaParams kap;
   double ap_q_pos = 1e-4;         // 칼만: 물체 자리 과정 잡음(m²/s, 가만히 있는 물체)
   double ap_r0 = 0.02, ap_r1 = 0.01;   // 관측 중심 잡음 σ = r0 + r1·깊이(m) — 조각·잘림이면 반 폭을 더함
+  // 살펴본 정도(inspect.hpp — 가장 가까이 본 거리·본 시점 수·윗면 본 비율). 판단에는 안 씀. 기본 꺼짐(capi sm_set_inspect)
+  InspectParams insp;
 };
 
 // objprob 진단 셈(ObjectMap::apStats)
@@ -194,6 +197,7 @@ struct MapObject {
   double gone_t = 0;              // 사라짐 판정 시각
   bool appeared = false;          // 전에 본 자리에 새로 나타남(옮겨짐 잇기 후보)
   ApStatePtr ap;                  // objprob 상태(임베딩·이름 사후·칼만 분산) — objprob 일 때만
+  InspectState insp;              // 살펴본 정도(ObjParams::insp.on 일 때만 채움)
 };
 
 // 이름 번호의 종류

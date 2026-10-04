@@ -445,6 +445,60 @@ static std::string slurp(const fs::path& p) {
   return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
 
+// ---- 살펴본 정도(sm_set_inspect): 끄면 저장 파일에 없음·sm_snap_inspect -2, 켜면 물체마다 값, 그 멤버를 빼면 view.json 이 바이트 같음 ----
+static std::string stripInspect(std::string t) {
+  for (size_t k; (k = t.find(",\"inspect\":{")) != std::string::npos;) t.erase(k, t.find('}', k) + 1 - k);
+  return t;
+}
+
+static void testInspect(const std::string& dir) {
+  std::printf("[inspect]\n");
+  const std::vector<Rect> rs = {R(C_CUP, 300, 300, 340, 340, 1.5f, 250, 0, 0), R(C_SOFA, 60, 350, 660, 440, 1.7f, 30, 30, 160)};
+  std::string vj[2];
+  for (int on = 0; on < 2; ++on) {
+    Rig g(kLabels);
+    if (on) CHECK(sm_set_inspect(g.c, 1) == 0, "set inspect");
+    for (int k = 0; k < 5; ++k) g.kf(0.2 * k, rs);
+    Snap s(g.c);
+    const sm_inspect* q = nullptr;
+    const int n = sm_snap_inspect(s.s, &q);
+    const auto objs = s.objs();
+    if (!on) CHECK(n == -2, "off: sm_snap_inspect %d", n);
+    if (on) {
+      CHECK(n == int(objs.size()) && n >= 2, "on: count %d objs %zu", n, objs.size());
+      for (int i = 0; i < n && q; ++i) {
+        CHECK(q[i].id == objs[size_t(i)].id, "order");
+        std::printf("  O%u %s closest %.2f views %d top %.3f\n", q[i].id, objs[size_t(i)].name, q[i].closest_view_m, q[i].n_views, q[i].top_seen);
+        CHECK(q[i].n_views == 1, "standing camera -> 1 view (%d)", q[i].n_views);
+        CHECK(q[i].closest_view_m > 1.0f && q[i].closest_view_m < 2.5f, "closest %.2f", q[i].closest_view_m);
+        if (std::strcmp(objs[size_t(i)].name, "cup") == 0) CHECK(q[i].top_seen == -1.f, "cup has no top %.2f", q[i].top_seen);
+      }
+    }
+    const std::string d = dir + (on ? "_insp_on" : "_insp_off");
+    fs::remove_all(d);
+    CHECK(sm_save_dsg(g.c, d.c_str()) == 0, "save");
+    vj[on] = slurp(fs::path(d) / "view.json");
+    const std::string sj = slurp(fs::path(d) / "scene.json");
+    CHECK((sj.find("\"inspect\":{") != std::string::npos) == bool(on), "scene.json inspect member on=%d", on);
+    fs::remove_all(d);
+  }
+  CHECK(vj[0].find("\"inspect\"") == std::string::npos, "off view.json has inspect");
+  CHECK(vj[1].find("\"inspect\":{\"closest_view_m\":") != std::string::npos, "on view.json lacks inspect");
+  CHECK(stripInspect(vj[1]) == vj[0], "view.json differs beyond inspect members");
+  // 설정 키 "inspect": 1 은 sm_set_robot 뒤에도 남음
+  sm_ctx* c = sm_create("{\"inspect\": 1, \"robot\": \"limo_omx\"}");
+  CHECK(c != nullptr, "create");
+  if (c) {
+    sm_set_robot(c, SM_ROBOT_R1PRO);
+    sm_snapshot_t* s = nullptr;
+    sm_snapshot(c, &s);
+    const sm_inspect* q = nullptr;
+    CHECK(sm_snap_inspect(s, &q) == 0, "config inspect kept after set_robot");
+    sm_snapshot_release(s);
+    sm_destroy(c);
+  }
+}
+
 static void testSave(const std::string& dir) {
   std::printf("[save] %s\n", dir.c_str());
   fs::remove_all(dir);
@@ -768,6 +822,7 @@ int main(int argc, char** argv) {
   testBestView();
   testCloud();
   testSave(dir);
+  testInspect(dir);
   testTiming();
   std::printf(g_fail ? "FAILED %d\n" : "ok\n", g_fail);
   return g_fail ? 1 : 0;

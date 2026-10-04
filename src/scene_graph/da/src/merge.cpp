@@ -93,6 +93,7 @@ void absorb(MapObject& a, MapObject& b, const ObjParams& op, double stamp, const
   a.n_vis_miss += b.n_vis_miss;
   if (a.state != SM_SEEN && b.state == SM_SEEN) a.state = SM_SEEN;
   if (!a.parent) { a.parent = b.parent; for (int k = 0; k < 3; ++k) a.parent_rel[k] = b.parent_rel[k]; }
+  if (op.insp.on) inspMerge(a.insp, b.insp, a.lo, a.hi, op.insp);   // 살펴본 정도(합친 상자 기준)
   // 점 구름: b 의 점(org + 점)을 a 에 넣는다
   if (b.cloud.data && !b.cloud.data->pts.empty()) {
     const auto& pts = b.cloud.data->pts;

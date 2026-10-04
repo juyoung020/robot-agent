@@ -429,6 +429,16 @@ int sm_observe_object_name(sm_ctx*, uint32_t id, const char* name, float log_lr)
  * [9] 구조물 덩어리 지움 [10] 다시 담기 요청 [11] 다시 담기 받음 [12] 벽 너머(창 밖) 관측 버림 [13] 문·창·기둥 이름인데 그 모양보다 큰 벽 조각 [14] 벽 선 없이 높고 넓은 세운 평면(벽) [15] 벽 같은 조각·납작한 이름 크기 밖이라 버린 관측 */
 int sm_get_objprob_stats(sm_ctx*, int64_t out[16]);
 
+/* ---- 살펴본 정도(inspection)(10-05, scenemap/inspect.hpp — README "살펴본 정도") ----
+ * 물체마다: closest_view_m = 그 물체에 붙은 관측의 카메라 ↔ 관측 중심 거리 최소(m, -1 = 없음), n_views = 서로 다른 keyframe
+ * 시점 수(0.3 m·15° 안은 같은 시점, 32 에서 멈춤), top_seen = 윗면 4 × 4 칸 중 윗면 위 5 cm 점이 2.0 m·시선–연직 80° 안에서
+ * 안 가리고 보인 칸 비율(0..1, 윗면 없는 물체 = -1). 판단에는 안 씀. 기본 꺼짐 — 끄면 저장 파일·결과가 옛것과 바이트 같음.
+ * 켜는 길: sm_set_inspect(c, 1) 또는 sm_create 설정 "inspect": 1(sm_set_robot·sm_reset 뒤에도 남음). 판 중간에 켜면 그때부터 셈. */
+typedef struct { uint32_t id; float closest_view_m; int32_t n_views; float top_seen; } sm_inspect;
+int sm_set_inspect(sm_ctx*, int32_t on);   /* 0 성공 */
+/* sm_snap_objects 와 같은 순서·개수의 배열(스냅숏 수명 동안). 개수, -2 = 꺼짐 */
+int sm_snap_inspect(const sm_snapshot_t*, const sm_inspect** out);
+
 #ifdef __cplusplus
 }
 #endif

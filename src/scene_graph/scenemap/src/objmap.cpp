@@ -77,6 +77,7 @@ struct Obs {
   double pso = 0;                 // 이 조각의 구조 물체(문·창·계단) 확률
   int top_lab = -1;               // 이 조각 하나의 가장 그럴듯한 라벨·확률(이름 충돌 막기)
   double top_p = 0;
+  double camd = -1;               // 카메라 광학 중심 ↔ 관측 중심 거리(살펴본 정도)
 };
 
 // 점 p(xy)와 선분 사이 수평 거리
@@ -168,7 +169,7 @@ void ObjectMap::envOverrides(ObjParams* p) {
                     {"da_min", &p->da_min, nullptr, nullptr},            {"da_k", &p->da_k, nullptr, nullptr},
                     {"merge_overlap", &p->merge_overlap, nullptr, nullptr},
                     {"grasp_check", nullptr, nullptr, &p->grasp_check},  {"self_pad", &p->self_pad, nullptr, nullptr},
-                    {"self_mask", nullptr, nullptr, &p->self_mask},
+                    {"self_mask", nullptr, nullptr, &p->self_mask},  {"inspect", nullptr, nullptr, &p->insp.on},
                     // objprob(objprob.hpp ApParams — 앞에 ap_)
                     {"objprob", nullptr, nullptr, &p->objprob},  {"ap_name_struct_skip", nullptr, nullptr, &p->ap_name_struct_skip},
                     {"ap_same_p", &p->ap.same_p, nullptr, nullptr},  {"ap_merge_p", &p->ap.merge_p, nullptr, nullptr},
@@ -413,6 +414,7 @@ void ObjectMap::relink(double t) {
     m.max_det_z = std::max(m.max_det_z, n.max_det_z);
     for (int k = 0; k < 3; ++k) m.trk_pos[k] = n.trk_pos[k];
     m.trk_t = n.trk_t;
+    m.insp = n.insp;   // 살펴본 정도는 새 자리 것
     m.mv_cnt = 0;
     m.appeared = false;
     m.moved = true;
@@ -803,6 +805,7 @@ void ObjectMap::update(const ObjFrame& f) {
         o.lo[a] = lo;
         o.hi[a] = hi;
       }
+      o.camd = std::sqrt((o.pos[0] - T[3]) * (o.pos[0] - T[3]) + (o.pos[1] - T[7]) * (o.pos[1] - T[7]) + (o.pos[2] - T[11]) * (o.pos[2] - T[11]));
       // 바닥 조각(점이 거의 다 바닥 높이): 물체 아님. 바닥에 깔리는 이름(러그·카펫·매트 — setFloorClasses)은 둠
       if (o.hi[2] < p_.floor_h && !floorLevel(o.cls)) { if (ap) ++aps_.n_floor; continue; }
       if (ap && f.wall_segs && f.n_wall_segs > 0) {
@@ -1104,6 +1107,14 @@ void ObjectMap::update(const ObjFrame& f) {
       }
     event(f.stamp, objs_.back(), 0);
   }
+  // 살펴본 정도: 물체에 붙은 관측마다(조각 포함) 가장 가까이 본 거리·시점
+  if (p_.insp.on)
+    for (const Obs& o : obs) {
+      const uint32_t id = assoc_[o.det].obj_id;
+      if (!id) continue;
+      for (MapObject& m : objs_)
+        if (m.id == id) { inspObserve(m.insp, cam6, o.camd, p_.insp); break; }
+    }
   // objprob: 이번에 본 물체의 이름 사후를 다시(이름 = 다시 셀 수 있는 캐시, 벡터가 원본)
   if (ap)
     for (MapObject& m : objs_)
@@ -1231,6 +1242,16 @@ void ObjectMap::update(const ObjFrame& f) {
                                return m.state == SM_GONE && !m.moved && int(m.n_obs) < p_.spurious_obs;
                              }),
               objs_.end());
+  // 살펴본 정도: 윗면 있는 물체(든 것·사라짐 빼고)의 윗면 칸을 이 깊이 영상으로 표시
+  if (p_.insp.on && (f.depth_m || f.depth_mm)) {
+    InspectFrame inf;
+    inf.w = f.w; inf.h = f.h; inf.depth_m = f.depth_m; inf.depth_mm = f.depth_mm;
+    inf.fx = f.fx; inf.fy = f.fy; inf.cx = f.cx; inf.cy = f.cy;
+    inf.T_mc = f.T_mc;
+    inf.zmin = p_.zmin; inf.zmax = p_.zmax;
+    for (MapObject& m : objs_)
+      if (m.held_by < 0 && m.state != SM_GONE && inspHasTop(m.lo, m.hi, p_.insp)) inspTop(m.insp, m.lo, m.hi, inf, p_.insp);
+  }
   markView(f);
   // 6. 중복 병합(da): 한 프레임에 일부만 보였거나 마스크가 쪼개져 따로 확정된 같은 물체를 하나로
   static const bool no_merge = std::getenv("SM_NO_MERGE") != nullptr;   // A/B 비교용
