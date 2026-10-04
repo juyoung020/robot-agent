@@ -149,7 +149,7 @@
 
 | 항목 | 상태 | 증거 | 다음 할 일 | 영역 |
 |---|---|---|---|---|
-| A–G 단계 전체, libmujoco 받기 | 대체됨 | BEHAVIOR_ENGINE_REVIEW 6절 제안대로 자체 env 커널(G1) + 팀 `RenderBatch` 로 감. MuJoCo 코드 없음 | 문서에 "대체됨" 표시(문서 정리 필요) | docs |
+| A–G 단계 전체, libmujoco 받기 | 대체됨 | BEHAVIOR_ENGINE_REVIEW 6절 제안대로 자체 env 커널(G1) + 팀 `RenderBatch` 로 감. MuJoCo 코드 없음 | — (표시 완료 `57bd99d`) | docs |
 
 ## 9. BEHAVIOR_ENGINE_REVIEW.md
 
@@ -234,7 +234,7 @@
 | 항목 | 상태 | 증거 | 다음 할 일 | 영역 |
 |---|---|---|---|---|
 | RL/env 가정 값(가속 한도·서보 이득·XL330) | 안 함 | `env.h:29-42` (가정) | 실측·회사 값 | env |
-| RL/map 남은 일 1 (5.2 맞추기) | 완료 | `d1a0c50`, `f66c173`, `a2abc45`, `886aa60` | README 줄 지우기(문서 정리) | docs |
+| RL/map 남은 일 1 (5.2 맞추기) | 완료 | `d1a0c50`, `f66c173`, `a2abc45`, `886aa60` | — (README 표시 완료 `57bd99d`) | docs |
 | RL/map 남은 일 2 (LIMO 기록으로 다시 맞춤) | 일부 | `7a474a0`, `c6b5cc5`. 거리별 놓침만 R1 | 위 "검출 실수" 와 같음 | map |
 | RL/map 남은 일 3 keyframe 커널 970 µs | 안 함 | — | 필요할 때 | map |
 | RL/map 남은 일 4 C1 격자 일부를 실제 탐사 경로로 | 안 함 | `map.h:185` 원판 공개 | 환경 개선 때 | map |
@@ -272,24 +272,24 @@
 | 문서:줄 | 무엇이 틀렸나 |
 |---|---|
 | `docs/map_vla/README.md` (SIM_PORTING 행) | "코드는 아직 없음" — G1 환경(`0eddb72`)이 있다. PORT_PLAN 행은 "대체됨" 으로. TODO_TRACKER 행 추가 필요. (다른 에이전트가 편집 중이라 손대지 않음) |
-| `docs/map_vla/BEHAVIOR_ENGINE_REVIEW.md` 3절 | "π0.5 체크포인트들(`data/pi05_native` 23 GB)" — 일부러 지웠다. 5절 "학습기는 π0.5 용, 우리 학습기 없음" 도 G3·G5 로 낡음 |
-| `docs/map_vla/PORT_PLAN.md` | 주의 문구만 있고 "대체됨" 표시가 없다 |
+| `docs/map_vla/BEHAVIOR_ENGINE_REVIEW.md` 3절 | "π0.5 체크포인트들(`data/pi05_native` 23 GB)" — 일부러 지웠다. 5절 "학습기는 π0.5 용, 우리 학습기 없음" 도 G3·G5 로 낡음 — **완료** `57bd99d` |
+| `docs/map_vla/PORT_PLAN.md` | 주의 문구만 있고 "대체됨" 표시가 없다 — **완료** `57bd99d` |
 | `docs/map_vla/SIM_PORTING.md` 4·5절 | 용도 미정·Python 허용 미정·`refs/code/behavior-2026` 경로 — 모두 정해졌거나 바뀜 |
 | `docs/map_vla/POLICY.md` 1.1 | "`move_robot` 부분·한계는 R1 Pro 기준, LIMO 없음" — 몸 크기 `limo_omx` 있음(`0705f51`). "`act()` 를 π0.5 엔진으로" — π0.5 버림 |
 | `docs/map_vla/TRAIN_VIEWER.md` 12절 | "args.json 대 run.json" — 실제 학습기는 `config.json`·`log.csv`·`results.json`(`~/ra_*`) |
-| `docs/map_vla/GPU_TRAINING.md` 12절 | "224² 렌더 안 쟀다"·"scenemap R1 Pro 전용" — 둘 다 끝남(`44b409c`, 서브모듈 `7219187`) |
-| `README.md:50,57,76,113`, `src/README.md:9,13,15`, `src/agent/README.md:3,10`, `src/vla/README.md:3` | VLA = π0.5 — 버림 |
-| `README.md:62` | "매니퓰레이터(모델 미정)" — OMX-F |
-| `docs/plan.md` 4절·위험 표 | π0.5 LoRA·리모 π0.5·"매니퓰레이터 모델 미정" — 낡음 |
-| `docs/model_selection.md:9,18,19,30,31,161-178` | Cartographer(실제는 자체 slam2d), π0.5 잠정/결정 — 변경 기록에 대체 행 없음 |
-| `docs/perception_model_candidates.md:144,192,269,399,409` | π0.5 가 돈다고 가정한 메모리·NPU 예산 |
-| `docs/known_bugs.md` 10 | 경로가 `da/merge.hpp`·`merge.cpp` 가 아니라 `da/include/da/merge.hpp`·`da/src/merge.cpp`. 3 번 파일 수 약 80 → 84 |
-| `src/scene_graph/README.md:18` | ctest "9/9" — 지금 12 개 |
-| `training/README.md:10,24` | Qwen VLA(아직 G7), `~/<모델>_work/runs/args.json`(RL·BC 는 `~/ra_*`·`config.json`) |
-| `training/RL/map/README.md:417-418` | "5.2 막혀 있다, FK R1 Pro 전용"·"R1 시뮬 기록" — 끝남/LIMO 기본 |
-| `training/RL/map_cmp/README.md:73,135` | 벽 56 "근사판에 없음"(`1bbd634` 에 있음), 상자 충돌 없음(A2 에 있음) |
+| `docs/map_vla/GPU_TRAINING.md` 12절 | "224² 렌더 안 쟀다"·"scenemap R1 Pro 전용" — 둘 다 끝남(`44b409c`, 서브모듈 `7219187`) — **완료** `57bd99d` |
+| `README.md:50,57,76,113`, `src/README.md:9,13,15`, `src/agent/README.md:3,10`, `src/vla/README.md:3` | VLA = π0.5 — 버림 — **완료** `57bd99d` |
+| `README.md:62` | "매니퓰레이터(모델 미정)" — OMX-F — **완료** `57bd99d` |
+| `docs/plan.md` 4절·위험 표 | π0.5 LoRA·리모 π0.5·"매니퓰레이터 모델 미정" — 낡음 — **완료** `57bd99d` |
+| `docs/model_selection.md:9,18,19,30,31,161-178` | Cartographer(실제는 자체 slam2d), π0.5 잠정/결정 — 변경 기록에 대체 행 없음 — **완료** `57bd99d` |
+| `docs/perception_model_candidates.md:144,192,269,399,409` | π0.5 가 돈다고 가정한 메모리·NPU 예산 — **완료** `57bd99d` |
+| `docs/known_bugs.md` 10 | 경로가 `da/merge.hpp`·`merge.cpp` 가 아니라 `da/include/da/merge.hpp`·`da/src/merge.cpp`. 3 번 파일 수 약 80 → 84 — 경로 **완료** `57bd99d`. 3 번 파일 수는 안 고침(세는 기준이 달라 다시 셀 것) |
+| `src/scene_graph/README.md:18` | ctest "9/9" — 지금 12 개 — **완료** `57bd99d` |
+| `training/README.md:10,24` | Qwen VLA(아직 G7), `~/<모델>_work/runs/args.json`(RL·BC 는 `~/ra_*`·`config.json`) — **완료** `57bd99d` |
+| `training/RL/map/README.md:417-418` | "5.2 막혀 있다, FK R1 Pro 전용"·"R1 시뮬 기록" — 끝남/LIMO 기본 — **완료** `57bd99d` |
+| `training/RL/map_cmp/README.md:73,135` | 벽 56 "근사판에 없음"(`1bbd634` 에 있음), 상자 충돌 없음(A2 에 있음) — **완료** `57bd99d` |
 | `training/RL/map_calib/limo/README.md:106` | "고친 카메라 판이 아직 없어" — 18:07 판 있음 |
-| `training/RL/ppo/README.md:127,385` | "C0 는 아직 없다"(G4 에 있음), "다음 1. G5"(끝남) |
+| `training/RL/ppo/README.md:127,385` | "C0 는 아직 없다"(G4 에 있음), "다음 1. G5"(끝남) — **완료** `57bd99d` |
 | `training/BC/README.md:235,238,328,333-334` | "영상 2 장 TODO"·"flow 아님"·"영상 학생 없음" — `b27aafd`·`3b09389` 로 끝남(G6 에이전트가 이 파일 편집 중) |
 | `docs/ai-agent/README.md:63` | VLA(π0.5) — git 무시 파일, 수업 저장소 쪽에서 고칠 것 |
 
