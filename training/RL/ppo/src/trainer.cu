@@ -311,6 +311,60 @@ __global__ void __launch_bounds__(256) log_k(TrainState* ts, const float* met_ta
   ts->iter = it + 1;
 }
 
+// ---- 장치 커리큘럼(호스트 왕복 없음): 앞쪽 칸(si, req, wn, wpos)은 호스트 ack 가 16 B 비동기 복사로 덮어씀 ----
+constexpr int CURR_MAXS = 16, CURR_MAXW = 64;
+struct CurrCtl {
+  int si, req, wn, wpos;   // 지금 단계, 환경 바꾸기 요청(−1 없음), 창에 든 수, 다음 쓸 칸
+  int on, n, window, pad;
+  float ns[CURR_MAXW], ne[CURR_MAXW];
+  PpoCurrStage st[CURR_MAXS];
+};
+// 바퀴 끝(gae 가 이 바퀴 에피소드 수를 ts 에 둔 뒤, log_k 가 it_stat·ts 를 지우기 전): 창에 넣고 넘어가기 판단 → 같은 칸 번호의 기록
+__global__ void curr_k(CurrCtl* c, TrainState* ts, const int* it_stat, gmap::MapCurr* mc, int ring, PpoCurrLog* out) {
+  PpoCurrLog L{-1, -1, 0, 0, 0.f, {0.f, 0.f, 0.f}};
+  const long long it = ts->iter;
+  if (c->on) {
+    const PpoCurrStage st = c->st[c->si];
+    if (c->req < 0) {   // 환경 바꾸기를 기다리는 동안(옛 환경 바퀴)은 창을 멈춤 — 예전 호스트 판의 ignore 와 같은 뜻
+      const int m = st.metric;
+      const float ns = m < 0 ? (float)ts->n_succ : (float)it_stat[m * 3 + 1];
+      const float ne = m < 0 ? (float)(ts->n_succ + ts->n_coll + ts->n_tout) : (float)it_stat[m * 3];
+      if (ne > 0.f) {
+        c->ns[c->wpos] = ns;
+        c->ne[c->wpos] = ne;
+        c->wpos = (c->wpos + 1) % c->window;
+        if (c->wn < c->window) c->wn = c->wn + 1;
+      }
+      float avg = 0.f;
+      if (c->wn == c->window) {   // 고정 순서(오래된 칸부터) 합
+        float a = 0.f, b = 0.f;
+        for (int k = 0; k < c->window; ++k) { const int q = (c->wpos + k) % c->window; a = a + c->ns[q]; b = b + c->ne[q]; }
+        avg = a / fmaxf(b, 1.f);
+      }
+      L.avg = avg;
+      L.n_win = c->wn;
+      if (c->si + 1 < c->n && avg >= st.promote) {
+        const PpoCurrStage nx = c->st[c->si + 1];
+        c->wn = 0;
+        c->wpos = 0;
+        if (nx.env != st.env) {
+          c->req = c->si + 1;
+          L.evt = 1;
+        } else {   // 같은 환경: 다음 바퀴의 롤아웃부터 새 처음 지도 비율·행동 비트(스트림 순서 그대로)
+          c->si = c->si + 1;
+          mc->p0 = nx.p0;
+          mc->p1 = nx.p1;
+          if (nx.act_mask) ts->act_mask = nx.act_mask;
+          L.evt = 2;
+        }
+      }
+    }
+    L.si = c->si;
+    L.req = c->req;
+  }
+  out[it % ring] = L;
+}
+
 __global__ void set_col_k(uint16_t* buf, long long rows, int ld, int col, uint16_t v) {
   const long long r = (long long)blockIdx.x * blockDim.x + threadIdx.x;
   if (r < rows) buf[r * ld + col] = v;
@@ -435,9 +489,16 @@ Trainer::Trainer(const PpoConfig& c) : cfg(c) {
   PCK(cudaHostGetDevicePointer(&ring_d, ring_h, 0));
   ev_a.resize(R); ev_b.resize(R); ev_c.resize(R);
   for (int k = 0; k < R; ++k) { PCK(cudaEventCreate(&ev_a[k])); PCK(cudaEventCreate(&ev_b[k])); PCK(cudaEventCreate(&ev_c[k])); }
+  cctl = alloc<CurrCtl>(1);   // 0 = 끔(ppo_curr_set 이 켬)
+  PCK(cudaHostAlloc(&cring_h, sizeof(PpoCurrLog) * R, cudaHostAllocMapped));
+  std::memset(cring_h, 0, sizeof(PpoCurrLog) * R);
+  PCK(cudaHostGetDevicePointer(&cring_d, cring_h, 0));
   ckpt_bytes = 64 + sizeof(float) * 3 * lay.total + sizeof(TrainState);
   PCK(cudaHostAlloc(&ckpt_h, ckpt_bytes, cudaHostAllocDefault));
   PCK(cudaEventCreateWithFlags(&ev_ckpt, cudaEventDisableTiming));
+  PCK(cudaEventCreateWithFlags(&ev_snap, cudaEventDisableTiming));
+  PCK(cudaStreamCreateWithFlags(&ckpt_st, cudaStreamNonBlocking));
+  ckpt_d = alloc<float>(3 * (size_t)lay.total + (sizeof(TrainState) + 3) / 4);
 
   make_env(cfg.stage);
   PCK(cudaDeviceSynchronize());
@@ -448,10 +509,14 @@ Trainer::~Trainer() {
   cudaDeviceSynchronize();
   if (g_roll) cudaGraphExecDestroy(g_roll);
   if (g_upd) cudaGraphExecDestroy(g_upd);
+  if (g_eval) cudaGraphExecDestroy(g_eval);
   for (void* p : allocs) cudaFree(p);
   for (size_t k = 0; k < ev_a.size(); ++k) { cudaEventDestroy(ev_a[k]); cudaEventDestroy(ev_b[k]); cudaEventDestroy(ev_c[k]); }
   if (ev_ckpt) cudaEventDestroy(ev_ckpt);
+  if (ev_snap) cudaEventDestroy(ev_snap);
+  if (ckpt_st) cudaStreamDestroy(ckpt_st);
   if (ring_h) cudaFreeHost(ring_h);
+  if (cring_h) cudaFreeHost(cring_h);
   if (ckpt_h) cudaFreeHost(ckpt_h);
   if (curr_h) cudaFreeHost(curr_h);
   vt.free_dev();
@@ -511,8 +576,10 @@ static cudaGraphExec_t capture_one(Trainer* tr, void (Trainer::*body)()) {
 void Trainer::capture() {
   if (g_roll) { cudaGraphExecDestroy(g_roll); g_roll = nullptr; }
   if (g_upd) { cudaGraphExecDestroy(g_upd); g_upd = nullptr; }
+  if (g_eval) { cudaGraphExecDestroy(g_eval); g_eval = nullptr; }
   g_roll = capture_one(this, &Trainer::rollout_body);
   g_upd = capture_one(this, &Trainer::update_body);
+  g_eval = capture_one(this, &Trainer::eval_body);
 }
 
 
@@ -601,6 +668,11 @@ void Trainer::log_iter() {
   PCK(cudaGetLastError());
 }
 
+void Trainer::curr_iter() {
+  curr_k<<<1, 1>>>(cctl, ts, it_stat, curr_d, cfg.log_ring, cring_d);
+  PCK(cudaGetLastError());
+}
+
 void Trainer::rollout_body() {
   // 지난 바퀴 끝 줄(관측·지도 토큰)을 0 줄로
   PCK(cudaMemcpyAsync(obs_buf, obs_buf + (size_t)T * N_OBS_G1 * N, sizeof(float) * N_OBS_G1 * N, cudaMemcpyDeviceToDevice, 0));
@@ -633,6 +705,7 @@ void Trainer::update_body() {
       backward(MB);
       optimizer();
     }
+  curr_iter();
   log_iter();
 }
 
@@ -656,8 +729,7 @@ int Trainer::eval_iterate() {
   PCK(cudaEventRecord(ev_a[slot], 0));
   if (g_roll) PCK(cudaGraphLaunch(g_roll, 0)); else rollout_body();
   PCK(cudaEventRecord(ev_b[slot], 0));
-  gae();
-  log_iter();
+  if (g_eval) PCK(cudaGraphLaunch(g_eval, 0)); else eval_body();
   PCK(cudaEventRecord(ev_c[slot], 0));
   ++issued;
   return 0;
@@ -670,6 +742,7 @@ int Trainer::poll(PpoLog* out) {
   if (q == cudaErrorNotReady) return 0;
   PCK(q);
   std::memcpy(out, (const void*)&ring_h[slot], sizeof(PpoLog));
+  std::memcpy(&clast, (const void*)&cring_h[slot], sizeof(PpoCurrLog));
   float a = 0.f, b = 0.f;
   PCK(cudaEventElapsedTime(&a, ev_a[slot], ev_b[slot]));
   PCK(cudaEventElapsedTime(&b, ev_b[slot], ev_c[slot]));
@@ -708,11 +781,17 @@ int ppo_ckpt_begin(void* h) {
   std::memcpy(p + 8, &n, 8);
   const int32_t st = t->cfg.stage;
   std::memcpy(p + 16, &st, 4);
-  PCK(cudaMemcpyAsync(p + 64, t->P, sizeof(float) * n, cudaMemcpyDeviceToHost, 0));
-  PCK(cudaMemcpyAsync(p + 64 + sizeof(float) * n, t->Am, sizeof(float) * n, cudaMemcpyDeviceToHost, 0));
-  PCK(cudaMemcpyAsync(p + 64 + 2 * sizeof(float) * n, t->Av, sizeof(float) * n, cudaMemcpyDeviceToHost, 0));
-  PCK(cudaMemcpyAsync(p + 64 + 3 * sizeof(float) * n, t->ts, sizeof(net::TrainState), cudaMemcpyDeviceToHost, 0));
-  PCK(cudaEventRecord(t->ev_ckpt, 0));
+  // 학습 스트림: 띄운 바퀴 뒤 자리에서 장치 안 사본(D2D)만 → 옆 스트림: 사본을 고정 호스트 버퍼로(학습은 기다리지 않고 계속)
+  float* d = t->ckpt_d;
+  PCK(cudaMemcpyAsync(d, t->P, sizeof(float) * n, cudaMemcpyDeviceToDevice, 0));
+  PCK(cudaMemcpyAsync(d + n, t->Am, sizeof(float) * n, cudaMemcpyDeviceToDevice, 0));
+  PCK(cudaMemcpyAsync(d + 2 * n, t->Av, sizeof(float) * n, cudaMemcpyDeviceToDevice, 0));
+  PCK(cudaMemcpyAsync(d + 3 * n, t->ts, sizeof(net::TrainState), cudaMemcpyDeviceToDevice, 0));
+  PCK(cudaEventRecord(t->ev_snap, 0));
+  PCK(cudaStreamWaitEvent(t->ckpt_st, t->ev_snap, 0));
+  PCK(cudaMemcpyAsync(p + 64, d, sizeof(float) * 3 * n + sizeof(net::TrainState), cudaMemcpyDeviceToHost, t->ckpt_st));
+  PCK(cudaEventRecord(t->ev_ckpt, t->ckpt_st));
+  t->ckpt_iter = t->issued;
   t->ckpt_pending = true;
   return 0;
 }
@@ -751,7 +830,33 @@ int ppo_set_act_mask(void* h, uint32_t mask) {
   static_cast<Trainer*>(h)->set_act_mask(mask);
   return 0;
 }
+int ppo_curr_set(void* h, const PpoCurrStage* st, int32_t n, int32_t window, int32_t start) {
+  auto* t = static_cast<Trainer*>(h);
+  if (n < 1 || n > ppo::CURR_MAXS || window < 1 || window > ppo::CURR_MAXW || start < 0 || start >= n || t->issued != t->polled) return -1;
+  ppo::CurrCtl c{};
+  c.si = start; c.req = -1; c.on = 1; c.n = n; c.window = window;
+  for (int k = 0; k < n; ++k) c.st[k] = st[k];
+  PCK(cudaMemcpyAsync(t->cctl, &c, sizeof c, cudaMemcpyHostToDevice, 0));
+  PCK(cudaStreamSynchronize(cudaStreamPerThread));   // 시작 때 한 번(c 는 스택)
+  return 0;
+}
+int ppo_curr_ack(void* h, int32_t si) {
+  auto* t = static_cast<Trainer*>(h);
+  const int k = t->curr_slot++ % 8;
+  if (cudaEventQuery(t->curr_ev[k]) == cudaErrorNotReady) PCK(cudaEventSynchronize(t->curr_ev[k]));
+  const int32_t v[4] = {si, -1, 0, 0};   // CurrCtl 앞 칸(si, req, wn, wpos)
+  static_assert(sizeof v <= sizeof(gmap::MapCurr), "ack fits a staging slot");
+  std::memcpy(&t->curr_h[k], v, sizeof v);
+  PCK(cudaMemcpyAsync(t->cctl, &t->curr_h[k], sizeof v, cudaMemcpyHostToDevice, 0));
+  PCK(cudaEventRecord(t->curr_ev[k], 0));
+  return 0;
+}
+int ppo_curr_log(void* h, PpoCurrLog* out) {
+  *out = static_cast<Trainer*>(h)->clast;
+  return 0;
+}
 int64_t ppo_issued(void* h) { return static_cast<Trainer*>(h)->issued; }
+int64_t ppo_ckpt_iter(void* h) { return static_cast<Trainer*>(h)->ckpt_iter; }
 int64_t ppo_num_params(void* h) { return static_cast<Trainer*>(h)->lay.total; }
 int64_t ppo_device_bytes(void* h) {
   auto* t = static_cast<Trainer*>(h);

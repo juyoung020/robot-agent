@@ -6,7 +6,8 @@
 //
 // 커리큘럼(G4, 계획서 5.5): 단계마다 G1 환경 단계(env)와 처음 지도 비율(map: [C0, C1], 나머지 C2)을 둔다. 넘어가기 = 그 단계가 재는
 // 처음 지도(metric: 0 C0, 1 C1, 2 C2, -1 전체)의 에피소드 성공률(최근 window 바퀴 에피소드 가중) ≥ promote.
-// 지도 비율만 바뀌면 장치 값 복사 하나(ppo_set_map_curriculum — 동기·그래프 다시 잡기 없음), 환경 단계가 바뀌면 예전처럼 ppo_set_stage.
+// 넘어가기 판단은 장치가 한다(ppo_curr_*: 갱신 그래프 끝 커널이 창·문턱을 보고, 같은 환경이면 처음 지도 비율·행동 비트를 바로 바꿈 —
+// 호스트 왕복·지연 없음, 띄운 바퀴 수와 무관하게 결정적). 환경 단계가 바뀌면 장치가 요청만 적고, 호스트가 기록에서 보고 ppo_set_stage → ppo_curr_ack.
 use serde_json::Value;
 mod runfolder; // 학습 뷰어 실행 폴더(run.json · progress.jsonl, TRAIN_VIEWER.md 4절) — 기록 스레드에서만
 use std::fs;
@@ -112,8 +113,33 @@ struct PpoLog {
     goal_known: f32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct PpoCurrStage {
+    env: i32,
+    p0: f32,
+    p1: f32,
+    promote: f32,
+    metric: i32,
+    act_mask: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug)]
+struct PpoCurrLog {
+    si: i32,
+    req: i32,
+    evt: i32,
+    n_win: i32,
+    avg: f32,
+    pad: [f32; 3],
+}
+
 #[allow(dead_code)]
 extern "C" {
+    fn ppo_curr_set(h: *mut std::ffi::c_void, st: *const PpoCurrStage, n: i32, window: i32, start: i32) -> i32;
+    fn ppo_curr_ack(h: *mut std::ffi::c_void, si: i32) -> i32;
+    fn ppo_curr_log(h: *mut std::ffi::c_void, out: *mut PpoCurrLog) -> i32;
     fn ppo_create(cfg: *const PpoConfig) -> *mut std::ffi::c_void;
     fn ppo_destroy(h: *mut std::ffi::c_void);
     fn ppo_iterate(h: *mut std::ffi::c_void) -> i32;
@@ -121,6 +147,7 @@ extern "C" {
     fn ppo_inflight(h: *mut std::ffi::c_void) -> i32;
     fn ppo_set_stage(h: *mut std::ffi::c_void, stage: i32) -> i32;
     fn ppo_ckpt_begin(h: *mut std::ffi::c_void) -> i32;
+    fn ppo_ckpt_iter(h: *mut std::ffi::c_void) -> i64;
     fn ppo_ckpt_poll(h: *mut std::ffi::c_void, data: *mut *const u8, nbytes: *mut i64) -> i32;
     fn ppo_load(h: *mut std::ffi::c_void, data: *const u8, nbytes: i64) -> i32;
     fn ppo_set_map_curriculum(h: *mut std::ffi::c_void, p0: f32, p1: f32, kmin: i32, kmax: i32, reveal_r: f32) -> i32;
@@ -367,11 +394,18 @@ fn main() {
         tx.send(Msg::Stage(si, 0.0)).unwrap();
     }
 
+    {
+        // 장치 커리큘럼: 단계 표·창을 장치에(시작 때 한 번). 판단은 갱신 그래프 끝 커널이 바퀴마다
+        let tab: Vec<PpoCurrStage> = stages
+            .iter()
+            .map(|s| PpoCurrStage { env: s.env, p0: s.p0, p1: s.p1, promote: s.promote as f32, metric: s.metric, act_mask: s.act_mask })
+            .collect();
+        let r = unsafe { ppo_curr_set(h, tab.as_ptr(), tab.len() as i32, window as i32, si as i32) };
+        assert_eq!(r, 0, "device curriculum: at most 16 stages, window 1..64");
+    }
     let t0 = Instant::now();
     let budget = Duration::from_secs_f64(minutes * 60.0);
-    let mut win: Vec<(f64, f64)> = Vec::new();   // (성공 수, 에피소드 수) — 바퀴마다
-    let mut pending_env = false;
-    let mut ignore_upto = 0i64;   // 지도 비율을 바꾼 뒤 이미 띄워 둔 바퀴(예전 비율)의 기록은 넘어가기 판단에 쓰지 않음
+    let mut pending_env: Option<usize> = None;   // 장치가 요청한 환경 바꾸기(단계 번호) — 띄운 바퀴가 다 끝난 뒤 처리
     let mut ckpt_pending = false;
     let mut last_iter = 0i64;
     let mut stop = false;
@@ -379,7 +413,7 @@ fn main() {
     let ckpt_path = |it: i64| out.join(format!("ckpt_{:06}.bin", it));
     loop {
         let timeup = t0.elapsed() > budget || (max_steps > 0 && log.env_steps >= max_steps);
-        if !timeup && !stop && !pending_env {
+        if !timeup && !stop && pending_env.is_none() {
             while unsafe { ppo_inflight(h) } < depth {
                 if unsafe { ppo_iterate(h) } != 0 {
                     break;
@@ -391,46 +425,29 @@ fn main() {
             got = true;
             last_iter = log.iter;
             tx.send(Msg::Log(log, t0.elapsed().as_secs_f64())).unwrap();
-            if log.iter <= ignore_upto || pending_env {
-                continue;
-            }
-            let st = &stages[si];
-            let (ns, ne) = if st.metric < 0 {
-                ((log.succ * log.n_eps) as f64, log.n_eps as f64)
-            } else {
-                let m = st.metric as usize;
-                ((log.s_c[m] * log.n_c[m]) as f64, log.n_c[m] as f64)
-            };
-            if ne > 0.0 {
-                win.push((ns, ne));
-                if win.len() > window {
-                    win.remove(0);
-                }
-            }
-            let avg = if win.len() == window { win.iter().map(|x| x.0).sum::<f64>() / win.iter().map(|x| x.1).sum::<f64>().max(1.0) } else { 0.0 };
-            if si + 1 < stages.len() && avg >= st.promote {
-                let nx = stages[si + 1].clone();
+            let mut cl = PpoCurrLog::default();
+            unsafe { ppo_curr_log(h, &mut cl) };
+            if cl.evt != 0 {
+                let st = &stages[si];
+                let nx = &stages[si + 1];
                 tx.send(Msg::Note(format!(
-                    "curriculum: stage {} success {:.3} (metric C{}, window {}) >= {} at iter {} / {} env-steps / {:.0} s -> {}",
-                    st.name, avg, st.metric, window, st.promote, log.iter, log.env_steps, t0.elapsed().as_secs_f64(), nx.name
+                    "curriculum: stage {} success {:.3} (metric C{}, window {}) >= {} at iter {} / {} env-steps / {:.0} s -> {} (decided on device)",
+                    st.name, cl.avg, st.metric, window, st.promote, log.iter, log.env_steps, t0.elapsed().as_secs_f64(), nx.name
                 )))
                 .unwrap();
-                win.clear();
-                if nx.env != st.env {
-                    pending_env = true;   // 환경을 새로 만들어야 함: 띄운 바퀴가 다 끝난 뒤
-                } else {
-                    si += 1;
+                if cl.evt == 2 {
+                    si = cl.si as usize;
                     tx.send(Msg::Stage(si, t0.elapsed().as_secs_f64())).unwrap();
-                    unsafe { ppo_set_map_curriculum(h, nx.p0, nx.p1, c.map_kmin, c.map_kmax, c.map_reveal_r) };
-                    if nx.act_mask != 0 { unsafe { ppo_set_act_mask(h, nx.act_mask) }; }
-                    ignore_upto = unsafe { ppo_issued(h) };
-                    tx.send(Msg::Note(format!("curriculum: now {} (first map C0 {:.2} C1 {:.2} C2 {:.2}: device value, no sync, no recapture; from iter {})",
-                        nx.name, nx.p0, nx.p1, 1.0 - nx.p0 - nx.p1, ignore_upto + 1))).unwrap();
+                    let nx = &stages[si];
+                    tx.send(Msg::Note(format!("curriculum: now {} (first map C0 {:.2} C1 {:.2} C2 {:.2}: switched on device from iter {}, no host round trip)",
+                        nx.name, nx.p0, nx.p1, 1.0 - nx.p0 - nx.p1, log.iter + 1))).unwrap();
+                } else {
+                    pending_env = Some(cl.req as usize);   // 환경을 새로 만들어야 함: 띄운 바퀴가 다 끝난 뒤
                 }
             }
-            if si + 1 == stages.len() && avg >= stop_success && !stop {
+            if si + 1 == stages.len() && pending_env.is_none() && cl.n_win as usize == window && cl.avg as f64 >= stop_success && !stop {
                 stop = true;
-                tx.send(Msg::Note(format!("stop: final stage success {:.3} >= {} at iter {}", avg, stop_success, log.iter))).unwrap();
+                tx.send(Msg::Note(format!("stop: final stage success {:.3} >= {} at iter {}", cl.avg, stop_success, log.iter))).unwrap();
             }
             if ckpt_every > 0 && log.iter % ckpt_every == 0 && !ckpt_pending {
                 unsafe { ppo_ckpt_begin(h) };
@@ -442,21 +459,22 @@ fn main() {
             let mut n: i64 = 0;
             if unsafe { ppo_ckpt_poll(h, &mut p, &mut n) } == 1 {
                 let b = unsafe { std::slice::from_raw_parts(p, n as usize) }.to_vec();
-                tx.send(Msg::Ckpt(b, ckpt_path(last_iter))).unwrap();
+                // 이름 = 사본에 든 바퀴 수(뜰 때 띄운 바퀴 수 — 예전에는 꺼낸 바퀴 번호라 1–3 바퀴 어긋났음)
+                tx.send(Msg::Ckpt(b, ckpt_path(unsafe { ppo_ckpt_iter(h) }))).unwrap();
                 ckpt_pending = false;
             }
         }
         let idle = unsafe { ppo_inflight(h) } == 0;
-        if pending_env && idle && !ckpt_pending {
-            si += 1;
+        if let (Some(req), true, false) = (pending_env, idle, ckpt_pending) {
+            si = req;
             tx.send(Msg::Stage(si, t0.elapsed().as_secs_f64())).unwrap();
             let nx = &stages[si];
             let r = unsafe { ppo_set_stage(h, nx.env) };
             assert_eq!(r, 0);
             unsafe { ppo_set_map_curriculum(h, nx.p0, nx.p1, c.map_kmin, c.map_kmax, c.map_reveal_r) };
             if nx.act_mask != 0 { unsafe { ppo_set_act_mask(h, nx.act_mask) }; }
-            win.clear();
-            pending_env = false;
+            unsafe { ppo_curr_ack(h, si as i32) };
+            pending_env = None;
             tx.send(Msg::Note(format!("curriculum: now {} (env A{} recreated, rollout graph recaptured; first map C0 {:.2} C1 {:.2})", nx.name, nx.env, nx.p0, nx.p1))).unwrap();
         }
         if (timeup || stop) && idle && !ckpt_pending {

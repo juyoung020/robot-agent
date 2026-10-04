@@ -15,6 +15,8 @@
 
 namespace ppo {
 
+struct CurrCtl;   // 장치 커리큘럼 상태(trainer.cu)
+
 struct Trainer {
   PpoConfig cfg;
   net::ParamLayout lay;
@@ -72,6 +74,12 @@ struct Trainer {
   net::LossHyper lh;
   net::AdamHyper ah;
 
+  // 장치 커리큘럼(ppo_capi.h ppo_curr_*): 단계 표·창은 장치, 기록은 같은 칸 번호의 매핑 링
+  struct CurrCtl* cctl = nullptr;
+  PpoCurrLog* cring_h = nullptr;
+  PpoCurrLog* cring_d = nullptr;
+  PpoCurrLog clast{-1, -1, 0, 0, 0.f, {0.f, 0.f, 0.f}};
+
   // 기록 링(장치가 매핑된 고정 호스트 메모리에 직접 씀)
   PpoLog* ring_h = nullptr;
   PpoLog* ring_d = nullptr;
@@ -83,8 +91,13 @@ struct Trainer {
   size_t ckpt_bytes = 0;
   cudaEvent_t ev_ckpt = nullptr;
   bool ckpt_pending = false;
+  // 체크포인트 비동기: 학습 스트림에서는 장치 안 사본(D2D, 수 µs)만 뜨고, 호스트로 내리기는 옆 스트림(복사 엔진)이 학습과 겹쳐서
+  float* ckpt_d = nullptr;            // [3·n + TrainState] 사본
+  cudaStream_t ckpt_st = nullptr;     // 옆 스트림(non-blocking)
+  cudaEvent_t ev_snap = nullptr;      // 사본 다 뜸(학습 스트림)
+  long long ckpt_iter = 0;            // 사본에 든 바퀴 수(= 뜰 때 띄운 바퀴 수)
 
-  cudaGraphExec_t g_roll = nullptr, g_upd = nullptr;
+  cudaGraphExec_t g_roll = nullptr, g_upd = nullptr, g_eval = nullptr;   // g_eval = 평가 바퀴 끝(GAE·기록, 갱신 없음)
   size_t dev_bytes = 0;
   int bug = 0;   // 음성 대조(검증용)
   bool keep_slot_bufs = false;   // 검증용: 칸 MLP 뒤 묶음(slot_bwd)이 dZ S2·dZ S1 도 전역에 쓰게(V4·V5 가 층마다 비교)
@@ -100,6 +113,7 @@ struct Trainer {
   void rollout_body();
   void rollout_step(int t);
   void update_body();
+  void eval_body() { gae(); log_iter(); }
   int iterate();
   int eval_iterate();   // 평가: 롤아웃 + GAE·기록만(갱신 없음 — 변수가 바뀌지 않음)
   int poll(PpoLog* out);
@@ -112,6 +126,7 @@ struct Trainer {
   void optimizer();
   void gae();
   void log_iter();
+  void curr_iter();   // 장치 커리큘럼 판단(갱신 그래프 끝, log_iter 앞)
   net::SlotC slot_c() const { return net::SlotC{sc, vt.d_name, vt.d_app}; }
   uint16_t* sin_full(int rows);   // 검증: 줄인 칸 줄 rows·16 개를 304 칸 줄로 펼쳐 sin 에(장치 포인터)
 

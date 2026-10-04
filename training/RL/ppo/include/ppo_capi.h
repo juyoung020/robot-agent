@@ -74,6 +74,8 @@ int ppo_set_stage(void* h, int stage);
 /* 체크포인트: 변수·Adam 상태·학습 상태를 고정 호스트 버퍼로 비동기 복사 → poll 이 1 이면 data 가 유효 */
 int ppo_ckpt_begin(void* h);
 int ppo_ckpt_poll(void* h, const uint8_t** data, int64_t* nbytes);
+/* 마지막 ppo_ckpt_begin 의 사본에 든 바퀴 수(= 그때 띄운 바퀴 수). 학습 스트림에서는 장치 안 사본만 뜨고 호스트 복사는 옆 스트림 */
+int64_t ppo_ckpt_iter(void* h);
 int ppo_load(void* h, const uint8_t* data, int64_t nbytes); /* 동기, 시작 때만 */
 /* 처음 지도 비율 바꾸기(장치 값, 비동기 복사 하나 — 동기·그래프 다시 잡기 없음). 다음에 띄우는 바퀴부터 */
 int ppo_set_map_curriculum(void* h, float p0, float p1, int32_t kmin, int32_t kmax, float reveal_r);
@@ -83,6 +85,32 @@ int64_t ppo_issued(void* h);
 int ppo_set_act_mask(void* h, uint32_t mask);
 int64_t ppo_num_params(void* h);
 int64_t ppo_device_bytes(void* h);
+
+/* 장치 커리큘럼(호스트 왕복 없는 넘어가기 판단). 단계 표·창을 장치에 두고, 갱신 그래프 끝 커널이 바퀴마다
+ * 그 단계 지표의 (성공 수, 에피소드 수)를 창(최근 window 바퀴, 에피소드 > 0 인 바퀴만)에 넣어 평균 ≥ promote 이면 넘어간다.
+ *  - 다음 단계가 같은 환경: 장치가 바로 처음 지도 비율·행동 비트를 바꾼다 → 다음 바퀴부터(호스트가 띄운 바퀴 수와 무관, 결정적).
+ *  - 다음 단계가 다른 환경: 장치는 req 에 단계 번호를 적고 창을 멈춘다. 호스트가 기록에서 보고 환경을 다시 만든 뒤 ppo_curr_ack. */
+typedef struct PpoCurrStage {
+  int32_t env;        /* 환경 단계(A0 ...) */
+  float p0, p1;       /* 처음 지도 C0·C1 비율 */
+  float promote;      /* 넘어가기 문턱(창 평균 성공률) */
+  int32_t metric;     /* −1 = 전체 에피소드, 0/1/2 = 처음 지도 C0/C1/C2 에피소드 */
+  uint32_t act_mask;  /* 0 = 바꾸지 않음 */
+} PpoCurrStage;
+typedef struct PpoCurrLog {   /* 기록 한 칸(PpoLog 와 같은 바퀴) */
+  int32_t si;         /* 이 바퀴 끝의 장치 단계 번호(−1 = 장치 커리큘럼 끔) */
+  int32_t req;        /* 환경을 바꿔야 하는 다음 단계 번호(−1 = 없음) */
+  int32_t evt;        /* 이 바퀴에 넘어가기: 0 없음, 1 환경 바꾸기 요청, 2 장치에서 바로 넘어감 */
+  int32_t n_win;      /* 창에 든 바퀴 수 */
+  float avg;          /* 창 평균 성공률(창이 다 찼을 때, 아니면 0) — 넘어가기 판단 값 */
+  float pad[3];
+} PpoCurrLog;
+/* 단계 표 n 개(≤ 16), 창(≤ 64), 시작 단계. 동기(시작 때만) */
+int ppo_curr_set(void* h, const PpoCurrStage* st, int32_t n, int32_t window, int32_t start);
+/* 호스트가 환경을 단계 si 의 것으로 다시 만든 뒤: 장치 단계 = si, 요청·창 지움(고정 호스트 링 + 비동기 복사) */
+int ppo_curr_ack(void* h, int32_t si);
+/* 마지막으로 ppo_poll 이 꺼낸 바퀴의 커리큘럼 기록 */
+int ppo_curr_log(void* h, PpoCurrLog* out);
 
 #ifdef __cplusplus
 }
