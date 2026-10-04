@@ -98,6 +98,7 @@ cmake -S src/scene_graph/scenemap -B ~/scenemap_build && cmake --build ~/scenema
 | `SM_MERGE_LOG` | 있으면 병합마다 stderr 에 한 줄 |
 | `SM_WALLS_CHECK` | 있으면 벽 증분 계산을 처음부터 계산한 것과 비교 |
 | `SM_KEEP` | `test_scene_json` 이 출력 폴더를 지우지 않음 |
+| `SM_SLAM_LOG=<파일>` | keyframe 마다 slam2d 예측·맞춤·정답·점 수 CSV(아래 LIMO SLAM) |
 
 sgrt 쪽 `SGRT_*` 변수는 [../runtime/README.md](../runtime/README.md).
 
@@ -175,8 +176,34 @@ python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py ~/ra_ws/map_vla.urdf   
 | 손 수(`n_hands`) | 2 | 1 | |
 | 그리퍼 닫힘 문턱 | 손가락 합 < 0.09 m | gripper_1 < 0.35 rad | 홈 자세는 0(닫힘) — 열었다 닫을 때만 잡기 |
 
-이 값들은 실측 전 추정이다(실제 로봇 기록으로 맞출 것). 나머지(slam2d 맞추기·격자·objmap 확정/사라짐 규칙)는 R1 과 같다.
+이 값들은 실측 전 추정이다(실제 로봇 기록으로 맞출 것). 나머지(격자·objmap 확정/사라짐 규칙)는 R1 과 같고, slam2d 맞추기 가중·받기 문턱만 아래처럼 다르다.
 
-**R1 회귀**: 바꾸기 전 빌드와 sgrt 기록 3 개(`mem_pose_slam_*`, `mem_pose_gt_move*`) × 자세 모드 3 개(slam·gt·odom)를 `sm_bench --save --traj` 로 재생해 keyframe 자세 CSV·`map.pgm`·`scene.json`·`view.json`·물체 PNG/PLY 가 바이트까지 같음, ctest 기존 10 개 통과.
+**LIMO SLAM(slam2d 맞추기, 10-04)**
+
+원인(시뮬 LIMO 기록 4 개 재생, `SM_SLAM_LOG` 로 keyframe 마다 예측·맞춘 결과·정답): 원래 가중(스캔 점 σ 1 cm, 사전항 2 cm + 10 %·이동)이면
+스캔 점 100–700 개의 정보가 오도메트리 사전항을 수천 배 눌러 예측이 사실상 무시된다. 좁은 시야(67.9°)에 벽 하나·복도만 보이거나 지도가 덜 찬
+keyframe(제자리 회전·출발 회전)에서 맞추기가 벽을 따라 미끄러지거나(복도 퇴화) 덜 찬 지도에 끌려 keyframe 하나에 4–10 cm 씩 튀었고
+(받기 문턱 8 cm·4σ 안이라 받아짐 — keyframe 사이 오도메트리는 1 mm·0.1° 수준인데), 그 자세로 넣은 지도(이중 벽)에 뒤 스캔이 다시 맞아
+오차가 고정 어긋남으로 굳었다. 맞추기는 평균으로 오차를 줄이지도 못했다(맞춘 뒤 정답에 가까워진 keyframe 43–51 %).
+높이 띠(맞추기 점을 0.5 m 아래로만 — 오히려 나빠짐)·첫 대응 반경(0.20 → 0.10 m — 나빠짐)·인라이어 하한은 원인이 아니었다.
+
+고침(`capi.cpp` `robotParams`, LIMO 만): 점 σ `sigma_r` 1 → 10 cm(점끼리 상관 — 스캔 정보 정규화), 사전항을 오도메트리 오차 크기로
+(`prior_xy0` 5 mm, `prior_xy_k` 3 %, `prior_yaw0` 0.2°, `prior_yaw_k` 3 %), 받기 문턱 `gate_xy` 3 cm·`gate_yaw` 1.5°(또는 사전항 4σ).
+퇴화 방향은 오도메트리를 따르고 잘 잡히는 방향(벽 법선·yaw — 회전 치우침 1.2 % 를 고침)만 스캔이 고친다. 코드 경로는 그대로라 R1 은 바이트까지 같다.
+
+| 기록(`sm_bench --robot limo_omx --no-dets`) | 전 RMS / 최대 / 끝 cm | 뒤 RMS / 최대 / 끝 cm | keyframe 튐 최대(전 → 뒤) cm | 점유 ±5 cm(전 → 뒤, gt 자세) | 벽 선분 ±5 cm(전 → 뒤, gt 자세) |
+|---|---|---|---|---|---|
+| 제자리 360° 14 s (turning_on_radio) | 1.47 / 2.81 / 0.45 | 0.70 / 1.24 / 0.34 | 0.95 → 0.24 | 95.3 → 95.5 % (95.1) | 95.2 → 96.5 % (96.6) |
+| explore 104 s (turning_on_radio) | 8.30 / 14.07 / 2.77 | 1.45 / 2.75 / 2.39 | 7.28 → 0.84 | 93.2 → 96.4 % (96.1) | 91.1 → 96.1 % (97.0) |
+| explore 121 s (bringing_water) | 12.25 / 26.33 / 4.57 | 2.68 / 4.93 / 3.25 | 11.06 → 0.76 | 89.5 → 96.5 % (97.4) | 93.6 → 98.5 % (94.0) |
+| explore 146 s (turning_on_radio, 고칠 때 안 씀) | 9.68 / 14.14 / 12.16 | 2.19 / 3.70 / 2.53 | 7.37 → 0.94 | 90.5 → 97.5 % (98.4) | 86.4 → 97.4 % (98.4) |
+
+오차 = keyframe 자세와 정답(첫 keyframe 에서 맞춤)의 거리, 튐 = 이웃 keyframe 사이 오차 벡터 변화. 점유 ±5 cm = 점유 칸(map.pgm 0) 중심이
+정답 지나갈 수 없는 곳(`gt_trav.py` .pgm, 1 cm 로 늘린 거리 변환)에서 5 cm 안인 비율, 벽 선분 = 저장 지도에 `wallSegmentsAligned` 를 돌린 선분을 1 cm 마다
+같은 거리로. 오도메트리만(odom)은 RMS 2.7–23 cm(회전 치우침으로 yaw 3°대) — 맞추기는 꼭 필요하다.
+
+진단: `SM_SLAM_LOG=<파일>`(sm_reset 때 열림)이면 keyframe 마다 한 줄 — stamp, 예측·맞춘 결과·쓴 자세, 정답(맞춤), 스캔 점 수, 인라이어, 맞춤·받음·제자리, 적분 이동.
+
+**R1 회귀**(LIMO SLAM 고침 10-04 에도 다시: sm_bench 9 개 저장·자세 CSV, `sgrt_replay` 9 개 저장 디렉터리 전부 바이트 같음, ctest 12 개 통과): 바꾸기 전 빌드와 sgrt 기록 3 개(`mem_pose_slam_*`, `mem_pose_gt_move*`) × 자세 모드 3 개(slam·gt·odom)를 `sm_bench --save --traj` 로 재생해 keyframe 자세 CSV·`map.pgm`·`scene.json`·`view.json`·물체 PNG/PLY 가 바이트까지 같음, ctest 기존 10 개 통과.
 
 **아직 R1 전용**: `tools/`(slam2d_eval·objmap_eval·stage_bench·capi_replay·map_timeline 은 R1 61 proprio 기록·`computeBodyFk` 를 씀. sm_bench 는 `--robot` 으로 고름), `eval/`(BEHAVIOR 데모·평가기 형식), `test_fk`·`test_objmem`·`test_posemap` 의 proprio, `sm_object`·이름 종류 표의 "person = 로봇 팔 오검출" 규칙, 스캔의 `shoulder`(캡슐이 있으면 안 씀). sgrt(`../runtime`)는 `SGRT_ROBOT=limo_omx` 로 고른다(그쪽 README "로봇 고르기").

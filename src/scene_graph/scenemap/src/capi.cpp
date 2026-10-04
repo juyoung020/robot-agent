@@ -6,6 +6,8 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -121,6 +123,8 @@ struct sm_ctx {
   sm_pose_diag diag{};
   double diag_s2xy = 0, diag_s2yaw = 0;
   int map_policy = 1, still_every = 50;
+  FILE* slog = nullptr;               // 진단: SM_SLAM_LOG=<파일> 이면 keyframe 마다 한 줄(예측·맞추기·정답)
+  KeyframeStats last_kf;
   // 스냅숏 격자 사본(보이는 값이 바뀌었을 때만 새로 — 그 사이 스냅숏은 같은 배열을 나눠 씀)
   std::shared_ptr<const std::vector<int8_t>> grid8;
   uint64_t grid8_ver = ~0ull;
@@ -248,6 +252,19 @@ void robotParams(int robot, SlamParams* sp, ObjParams* op) {
   op->body_r = 0.22;
   op->grip_closed = 0.35f;     // omx_gripper_joint_1 < 0.35 rad(손끝 틈 ≈ 5 cm 아래)면 닫힘. 0 = 완전히 닫힘, 1.745 = 다 열림
   op->n_hands = 1;
+  // 스캔 맞추기(10-04, LIMO 만): 오도메트리가 정확하다(이동 0.8 %/m, 회전 치우침 1.2 %). 원래 값(점 σ 1 cm, 사전항 2 cm + 10 %)이면
+  // 스캔 점 수백 개의 정보가 사전항을 수천 배 눌러 예측은 사실상 무시되고, 좁은 시야(67.9°)로 벽 하나·복도만 보이는 keyframe 에서
+  // 맞추기가 벽을 따라 미끄러지거나(복도 퇴화) 덜 찬 지도에 끌려 keyframe 하나에 4–10 cm 씩 튀고(gate 8 cm 안이라 받아짐), 그 자세로 넣은
+  // 지도(이중 벽)에 뒤 스캔이 다시 맞아 오차가 굳었다. 점 σ 를 10 cm(점끼리 상관 — 정보 정규화)로, 사전항을 오도메트리 오차 크기
+  // (5 mm + 3 %·이동, 0.2° + 3 %·회전)로 두어 퇴화 방향은 오도메트리, 잘 잡히는 방향(벽 법선·yaw)만 스캔이 고친다.
+  // 받기 문턱도 오도메트리와 맞는 범위로(keyframe 하나에 3 cm·1.5° 또는 사전항 4σ 넘게 고치면 버림).
+  sp->sigma_r = 0.10;
+  sp->prior_xy0 = 0.005;
+  sp->prior_xy_k = 0.03;
+  sp->prior_yaw0 = 0.2 * M_PI / 180.0;
+  sp->prior_yaw_k = 0.03;
+  sp->gate_xy = 0.03;
+  sp->gate_yaw = 1.5 * M_PI / 180.0;
 }
 
 // 베이스 기준 점 → map (slam 자세)
@@ -497,7 +514,10 @@ int sm_robot_fk(int32_t robot, const float* q, int32_t n, sm_body_fk* o) {
   return 0;
 }
 
-void sm_destroy(sm_ctx* c) { delete c; }
+void sm_destroy(sm_ctx* c) {
+  if (c && c->slog) std::fclose(c->slog);
+  delete c;
+}
 
 int sm_set_labels(sm_ctx* c, const char* const* names, int n) {
   if (!c || n < 0) return -1;
@@ -551,6 +571,12 @@ int sm_reset(sm_ctx* c) {
   c->diag_align = false;
   c->diag = sm_pose_diag{};
   c->diag_s2xy = c->diag_s2yaw = 0;
+  if (c->slog) std::fclose(c->slog);
+  c->slog = nullptr;
+  if (const char* lp = std::getenv("SM_SLAM_LOG")) {
+    c->slog = std::fopen(lp, "w");
+    if (c->slog) std::fprintf(c->slog, "stamp,pred_x,pred_y,pred_th,cand_x,cand_y,cand_th,x,y,th,ref_x,ref_y,ref_th,n_hits,inliers,matched,accepted,still,odom_xy,odom_yaw\n");
+  }
   c->grid8.reset();
   c->grid8_ver = ~0ull;
   c->walls.reset();
@@ -749,6 +775,16 @@ void poseDiag(sm_ctx* c, double stamp) {
   d.ref[0] = r.x; d.ref[1] = r.y; d.ref[2] = r.th;
   d.stamp = stamp;
 }
+// SM_SLAM_LOG 한 줄: stamp, 예측 x y th, 맞춘 결과 x y th, 쓴 자세 x y th, 정답(맞춤) x y th, 점 수, 인라이어, 맞춤·받음, 적분 이동
+void slamLog(sm_ctx* c, double stamp) {
+  const KeyframeStats& k = c->last_kf;
+  const Pose2 P = c->slam.pose();
+  Pose2 ref{NAN, NAN, NAN}, g;
+  if (c->diag_align && gtAt(c, stamp, &g)) ref = compose(c->align, g);
+  std::fprintf(c->slog, "%.4f,%.5f,%.5f,%.6f,%.5f,%.5f,%.6f,%.5f,%.5f,%.6f,%.5f,%.5f,%.6f,%d,%d,%d,%d,%d,%.5f,%.6f\n", stamp, k.pred.x,
+               k.pred.y, k.pred.th, k.cand.x, k.cand.y, k.cand.th, P.x, P.y, P.th, ref.x, ref.y, ref.th, k.n_hits, k.inliers, int(k.matched),
+               int(k.accepted), int(k.still), k.odom_xy, k.odom_yaw);
+}
 }  // namespace
 
 int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, const sm_rgb_source* src) {
@@ -796,10 +832,11 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   std::memcpy(dv.T_bc, fk.T_head, sizeof(dv.T_bc));
   {
     std::lock_guard<std::mutex> tg(c->tmu);   // 단계 시간은 slam2d 가 직접 더함
-    if (use_gt) c->slam.keyframeKnown(dv, body, known, &c->tm);
-    else c->slam.keyframe(dv, body, nullptr, &c->tm);
+    if (use_gt) c->last_kf = c->slam.keyframeKnown(dv, body, known, &c->tm);
+    else c->last_kf = c->slam.keyframe(dv, body, nullptr, &c->tm);
   }
   poseDiag(c, im->stamp);
+  if (c->slog) slamLog(c, im->stamp);
   streamMap(c);
   if (!dets) { c->last_assoc.clear(); c->last_view_upd.clear(); c->last_view_q.clear(); updateGraph(c, im->stamp, false); return 0; }   // 검출 없음: 지도(slam2d)만
   // 물체 지도: map ← 카메라 = slam 자세 ∘ 순기구학 머리 카메라(objmap_eval 과 같은 계산)

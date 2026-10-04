@@ -60,6 +60,8 @@ struct KeyframeStats {
   int changed_cells = 0;           // 넣기가 값을 바꾼 칸 수(넣었을 때)
   int n_hits = 0, inliers = 0, n_attached = 0;
   double jump_xy = 0, jump_yaw = 0;
+  Pose2 pred, cand;                // 맞추기 시작 자세(예측)·맞추기 결과(받든 안 받든) — 진단 로그(SM_SLAM_LOG)
+  double odom_xy = 0, odom_yaw = 0;   // 지난 keyframe 뒤 적분한 이동(예측 − 지난 자세)
   double us_scan = 0, us_match = 0, us_insert = 0;
 };
 

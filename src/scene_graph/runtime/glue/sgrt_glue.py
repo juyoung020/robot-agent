@@ -229,7 +229,8 @@ class SceneMemory:
         r = self.robot if self.robot is not None else _find_robot()
         k = None
         for name, sen in (getattr(r, "sensors", None) or {}).items():
-            if ":" + HEAD_LINK[1] + ":" in name and hasattr(sen, "intrinsic_matrix"):
+            # hasattr(sen, ...) 는 속성을 실제로 읽어 아래 AssertionError 가 try 밖에서 난다 — 클래스에서 확인
+            if ":" + HEAD_LINK[1] + ":" in name and hasattr(type(sen), "intrinsic_matrix"):
                 try:
                     K = sen.intrinsic_matrix
                     k = (float(K[0][0]), float(K[1][1]), float(K[0][2]), float(K[1][2]))

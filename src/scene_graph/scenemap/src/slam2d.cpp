@@ -99,6 +99,9 @@ KeyframeStats Slam2D::keyframe(const DepthView& d, const BodyState& b, const Pos
   const auto t1 = Clock::now();
   const Pose2 pred = truth ? *truth : compose(kf_, delta_);
   Pose2 pose = pred;
+  st.pred = st.cand = pred;
+  st.odom_xy = std::hypot(delta_.x, delta_.y);
+  st.odom_yaw = delta_.th;
   st.still = p_.stationary_rule && !first_ && vmax_ < p_.still_v && wmax_ < p_.still_w;
   if (!first_ && !st.still && p_.method != 'O' && st.n_hits >= p_.min_inliers) {
     ScopedStage tm(T, kStMatch);
@@ -108,6 +111,7 @@ KeyframeStats Slam2D::keyframe(const DepthView& d, const BodyState& b, const Pos
     Pose2 cand;
     st.inliers = p_.method == 'A' ? matchA(s, pred, sig, &cand) : matchB(s, pred, sig, &cand);
     st.matched = true;
+    st.cand = cand;
     st.jump_xy = std::hypot(cand.x - pred.x, cand.y - pred.y);
     st.jump_yaw = std::fabs(wrapAngle(cand.th - pred.th));
     if (st.inliers >= p_.min_inliers && st.jump_xy <= std::max(p_.gate_xy, 4 * sig[0]) &&
