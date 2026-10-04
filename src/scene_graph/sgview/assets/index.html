@@ -371,6 +371,12 @@ function zOf(kind) {   // two layers: objects and rooms one spacing above; the r
 }
 let graphNodes = [];   // for picking/labels/hover: {id, kind, x, y, z, oid?}
 let trajInfo = null;   // {len, last:[x,y,z]}
+// trajectory label: the robot of the run — view.json "robot" if the memory carries it, else the server's guess from the run's
+// robot_footprint.json (/api/robot), else a neutral "robot"
+const ROBOT_NAMES = { r1pro:"R1", r1:"R1", limo_omx:"LIMO", limo:"LIMO" };
+let robotKind = null;
+function robotLabel() { const k = (view && view.robot) || robotKind; return k ? (ROBOT_NAMES[k] || k) : "robot"; }
+async function loadRobotKind() { try { robotKind = (await (await fetch("/api/robot")).json()).robot || null; } catch (e) { robotKind = null; } }
 
 // thumbnail with a state-coloured frame, cached per (url, state)
 const thumbTex = new Map(), lastThumb = new Map();   // lastThumb: newest ready thumbnail per image path
@@ -554,7 +560,7 @@ function updateLabels() {
       const e = labelEls.get("o" + o.id); if (e) e.style.setProperty("--c", "#" + new THREE.Color(STATE_COL[o.state] ?? 0xc83cc8).getHexString());
     }
     if (opt("g_on")) {
-      if (trajInfo && opt("g_agents")) put("traj", `R1 ${trajInfo.len.toFixed(1)} m`, trajInfo.last, "traj");
+      if (trajInfo && opt("g_agents")) put("traj", `${robotLabel()} ${trajInfo.len.toFixed(1)} m`, trajInfo.last, "traj");
     }
     if (opt("g_on") && opt("g_rooms")) for (const r of view.rooms || []) put("r" + r.id, r.name || ("room " + r.id), [r.centroid[0], r.centroid[1], zOf("room") + 0.6], "room");
   }
@@ -1045,6 +1051,7 @@ async function startLive() {
   $("boot").textContent = "connecting …";
   const es = new EventSource("/stream");
   es.addEventListener("reset", () => {   // a new run: forget the old map, trail and summary
+    loadRobotKind().then(invalidate);   // the new run may be another robot
     if (mapState) { mapState.tex.dispose(); mapState.mesh.geometry.dispose(); mapState.mesh.material.dispose(); gMap.remove(mapState.mesh); mapState = null; }
     dropAligned(); alignTheta = 0;
     trailN = 0; trailLast = null; if (trail) trail.geometry.setDrawRange(0, 0);
@@ -1090,6 +1097,7 @@ $("n_rscale").onchange = () => { if (robotModel) robotModel.root.scale.setScalar
   perf.frames++; perf.renderMs += performance.now() - tr;
 })();
 loadRobotModel();
+loadRobotKind().then(invalidate);
 startLive().then(live => { if (!live) { $("boot").classList.add("gone"); poll(); } });
 </script>
 </body>

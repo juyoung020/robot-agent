@@ -25,7 +25,7 @@
 | `cloud.*` | 물체 점 구름: 복셀(기본 0.02 m)마다 점 하나, 물체당 한도(기본 4000), 물체가 움직이면 원점만 옮김 |
 | `rooms.*` | 방 나누기(Hydra room finder 의 2D 판): 빈칸 거리 변환 → 지속성 거름·붙이기 → 합치기 → 문(방–방 변). 방 id 유지, 물체 배정(바닥 자리 다수결), 들어 있는 물체로 규칙 이름(kitchen·bedroom …), 외부 이름 덮어쓰기 |
 | `sgraph.*` | 살아 있는 장면 그래프: 물체·방 노드, agent(0.5 m·30° 또는 10 s 마다), place 계산(바뀐 격자 둘레 2 m 창만 다시). `publish()` 가 바뀐 때만 읽기 전용 사본을 만든다 |
-| `walls.*` | 점유 격자 → 축에 맞는 벽 선분 → 벽 상태 벡터(길이 56: 16방향 거리 + 가까운 선분 8개). `viewer/walls2d.py` 의 C++ 판. sgview 도 이 파일을 컴파일해 쓴다. `wallSegmentsAligned`: slam 지도(지도 좌표 = 출발 자세라 벽이 기울어짐)용 — 벽 방향 θ 를 찾아(`wallAngle`, 투영 히스토그램) 돌린 격자에서 뽑고 되돌림, \|θ\| ≤ 1° 면 `wallSegments` 와 같은 결과(sgview 가 씀, capi 는 그대로) |
+| `walls.*` | 점유 격자 → 축에 맞는 벽 선분 → 벽 상태 벡터(길이 56: 16방향 거리 + 가까운 선분 8개). `viewer/walls2d.py` 의 C++ 판. sgview 도 이 파일을 컴파일해 쓴다. `wallSegmentsAligned`: slam 지도(지도 좌표 = 출발 자세라 벽이 기울어짐)용 — 벽 방향 θ 를 찾아(`wallAngle`, 투영 히스토그램) 돌린 격자에서 뽑고 되돌림, \|θ\| ≤ 1° 이거나 θ 로 돌려도 투영 점수가 8 % 미만으로 늘면(gt 지도의 −1°대 잡음) `wallSegments` 와 같은 결과. 돌린 격자에서 뽑은 선분은 원래 격자의 점유 띠에 다시 맞춤(±3 칸 안 가장 진한 띠 가운데로, 4 칸 넘는 끊김에서 나누고 양끝 자름, 점유 < 70 % 버림, 2 칸 안 겹치는 나란한 선 합침) — 돌린 격자 덩어리 가운데 행을 그대로 쓰면 slam 지도에서 선이 벽 옆 빈칸·두 줄 벽 사이에 놓이고 벽 끝을 지나 뻗음(sgview 가 씀, capi 는 그대로) |
 | `stream.*` | sgview 실시간 스트림. 스텝 스레드는 링 버퍼에 복사만, 송신 스레드가 비차단 소켓으로 보냄. 프레임 POSE · MAP_RECT · VIEW · JOINTS. 다시 붙으면 전체 상태를 다시 보냄 |
 | `dsg_save.*` | 저장(아래 "저장 파일"). 모든 파일은 임시 이름 → rename. scene.json 은 Spark-DSG JSON 형식을 직접 문자열로 쓴다(바뀐 노드만 다시 만드는 캐시) |
 | `png.*` | 최소 PNG 쓰기(8 비트 RGB, 16 비트 회색) |
@@ -111,7 +111,7 @@ sgrt 쪽 `SGRT_*` 변수는 [../runtime/README.md](../runtime/README.md).
 | `relations` | 물체끼리 on/in/near 변이 없음, 물체 부모는 방·place 만 |
 | `gt_traj` | GT 자세 모드에서 agent 노드가 `sm_push_pose` 정답 자세를 그대로 따라감(영상·proprio 없이) |
 | `scene_json` | scene.json 에 frontier·mesh·건물 층·GVD 필드가 없음, 줄인 Spark-DSG 로 다시 읽힘 |
-| `walls` | 합성 격자 속도, 증분 = 처음부터 계산, 물체 자리(소파) 빼기, 49.2° 기울어진 방(축 추출 0 개 → 돌려 뽑기 4 벽, θ 오차 < 0.3°), 축에 맞는 격자에서 돌려 뽑기 = 그대로. 인자로 파이썬 기준(`<cells.bin> <ref.json>`)을 주면 값 비교(ctest 는 인자 없이 돔) |
+| `walls` | 합성 격자 속도, 증분 = 처음부터 계산, 물체 자리(소파) 빼기, 49.2° 기울어진 방(축 추출 0 개 → 돌려 뽑기 4 벽, θ 오차 < 0.3°, 양끝이 벽 가운데선 1 cm 안·벽 밖으로 안 나감), 축에 맞는 격자에서 돌려 뽑기 = 그대로. 인자로 파이썬 기준(`<cells.bin> <ref.json>`)을 주면 값 비교(ctest 는 인자 없이 돔) |
 | `da_merge` | `../da/tests/test_merge.cpp` |
 | `stream` | 루프백 TCP 로 프레임 내용, 다시 붙을 때 전체 상태 재전송, 스텝 스레드 비용 |
 | `limo_fk` | LIMO 순기구학(깊이·손목 카메라 광학, 팔 끝)이 URDF 독립 계산(`tests/gen_limo_fk_ref.py`, 15 자세)과 위치 1e-5 m·회전 원소 1e-6 안, C ABI `sm_robot_fk` = 내부 값, R1 `sm_robot_fk` 머리 = `T_head` |

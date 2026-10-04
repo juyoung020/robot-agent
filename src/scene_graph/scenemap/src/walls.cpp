@@ -239,7 +239,8 @@ double wallAngle(const WallGrid& g) {
     return v;
   };
   constexpr double deg = M_PI / 180.0;
-  double best = 0.0, bv = score(0.0);
+  const double v0 = score(0.0);
+  double best = 0.0, bv = v0;
   // 1° 간격 → 0.25° → 0.05° 로 좁힌다
   for (int k = -45; k < 45; ++k) { const double th = k * deg, v = score(th); if (v > bv) { bv = v; best = th; } }
   for (const double step : {0.25 * deg, 0.05 * deg}) {
@@ -248,6 +249,9 @@ double wallAngle(const WallGrid& g) {
   }
   if (best >= M_PI / 4) best -= M_PI / 2;
   if (best < -M_PI / 4) best += M_PI / 2;
+  // 돌려도 뾰족함이 8 % 도 안 늘면 축에 맞는 지도로 본다(gt 지도: 잡동사니 때문에 −1°..−1.25° 가 조금 더 높게 나오기도 함 — 점수 비 ≤ 1.05,
+  // 기울어진 slam 지도는 1.13..3.3). 그런 지도는 예전처럼 wallSegments 로.
+  if (std::abs(best) > kAlignTol && bv < kAlignGain * v0) return 0.0;
   return best;
 }
 
@@ -304,9 +308,96 @@ std::vector<WallSeg> wallSegmentsAligned(const WallGrid& g, double min_len, doub
     }
   }
   const WallGrid gr{rot.data(), W, H, res, u0, v0};
-  std::vector<WallSeg> all = wallSegments(gr, min_len, max_thick, overlap, nullptr);
-  // 돌린 격자의 벽 가장자리는 계단 모양이라, 두꺼운 벽 한 덩어리 옆에 짧은 평행 조각이 따로 남는다(groupRuns 는 행마다 run 하나만 잇는다).
-  // 더 긴 평행 선분과 수직 거리 ≤ max_thick/2 이고 그 구간 안(양끝 1 칸 여유)에 들어가면 버린다.
+  const std::vector<WallSeg> raw = wallSegments(gr, min_len, max_thick, overlap, nullptr);
+  // 돌린 격자에서 뽑은 선분은 덩어리(groupRuns)의 가운데 행이라, 계단 모양으로 부푼 벽·나란한 두 줄 벽(slam)·max_thick 로 잘린 덩어리에서는
+  // 벽 띠 옆 빈칸에 놓이거나 벽 끝을 지나 빈칸으로 뻗는다. 그래서 원래 격자(가구 지운 src)에서 다시 맞춘다:
+  //  1) 맞추기: 선분과 나란히 ±3 칸 안을 1/4 칸씩 옮겨 가며 선분 위 점이 점유 칸에 드는 비율을 재고, 가장 높은 띠(봉우리의 절반 이상인
+  //     이어진 구간)의 가중 가운데로 옮긴다. 봉우리 < 0.25 면 버린다.
+  //  2) 자르기: 옮긴 선 위를 반 칸마다 보며(수직 ±반 칸 여유) 점유가 4 칸보다 길게 끊기면 나누고, 양끝을 마지막 점유 점까지 줄인다.
+  //     조각은 min_len 이상이고 점유 비율 ≥ 0.7 이어야 남는다(방 안을 지나는 선·벽을 가로지르는 짧은 가시가 여기서 빠진다).
+  //  3) 합치기: 같은 방향이고 수직 거리 ≤ 2 칸, 구간이 겹치거나 1 칸 안으로 붙은 두 선은 하나로(길이 가중 평균 위치에서 다시 1·2).
+  // 원래 격자의 칸 (x, y) = 점 (ox + x·res, oy + y·res) 에서 한 칸 — 칸 모서리 기준이라 반 칸 어긋남이 없다(돌린 격자 칸 중심과 상관없음).
+  auto occUV = [&](double u, double v) {
+    const double x = c * u - s * v, y = s * u + c * v;
+    const int ix = int(std::floor((x - g.ox) / res)), iy = int(std::floor((y - g.oy) / res));
+    return ix >= 0 && iy >= 0 && ix < g.w && iy < g.h && src[size_t(iy) * g.w + ix] >= kOccMin;
+  };
+  struct Line { bool hz; double q, a0, a1; };   // hz: u 방향(v = q, u = a0..a1), 아니면 v 방향(u = q, v = a0..a1)
+  auto occL = [&](const Line& l, double t, double d) { return l.hz ? occUV(t, l.q + d) : occUV(l.q + d, t); };
+  const double sstep = res / 2;
+  auto nsamp = [&](const Line& l) { return std::max(1, int(std::lround((l.a1 - l.a0) / sstep))); };
+  auto snap = [&](Line& l) {
+    constexpr int K = 12;   // ±3 칸, 1/4 칸 간격
+    const int n = nsamp(l);
+    double f[2 * K + 1];
+    for (int k = 0; k <= 2 * K; ++k) {
+      const double d = (k - K) * res / 4;
+      int cnt = 0;
+      for (int i = 0; i <= n; ++i) cnt += occL(l, l.a0 + (l.a1 - l.a0) * i / n, d);
+      f[k] = double(cnt) / (n + 1);
+    }
+    int b = K;
+    for (int k = 0; k <= 2 * K; ++k) if (f[k] - 0.01 * std::abs(k - K) > f[b] - 0.01 * std::abs(b - K)) b = k;
+    if (f[b] < 0.25) return false;
+    int lo = b, hi = b;
+    while (lo > 0 && f[lo - 1] >= 0.5 * f[b]) --lo;
+    while (hi < 2 * K && f[hi + 1] >= 0.5 * f[b]) ++hi;
+    double sw = 0, sd = 0;
+    for (int k = lo; k <= hi; ++k) { sw += f[k]; sd += f[k] * (k - K) * res / 4; }
+    l.q += sd / sw;
+    return true;
+  };
+  auto clip = [&](const Line& l, std::vector<Line>& out) {
+    const int n = nsamp(l), max_gap = 8;   // 4 칸 = 반 칸 점 8 개
+    auto on = [&](double t) { return occL(l, t, 0) || occL(l, t, -res / 2) || occL(l, t, res / 2); };
+    int first = -1, last = -1, cnt = 0, gap = 0;
+    auto close = [&]() {
+      if (first >= 0) {
+        const double t0 = l.a0 + (l.a1 - l.a0) * first / n, t1 = l.a0 + (l.a1 - l.a0) * last / n;
+        if (t1 - t0 >= min_len - res - 1e-9 && cnt >= 0.7 * (last - first + 1)) out.push_back({l.hz, l.q, t0, t1});
+      }
+      first = last = -1; cnt = 0; gap = 0;
+    };
+    for (int i = 0; i <= n; ++i) {
+      if (on(l.a0 + (l.a1 - l.a0) * i / n)) {
+        if (first < 0) first = i;
+        last = i; ++cnt; gap = 0;
+      } else if (first >= 0 && ++gap > max_gap) {
+        close();
+      }
+    }
+    close();
+  };
+  auto refine = [&](Line l, std::vector<Line>& out) {
+    if (!snap(l)) return;
+    std::vector<Line> pcs;
+    clip(l, pcs);
+    for (Line& p : pcs) if (snap(p)) out.push_back(p);   // 잘린 조각의 자리를 한 번 더 맞춘다
+  };
+  std::vector<Line> lines;
+  for (const WallSeg& w : raw) {
+    const bool hz = w.ay == w.by;
+    refine(hz ? Line{true, w.ay, std::min(w.ax, w.bx), std::max(w.ax, w.bx)} : Line{false, w.ax, std::min(w.ay, w.by), std::max(w.ay, w.by)}, lines);
+  }
+  for (bool changed = true; changed;) {
+    changed = false;
+    for (size_t i = 0; i < lines.size() && !changed; ++i)
+      for (size_t j = i + 1; j < lines.size() && !changed; ++j) {
+        const Line &a = lines[i], &b = lines[j];
+        if (a.hz != b.hz || std::abs(a.q - b.q) > 2 * res + 1e-9 || std::min(a.a1, b.a1) - std::max(a.a0, b.a0) < -res - 1e-9) continue;
+        const double la = a.a1 - a.a0 + res, lb = b.a1 - b.a0 + res;
+        Line m{a.hz, (a.q * la + b.q * lb) / (la + lb), std::min(a.a0, b.a0), std::max(a.a1, b.a1)};
+        std::vector<Line> pcs;
+        refine(m, pcs);
+        lines.erase(lines.begin() + j);
+        lines.erase(lines.begin() + i);
+        lines.insert(lines.begin() + i, pcs.begin(), pcs.end());
+        changed = true;   // 합칠 때마다 선이 하나 이상 줄거나(조각 ≤ 1) 나뉜 조각끼리는 4 칸 넘게 떨어져 다시 안 합쳐진다
+      }
+  }
+  std::vector<WallSeg> all;
+  for (const Line& l : lines) all.push_back(l.hz ? WallSeg{l.a0, l.q, l.a1, l.q} : WallSeg{l.q, l.a0, l.q, l.a1});
+  // 그래도 남는 짧은 평행 조각: 더 긴 평행 선분과 수직 거리 ≤ max_thick/2 이고 그 구간 안(양끝 1 칸 여유)에 들어가면 버린다.
   std::vector<WallSeg> segs;
   {
     const double tol = max_thick / 2, slack = res;

@@ -266,6 +266,37 @@ fn furniture_rects_of(text: &str) -> Vec<f64> {
     out
 }
 
+/// Which robot made the run, for the trajectory label: `robot_footprint.json` next to the memory dir (run dir) or inside it.
+/// An explicit `"robot"` field wins; older files only carry the simulator AABB, which tells the two bodies apart
+/// (R1 Pro ≈ 0.75 × 0.73 × 1.48 m, LIMO + OMX-F ≈ 0.35 × 0.36 × 0.38 m). Unknown → null (the page says "robot").
+fn robot_kind(st: &State) -> Option<String> {
+    let mut cands = vec![st.dir.join("robot_footprint.json")];
+    if let Some(p) = st.dir.parent() {
+        cands.push(p.join("robot_footprint.json"));
+    }
+    for p in cands {
+        let v: serde_json::Value = match std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str(&t).ok()) {
+            Some(v) => v,
+            None => continue,
+        };
+        if let Some(r) = v["robot"].as_str() {
+            return Some(r.to_string());
+        }
+        let e: Vec<f64> = v["robot_aabb_extent"].as_array().map(|a| a.iter().filter_map(|x| x.as_f64()).collect()).unwrap_or_default();
+        if e.len() == 3 {
+            let xy = e[0].max(e[1]);
+            if xy < 0.5 && e[2] < 0.6 {
+                return Some("limo_omx".into());
+            }
+            if xy > 0.6 && e[2] > 1.0 {
+                return Some("r1pro".into());
+            }
+        }
+        return None;
+    }
+    None
+}
+
 /// The wall map of the current `map.pgm` (cached by mtime+size; segments are recomputed only when the map file changes).
 fn wall_map(st: &State) -> Option<Arc<WallMap>> {
     let pgm_path = st.dir.join("map.pgm");
@@ -472,6 +503,13 @@ fn handle(mut s: TcpStream, st: Arc<State>) {
         "/OrbitControls.js" => respond(&mut s, 200, "application/javascript", "", ORBIT_JS),
         "/favicon.ico" => respond(&mut s, 204, "image/x-icon", "", b""),
         "/api/mode" => respond(&mut s, 200, "application/json", "", format!("{{\"live\":{}}}", st.live_mode).as_bytes()),
+        "/api/robot" => {
+            let body = match robot_kind(&st) {
+                Some(r) => format!("{{\"robot\":{}}}", serde_json::Value::String(r)),
+                None => "{\"robot\":null}".to_string(),
+            };
+            respond(&mut s, 200, "application/json", "", body.as_bytes())
+        }
         "/stream" => {
             let st2 = st.clone();
             return serve_stream(s, st2);

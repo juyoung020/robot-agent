@@ -37,10 +37,13 @@ std::vector<WallSeg> wallSegments(const WallGrid& g, double min_len = kMinLen, d
                                   double overlap = 0.6, const std::vector<WallRect>* ignore = nullptr);
 
 // 지도 축과 벽 방향이 어긋난 지도(slam: 지도 좌표 = 출발 자세라 벽이 기울어짐)용. 점유 칸의 주된 직교 방향 θ(−45°..45°, rad)를
-// 찾아(투영 히스토그램이 가장 뾰족한 각), |θ| ≤ kAlignTol 이면 wallSegments 그대로(축에 맞는 지도 = 같은 결과), 아니면 격자를 −θ 돌린
-// 격자로 다시 뽑아(칸 = 원래 칸 4 개 중 하나라도 점유면 점유) 축에 맞는 벽을 찾고 선분을 θ 돌려 원래 지도 좌표로 돌려준다.
+// 찾아(투영 히스토그램이 가장 뾰족한 각, 0° 보다 kAlignGain 배 이상 뾰족할 때만), |θ| ≤ kAlignTol 이면 wallSegments 그대로(축에 맞는 지도 = 같은 결과), 아니면 격자를 −θ 돌린
+// 격자로 다시 뽑아(칸 = 원래 칸 4 개 중 하나라도 점유면 점유) 축에 맞는 벽을 찾고, 각 선분을 원래 격자의 점유 띠에 다시 맞춘다
+// (나란히 ±3 칸 안에서 가장 점유가 많은 띠 가운데로 옮김, 점유가 4 칸 넘게 끊기면 나누고 양끝을 점유까지 자름, 점유 < 70 % 조각은 버림,
+// 2 칸 안의 겹치는 나란한 선은 하나로) 뒤 θ 돌려 원래 지도 좌표로 돌려준다.
 // ignore 영역은 원래 지도 좌표에서 지운 뒤 돌린다. angle_out 이 있으면 쓴 θ 를 넣는다.
 constexpr double kAlignTol = 1.0 * 3.14159265358979323846 / 180.0;
+constexpr double kAlignGain = 1.08;   // wallAngle: θ 의 투영 점수가 0° 점수의 이 배수보다 작으면 0 을 돌려준다(축에 맞는 지도)
 double wallAngle(const WallGrid& g);
 std::vector<WallSeg> wallSegmentsAligned(const WallGrid& g, double min_len = kMinLen, double max_thick = kMaxThick,
                                          double overlap = 0.6, const std::vector<WallRect>* ignore = nullptr,

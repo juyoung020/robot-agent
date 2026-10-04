@@ -130,14 +130,23 @@ int main(int argc, char** argv) {
     double ang = 0;
     const auto axis = wallSegments(g4);
     const auto al = wallSegmentsAligned(g4, kMinLen, kMaxThick, 0.6, nullptr, &ang);
-    double len = 0, axis_len = 0;
-    int off_dir = 0;
+    double len = 0, axis_len = 0, worst_off = 0;
+    int off_dir = 0, outside = 0;
     for (auto& s : axis) axis_len += std::hypot(s.bx - s.ax, s.by - s.ay);
     for (auto& s : al) {
       len += std::hypot(s.bx - s.ax, s.by - s.ay);
       double a = std::fmod(std::atan2(s.by - s.ay, s.bx - s.ax) - th + 4 * M_PI, M_PI / 2);
       if (std::min(a, M_PI / 2 - a) > 1.0 * M_PI / 180) ++off_dir;
+      // 선분은 벽 띠(가운데 ±0.05 m) 위에 있어야 한다: 양끝의 벽 가운데선까지 거리, 벽 끝을 넘지 않음
+      for (int e = 0; e < 2; ++e) {
+        const double px = (e ? s.bx : s.ax) - cx, py = (e ? s.by : s.ay) - cy;
+        const double u = std::cos(th) * px + std::sin(th) * py, v = -std::sin(th) * px + std::cos(th) * py;
+        worst_off = std::max(worst_off, std::min(std::abs(std::abs(u) - L / 2), std::abs(std::abs(v) - Wd / 2)));
+        if (std::abs(u) > L / 2 + 0.08 || std::abs(v) > Wd / 2 + 0.08) ++outside;   // 벽 바깥 모서리 + 0.6 칸(점 칸 판정)
+      }
     }
+    std::printf("rotated room: worst endpoint offset from the wall centre %.3f m, endpoints outside the walls %d\n", worst_off, outside);
+    if (worst_off > 0.01 || outside) { std::printf("FAIL aligned segments off the wall band\n"); ++bad; }
     const double angd = ang * 180 / M_PI;
     std::printf("rotated room 49.2 deg: axis %zu seg %.1f m, aligned %zu seg %.1f m (theta %.2f deg)\n", axis.size(), axis_len, al.size(), len, angd);
     if (std::abs(std::remainder(angd - 49.2, 90.0)) > 0.3) { std::printf("FAIL wallAngle %.2f\n", angd); ++bad; }
