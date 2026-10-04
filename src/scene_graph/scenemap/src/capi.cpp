@@ -112,6 +112,9 @@ struct sm_ctx {
   std::atomic<bool> rooms_force{false};
   // 자세 원천(sm_set_pose_mode): SLAM(적분 + 스캔 맞추기) / ODOM(적분만) / GT(sm_push_pose 외부·정답 자세)
   int pose_mode = SM_POSE_SLAM;
+  // 외부 카메라 외부 자세(sm_set_cam_extrinsic): cam 0 의 베이스 ← 광학 프레임을 순기구학 대신 이 값으로(카메라만 있는 기록 — 벤치마크)
+  bool ext_cam = false;
+  float ext_T[12] = {0};
   std::deque<sm_pose2> gtq;           // 외부 자세(stamp 순). GT 가 아닌 모드에서는 진단(떠밀림)에만 씀
   bool diag_align = false;            // 진단: map ← 외부 프레임 맞춤(첫 keyframe 에서 오차 0)
   Pose2 align;
@@ -782,6 +785,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   c->addT(kStPair, usBetween(tp, tf));
   BodyFk fk;
   const BodyState body = robotBody(c->robot, c->last_used.q, &fk);
+  if (c->ext_cam) std::memcpy(fk.T_head, c->ext_T, sizeof(fk.T_head));
   c->addT(kStFk, usBetween(tf, TClock::now()));
   DepthView dv;
   dv.w = im->w;
@@ -1428,6 +1432,15 @@ int sm_set_pose_mode(sm_ctx* c, int32_t mode) {
   std::lock_guard<std::mutex> g(c->mu);
   c->pose_mode = mode;
   c->slam.setMethod(mode == SM_POSE_ODOM ? 'O' : c->params.method);
+  return 0;
+}
+
+int sm_set_cam_extrinsic(sm_ctx* c, int32_t cam, const double* T_bc) {
+  if (!c || cam != 0) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  c->ext_cam = T_bc != nullptr;
+  if (T_bc)
+    for (int k = 0; k < 12; ++k) c->ext_T[k] = float(T_bc[k]);
   return 0;
 }
 

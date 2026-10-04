@@ -338,6 +338,13 @@ typedef struct {
 } sm_pose_diag;
 int sm_get_pose_diag(sm_ctx*, sm_pose_diag* out);
 
+/* ---- 외부 카메라 외부 자세(추가 ABI, 10-04) ----
+ * cam 0 의 베이스 ← 카메라 광학 프레임(z 앞, x 오른쪽, y 아래; 행 우선 3×4)을 순기구학 대신 이 값으로 쓴다(스캔·물체 지도 둘 다).
+ * 로봇 몸이 없는 카메라 기록(dynamic-object-mapping-benchmark: 자세 = world ← 카메라 6 자유도)을 넣을 때: 베이스 = 카메라의 바닥 투영
+ * (sm_push_pose 의 x, y, yaw) + 이 값 = 베이스 ← 카메라(높이·기울기). 영상마다 바꿔도 된다(다음 sm_push_image 부터).
+ * T_bc == NULL 이면 끄고 순기구학으로. 몸 가리기·팔 끝·잡기 규칙은 그대로 proprio 를 쓴다. sm_reset·sm_set_robot 은 바꾸지 않음. 0 성공 */
+int sm_set_cam_extrinsic(sm_ctx*, int32_t cam, const double* T_bc);
+
 /* ---- 격자 넣기 정책(추가 ABI) ----
  * policy 0: 움직임 거르기(옛 판) — 5 cm·2° 움직였거나 still_every keyframe 마다 한 번.
  * policy 1(기본): 사건 기반 — 움직였거나, 가상 스캔(방위 칸 서명)이 지난번 넣은 것과 다르거나, 지난 넣기가 아직 칸 값을

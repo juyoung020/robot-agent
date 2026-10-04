@@ -28,6 +28,7 @@ keyframe 인지는 `sgrt_want_image()` 가 알려 준다(`kf_every` 스텝마다
 | `glue/sgrt_glue.py` | 평가기 쪽 접착부 `SceneMemory(task, out_dir)` · `step(obs)` · `close()`. 과제 프롬프트(`../ovdet/config/task_prompts.txt` 의 과제 줄 + `_scene` 줄), GT 자세 넣기, GT 기록, 900 스텝마다 진단·시간 출력 |
 | `tests/test_crop.cpp` | 장치 자르기·색 모으기 = 호스트 식, 시간 |
 | `tools/sgrt_replay.cpp` | sgrt 기록(`SGRT_RECORD`)을 libsgrt 로 다시 굴림(검출 → 지도 → 저장). 라이브러리는 dlopen — 옛 빌드와 새 빌드를 같은 입력으로 바이트 비교 |
+| `tools/dom_bench_det.cpp` | dynamic-object-mapping-benchmark 시퀀스를 실제 검출(ovdet FastSAM-s 416, conf 0.25)로 scenemap 에 넣어 `map_timeline.csv`·`map_points.npz`. `--classify`: 검출마다 SigLIP 2 임베딩 → 글 프롬프트(벤치마크 범주·구조물) 코사인 최대를 cls 로. 없으면 sgrt 와 같이 모두 'object' |
 | `tools/sgrt_frames.cpp` | 실제 엔진으로 끝까지 확인: raw RGB 프레임을 장치에 올려 `sgrt_step` → 저장. 깊이는 평평한 2 m(가짜) — 검출 → 자르기·색 모으기 → PNG/PLY 경로 확인용 |
 
 ## 만들기

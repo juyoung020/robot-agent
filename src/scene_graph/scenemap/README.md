@@ -65,6 +65,7 @@ cmake -S src/scene_graph/scenemap -B ~/scenemap_build && cmake --build ~/scenema
 | `objmap_eval <ep.bin> <det.bin> <out prefix> [--gt-pose] [--min-cells N]` | '완벽한 검출'(`eval/export_gtdet.py`)로 물체 지도를 만들어 물체 표·사건을 씀. 채점은 `eval/score_objmap.py` |
 | `capi_replay <ep.bin> <est.bin>` | 같은 판을 C ABI 로 넣고 keyframe 자세를 `slam2d_eval` 결과와 비교, 격자 크기·reachable |
 | `map_timeline <ep.bin> <det.bin> <out dir> [--min-cells N]` | 팀 벤치마크 형식 지도 시간표 `map_timeline.csv`, 물체 점 `map_points.npz` |
+| `dom_bench <seq dir> <pred root> [--min-px 100] [--every 1] [--bench-static]` | dynamic-object-mapping-benchmark 시퀀스(toolkit 배치)를 '완벽한 검출'(정답 인스턴스 마스크 + 범주)로 넣어 `<pred root>/<seq>/map_timeline.csv`·`map_points.npz`. 카메라만 있는 기록은 `sm_set_cam_extrinsic`(베이스 = 카메라 바닥 투영, GT 자세 모드)으로 넣는다(`tools/dom_seq.hpp`, libpng 있을 때만 빌드). 실제 검출판은 `../runtime/tools/dom_bench_det.cpp` |
 | `sm_bench <rec.bin> [--pose slam\|odom\|gt] [--lag 0\|1] [--policy 0\|1] …` | sgrt 기록(`SGRT_RECORD`)을 C ABI 로 재생: 자세 모드 비교(떠밀림), 단계별 µs 표. `--robot limo_omx`(또는 `--sm-config '<json>'`)로 LIMO 기록 — 기록에는 로봇이 안 적히므로 sgrt 의 `SGRT_ROBOT` 과 같게 준다(없으면 R1) |
 | `stage_bench <rec.bin> [--loops K] [--frames N]` | 같은 기록을 내부 C++ API 로 재생해 fk·scan·match·insert·objmap 단계 µs(옛 판 소스로도 빌드되게 오래된 모양만 씀) |
 | `rooms_pgm <memory dir> [출력 dir] [되풀이 수]` | 저장된 기억(map.pgm·map.yaml·view.json)에서 방을 나눠 표, `rooms.pgm`, `rooms_color.ppm`. 되풀이 수를 주면 시간 중앙값 |

@@ -42,3 +42,11 @@ target_link_libraries(sgrt_frames sgrt CUDA::cudart_static)
 add_executable(sgrt_replay tools/sgrt_replay.cpp)
 target_include_directories(sgrt_replay PRIVATE include ../scenemap/tools)
 target_link_libraries(sgrt_replay ${CMAKE_DL_LIBS})
+
+# dynamic-object-mapping-benchmark 어댑터(실제 검출: FastSAM-s + 선택 SigLIP 2 이름). 완벽한 검출판은 ../scenemap/tools/dom_bench.cpp
+find_package(PNG)
+if(PNG_FOUND)
+  add_executable(dom_bench_det tools/dom_bench_det.cpp)
+  target_include_directories(dom_bench_det PRIVATE ../scenemap/tools)
+  target_link_libraries(dom_bench_det scenemap ovdet sgclip PNG::PNG ZLIB::ZLIB CUDA::cudart_static)
+endif()
