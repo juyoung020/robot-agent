@@ -5,7 +5,9 @@ realbag_run 에 다시 넣기 위해(검출기 비교: 같은 RGB-D·바퀴 오�
 
   rec.bin 'I'(RGB 있는 것) → rgb/NNNNNN.png · depth/NNNNNN.png(uint16 mm), 영상 시각 = 직전 스텝(sgrt SGRT_IMAGE_LAG 1 과 같음)
   'P'(LIMO proprio 12, 0–5 = 바퀴 오도메트리 x y yaw vx vy wz) → odom.csv(30 Hz 전부)
-  'G'(정답 베이스 자세, world) → frames.csv gt_*(영상 시각의 G, 없으면 가장 가까운 것)
+  'G'(정답 베이스 자세, world) → frames.csv gt_*(영상 시각의 G, 없으면 가장 가까운 것), gt.csv(전부)
+  'L'(2D 라이다 스캔, 10-06) → scans.bin(bag2stream.py --scan-only 와 같은 SCN1), meta.json T_bl = URDF laser_link
+     (base_footprint ← laser: 0.103, 0, 0.15 − 0.034) — slam_carto/tools/carto_run·realbag_run --pose carto 가 읽음
   T_bc(base_footprint ← 광학 카메라) = run/gt_poses.csv 의 정답 베이스·카메라 자세에서(OG 카메라 −z 앞·+y 위 → 광학 z 앞·y 아래,
   base_link − 0.15 m = base_footprint). 정답 물체(run/gt_poses.csv.objects.json)는 gt_objects.json 으로 옮겨 둔다.
 """
@@ -27,7 +29,13 @@ def quat_R(x, y, z, w):
 
 
 def t_bc_from_gt(run):
-    """base_footprint ← 광학 카메라, 정답 로그 행 평균(바퀴 로봇이라 거의 상수)"""
+    """base_footprint ← 광학 카메라, 정답 로그 행 평균(바퀴 로봇이라 거의 상수). gt_poses.csv 가 없는 판(run_limo_map)은
+    URDF 렌즈 광학 프레임(base_link (0.094, 0, 0.03) = base_footprint (0.094, 0, 0.18), 앞을 봄)"""
+    if not os.path.exists(os.path.join(run, 'gt_poses.csv')):
+        T = np.eye(4)
+        T[:3, :3] = np.array([[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]])
+        T[:3, 3] = [0.094, 0.0, 0.18]
+        return T, 0
     Ts = []
     for ln in open(os.path.join(run, 'gt_poses.csv')).read().splitlines()[1:]:
         v = [float(x) for x in ln.split(',')]
@@ -58,6 +66,8 @@ def main():
     f = open(a.rec, 'rb')
     assert f.read(4) == b'SGRC' and struct.unpack('I', f.read(4))[0] == 1
     odom, gts, frames = [], [], []
+    fs = None
+    n_scan = 0
     K = size = None
     n_img = 0
     while True:
@@ -71,6 +81,15 @@ def main():
             odom.append((st, *p[:6]))
         elif t == b'G':
             gts.append((st, *struct.unpack('3d', f.read(24))))
+        elif t == b'L':
+            n, = struct.unpack('i', f.read(4))
+            hdr = f.read(40)
+            rr = f.read(4 * n)
+            if fs is None:
+                fs = open(a.out + '/scans.bin', 'wb')
+                fs.write(b'SCN1')
+            fs.write(struct.pack('<di', st, n) + hdr + rr)
+            n_scan += 1
         elif t == b'I':
             w, h = struct.unpack('2i', f.read(8))
             k = struct.unpack('4d', f.read(32))
@@ -94,6 +113,8 @@ def main():
             cv2.imwrite(f'{a.out}/rgb/{i:06d}.png', rgb[:, :, ::-1], [cv2.IMWRITE_PNG_COMPRESSION, 1])
             cv2.imwrite(f'{a.out}/depth/{i:06d}.png', d, [cv2.IMWRITE_PNG_COMPRESSION, 1])
             frames.append((i, stamp, step))
+    if fs is not None:
+        fs.close()
     T_bc, n_t = t_bc_from_gt(a.run)
     g_t = np.array([g[0] for g in gts])
     with open(a.out + '/frames.csv', 'w') as fo:
@@ -111,6 +132,12 @@ def main():
     meta = dict(kind='sim_limo', rec=os.path.abspath(a.rec), run=os.path.abspath(a.run), width=size[0], height=size[1],
                 fx=K[0], fy=K[1], cx=K[2], cy=K[3], T_bc=[float(x) for x in T_bc[:3, :].reshape(-1)], T_bc_rows=n_t,
                 n_frames=len(frames), n_odom=len(odom), n_gt=len(gts), every=a.every)
+    if n_scan:
+        meta.update(T_bl=[1.0, 0.0, 0.0, 0.103, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.15 - 0.034], n_scans=n_scan, scan_dt=0.0)
+    with open(a.out + '/gt.csv', 'w') as fo:
+        fo.write('stamp,x,y,yaw\n')
+        for g in gts:
+            fo.write(','.join(f'{v:.6f}' for v in g) + '\n')
     json.dump(meta, open(a.out + '/meta.json', 'w'), indent=1)
     gobj = os.path.join(a.run, 'gt_poses.csv.objects.json')
     if os.path.exists(gobj):

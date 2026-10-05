@@ -3,7 +3,9 @@
 //
 //   realbag_run <stream dir>[,<stream dir>…] <out dir> [옵션]
 //     --robot limo_omx|r1pro   scenemap 로봇 매개변수(기본 limo_omx — 우리 로봇의 SLAM·몸 크기 설정)
-//     --pose slam|odom|gt      자세 원천(기본 slam = 바퀴 오도메트리 적분 + 깊이 가상 스캔 맞추기). gt = 정답 베이스 자세(여러 판을
+//     --pose slam|odom|gt|carto 자세 원천(기본 slam = 바퀴 오도메트리 적분 + 깊이 가상 스캔 맞추기). carto = Cartographer(../../slam_carto,
+//                              2D 라이다 scans.bin + 바퀴 오도메트리, bag2stream.py --scan-only) 자세를 영상마다 sm_push_ext_pose(SM_POSE_EXT).
+//                              --carto-config <lua>(기본 openloris → openloris_hokuyo.lua), 끝에 <out>/carto_map.pgm·metrics.json "carto". gt = 정답 베이스 자세(여러 판을
 //                              한 지도에 이을 때 — 판 사이 재위치 추정이 없으므로). slam·odom 에서도 정답은 진단(sm_get_pose_diag)에만 넣는다
 //     --det fastsam|yolo|none  검출(기본 fastsam = 이름 없는 분할 엔진 + SigLIP 2 이름(dom_bench_det --classify 와 같은 길). 분할 엔진 기본은
 //                              ObjectSAM(YOLO26n 학생, yolo26n-seg-obj-416.plan — objprob_front.hpp kDefaultEngine), 원래 FastSAM-s 는
@@ -61,6 +63,10 @@ void putI(gzFile z, int32_t v) { gzwrite(z, &v, 4); }
 bool getI(gzFile z, int32_t* v) { return gzread(z, v, 4) == 4; }
 size_t maskWords(const sm_detections& D) { return (size_t(D.mask_w) * D.mask_h + 31) / 32; }
 
+#ifdef RB_HAVE_CARTO
+#include <slam_carto.h>
+#endif
+
 // ---------------- 스트림 폴더 ----------------
 struct FrameRow {
   int idx;
@@ -77,7 +83,28 @@ struct Stream {
   double T_bc[12]{};
   std::vector<FrameRow> frames;
   std::vector<Odo> odom;
+  double T_bl[12]{};            // base ← 2D 라이다(bag2stream --scan-only), 없으면 0
+  bool have_bl = false;
+  double scan_dt = 0;           // 스캔 시각 + scan_dt = 오도메트리·영상 시계
 };
+struct ScanRec { double t, a0, da, dt, rmin, rmax; std::vector<float> r; };
+bool loadScans(const std::string& dir, double dt, std::vector<ScanRec>* out) {
+  std::ifstream f(dir + "/scans.bin", std::ios::binary);
+  char mg[4];
+  if (!f.read(mg, 4) || std::memcmp(mg, "SCN1", 4)) return false;
+  while (true) {
+    ScanRec s;
+    int32_t n;
+    double h[5];
+    if (!f.read(reinterpret_cast<char*>(&s.t), 8) || !f.read(reinterpret_cast<char*>(&n), 4) || !f.read(reinterpret_cast<char*>(h), 40)) break;
+    s.a0 = h[0]; s.da = h[1]; s.dt = h[2]; s.rmin = h[3]; s.rmax = h[4];
+    s.r.resize(size_t(n));
+    if (!f.read(reinterpret_cast<char*>(s.r.data()), std::streamsize(4 * n))) break;
+    s.t += dt;
+    out->push_back(std::move(s));
+  }
+  return !out->empty();
+}
 
 std::string slurp(const std::string& p) { std::ifstream f(p); std::stringstream s; s << f.rdbuf(); return s.str(); }
 
@@ -97,6 +124,14 @@ bool loadStream(const std::string& dir, Stream* s) {
     const size_t p = js.find('[', js.find("\"T_bc\""));
     const char* q = js.c_str() + p + 1;
     for (double& v : s->T_bc) { char* e; v = std::strtod(q, &e); q = e; while (*q == ',' || *q == ' ' || *q == '\n') ++q; }
+    const size_t kb = js.find("\"T_bl\"");
+    if (kb != std::string::npos) {
+      const char* r = js.c_str() + js.find('[', kb) + 1;
+      for (double& v : s->T_bl) { char* e; v = std::strtod(r, &e); r = e; while (*r == ',' || *r == ' ' || *r == '\n') ++r; }
+      s->have_bl = true;
+    }
+    const size_t kd = js.find("\"scan_dt\"");
+    if (kd != std::string::npos) s->scan_dt = std::atof(js.c_str() + js.find(':', kd) + 1);
   }
   std::ifstream fi(dir + "/frames.csv");
   std::string line;
@@ -474,6 +509,7 @@ int main(int argc, char** argv) {
     return 2;
   }
   const std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
+  std::string carto_config;
   std::string robot = "limo_omx", pose = "slam", det_mode = "fastsam", namer, engine, dump_path, load_path, live, sg_run, ref_map, snap_at;
   std::string clip_plan = home + "/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan";
   std::string labels_dir = home + "/embed_work/labels/objects-v1";
@@ -497,6 +533,7 @@ int main(int argc, char** argv) {
     else if (a == "--frames") max_frames = std::stol(nx()); else if (a == "--conf") conf = std::stof(nx());
     else if (a == "--engine") engine = nx(); else if (a == "--namer") namer = nx(); else if (a == "--clip") clip_plan = nx(); else if (a == "--labels") labels_dir = nx();
     else if (a == "--objprob") objprob_flag = 1; else if (a == "--no-objprob") objprob_flag = 0; else if (a == "--label-prior") label_prior = nx(); else if (a == "--inspect") inspect = true; else if (a == "--objprob-params") obj_params_file = nx();
+    else if (a == "--carto-config") carto_config = nx();
     else if (a == "--gap") gap = std::stod(nx()); else if (a == "--max-depth") max_depth = std::stof(nx()); else if (a == "--save-s") save_s = std::stod(nx());
     else { std::fprintf(stderr, "unknown %s\n", a.c_str()); return 2; }
   }
@@ -597,7 +634,33 @@ int main(int argc, char** argv) {
     }
   }
   if (inspect) sm_set_inspect(c, 1);
-  sm_set_pose_mode(c, pose == "gt" ? SM_POSE_GT : pose == "odom" ? SM_POSE_ODOM : SM_POSE_SLAM);
+  sm_set_pose_mode(c, pose == "gt" ? SM_POSE_GT : pose == "odom" ? SM_POSE_ODOM : pose == "carto" ? SM_POSE_EXT : SM_POSE_SLAM);
+  // Cartographer(--pose carto): 스캔 + 바퀴 오도메트리 → 영상마다 자세(sm_push_ext_pose)
+  std::vector<ScanRec> scans;
+#ifdef RB_HAVE_CARTO
+  sc_ctx* carto = nullptr;
+#endif
+  if (pose == "carto") {
+#ifdef RB_HAVE_CARTO
+    const Stream& S0 = streams[0];
+    if (!S0.have_bl || !loadScans(S0.dir, S0.scan_dt, &scans)) {
+      std::fprintf(stderr, "--pose carto: %s has no scans.bin/T_bl (bag2stream.py --scan-only)\n", S0.dir.c_str());
+      return 1;
+    }
+    sc_config cc = sc_default_config();
+    if (carto_config.empty()) carto_config = S0.kind == "openloris" ? "openloris_hokuyo.lua" : "limo_x2l.lua";
+    cc.config_name = carto_config.c_str();
+    cc.laser_xyz[0] = S0.T_bl[3]; cc.laser_xyz[1] = S0.T_bl[7]; cc.laser_xyz[2] = S0.T_bl[11];
+    cc.laser_yaw = std::atan2(S0.T_bl[4], S0.T_bl[0]);
+    char er[256] = {0};
+    carto = sc_create(&cc, er, sizeof er);
+    if (!carto) { std::fprintf(stderr, "%s\n", er); return 1; }
+    std::fprintf(stderr, "[carto] %zu scans, config %s, scan_dt %+.2f s\n", scans.size(), carto_config.c_str(), S0.scan_dt);
+#else
+    std::fprintf(stderr, "--pose carto: built without slam_carto (tools/build_all.sh cartographer realbag)\n");
+    return 1;
+#endif
+  }
   sm_set_cam_extrinsic(c, 0, streams[0].T_bc);
   const bool limo = robot == "limo_omx";
   const int n_prop = limo ? SM_LIMO_PROPRIO_DIM : SM_R1PRO_PROPRIO_DIM;
@@ -681,6 +744,8 @@ int main(int argc, char** argv) {
     const double t0 = S.frames.front().stamp;
     size_t oi = 0;
     while (oi < S.odom.size() && S.odom[oi].t < t0 - 0.5) ++oi;
+    size_t csi = 0, coi = oi;   // Cartographer 넣기 위치(스캔·오도메트리, 시각 순)
+    while (csi < scans.size() && scans[csi].t < t0 - 0.5) ++csi;
     const double sess_start = t_off;
     for (size_t fi = 0; fi < S.frames.size() && n_frames < max_frames; ++fi) {
       const FrameRow& f = S.frames[fi];
@@ -729,6 +794,21 @@ int main(int argc, char** argv) {
         }
         if (have_det) { Dt.stamp = t; Dt.cam = 0; ++n_detf; n_dets += Dt.n; }
       }
+#ifdef RB_HAVE_CARTO
+      if (carto) {   // 영상 시각까지 스캔·오도메트리를 시각 순으로 넣고 그 시각 자세를 scenemap 에
+        while (csi < scans.size() || coi < S.odom.size()) {
+          const double ts = csi < scans.size() ? scans[csi].t : 1e300, to = coi < S.odom.size() ? S.odom[coi].t : 1e300;
+          if (std::min(ts, to) > f.stamp) break;
+          if (to <= ts) { const Odo& o = S.odom[coi++]; sc_push_odom(carto, o.t - t0 + t_off, o.x, o.y, o.yaw); }
+          else {
+            const ScanRec& r = scans[csi++];
+            sc_push_scan(carto, r.t - t0 + t_off, int32_t(r.r.size()), r.r.data(), r.a0, r.da, r.dt, r.rmin, r.rmax);
+          }
+        }
+        double cp[3];
+        if (!sc_pose_at(carto, t, cp)) { const sm_pose2 ep{t, cp[0], cp[1], cp[2]}; sm_push_ext_pose(c, &ep); }
+      }
+#endif
       sm_image im{t, 0, S.w, S.h, kf ? rgba.data() : nullptr, dm.data(), S.fx, S.fy, S.cx, S.cy};
       if (objprob && have_det) {
         const std::vector<float>& E = D.mode == "load" ? dr[si].emb : D.emb;
@@ -880,6 +960,19 @@ int main(int argc, char** argv) {
   }
   sm_pose_diag pd{};
   sm_get_pose_diag(c, &pd);
+  std::string cartoj = "null";
+#ifdef RB_HAVE_CARTO
+  if (carto) {
+    sc_stats cs{};
+    sc_get_stats(carto, &cs);
+    sc_write_map(carto, (out + "/carto_map.pgm").c_str(), 0.05);
+    cartoj = Obj().str("config", carto_config).num("scan_dt", streams[0].scan_dt).num("scans", double(cs.n_scans)).num("nodes", double(cs.n_nodes))
+                 .num("submaps", double(cs.n_submaps)).num("loop_constraints", double(cs.n_loop_constraints)).num("us_scan_mean", cs.us_scan_mean)
+                 .num("us_scan_max", cs.us_scan_max).done();
+    sc_destroy(carto);
+    carto = nullptr;
+  }
+#endif
   // 정답 궤적(map 좌표, 재생 화면 초록 선): map ← world = Tu⁻¹
   {
     const double ci = Tu.c, si2 = -Tu.s;
@@ -1052,7 +1145,7 @@ int main(int argc, char** argv) {
           .num("dets_per_frame", n_detf ? double(n_dets) / n_detf : 0).num("det_ms", D.n_calls ? D.det_ms / D.n_calls : 0)
           .num("clip_ms", D.n_calls ? D.clip_ms / D.n_calls : 0).raw("objprob", apj).num("objmap_us", objmap_us).num("inspect", inspect ? 1 : 0).str("objprob_params", objprob ? obj_params_file : std::string()).num("duration_s", t_end).num("wall_s", wall).num("gt_path_m", gt_len)
           .raw("ate_se2_cam", ateJ(a_est)).raw("ate_se2_odom", ateJ(a_odo)).raw("ate_first_cam", ateJ(a_est1)).raw("ate_first_odom", ateJ(a_odo1))
-          .num("yaw_rms_deg", yaw_rms * 180 / M_PI)
+          .num("yaw_rms_deg", yaw_rms * 180 / M_PI).raw("carto", cartoj)
           .raw("pose_diag", Obj().num("n", pd.n).num("rms_xy", pd.rms_xy).num("max_xy", pd.max_xy).num("last_xy", pd.last_xy)
                                 .num("rms_yaw_deg", pd.rms_yaw * 180 / M_PI).num("max_yaw_deg", pd.max_yaw * 180 / M_PI).done())
           .raw("map", Obj().num("res", g.resolution).num("known_m2", n_known * g.resolution * g.resolution).num("free_m2", n_free * g.resolution * g.resolution)

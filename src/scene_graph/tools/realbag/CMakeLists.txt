@@ -18,6 +18,7 @@ set(SG_DIR "${CMAKE_CURRENT_LIST_DIR}/../..")
 add_subdirectory(${SG_DIR}/scenemap scenemap EXCLUDE_FROM_ALL)
 add_subdirectory(${SG_DIR}/ovdet ovdet EXCLUDE_FROM_ALL)
 add_subdirectory(${SG_DIR}/clip clip EXCLUDE_FROM_ALL)
+add_subdirectory(${SG_DIR}/slam_carto slam_carto EXCLUDE_FROM_ALL)   # Cartographer 가 설치돼 있으면(--pose carto)
 
 # bag2stream 스트림 → 검출 + scenemap → 지표·기억 폴더·재생 판(stream.sgs)·실시간 sgview 스트림
 add_executable(realbag_run realbag_run.cpp)
@@ -25,6 +26,10 @@ target_include_directories(realbag_run PRIVATE ${SG_DIR}/scenemap/tools ${SG_DIR
 target_compile_definitions(realbag_run PRIVATE RB_PARAMS_DIR="${CMAKE_CURRENT_LIST_DIR}/objprob_params")   # 엔진별 objprob 매개변수
 target_compile_options(realbag_run PRIVATE -Wall -Wno-unused-function)
 target_link_libraries(realbag_run scenemap ovdet sgclip PNG::PNG ZLIB::ZLIB JPEG::JPEG CUDA::cudart_static pthread)
+if(SLAM_CARTO_FOUND)
+  target_link_libraries(realbag_run slam_carto)
+  target_compile_definitions(realbag_run PRIVATE RB_HAVE_CARTO=1)
+endif()
 
 # 기록한 sgview 스트림(stream.sgs)을 벽시계에 맞춰 sgview 로(자세 60 Hz 보간)
 add_executable(sgs_play sgs_play.cpp)

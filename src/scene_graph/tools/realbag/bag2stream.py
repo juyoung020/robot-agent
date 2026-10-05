@@ -27,7 +27,7 @@ from rosbags.typesys import Stores, get_typestore, get_types_from_msg
 
 TOPICS = {
     'openloris': dict(extr='tf', rgb='/d400/color/image_raw', depth='/d400/aligned_depth_to_color/image_raw', info='/d400/color/camera_info',
-                      odom='/odom', gt='/gt', gt_child='base_link', cam_frame='d400_color', base='base_link'),
+                      odom='/odom', gt='/gt', gt_child='base_link', cam_frame='d400_color', base='base_link', scan='/scan'),
     'tum_pioneer': dict(extr='floor', rgb='/camera/rgb/image_color', depth='/camera/depth/image', info='/camera/rgb/camera_info',
                         odom='/pose', gt=None, gt_child=None, cam_frame='/openni_rgb_optical_frame', base='/base_link'),
 }
@@ -157,6 +157,115 @@ def refit(out, cfg):
     print(f'refit {out}: extrinsic from {cfg["extr"]}, floor height {h:.3f} m, pitch down {pitch:.2f} deg, inliers {frac:.2f}', file=sys.stderr)
 
 
+def read_scans(path):
+    """scans.bin(SCN1) → [(t, angle_min, angle_inc, ranges(np.float32))]"""
+    import struct
+    out = []
+    with open(path, 'rb') as f:
+        assert f.read(4) == b'SCN1'
+        while True:
+            h = f.read(52)
+            if len(h) < 52:
+                break
+            t, n, a0, da, dti, rmin, rmax = struct.unpack('<di5d', h)
+            r = np.frombuffer(f.read(4 * n), dtype='<f4').copy()
+            r[~np.isfinite(r) | (r < rmin) | (r > rmax)] = np.nan
+            out.append((t, a0, da, r))
+    return out
+
+
+def scan_clock_offset(out, max_lag=1.5):
+    """스캔 시계 어긋남(초) 찾기 — 정답 없이 오도메트리만으로: 스캔끼리 거리 배열을 각도로 밀어 맞춘 yaw 속도와
+    바퀴 오도메트리 yaw 속도의 상호상관이 가장 큰 지연. 돌려줌: (dt, 상관) — 스캔 시각 + dt = 오도메트리 시계"""
+    S = read_scans(out + '/scans.bin')
+    O = np.loadtxt(out + '/odom.csv', delimiter=',', skiprows=1)
+    if len(S) < 20 or len(O) < 20:
+        return 0.0, 0.0
+    step = max(1, int(round(0.1 / max(1e-3, np.median(np.diff([s[0] for s in S]))))))   # 약 10 Hz
+    S = S[::step]
+    da = S[0][2]
+    kmax = int(math.radians(25) / da)
+    ts, w = [], []
+    for (t0, _, _, r0), (t1, _, _, r1) in zip(S[:-1], S[1:]):
+        best, bk = 1e9, 0
+        for k in range(-kmax, kmax + 1):   # r1[i] ≈ r0[i + k] (로봇이 k·da 만큼 돌면 장면은 반대로 밀림)
+            a = r1[max(0, -k):len(r1) - max(0, k)]
+            b = r0[max(0, k):len(r0) - max(0, -k)]
+            m = np.isfinite(a) & np.isfinite(b)
+            if m.sum() < 50:
+                continue
+            e = np.median(np.abs(a[m] - b[m]))
+            if e < best:
+                best, bk = e, k
+        ts.append(0.5 * (t0 + t1))
+        w.append(bk * da / (t1 - t0))
+    ts, w = np.array(ts), np.array(w)
+    to = O[:, 0]
+    wo = np.gradient(np.unwrap(O[:, 3]), to)
+    grid = np.arange(max(ts[0], to[0]) + max_lag, min(ts[-1], to[-1]) - max_lag, 0.02)
+    if len(grid) < 50:
+        return 0.0, 0.0
+    best = (-2.0, 0.0)
+    wo_g = np.interp(grid, to, wo)
+    for lag in np.arange(-max_lag, max_lag + 1e-9, 0.02):
+        ws = np.interp(grid - lag, ts, w)   # 스캔 시각 + lag = 오도메트리 시각
+        c = np.corrcoef(ws, wo_g)[0, 1]
+        if np.isfinite(c) and c > best[0]:
+            best = (c, lag)
+    return float(best[1]), float(best[0])
+
+
+def scan_only(a, cfg):
+    """2D 라이다 스캔 → <out>/scans.bin. 형식 SCN1: 'SCN1' 다음 스캔마다
+    f64 t(마지막 광선 시각), i32 n, f64 angle_min, angle_inc, time_inc, range_min, range_max, f32 ranges[n] (라이다 프레임, 리틀 엔디언).
+    정답 베이스 자세 전부를 gt.csv(stamp,x,y,yaw) 로, base ← 라이다(TF 정적)를 meta.json T_bl(3×4)·scan_frame 으로."""
+    import struct
+    if not cfg.get('scan'):
+        raise SystemExit(f'{a.kind}: no scan topic')
+    ts = get_typestore(Stores.ROS1_NOETIC)
+    static, gt, n_scan, frame = {}, [], 0, None
+    with Reader(a.bag) as r, open(a.out + '/scans.bin', 'wb') as fs:
+        for c in r.connections:
+            try:
+                ts.register(get_types_from_msg(c.msgdef.data, c.msgtype))
+            except Exception:
+                pass
+        want = {cfg['scan'], '/tf_static', '/tf'} | ({cfg['gt']} if cfg['gt'] else set())
+        fs.write(b'SCN1')
+        for c, t, raw in r.messages(connections=[c for c in r.connections if c.topic in want]):
+            m = ts.deserialize_ros1(raw, c.msgtype)
+            if c.topic == cfg['scan']:
+                n = len(m.ranges)
+                st = m.header.stamp.sec + m.header.stamp.nanosec * 1e-9 + (n - 1) * m.time_increment
+                frame = m.header.frame_id
+                fs.write(struct.pack('<di5d', st, n, m.angle_min, m.angle_increment, m.time_increment, m.range_min, m.range_max))
+                fs.write(np.asarray(m.ranges, dtype='<f4').tobytes())
+                n_scan += 1
+                continue
+            for tr in m.transforms:
+                p, ch = tr.header.frame_id, tr.child_frame_id
+                if c.topic == cfg['gt'] and ch == cfg['gt_child']:
+                    T = T_of(tr)
+                    gt.append((tr.header.stamp.sec + tr.header.stamp.nanosec * 1e-9, T[0, 3], T[1, 3], yaw_of(T[:3, :3])))
+                elif c.topic == '/tf_static' or (p, ch) not in static and 'odom' not in p and 'world' not in p and p != '/kinect':
+                    static[(p, ch)] = T_of(tr)
+    T_bl = tf_chain(static, cfg['base'], frame.lstrip('/'))
+    with open(a.out + '/gt.csv', 'w') as f:
+        f.write('stamp,x,y,yaw\n')
+        for g in sorted(gt):
+            f.write(','.join(f'{x:.6f}' for x in g) + '\n')
+    meta = json.load(open(a.out + '/meta.json'))
+    meta['T_bl'] = [float(x) for x in T_bl[:3, :].reshape(-1)]
+    meta['scan_frame'] = frame
+    meta['n_scans'] = n_scan
+    dt, corr = scan_clock_offset(a.out)
+    meta['scan_dt'] = dt          # 스캔 시각 + scan_dt = 오도메트리·영상 시계(정답 없이 yaw 속도 상호상관). carto_run·realbag_run 이 더함
+    meta['scan_dt_corr'] = corr
+    json.dump(meta, open(a.out + '/meta.json', 'w'), indent=1)
+    print(f'{a.bag}: scans {n_scan} frame {frame} T_bl xyz {T_bl[:3, 3].round(3).tolist()} yaw {math.degrees(yaw_of(T_bl[:3, :3])):.2f} '
+          f'roll/pitch z-axis {T_bl[:3, 2].round(3).tolist()} gt {len(gt)} scan_dt {dt:+.2f} s (corr {corr:.2f}) -> {a.out}', file=sys.stderr)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('kind', choices=list(TOPICS))
@@ -167,10 +276,15 @@ def main():
     ap.add_argument('--t1', type=float, default=1e9)
     ap.add_argument('--refit-only', action='store_true', help='영상은 그대로 두고 meta.json 의 T_bc 만 다시(바닥 맞추기)')
     ap.add_argument('--gt', default=None, help='TUM groundtruth.txt (world ← 컬러 카메라 광학 중심)')
+    ap.add_argument('--scan-only', action='store_true',
+                    help='영상은 그대로 두고 2D 라이다만: scans.bin(SCN1) · gt.csv(정답 베이스 자세 전부) · meta.json 의 T_bl(base ← 라이다)')
     a = ap.parse_args()
     cfg = TOPICS[a.kind]
     if a.refit_only:
         refit(a.out, cfg)
+        return
+    if a.scan_only:
+        scan_only(a, cfg)
         return
     ts = get_typestore(Stores.ROS1_NOETIC)
     os.makedirs(a.out + '/rgb', exist_ok=True)
