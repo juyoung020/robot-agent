@@ -46,6 +46,12 @@
 
 <sub>학습 뷰어의 리플레이 탭 — OmniGibson 리모 탐사 한 판을 실제 인지 파이프라인(libsgrt: ObjectSAM + SigLIP 2 + scenemap + Cartographer)으로 다시 돌린 물체 기억이 자라는 모습(1배속, 82 초)</sub>
 
+<br><br>
+
+<img src="docs/assets/curriculum_2_goto.gif" width="760" alt="커리큘럼 2 — 목표로 가기">
+
+<sub>커리큘럼 2단계 <b>목표로 가기</b> — RL 교사(빈 지도에서 자라는 지도, house_single_floor, 20 분 학습·성공률 75 %)의 한 판을 OmniGibson 에서 다시 돌려 실제 인지(ObjectSAM + SigLIP 2 + scenemap, 점구름)로 본 모습. 왼쪽 위 = 몸통 카메라·손목 카메라, 1배속 (<a href="training/curriculum/README.md">커리큘럼</a>)</sub>
+
 </div>
 
 <br>
