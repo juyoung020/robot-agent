@@ -1,0 +1,4 @@
+#!/bin/sh
+# 이번 커밋에서 새로 더한 줄이 저장소 밖 홈 경로·behavior-2026·개인 빌드 폴더를 박으면 막는다(tools/check_paths.sh).
+# 설치(PC 마다 한 번): git config core.hooksPath tools/git-hooks
+exec "$(git rev-parse --show-toplevel)/tools/check_paths.sh" --staged
