@@ -1,7 +1,7 @@
 # explore 프롬프트·관측 고친 기록
 
 같은 조건에서 잰다: 가짜 집 두 곳(`house_single_floor`·bringing_water 방 6개 161 m², `house_double_floor_lower`·turning_on_radio 방 3개 55 m², 정원 뺌),
-과제 instance 시작 자리에서 방향 0°/120°/240° 세 출발(`mock_eval.sh`), Qwen3.5-9B(KAU, 온도 0, 생각 끔). 덮음 = 정답 바닥(닿을 수 있는 곳 + 0.6 m) 중 지도 빈칸 비율.
+과제 instance 시작 자리에서 방향 0°/120°/240° 세 출발(`devtools/mock_eval.sh`, 10-06 에 skills/explore/ 에서 옮김), Qwen3.5-9B(KAU, 온도 0, 생각 끔). 덮음 = 정답 바닥(닿을 수 있는 곳 + 0.6 m) 중 지도 빈칸 비율.
 
 | 판 | 무엇을 | 왜 | 잰 효과 |
 |---|---|---|---|

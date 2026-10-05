@@ -82,7 +82,7 @@
 - 실행기 시간(시뮬, `timing.jsonl`): 스텝마다 물체 기억 2–4.5 ms, 지도 넘기기 0.5–0.9 ms(keyframe 당 3–5.5 ms: 격자 복사·거리장·바뀐 칸), 닫힌 고리 0.2–5.5 ms(DWA 중),
   관측 만들기 1–2.5 ms, 다시 계획 0.4–1.4 ms. 평가기 스텝 93–165 ms 대비 실행기 몫 3–6 %.
 
-### 가짜 집(정답 바닥 + 카메라 흉내, 출발 6 개 = 두 집 × 방향 3, `mock_eval.sh final`)
+### 가짜 집(정답 바닥 + 카메라 흉내, 출발 6 개 = 두 집 × 방향 3, `devtools/mock_eval.sh final`)
 
 | 정책 | 덮음 평균 | 접촉 | 경로 m 평균 | 90 % 까지 경로 평균 | 호출 | LLM 호출 | 토큰 | 벽시계 s |
 |---|---|---|---|---|---|---|---|---|
@@ -132,7 +132,7 @@ LLM go_to 의 timeout 대부분은 v2 판의 R5 되풀이(15 번)와 지도가 �
 set -a; . ~/.config/behavior-2026/kau.env; set +a              # 키는 환경변수로만
 # 가짜 집(정답 바닥 + 카메라 흉내), Isaac Sim 없이 몇 분
 (cd ../../../behavior-2026/src/sim/explore && python gt_trav.py --task bringing_water && python gt_trav.py --task turning_on_radio)
-./mock_eval.sh <tag> [--style compact]                          # → behavior-2026/outputs/explore_mock_<tag>/ (POLS=frontier 면 기준선만)
+../../devtools/mock_eval.sh <tag> [--style compact]                          # → behavior-2026/outputs/explore_mock_<tag>/ (POLS=frontier 면 기준선만)
 ../../runtime/target/release/run-skill --skill explore --policy frontier --mock <gt.pgm> --gt <gt.json> --out <dir>   # 한 판
 # 시뮬(OmniGibson, 머리 RGB-D, VRAM ≥ 9 GB·RAM ≥ 16 GB 될 때까지 기다림)
 cmake -S ../../../behavior-2026/src/scene_graph/runtime -B ~/sgrt_build_explore && cmake --build ~/sgrt_build_explore -j

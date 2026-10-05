@@ -31,7 +31,7 @@
 | [`runtime/`](runtime/README.md) | 에이전트 런타임: 원형 도구 호출 루프, 프롬프트 읽기·판 지문, 결과 줄이기·16k 맥락 접기, 결정·시간·LLM 기록, 명령 `run-skill` | — |
 | [`skills/`](skills/README.md) | 스킬 = 프롬프트(`system.md`·`task.md`·`tool.md`)·`skill.json`(도구·끝 조건·지표 데이터)·CHANGELOG·결과 표. 코드 없음 | 프롬프트로 |
 | [`prompts/`](prompts/) | 모든 스킬 공통 프롬프트 조각 `common.md` | 프롬프트로 |
-| [`devtools/`](devtools/README.md) | 개발 명령(`decisions-agg`) — LLM 도구 아님 | 안 보임 |
+| [`devtools/`](devtools/README.md) | 개발 명령(`decisions-agg`, `mock_eval.sh`) — LLM 도구 아님 | 안 보임 |
 
 ```bash
 (cd runtime && cargo build --release -j4) && runtime/target/release/run-skill --skill explore --policy frontier|llm --mock <gt.pgm> --gt <gt.json> --out <dir>

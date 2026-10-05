@@ -6,10 +6,10 @@
 set -a; . ~/.config/behavior-2026/kau.env; set +a
 TAG=$1; shift
 HERE=$(cd "$(dirname "$0")" && pwd)
-BIN=$HERE/../../runtime/target/release/run-skill
-[ -x "$BIN" ] || { echo "런타임 없음: (cd $HERE/../../runtime && cargo build --release -j4)"; exit 1; }
-GT=$HERE/../../../behavior-2026/src/sim/explore/gt
-O=$HERE/../../../behavior-2026/outputs/explore_mock_$TAG
+BIN=$HERE/../runtime/target/release/run-skill
+[ -x "$BIN" ] || { echo "런타임 없음: (cd $HERE/../runtime && cargo build --release -j4)"; exit 1; }
+GT=$HERE/../../behavior-2026/src/sim/explore/gt
+O=$HERE/../../behavior-2026/outputs/explore_mock_$TAG
 STARTS=${STARTS:-3}; POLS=${POLS:-"llm frontier"}
 mkdir -p $O
 for H in house_single_floor__bringing_water house_double_floor_lower__turning_on_radio; do
