@@ -1,17 +1,17 @@
-//! `move_robot` — LLM 이 로봇 한 부분(베이스·팔·그리퍼)을 직접 움직이는 도구 하나. 로봇은 AgileX LIMO(차동 2륜 베이스) + ROBOTIS OMX-F
-//! (관절 5 + 그리퍼) 하나뿐이다.
+//! `move_robot` — LLM 이 로봇 한 부분(베이스·몸통·팔·그리퍼)을 직접 움직이는 도구 하나.
 //!
 //! 이 크레이트가 하는 일은 이것뿐이다.
 //! - [`definition`]: OpenAI `tools` 스키마(9B 모델용으로 작게: enum·필수 인자, 짧은 설명)
 //! - [`parse`]: 도구 인자 → [`Command`] (틀리면 모델이 고칠 수 있는 오류 문장)
-//! - [`Robot`]: 매 시뮬 스텝 LIMO proprio(24)를 받아 행동 벡터(8 = [vx, wz, j1..j5, 그리퍼])를 내는 닫힌 고리 실행기.
+//! - [`Robot`]: 매 시뮬 스텝 proprio(61) 를 받아 BEHAVIOR R1Pro 행동 벡터(23)를 내는 닫힌 고리 실행기.
 //!   관절은 최소 저크 보간 + 도착/막힘/시간 초과 판정, 베이스는 base_qvel 적분(오도메트리) 위 P 제어 + 가감속 한도.
 //! - [`ffi`]: 같은 실행기를 C ABI 로(시뮬 쪽 파이썬은 ctypes 로 부른다)
 //! - [`link`]: 에이전트 쪽 실행 경로(시뮬 TCP / 가짜 로봇)
 //!
 //! 단위: 길이 m, 각도 도(°, LLM 에게 보이는 값). 안에서는 rad. 그리퍼는 0 = 닫힘 … 1 = 열림.
-//! 행동·관측 배치와 관절 한계는 [`limo`](관절 이름 omx_joint1..5, 한계 = `src/robot/real_limits.json`), 평가기 설정은 `src/robot/og/limo_omx_eval.yaml`.
-//! 베이스는 차동 2륜이라 앞뒤(vx)와 제자리 돌기(wz)만 낸다 — 옆으로 가지 못한다. 머리(카메라)는 몸에 붙어 앞만 본다.
+//! 행동·관측 배치는 BEHAVIOR-1K `omnigibson/eval/utils/eval_utils.py` 의 `ACTION_QPOS_INDICES` / `PROPRIOCEPTION_INDICES`,
+//! 제어기는 `omnigibson/eval/r1pro.yaml`(팔·몸통 = 절대 관절 위치, 베이스 = 로봇 기준 속도 [-1,1] → [±0.75 m/s, ±0.75, ±1 rad/s],
+//! 그리퍼 = smooth [-1,1] → 손가락 0…0.05 m). 머리(카메라)는 NullJointController 라 움직일 수 없다.
 
 pub mod ffi;
 pub mod frontier;
@@ -28,14 +28,96 @@ mod robot_vla;
 pub mod verify;
 pub mod vla;
 
-pub use limo::{act, prop, LimoState as State, Part, ACTION_DIM, JOINT_MARGIN, PARTS, PROPRIO_DIM};
 pub use map::{Grid, MapIn, NavParams, RoomGrid, Scan};
 
 use serde_json::{json, Value};
 use std::f64::consts::PI;
 
+pub const ACTION_DIM: usize = 23;
+pub const PROPRIO_DIM: usize = 61;
 pub const HZ: f64 = 30.0;
 pub const TOOL_NAME: &str = "move_robot";
+
+/// 행동 벡터 칸 (ACTION_QPOS_INDICES["R1Pro"])
+pub mod act {
+    use std::ops::Range;
+    pub const BASE: Range<usize> = 0..3;
+    pub const TORSO: Range<usize> = 3..7;
+    pub const LEFT_ARM: Range<usize> = 7..14;
+    pub const LEFT_GRIPPER: usize = 14;
+    pub const RIGHT_ARM: Range<usize> = 15..22;
+    pub const RIGHT_GRIPPER: usize = 22;
+    /// 베이스 명령 [-1,1] 이 뜻하는 실제 속도 (r1pro.yaml command_output_limits)
+    pub const BASE_OUT: [f64; 3] = [0.75, 0.75, 1.0];
+}
+
+/// proprio 칸 (PROPRIOCEPTION_INDICES["R1Pro"])
+pub mod prop {
+    use std::ops::Range;
+    pub const BASE_QVEL: Range<usize> = 0..3;
+    pub const ARM_L_QPOS: Range<usize> = 3..10;
+    pub const ARM_L_QVEL: Range<usize> = 10..17;
+    pub const GRIP_L_QPOS: Range<usize> = 24..26;
+    pub const GRIP_L_QVEL: Range<usize> = 26..28;
+    pub const ARM_R_QPOS: Range<usize> = 28..35;
+    pub const ARM_R_QVEL: Range<usize> = 35..42;
+    pub const GRIP_R_QPOS: Range<usize> = 49..51;
+    pub const GRIP_R_QVEL: Range<usize> = 51..53;
+    pub const TRUNK_QPOS: Range<usize> = 53..57;
+    pub const TRUNK_QVEL: Range<usize> = 57..61;
+}
+
+/// 손가락 하나의 최대 벌림(m, URDF finger_joint 상한)
+pub const FINGER_MAX: f64 = 0.05;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Part {
+    Base,
+    Torso,
+    LeftArm,
+    RightArm,
+    LeftGripper,
+    RightGripper,
+}
+
+pub const PARTS: [&str; 6] = ["base", "torso", "left_arm", "right_arm", "left_gripper", "right_gripper"];
+
+impl Part {
+    pub fn from_name(s: &str) -> Option<Part> {
+        let n: String = s.trim().to_ascii_lowercase().chars().map(|c| if c == ' ' || c == '-' { '_' } else { c }).collect();
+        Some(match n.as_str() {
+            "base" => Part::Base,
+            "torso" | "trunk" => Part::Torso,
+            "left_arm" => Part::LeftArm,
+            "right_arm" => Part::RightArm,
+            "left_gripper" | "left_hand" => Part::LeftGripper,
+            "right_gripper" | "right_hand" => Part::RightGripper,
+            _ => return None,
+        })
+    }
+    pub fn name(self) -> &'static str {
+        PARTS[self as usize]
+    }
+    pub fn dof(self) -> usize {
+        match self {
+            Part::Base => 3,
+            Part::Torso => 4,
+            Part::LeftArm | Part::RightArm => 7,
+            Part::LeftGripper | Part::RightGripper => 1,
+        }
+    }
+    pub fn is_gripper(self) -> bool {
+        matches!(self, Part::LeftGripper | Part::RightGripper)
+    }
+    /// LLM 에게 보이는 단위
+    pub fn units(self) -> &'static str {
+        match self {
+            Part::Base => "[forward m, left m, turn_left deg]",
+            Part::Torso | Part::LeftArm | Part::RightArm => "deg",
+            _ => "0=closed..1=open",
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -60,16 +142,43 @@ pub struct Command {
 
 // ---------------------------------------------------------------- 안전 한계
 
+/// 관절 한계 안쪽 여유(rad) — URDF 한계에 붙지 않게
+pub const JOINT_MARGIN: f64 = 2.0 * PI / 180.0;
+
+/// URDF(`r1pro.urdf`) torso_joint1..4 (rad)
+pub const TORSO_LIM: [(f64, f64); 4] = [(-1.1345, 1.8326), (-2.7925, 2.5307), (-1.8326, 1.5708), (-3.0543, 3.0543)];
+/// left_arm_joint1..7 (rad)
+pub const LEFT_ARM_LIM: [(f64, f64); 7] = [
+    (-4.4506, 1.3090),
+    (-0.1745, 3.1416),
+    (-2.356196, 2.356196),
+    (-2.0944, 0.3491),
+    (-2.356196, 2.356196),
+    (-1.047198, 1.047198),
+    (-1.5708, 1.5708),
+];
+/// right_arm_joint1..7 (rad) — 2번만 왼팔과 거울
+pub const RIGHT_ARM_LIM: [(f64, f64); 7] = [
+    (-4.4506, 1.3090),
+    (-3.1416, 0.1745),
+    (-2.356196, 2.356196),
+    (-2.0944, 0.3491),
+    (-2.356196, 2.356196),
+    (-1.047198, 1.047198),
+    (-1.5708, 1.5708),
+];
+
 /// 안전 속도·가속도와 판정 문턱. 기본값은 사람이 옆에 있어도 놀라지 않을 정도로 느리게.
 #[derive(Clone, Debug)]
 pub struct Safety {
-    pub arm_vmax: f64,     // rad/s (OMX-F XL430 최고 4.8 rad/s 의 약 1/6)
+    pub arm_vmax: f64,     // rad/s (URDF 7~10 rad/s 의 약 1/10)
+    pub torso_vmax: f64,   // rad/s
     pub gripper_vmax: f64, // 벌림 비율/s (1 = 1 초에 다 열기)
     pub base_vmax: f64,    // m/s
     pub base_wmax: f64,    // rad/s
     pub base_acc: f64,     // m/s²
     pub base_wacc: f64,    // rad/s²
-    pub base_max_fwd: f64, // delta 한 번에 갈 거리 상한(m)
+    pub base_max_xy: f64,  // 한 번에 움직일 거리 상한(축마다, m)
     pub base_max_yaw: f64, // 한 번에 돌 각 상한(rad)
     pub min_duration: f64,
     pub max_duration: f64,
@@ -97,12 +206,13 @@ impl Default for Safety {
     fn default() -> Self {
         Safety {
             arm_vmax: 45f64.to_radians(),
+            torso_vmax: 20f64.to_radians(),
             gripper_vmax: 1.0,
             base_vmax: 0.3,
             base_wmax: 35f64.to_radians(),
             base_acc: 0.6,
             base_wacc: 90f64.to_radians(),
-            base_max_fwd: 2.0,
+            base_max_xy: 2.0,
             base_max_yaw: PI,
             min_duration: 0.1,
             max_duration: 20.0,
@@ -124,9 +234,12 @@ impl Default for Safety {
 
 /// 부분의 관절 한계(안쪽 여유 포함, 안 단위: rad / 비율)
 pub fn joint_limits(part: Part) -> Vec<(f64, f64)> {
+    let shrink = |l: &[(f64, f64)]| l.iter().map(|&(a, b)| (a + JOINT_MARGIN, b - JOINT_MARGIN)).collect();
     match part {
-        Part::Arm => limo::arm_limits().to_vec(),
-        Part::Gripper => vec![(0.0, 1.0)],
+        Part::Torso => shrink(&TORSO_LIM),
+        Part::LeftArm => shrink(&LEFT_ARM_LIM),
+        Part::RightArm => shrink(&RIGHT_ARM_LIM),
+        Part::LeftGripper | Part::RightGripper => vec![(0.0, 1.0)],
         Part::Base => vec![],
     }
 }
@@ -134,9 +247,9 @@ pub fn joint_limits(part: Part) -> Vec<(f64, f64)> {
 /// LLM 단위 → 안 단위 (deg → rad; m·비율은 그대로)
 pub fn to_internal(part: Part, v: &[f64]) -> Vec<f64> {
     match part {
-        Part::Arm => v.iter().map(|x| x.to_radians()).collect(),
-        Part::Base => vec![v[0], v[1].to_radians()],
-        Part::Gripper => v.to_vec(),
+        Part::Torso | Part::LeftArm | Part::RightArm => v.iter().map(|x| x.to_radians()).collect(),
+        Part::Base => vec![v[0], v[1], v[2].to_radians()],
+        _ => v.to_vec(),
     }
 }
 
@@ -144,20 +257,19 @@ pub fn to_internal(part: Part, v: &[f64]) -> Vec<f64> {
 pub fn to_user(part: Part, v: &[f64]) -> Vec<f64> {
     let r = |x: f64, k: f64| (x * k).round() / k;
     match part {
-        Part::Arm => v.iter().map(|x| r(x.to_degrees(), 10.0)).collect(),
-        Part::Base => vec![r(v[0], 1000.0), r(v[1].to_degrees(), 10.0)],
-        Part::Gripper => v.iter().map(|x| r(*x, 100.0)).collect(),
+        Part::Torso | Part::LeftArm | Part::RightArm => v.iter().map(|x| r(x.to_degrees(), 10.0)).collect(),
+        Part::Base => vec![r(v[0], 1000.0), r(v[1], 1000.0), r(v[2].to_degrees(), 10.0)],
+        _ => v.iter().map(|x| r(*x, 100.0)).collect(),
     }
 }
 
 // ---------------------------------------------------------------- 스키마
 
 pub const DESCRIPTION: &str = "Move ONE robot part and wait until it stops. Units: meters, degrees; left/counter-clockwise is positive. \
-The base is a 2-wheel differential drive: it drives forward/backward and turns in place, it cannot move sideways. \
-base modes: go_to = drive along a planned path through KNOWN free space to target id (\"F1\" frontier, \"R2\" room) or values [forward_m, left_m] (a point in front/left of the robot, must be known free); \
-probe = values [turn_left_deg, forward_m]: turn in place, then creep forward into UNKNOWN space, stopping before obstacles seen by the camera (forward_m 0 = just turn/look); \
-delta = values [forward_m, turn_left_deg] drive straight, then turn in place (no planning). Base results include a map summary. \
-arm [j1..j5] = OMX-F joints base to wrist (deg; delta or absolute); gripper [opening] 0=closed..1=open (absolute). \
+base modes: go_to = drive along a planned path through KNOWN free space to target id (\"F1\" frontier, \"R2\" room) or values [forward_m, left_m] (must be known free); \
+probe = values [turn_left_deg, forward_m]: turn in place, then creep forward into UNKNOWN space, stopping before obstacles seen by the head camera (forward_m 0 = just turn/look); \
+delta = values [forward_m, left_m, turn_left_deg] small straight move (no planning). Base results include a map summary. \
+torso [j1..j4], left_arm/right_arm [j1..j7] shoulder to wrist (deg; delta or absolute); gripper [opening] 0=closed..1=open (absolute). \
 delta with all zeros only reads the state. Joint limits, safe speeds and obstacle stops are enforced.";
 
 /// OpenAI Chat Completions `tools` 항목 하나 (설명은 기본 [`DESCRIPTION`])
@@ -179,8 +291,8 @@ pub fn definition_modes(desc: &str, modes: &[&str]) -> Value {
             "part": {"type": "string", "enum": PARTS},
             "mode": {"type": "string", "enum": modes},
             "target": {"type": "string", "description": "go_to only: id from the last map summary, e.g. F1 or R2"},
-            "values": {"type": "array", "items": {"type": "number"}, "minItems": 1, "maxItems": 5,
-                       "description": "probe 2, go_to 2 (if no target), base delta 2, arm 5, gripper 1"},
+            "values": {"type": "array", "items": {"type": "number"}, "minItems": 1, "maxItems": 7,
+                       "description": "probe 2, go_to 2 (if no target), base delta 3, torso 4, arm 7, gripper 1"},
             "duration_s": {"type": "number", "description": "optional; slower if too fast for safe speed"}
         },
         "required": ["part", "mode"]
@@ -277,9 +389,86 @@ pub fn parse(args: &Value) -> Result<Command, String> {
 
 // ---------------------------------------------------------------- 관측
 
+/// proprio 에서 이 도구가 쓰는 값만 (안 단위)
+#[derive(Clone, Debug, Default)]
+pub struct State {
+    pub base_v: [f64; 3],
+    pub torso: [f64; 4],
+    pub torso_v: [f64; 4],
+    pub arm_l: [f64; 7],
+    pub arm_l_v: [f64; 7],
+    pub arm_r: [f64; 7],
+    pub arm_r_v: [f64; 7],
+    /// 벌림 비율 0..1 (두 손가락 평균 / FINGER_MAX)
+    pub grip_l: f64,
+    pub grip_l_v: f64,
+    pub grip_r: f64,
+    pub grip_r_v: f64,
+}
+
+fn arr<const N: usize>(p: &[f32], r: std::ops::Range<usize>) -> [f64; N] {
+    let mut o = [0.0; N];
+    for (k, i) in r.enumerate() {
+        o[k] = p[i] as f64;
+    }
+    o
+}
+
+fn mean(p: &[f32], r: std::ops::Range<usize>) -> f64 {
+    let n = r.len() as f64;
+    p[r].iter().map(|x| *x as f64).sum::<f64>() / n
+}
+
+impl State {
+    pub fn from_proprio(p: &[f32]) -> Result<State, String> {
+        if p.len() < PROPRIO_DIM {
+            return Err(format!("proprio has {} values, need {PROPRIO_DIM} (R1Pro)", p.len()));
+        }
+        if p[..PROPRIO_DIM].iter().any(|x| !x.is_finite()) {
+            return Err("proprio has NaN/inf".into());
+        }
+        Ok(State {
+            base_v: arr(p, prop::BASE_QVEL),
+            torso: arr(p, prop::TRUNK_QPOS),
+            torso_v: arr(p, prop::TRUNK_QVEL),
+            arm_l: arr(p, prop::ARM_L_QPOS),
+            arm_l_v: arr(p, prop::ARM_L_QVEL),
+            arm_r: arr(p, prop::ARM_R_QPOS),
+            arm_r_v: arr(p, prop::ARM_R_QVEL),
+            grip_l: mean(p, prop::GRIP_L_QPOS) / FINGER_MAX,
+            grip_l_v: mean(p, prop::GRIP_L_QVEL) / FINGER_MAX,
+            grip_r: mean(p, prop::GRIP_R_QPOS) / FINGER_MAX,
+            grip_r_v: mean(p, prop::GRIP_R_QVEL) / FINGER_MAX,
+        })
+    }
+    /// 관절 부분의 위치·속도 (베이스는 빈 값)
+    pub fn joints(&self, part: Part) -> (Vec<f64>, Vec<f64>) {
+        match part {
+            Part::Torso => (self.torso.to_vec(), self.torso_v.to_vec()),
+            Part::LeftArm => (self.arm_l.to_vec(), self.arm_l_v.to_vec()),
+            Part::RightArm => (self.arm_r.to_vec(), self.arm_r_v.to_vec()),
+            Part::LeftGripper => (vec![self.grip_l], vec![self.grip_l_v]),
+            Part::RightGripper => (vec![self.grip_r], vec![self.grip_r_v]),
+            Part::Base => (vec![], vec![]),
+        }
+    }
+}
+
+/// 그리퍼 벌림 비율(0..1) ↔ 행동 값([-1,1], smooth 모드: -1 → 0 m, +1 → 0.05 m)
+pub fn gripper_to_action(frac: f64) -> f64 {
+    (2.0 * frac - 1.0).clamp(-1.0, 1.0)
+}
+
 /// 행동 벡터에서 부분이 차지하는 칸
 pub fn action_slots(part: Part) -> std::ops::Range<usize> {
-    part.slots()
+    match part {
+        Part::Base => act::BASE,
+        Part::Torso => act::TORSO,
+        Part::LeftArm => act::LEFT_ARM,
+        Part::RightArm => act::RIGHT_ARM,
+        Part::LeftGripper => act::LEFT_GRIPPER..act::LEFT_GRIPPER + 1,
+        Part::RightGripper => act::RIGHT_GRIPPER..act::RIGHT_GRIPPER + 1,
+    }
 }
 
 // ---------------------------------------------------------------- 보간
@@ -335,14 +524,9 @@ struct JointMove {
 
 #[derive(Clone, Debug)]
 struct BaseMove {
-    /// [앞 m(뒤는 음수), 왼쪽으로 돌기 rad] — 먼저 곧게 가고(phase 0), 멈춘 뒤 제자리에서 돈다(phase 1)
-    target: [f64; 2],
-    /// 이 명령에서 간 거리(m, 부호 있음)와 돈 각(rad) — base_qvel 적분(오도메트리)
-    dist: f64,
-    yaw: f64,
-    phase: u8,
-    /// 지령 [vx, wz]
-    v_cmd: [f64; 2],
+    target: [f64; 3],
+    pose: [f64; 3],
+    v_cmd: [f64; 3],
     t_max: f64,
     stall: u32,
     /// 도착 판정 뒤 0 지령으로 멈출 때까지 기다린 스텝(관성으로 더 가거나 덜 간 것까지 재서 보고)
@@ -374,7 +558,7 @@ pub(crate) struct Active {
 pub struct Robot {
     pub safety: Safety,
     pub dt: f64,
-    /// 유지 중인 행동(팔 = 관절 목표 rad, 그리퍼 = 벌림 0..1, 베이스 = 0)
+    /// 유지 중인 행동(팔·몸통 = 관절 목표 rad, 그리퍼 = [-1,1], 베이스 = 0)
     hold: [f64; ACTION_DIM],
     state: Option<State>,
     active: Option<Active>,
@@ -410,9 +594,15 @@ impl Robot {
         Robot { safety: Safety::default(), dt: 1.0 / hz, hold: [0.0; ACTION_DIM], state: None, active: None, result: None, ticks: 0, nav: robot_nav::NavState::with_body(&Self::body()), gt_pose: None, vla: vla::VlaCtx::default() }
     }
 
-    /// 몸 크기: LIMO + OMX-F 하나([`nav::Body::limo_omx`])
+    /// 몸 크기: `MOVE_ROBOT_FOOTPRINT`(limo_omx 기본 | r1pro(옛 기록용) | rect:LxW | circle:R). 알린다.
     fn body() -> nav::Body {
-        nav::Body::limo_omx()
+        // 단위 시험은 가짜 R1Pro 시뮬(link.rs MockWorld)·R1 몸 크기 값으로 쓰여 있다 — 환경 변수가 없을 때만 r1pro 로(실행 기본은 limo_omx)
+        let b = if cfg!(test) && std::env::var("MOVE_ROBOT_FOOTPRINT").is_err() { nav::Body::r1pro() } else { nav::Body::from_env() };
+        {
+            eprintln!("[move_robot] body {}: footprint {:.3} x {:.3} m{}, plan radius {:.3} m", b.name, 2.0 * b.fp.hl, 2.0 * b.fp.hw,
+                      if b.fp.round { " (circle)" } else { "" }, b.robot_r);
+        }
+        b
     }
 
     pub fn busy(&self) -> bool {
@@ -465,14 +655,17 @@ impl Robot {
     fn init_hold(&mut self, s: &State) {
         let h = &mut self.hold;
         h[act::BASE].fill(0.0);
-        h[act::ARM].copy_from_slice(&s.arm);
-        h[act::GRIPPER] = s.grip;
+        h[act::TORSO].copy_from_slice(&s.torso);
+        h[act::LEFT_ARM].copy_from_slice(&s.arm_l);
+        h[act::RIGHT_ARM].copy_from_slice(&s.arm_r);
+        h[act::LEFT_GRIPPER] = gripper_to_action(s.grip_l);
+        h[act::RIGHT_GRIPPER] = gripper_to_action(s.grip_r);
     }
 
     fn set_hold(&mut self, part: Part, q: &[f64]) {
         let r = action_slots(part);
         if part.is_gripper() {
-            self.hold[r.start] = q[0];
+            self.hold[r.start] = gripper_to_action(q[0]);
         } else if part != Part::Base {
             self.hold[r].copy_from_slice(q);
         }
@@ -526,17 +719,17 @@ impl Robot {
         }
 
         let (motion, clamped, slowed) = if part == Part::Base {
-            let mut t = [v[0], v[1]];
+            let mut t = [v[0], v[1], v[2]];
             let mut clamped = vec![];
-            for (i, lim) in [s.base_max_fwd, s.base_max_yaw].into_iter().enumerate() {
+            for (i, lim) in [s.base_max_xy, s.base_max_xy, s.base_max_yaw].into_iter().enumerate() {
                 if t[i].abs() > lim {
                     t[i] = t[i].clamp(-lim, lim);
                     clamped.push(i);
                 }
             }
-            let need = t[0].abs() / s.base_vmax + t[1].abs() / s.base_wmax;
+            let need = t[0].hypot(t[1]) / s.base_vmax + t[2].abs() / s.base_wmax;
             let t_max = need * 1.5 + 3.0 + cmd.duration_s.unwrap_or(0.0);
-            (Motion::Base(BaseMove { target: t, dist: 0.0, yaw: 0.0, phase: 0, v_cmd: [0.0; 2], t_max, stall: 0, settle: 0, retries: 0, stop: None, anchor: [self.nav.pose[0], self.nav.pose[1]] }), clamped, false)
+            (Motion::Base(BaseMove { target: t, pose: [0.0; 3], v_cmd: [0.0; 3], t_max, stall: 0, settle: 0, retries: 0, stop: None, anchor: [self.nav.pose[0], self.nav.pose[1]] }), clamped, false)
         } else {
             let (q, _) = st.joints(part);
             let mut target: Vec<f64> = match cmd.mode {
@@ -546,12 +739,16 @@ impl Robot {
             let clamped = clamp_target(&mut target, &joint_limits(part));
             // 보간은 지금 지령(유지값)에서 시작한다 — 측정값에서 시작하면 처진 만큼 한 스텝에 튄다
             let start: Vec<f64> = if part.is_gripper() {
-                vec![self.hold[action_slots(part).start]]
+                vec![(self.hold[action_slots(part).start] + 1.0) / 2.0]
             } else {
                 self.hold[action_slots(part)].to_vec()
             };
             let delta: Vec<f64> = target.iter().zip(&start).map(|(t, a)| t - a).collect();
-            let vmax = if part.is_gripper() { s.gripper_vmax } else { s.arm_vmax };
+            let vmax = match part {
+                Part::Torso => s.torso_vmax,
+                Part::LeftArm | Part::RightArm => s.arm_vmax,
+                _ => s.gripper_vmax,
+            };
             let (t_move, slowed) = plan_duration(&delta, vmax, cmd.duration_s, &s);
             (Motion::Joints(JointMove { part, start, target, t_move, still: 0, off_track: 0 }), clamped, slowed)
         };
@@ -559,7 +756,7 @@ impl Robot {
         Ok(false)
     }
 
-    /// 시뮬 한 스텝: proprio(24) → 행동(8). 행동은 언제나 채워진다.
+    /// 시뮬 한 스텝: proprio(61) → 행동(23). 행동은 언제나 채워진다.
     pub fn tick(&mut self, proprio: &[f32], action: &mut [f32]) -> Tick {
         self.ticks += 1;
         let st = match State::from_proprio(proprio) {
@@ -574,7 +771,7 @@ impl Robot {
         }
         match self.gt_pose.take() {
             Some(g) => self.nav.integrate_gt(g, self.dt),
-            None => self.nav.integrate([st.base_v[0], st.base_v[2]], self.dt),
+            None => self.nav.integrate(st.base_v, self.dt),
         }
         self.state = Some(st.clone());
         let Some(mut a) = self.active.take() else {
@@ -631,68 +828,65 @@ impl Robot {
                 }
             }
             Motion::Base(m) => {
-                // 오도메트리: 측정 base_qvel 의 vx·wz(차동 — vy 는 쓰지 않음)를 명령 시작부터 적분
-                let (vx, wz) = (st.base_v[0], st.base_v[2]);
-                m.dist += vx * self.dt;
-                m.yaw += wz * self.dt;
-                let ex = m.target[0] - m.dist;
-                let eyaw = m.target[1] - m.yaw;
-                let dist_ok = ex.abs() < s.base_tol_xy;
-                let yaw_ok = eyaw.abs() < s.base_tol_yaw;
-                let mut des = [0.0; 2];
-                if m.phase == 0 {
-                    if dist_ok {
-                        // 멈추고 나서 돈다
-                        if vx.abs() < 0.02 {
-                            m.phase = 1;
-                        }
-                    } else {
+                // 오도메트리: 측정 base_qvel(로봇 기준)을 명령 시작 자세 기준으로 적분 (planner odom.rs 와 같은 식)
+                let [vx, vy, wz] = st.base_v;
+                let (sn, cs) = m.pose[2].sin_cos();
+                m.pose[0] += (cs * vx - sn * vy) * self.dt;
+                m.pose[1] += (sn * vx + cs * vy) * self.dt;
+                m.pose[2] += wz * self.dt;
+                let (ex_w, ey_w) = (m.target[0] - m.pose[0], m.target[1] - m.pose[1]);
+                let (sn, cs) = m.pose[2].sin_cos();
+                let (ex, ey) = (cs * ex_w + sn * ey_w, -sn * ex_w + cs * ey_w);
+                let eyaw = m.target[2] - m.pose[2];
+                let exy = ex.hypot(ey);
+                let within = exy < s.base_tol_xy && eyaw.abs() < s.base_tol_yaw;
+                let mut des = [0.0; 3];
+                if m.settle == 0 && !within {
+                    if exy > s.base_tol_xy * 0.5 {
                         // 감속 곡선 + 마지막 접근 최소 속도(덜 가서 멈추는 것 막기)
-                        let mut sp = s.base_vmax.min((2.0 * s.base_acc * ex.abs()).sqrt()).max(s.base_creep.min(ex.abs() * 4.0));
-                        // 안전 정지: 지도가 있으면 가는 방향 몸통 통로(지도 장애물·모르는 곳(카메라 밖)·깊이)
+                        let mut sp = s.base_vmax.min((2.0 * s.base_acc * exy).sqrt()).max(s.base_creep.min(exy * 4.0));
+                        // 안전 정지: 지도가 있으면 진행 방향 몸통 통로(지도 장애물·모르는 곳(카메라 밖)·깊이)
                         if self.nav.have_map {
-                            let heading = self.nav.pose[2] + if ex < 0.0 { PI } else { 0.0 };
+                            let heading = self.nav.pose[2] + ey.atan2(ex);
                             let (free, by) = self.free_ahead(self.nav.pose, heading, true, m.anchor);
                             let room = free - self.nav.params.stop_margin;
-                            if room < ex.abs() {
+                            if room < exy {
                                 sp = sp.min((2.0 * s.base_acc * room.max(0.0)).sqrt());
                                 if room <= 0.01 {
                                     m.stop = Some((by, (free.max(0.0) * 100.0).round() / 100.0));
                                 }
                             }
                         }
-                        des[0] = ex.signum() * sp;
-                        // 곧게: 처음 방향에서 벗어난 만큼 되돌린다(돌 각은 이 단계 뒤)
-                        des[1] = (-2.0 * m.yaw).clamp(-s.base_wmax, s.base_wmax);
+                        des[0] = ex / exy * sp;
+                        des[1] = ey / exy * sp;
+                    }
+                    if eyaw.abs() > s.base_tol_yaw * 0.5 {
+                        let w = s.base_wmax.min((2.0 * s.base_wacc * eyaw.abs()).sqrt()).max(s.base_wcreep.min(eyaw.abs() * 4.0));
+                        des[2] = eyaw.signum() * w;
                     }
                 }
-                if m.phase == 1 && !yaw_ok {
-                    let w = s.base_wmax.min((2.0 * s.base_wacc * eyaw.abs()).sqrt()).max(s.base_wcreep.min(eyaw.abs() * 4.0));
-                    des[1] = eyaw.signum() * w;
-                }
-                let lim = [s.base_acc * self.dt, s.base_wacc * self.dt];
-                for i in 0..2 {
+                let lim = [s.base_acc * self.dt, s.base_acc * self.dt, s.base_wacc * self.dt];
+                for i in 0..3 {
                     m.v_cmd[i] += (des[i] - m.v_cmd[i]).clamp(-lim[i], lim[i]);
                 }
-                let within = dist_ok && yaw_ok && m.phase == 1;
                 if m.stop.is_some() || within || m.settle > 0 {
-                    m.v_cmd = [0.0; 2];
+                    m.v_cmd = [0.0; 3];
                 }
-                let moving_cmd = m.v_cmd[0].abs() > 0.05 || m.v_cmd[1].abs() > 0.1;
-                let barely = vx.abs() < 0.2 * m.v_cmd[0].abs().max(0.05) && wz.abs() < 0.2 * m.v_cmd[1].abs().max(0.1);
+                let cmd_sp = m.v_cmd[0].hypot(m.v_cmd[1]);
+                let meas_sp = vx.hypot(vy);
+                let moving_cmd = cmd_sp > 0.05 || m.v_cmd[2].abs() > 0.1;
+                let barely = meas_sp < 0.2 * cmd_sp.max(0.05) && wz.abs() < 0.2 * m.v_cmd[2].abs().max(0.1);
                 m.stall = if moving_cmd && barely { m.stall + 1 } else { 0 };
                 if within || m.settle > 0 {
                     // 멈출 때까지(관성) 기다려 실제 도착 자리를 잰다. 너무 벗어나면 한 번 더 접근
                     m.settle += 1;
-                    let still = vx.abs() < 0.005 && wz.abs() < 0.01;
+                    let still = meas_sp < 0.005 && wz.abs() < 0.01;
                     if (still && m.settle >= 3) || m.settle >= 15 {
-                        let good = ex.abs() < 2.0 * s.base_tol_xy && eyaw.abs() < 2.0 * s.base_tol_yaw;
-                        if good || m.retries >= 2 {
-                            outcome = Some(if good { "reached" } else { "timeout" });
+                        if exy < 2.0 * s.base_tol_xy && eyaw.abs() < 2.0 * s.base_tol_yaw || m.retries >= 2 {
+                            outcome = Some(if exy < 2.0 * s.base_tol_xy && eyaw.abs() < 2.0 * s.base_tol_yaw { "reached" } else { "timeout" });
                         } else {
                             m.retries += 1;
                             m.settle = 0;
-                            m.phase = if ex.abs() >= 2.0 * s.base_tol_xy { 0 } else { 1 };
                         }
                     }
                 } else if m.stop.is_some() {
@@ -704,11 +898,11 @@ impl Robot {
                     outcome = Some("timeout");
                 }
                 if outcome.is_some() {
-                    m.v_cmd = [0.0; 2];
-                    final_state = to_user(Part::Base, &[m.dist, m.yaw]);
+                    m.v_cmd = [0.0; 3];
+                    final_state = to_user(Part::Base, &m.pose);
                     target_user = to_user(Part::Base, &m.target);
                     // 남은 거리(m)와 남은 회전(deg)
-                    err_user = Some(json!([(ex * 1000.0).round() / 1000.0, (eyaw.to_degrees() * 10.0).round() / 10.0]));
+                    err_user = Some(json!([(exy * 1000.0).round() / 1000.0, (eyaw.to_degrees() * 10.0).round() / 10.0]));
                     if outcome == Some("blocked") {
                         self.nav.n_blocked += 1;
                     }
@@ -716,9 +910,9 @@ impl Robot {
                 base_cmd = Some(m.v_cmd);
             }
             Motion::Nav(m) => {
-                if let Some(r) = self.tick_nav(m, t, [st.base_v[0], st.base_v[2]]) {
+                if let Some(r) = self.tick_nav(m, t, st.base_v) {
                     nav_done = Some(r);
-                    base_cmd = Some([0.0; 2]);
+                    base_cmd = Some([0.0; 3]);
                 } else {
                     base_cmd = Some(m.v_cmd);
                 }
@@ -747,7 +941,7 @@ impl Robot {
                 }
                 if !a.clamped.is_empty() {
                     r["clamped"] = json!(a.clamped);
-                    if part == Part::Arm {
+                    if part != Part::Base && !part.is_gripper() {
                         // 잘린 관절의 허용 범위(LLM 단위) — 방향(부호)을 고치게
                         let lim = joint_limits(part);
                         let l: Vec<Value> = a.clamped.iter().map(|&i| json!(to_user(part, &[lim[i].0, lim[i].1]))).collect();
@@ -774,22 +968,22 @@ impl Robot {
         }
     }
 
-    /// 행동 8 = [vx m/s, wz rad/s, j1..j5 rad, 그리퍼 0..1] (물리 단위 — 안전 거르개 출력과 같은 배치)
-    fn write_action(&self, action: &mut [f32], base: Option<[f64; 2]>) {
+    fn write_action(&self, action: &mut [f32], base: Option<[f64; 3]>) {
         for (o, h) in action.iter_mut().zip(self.hold.iter()) {
             *o = *h as f32;
         }
-        let b = base.unwrap_or([0.0; 2]);
-        action[act::BASE.start] = b[0] as f32;
-        action[act::BASE.start + 1] = b[1] as f32;
+        let b = base.unwrap_or([0.0; 3]);
+        for i in 0..3 {
+            action[act::BASE.start + i] = (b[i] / act::BASE_OUT[i]).clamp(-1.0, 1.0) as f32;
+        }
     }
 }
 
 fn hint(part: Part, outcome: &str, cmd: &Command) -> &'static str {
     match (part, outcome) {
-        (Part::Gripper, "blocked") if cmd.values[0] < 0.5 => "gripper stopped before closing: probably holding an object",
-        (Part::Gripper, _) => "gripper did not reach the opening",
-        (Part::Base, "blocked") => "base is not moving: probably an obstacle; turn to face another direction (probe) and try again",
+        (Part::LeftGripper | Part::RightGripper, "blocked") if cmd.values[0] < 0.5 => "gripper stopped before closing: probably holding an object",
+        (Part::LeftGripper | Part::RightGripper, _) => "gripper did not reach the opening",
+        (Part::Base, "blocked") => "base is not moving: probably an obstacle; try another direction",
         (Part::Base, _) => "base did not arrive in time; call again with the remaining distance",
         (_, "blocked") => "joint stopped early: probably contact or self-collision; it now holds where it stopped",
         _ => "not settled at the target yet; it keeps holding the target",

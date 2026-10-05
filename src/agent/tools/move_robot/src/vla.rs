@@ -712,7 +712,7 @@ impl Default for VlaParams {
             unsure: 0.5,
             unsure_s: 1.0,
             unsafe_filter_s: 2.0,
-            // OMX-F XL430 최고 4.8 rad/s(URDF velocity)의 약 1/5 — R1 기본 45°/s 를 OMX 에 맞게(추정)
+            // OMX-F XL430 최고 4.8 rad/s(URDF velocity)의 약 1/5 (추정)
             arm_vmax: 60f64.to_radians(),
             grip_vmax: 1.0,
             // VLA 베이스는 `delta` 수준 0.3 m/s 이하(POLICY 7.1)

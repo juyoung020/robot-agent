@@ -1,4 +1,4 @@
-/* move_robot: R1Pro 한 부분 직접 움직이기 실행기 + LIMO + OMX-F VLA 실행기 C ABI (src/ffi.rs). libmove_robot.so */
+/* move_robot: LIMO + OMX-F 한 부분(base·arm·gripper) 직접 움직이기 실행기 + VLA 실행기 C ABI (src/ffi.rs). libmove_robot.so */
 #ifndef MOVE_ROBOT_H
 #define MOVE_ROBOT_H
 #include <stddef.h>
@@ -11,7 +11,7 @@ typedef struct MrRobot MrRobot;
 
 MrRobot *mr_new(double hz);                 /* hz <= 0 -> 30 */
 void mr_free(MrRobot *r);
-/* 한 스텝: proprio(61, R1Pro PROPRIOCEPTION_INDICES) -> action(23, ACTION_QPOS_INDICES).
+/* 한 스텝: proprio(24, limo_omx_eval.yaml proprio_obs) -> action(8 = [vx m/s, wz rad/s, omx_joint1..5 rad, 그리퍼 0..1]).
  * 0 대기(유지), 1 움직이는 중, 2 이번에 끝남(결과 준비), -1 proprio 이상(유지값), -2 인자 이상 */
 int mr_tick(MrRobot *r, const float *proprio, size_t n, float *action);
 /* 이번 스텝의 정답(GT) 자세(map 틀 x, y, yaw[rad]). 다음 mr_tick 한 번에서 base_qvel 적분 대신 쓰임(SGRT_POSE=gt 일 때 매 스텝). 0 / -2 */

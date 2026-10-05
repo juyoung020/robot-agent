@@ -11,7 +11,7 @@ LLM 이 골라 부르는 도구 중 **코드가 있는 것**만 여기 적는다
 | `search_objects` | 물체 기억에서 찾기: ① 이름·동의어·상위어 → 없거나 약하면 ② 이름 무시 생김새 재검색(벡터는 도구 안, 결과는 글) | [`search_objects/`](search_objects/) |
 | `confirm_object` | 확인된 물체의 이름 고치기(이름 사후 베이즈 갱신 + 확인 기록) | [`search_objects/`](search_objects/) |
 | `list_place` | 방의 물체, 또는 가구 id 상자에서 1.5 m 안 물체(거리·높이 숫자, 관계말 없음), 최대 15 | [`search_objects/`](search_objects/) |
-| `move_robot` | 로봇 한 부분(베이스·몸통·팔·그리퍼)을 움직이고 멈출 때까지 기다리기. 베이스 모드 `go_to`·`probe`·`delta`, 에이전트 쪽 모드 `explore`(프런티어 탐사) | [`move_robot/`](move_robot/) |
+| `move_robot` | 로봇(LIMO + OMX-F) 한 부분(베이스·팔·그리퍼)을 움직이고 멈출 때까지 기다리기. 베이스 모드 `go_to`·`probe`·`delta`, 에이전트 쪽 모드 `explore`(프런티어 탐사) | [`move_robot/`](move_robot/) |
 
 - LLM 에 보이는 도구 수: 코드가 있는 것 4 개. 계획만 있는 도구와 전체 수(원칙 8 개, 계획까지 10 개)·합치는 안은 [plan.md 3.3](../plan.md).
 - 프런티어 탐사(옛 스킬 explore 의 기준선 코드, 10-06)는 새 도구로 늘리지 않고 `move_robot` 의 베이스 모드 `explore` 로 넣었다 — 도구 수 그대로.
@@ -21,7 +21,7 @@ LLM 이 골라 부르는 도구 중 **코드가 있는 것**만 여기 적는다
 ## `search_objects` · `confirm_object` · `list_place` — 물체 찾기, 이름 고치기, 자리 목록
 
 자세한 것: [`search_objects/README.md`](search_objects/README.md). LLM 은 글만 받으므로 벡터 찾기는 도구 안의 공용 물체 색인
-(behavior-2026 `src/scene_graph/clip/include/sgsearch.h`)이 하고, 도구는 색인된 이름·속성과 기억의 자리 정보를 글로 준다.
+(`src/scene_graph/clip/include/sgsearch.h`)이 하고, 도구는 색인된 이름·속성과 기억의 자리 정보를 글로 준다.
 
 인자
 ```json
@@ -42,7 +42,9 @@ list_place     {"place": "kitchen" | "R2" | "O12"}
 측정(BEHAVIOR 집 FastSAM 기억 283 물체): 이름만 R@5 0.22 → 이름 + 생김새 0.56, 이름으로 못 찾는 물체 R@5 0 → 0.33,
 없는 물체 질의에 묻지 않고 행동할 만큼 나오는 것 0.03, 질의 ≈ 0.1 ms(자유 글 ≈ 1 ms).
 
-## `move_robot` — 관절·베이스 직접 움직이기
+## `move_robot` — 베이스·팔·그리퍼 직접 움직이기
+
+로봇은 AgileX LIMO(차동 2륜 베이스 — 앞뒤로 가고 제자리에서 돌 뿐 옆으로 못 감, 머리 RGB-D, 2D 라이다) + ROBOTIS OMX-F(관절 5 + 그리퍼, 손목 카메라) 하나다. 관절 이름은 `omx_joint1..5`, 한계는 `src/robot/real_limits.json`.
 
 한 부분을 목표까지 안전하게 움직이고 결과를 짧게 돌려준다. 닫힌 고리 실행기(검증·자르기·보간·판정)는 Rust 한 곳(`move_robot/src/lib.rs`,
 주행은 `nav.rs`·`robot_nav.rs`·`map.rs`)이고, 시뮬에서는 같은 코드가 `libmove_robot.so` 로 평가기 안에서 돈다.
@@ -50,26 +52,24 @@ list_place     {"place": "kitchen" | "R2" | "O12"}
 ### 인자 (9B 모델용으로 작게, 정의 JSON 약 1.5 KB — `move_robot::definition()`, `move-robot schema`)
 
 ```json
-{"part": "base | torso | left_arm | right_arm | left_gripper | right_gripper",
+{"part": "base | arm | gripper",
  "mode": "go_to | probe | delta | absolute",            (에이전트 쪽 "explore" 는 스킬이 고를 때만 보임 — 아래)
  "target": string (선택, go_to 만: 지난 지도 요약의 id "F1"·"R2"),
- "values": [number, ...] (1..7 개),
+ "values": [number, ...] (1..5 개),
  "duration_s": number (선택, 0 보다 큼),
  "max_steps": int (explore 만, 1..50, 기본 1)}
 ```
-필수: `part`, `mode`. `values` 는 go_to 에 `target` 을 줄 때 말고는 있어야 하고, 개수는 모드·부분마다 정해져 있다(probe 2, target 없는 go_to 2, base delta 3, torso 4, 팔 7, 그리퍼 1).
+필수: `part`, `mode`. `values` 는 go_to 에 `target` 을 줄 때 말고는 있어야 하고, 개수는 모드·부분마다 정해져 있다(probe 2, target 없는 go_to 2, base delta 2, 팔 5, 그리퍼 1).
 `go_to`·`probe`·`explore` 는 베이스 전용, 베이스에 `absolute` 는 없다(`error`).
 
-| part | values (순서·단위) | 행동 벡터 칸 (R1Pro 23) | 제어기 (`omnigibson/eval/r1pro.yaml`) |
+| part | values (순서·단위) | 행동 벡터 칸 (8) | 시뮬 제어기 (`src/robot/og/limo_omx_eval.yaml`) |
 |---|---|---|---|
-| `base` | delta `[앞 m, 왼쪽 m, 왼쪽으로 돌기 °]` — 호출할 때의 로봇 기준 / probe `[왼쪽으로 돌기 °, 앞 m]` / go_to `target` 또는 `[앞 m, 왼쪽 m]` | 0..3 `vx, vy, wz` | 속도, [-1,1] → ±0.75 m/s, ±0.75 m/s, ±1 rad/s |
-| `torso` | `[j1..j4]` ° (delta·absolute) | 3..7 | 절대 관절 위치 (rad) |
-| `left_arm` | `[j1..j7]` ° (어깨 → 손목) | 7..14 | 절대 관절 위치 |
-| `left_gripper` | `[벌림]` 0 = 닫힘 … 1 = 열림 (absolute 권장) | 14 | smooth, [-1,1] → 손가락 0…0.05 m |
-| `right_arm` | `[j1..j7]` ° | 15..22 | 절대 관절 위치 |
-| `right_gripper` | `[벌림]` | 22 | smooth |
+| `base` | delta `[앞 m(뒤는 음수), 왼쪽으로 돌기 °]` — 곧게 간 뒤 제자리에서 돎 / probe `[왼쪽으로 돌기 °, 앞 m]` / go_to `target` 또는 `[앞 m, 왼쪽 m]`(목표 점, 경로는 차동으로 따라감) | 0..2 `vx m/s, wz rad/s` | 속도, 평가기 행동 [-1,1] → ±0.5 m/s, ±0.8727 rad/s (옆 속도 칸은 늘 0) |
+| `arm` | `[j1..j5]` ° (`omx_joint1..5`, 어깨 → 손목, delta·absolute) | 2..7 | 절대 관절 위치 (rad) |
+| `gripper` | `[벌림]` 0 = 닫힘 … 1 = 열림 (absolute 권장) | 7 | 벌림 0..1 → joint_1 0…100° |
 
-- 행동·관측 칸은 BEHAVIOR-1K `eval_utils.py` 의 `ACTION_QPOS_INDICES` / `PROPRIOCEPTION_INDICES` 그대로. 머리(카메라)는 평가 설정에서 `NullJointController` 라 enum 에 없다.
+- 행동 8 = `[vx, wz, j1..j5, 그리퍼]`(물리 단위), 관측 24 = `base_qvel 3, arm_0_qpos 5, arm_0_qvel 5, eef_0_pos 3, eef_0_quat 4, gripper_0_qpos 2, gripper_0_qvel 2` — 배치는 `move_robot/src/limo.rs`.
+  시뮬 접착부(`src/sim/move_robot/move_robot_limo.py`)가 이 8 을 시뮬 로봇의 행동 9 칸에 놓을 뿐이다.
 - `delta` 는 지금 측정값에 더하기, `absolute` 는 그 값으로 가기(관절·그리퍼만). **`delta` 에 0 만 주면 움직이지 않고 상태만 읽는다**(도구를 늘리지 않으려고).
 - 한 번에 한 부분. 그동안 나머지 부분은 마지막 목표를 유지하고 베이스는 0 속도.
 
@@ -86,9 +86,9 @@ list_place     {"place": "kitchen" | "R2" | "O12"}
 ### 결과 (짧은 JSON)
 
 ```json
-{"status":"reached","part":"left_arm","state":[0.0,20.0,0.0,-30.0,0.0,0.0,0.0],"target":[…],"units":"deg","steps":38,"time_s":1.27}
-{"status":"blocked","part":"right_gripper","state":[0.4],"error":0.6,"hint":"gripper stopped before closing: probably holding an object",…}
-{"status":"error","message":"left_arm needs exactly 7 values (deg), got 2","hint":"fix the arguments and call move_robot again"}
+{"status":"reached","part":"arm","state":[0.0,20.0,0.0,-30.0,0.0],"target":[…],"units":"deg","steps":38,"time_s":1.27}
+{"status":"blocked","part":"gripper","state":[0.4],"error":0.6,"hint":"gripper stopped before closing: probably holding an object",…}
+{"status":"error","message":"arm needs exactly 5 values (deg), got 2","hint":"fix the arguments and call move_robot again"}
 ```
 - `status`: `reached`(허용 오차 안) / `blocked`(멈췄는데 목표 못 감: 접촉·물체·장애물) / `timeout`(아직 가는 중) / `error`(인자 틀림 — 관찰값).
 - `clamped`: 한계 밖이라 잘린 칸 번호, 관절이면 `limits`(그 칸의 허용 범위 °)도. `slowed`: 요청한 `duration_s` 가 안전 속도보다 빨라서 늘렸다.
@@ -105,10 +105,10 @@ list_place     {"place": "kitchen" | "R2" | "O12"}
 
 | 항목 | 값 |
 |---|---|
-| 관절 한계 | URDF `r1pro.urdf` 한계 안쪽 2° 로 자름 |
-| 팔 / 몸통 속도 | 45 °/s / 20 °/s (최소 저크 보간 최고 속도 기준) |
+| 관절 한계 | `src/robot/real_limits.json`(실제 OMX-F 범위) 안쪽 2° 로 자름 |
+| 팔 속도 | 45 °/s (최소 저크 보간 최고 속도 기준) |
 | 그리퍼 | 1 초에 끝까지 (비율 1.0/s) |
-| 베이스 | delta 0.3 m/s, 35 °/s, 한 번에 축마다 2 m·180° 까지 / go_to 0.5 m/s, 50 °/s / probe 앞으로 0.25 m/s, 한 번에 1.5 m·돌기 ±360° 까지. 가속 0.6 m/s²·90 °/s² |
+| 베이스 | delta 0.3 m/s, 35 °/s, 한 번에 2 m·180° 까지(곧게 간 뒤 돎) / go_to 0.5 m/s, 50 °/s / probe 앞으로 0.25 m/s, 한 번에 1.5 m·돌기 ±360° 까지. 가속 0.6 m/s²·90 °/s² |
 | 막힘 판정 | 관절: 지령과 실제 차이 20° 넘게 0.2 s → 멈추고 그 자리 유지 / 보간 끝난 뒤 정지 0.27 s. 베이스: 지령의 20 % 미만으로 1 s |
 | 도착 허용 | 관절 1.5°, 그리퍼 0.05, 베이스 1 cm·1° (멈춘 뒤 2 배 안이면 `reached`, 밖이면 다시 접근 최대 2 번) |
 | 시간 초과 | 관절: 보간 + 1.5 s, 베이스 delta: 예상 시간 × 1.5 + 3 s (+ `duration_s`), go_to: 경로 길이 / 0.3 m/s + 12 s, probe: 돌기 / 50 °/s × 1.5 + 앞 / 0.25 m/s × 2 + 4 s |
@@ -120,14 +120,11 @@ list_place     {"place": "kitchen" | "R2" | "O12"}
 - 비용 지도 = scenemap 2D 점유 격자 하나(로그 오즈라 치운 물체는 광선이 비움). 바뀐 칸은 scenemap 의 바뀐 영역(`sgrt_map_view.dirty_box`) 안에서만 비교,
   거리장은 장애물이 바뀔 때만 다시. 물체 기억의 옮길 수 있는 물체 둘레는 계획 벌점.
 - 전역 경로: 바뀐 칸이 경로 통로(몸통 + 0.3 m)에 걸리고 실제로 막혔을 때, 또는 3 s 마다 다시 계획(ms 단위).
-- 몸통: 반지름 0.37 m 원(시뮬 base_link AABB 0.743 × 0.732 m). 사각형 0.57 × 0.54 m 로 했을 때 시뮬에서 바퀴가 소파·탁자에
-  12 번 닿았고, 원으로 바꾼 뒤 0 번(같은 집·같은 출발). 계획 부풀림 0.40 m.
-- 로봇별 몸 크기: 환경 변수 `MOVE_ROBOT_FOOTPRINT` — 없거나 `limo_omx`(10-06 부터 기본)면 LIMO 사각형 0.36 × 0.22 m·계획 부풀림 0.241 m, `r1pro` 면 위 값(옛 R1 기록·시험 전용),
-  `rect:<길이>x<폭>`·`circle:<반경>` 도 된다(`nav::Body`). behavior-2026 `run_explore.sh` 가 `SGRT_ROBOT=limo_omx` 일 때 넣는다.
-- 지역 제어: 매 스텝 DWA(앞 속도 6 + 뒤 2 × 회전 13 × 옆 속도 3 표본, 1.2 s 굴림, 몸통 둘레 44 점 검사, 여유 2 cm + 0.2·v)
-  + 전방향 미끄러지기 7 방향 + 막혔을 때 16 방향 빠져나오기. 가야 할 쪽이 30° 넘게 옆이면 제자리 돌기.
+- 몸통: LIMO 사각형 0.36 × 0.22 m(시뮬 충돌 모양을 base_link 기준으로 잰 범위 — `nav.rs` `LIMO_LEN`·`LIMO_WID`), 계획 부풀림 = 외접원 0.211 m + 0.03 = 0.241 m. 크기는 하나뿐이라 고르는 설정이 없다.
+- 지역 제어: 매 스텝 DWA(앞 속도 6 + 뒤 2 × 회전 13 표본 — 차동이라 옆 속도 없음, 1.2 s 굴림, 몸통 둘레 44 점 검사, 여유 2 cm + 0.2·v)
+  + 막혔을 때 곧게 앞·뒤 0.5 s 빠져나오기. 가야 할 쪽이 30° 넘게 옆이면 제자리 돌기.
 - 얇은 안전 정지: 마지막 깊이 프레임 장애물 점 중 **지도에 아직 없는** 것으로 앞 속도를 줄이고 멈춤.
-- 회복: 다시 계획 → 35° 돌아보기 → 되짚기(지나온 자리 0.7 m 를 거꾸로) → `blocked`. 밀었는데 안 움직이면(접촉) 0.15 m 물러난 뒤 `blocked`.
+- 회복: 다시 계획 → 35° 돌아보기 → 되짚기(지나온 자리 0.7 m 를 뒤로 가며 조향) → `blocked`. 밀었는데 안 움직이면(접촉) 0.15 m 물러난 뒤 `blocked`.
   두 번 실패한 목표 둘레 프런티어는 다음 관측에서 뺌(`skipped_failed`).
 
 ### 실행 경로
@@ -136,15 +133,15 @@ list_place     {"place": "kitchen" | "R2" | "O12"}
 런타임(run-skill) ── 도구 호출 ──▶ move_robot::frontier::run_tool_ctx (explore 면 go_to 를 되풀이) → link::run_tool ── 먼저 인자 검사(왕복 없이 오류)
      │                                              │
      │                                              └─ TcpSim ─ JSON 한 줄 ─▶ [평가기 프로세스]
-     │                                                   behavior-2026/src/sim/move_robot/move_robot_sim.py (ctypes)
-     │                                                   매 스텝: proprio 61 → mr_tick (libmove_robot.so, 같은 Rust 실행기) → 행동 23
+     │                                                   src/sim/move_robot/move_robot_sim.py (ctypes)
+     │                                                   매 스텝: proprio 24 → mr_tick (libmove_robot.so, 같은 Rust 실행기) → 행동 8
      ◀──────────────────── 결과 JSON 한 줄 ◀─────────────────┘
 ```
 - C ABI(`move_robot/include/move_robot.h`, `src/ffi.rs`): `mr_new`, `mr_free`, `mr_tick`(0 대기 / 1 움직이는 중 / 2 이번에 끝남 / -1 proprio 이상 / -2 인자 이상), `mr_command`(0 시작 / 1 바로 끝남 / -2),
   `mr_busy`, `mr_reset`, `mr_take_result`, `mr_tool_definition`, 지도용 `mr_set_map`·`mr_set_reference`·`mr_set_contacts`·`mr_overlay_json`,
   `mr_set_gt_pose(r, x, y, yaw)`(`SGRT_POSE=gt` 일 때 평가기가 매 스텝 부름. 베이스 delta 의 도착 판정은 그래도 오도메트리 — 실제 로봇과 같게).
 - 에이전트 쪽 의존성: `serde_json` 하나. `--features llm` 일 때만 기존 계획기 `llm.rs`(KAU HTTPS, curl)를 경로 의존성으로 쓴다.
-- 가짜 집 `link::MockWorld`(정답 바닥 PGM + 머리 카메라 흉내 ±49.6°, 6 m, 로그 오즈 격자, 몸통 원 접촉). 덮음을 잴 정답 기준은
+- 가짜 집 `link::MockWorld`(정답 바닥 PGM + 머리 카메라 흉내 ±34°(LIMO eyes 화각 67.9°)·0.25–6 m, 로그 오즈 격자, 몸통 사각형 접촉). 덮음을 잴 정답 기준은
   `mock_eval::{mock_from_gt, reachable_reference}`(평가용, LLM 에게 안 보임 — 옛 스킬 explore `bin/explore.rs` 에서 옮김).
 
 ### `executor: "vla"` 호출 (코드: `src/vla.rs`·`robot_vla.rs`·`goal.rs`·`limo.rs`·`verify.rs`)
@@ -159,15 +156,15 @@ list_place     {"place": "kitchen" | "R2" | "O12"}
 
 ```bash
 cd src/agent/tools/move_robot
-cargo test --release -j4                  # lib 시험 60개 (Isaac Sim 없이; explore 모드 3개 포함)
+cargo test --release -j4                  # lib 시험 61개 (Isaac Sim 없이; explore 모드 3개 포함)
 cargo build --release -j4 --features llm  # libmove_robot.so + move-robot 명령
 ./target/release/move-robot schema
-./target/release/move-robot mock '{"part":"left_arm","mode":"delta","values":[0,20,0,-30,0,0,0]}'   # 가짜 로봇
-python ../../../behavior-2026/src/sim/move_robot/run_eval_move.py --listen 127.0.0.1:8771 -- --task-name turning_on_radio --max-steps 6000 --headless
-./target/release/move-robot call '{"part":"base","mode":"delta","values":[0.3,0,0]}'
-set -a; . ~/.config/behavior-2026/kau.env; set +a   # 키는 환경변수로만
-./target/release/move-robot llm "오른쪽 그리퍼를 반쯤 닫고 앞으로 50cm 가" [--mock]
-python3 ../../../behavior-2026/src/sim/move_robot/test_move_robot_sim.py   # 시뮬 접착부 시험 (Isaac Sim 없이)
+./target/release/move-robot mock '{"part":"arm","mode":"delta","values":[0,20,0,-30,0]}'   # 가짜 로봇
+tools/run_explore_live.sh frontier bringing_water <tag>   # 시뮬(평가기 안 실행기, TCP 8771) — 저장소 루트에서
+./target/release/move-robot call '{"part":"base","mode":"delta","values":[0.3,0]}'
+set -a; . ~/.config/robot-agent/kau.env; set +a   # 키는 환경변수로만
+./target/release/move-robot llm "그리퍼를 반쯤 닫고 앞으로 50cm 가" [--mock]
+python3 ../../../sim/move_robot/test_move_robot_sim.py   # 시뮬 접착부 시험 (Isaac Sim 없이)
 ```
 
 ### 측정

@@ -19,7 +19,7 @@ pub fn mock_from_gt(pgm: &str, gt_json: &str, start: Option<[f64; 3]>) -> Result
     Ok(m)
 }
 
-/// 정답 기준: 바닥 칸 중 출발점에서 몸통 원(0.37 m)이 닿는 곳(벽에서 0.37 m 떨어진 칸으로 이어진 연결 성분)과 그 둘레 0.6 m
+/// 정답 기준: 바닥 칸 중 출발점에서 몸통 부풀림 원(LIMO, [`crate::nav::Body::limo_omx`] robot_r 0.24 m)이 닿는 곳(벽에서 그만큼 떨어진 칸으로 이어진 연결 성분)과 그 둘레 0.6 m
 /// (카메라로 볼 수 있는 바닥). 값 1 = 기준 칸.
 pub fn reachable_reference(floor: &Grid, start: [f64; 3]) -> Grid {
     let mut obst = floor.clone();
@@ -27,6 +27,7 @@ pub fn reachable_reference(floor: &Grid, start: [f64; 3]) -> Grid {
         *v = if *v == 1 { 0 } else { 100 };
     }
     let d = crate::map::obstacle_distance(&obst, 1.0);
+    let reach_r = crate::nav::Body::limo_omx().robot_r as f32;
     let (w, h) = (floor.w as i64, floor.h as i64);
     let mut reach = vec![false; floor.cells.len()];
     let (sx, sy) = floor.cell_of(start[0], start[1]);
@@ -43,7 +44,7 @@ pub fn reachable_reference(floor: &Grid, start: [f64; 3]) -> Grid {
                 continue;
             }
             let j = (ny * w + nx) as usize;
-            if !reach[j] && floor.cells[j] == 1 && (d[j] >= 0.37 || (nx - sx).pow(2) + (ny - sy).pow(2) < 64) {
+            if !reach[j] && floor.cells[j] == 1 && (d[j] >= reach_r || (nx - sx).pow(2) + (ny - sy).pow(2) < 64) {
                 reach[j] = true;
                 q.push_back(j);
             }

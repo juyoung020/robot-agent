@@ -4,7 +4,7 @@
 //!   결과 한 줄을 받는다(줄 단위 JSON, 호출마다 연결 하나). 실행기(닫힌 고리)는 저쪽 프로세스 안 같은 Rust 코드다.
 //! - [`Mock`]: 같은 실행기 + 가짜 로봇([`MockPlant`]). Isaac Sim 없이 시험·시연.
 
-use crate::{act, error_obs, parse, Part, Robot, Tick, ACTION_DIM};
+use crate::{act, error_obs, parse, Part, Robot, Tick, ACTION_DIM, FINGER_MAX, PROPRIO_DIM};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
@@ -70,25 +70,23 @@ impl Backend for TcpSim {
     }
 }
 
-/// 가짜 LIMO + OMX-F: 팔 관절은 1차 지연(위치 제어기 흉내), 그리퍼는 벌림 속도 1 /s, 베이스(차동)는 지령 (vx, wz)에 1차 지연.
-/// 행동·proprio 배치는 [`crate::limo`]. 막힘 시험용으로 관절 멈춤·그리퍼 사이 물체·벽을 넣을 수 있다.
+/// 가짜 R1Pro: 관절은 1차 지연(위치 제어기 흉내)·속도 한도, 그리퍼는 손가락 속도 0.25 m/s, 베이스는 지령 속도에 1차 지연.
+/// 막힘 시험용으로 관절 멈춤·그리퍼 사이 물체·벽을 넣을 수 있다.
 #[derive(Clone, Debug)]
 pub struct MockPlant {
     pub dt: f64,
-    /// 관절 위치 — 행동 칸 번호로(팔 = `act::ARM`, 그리퍼 칸은 쓰지 않음)
     pub q: [f64; ACTION_DIM],
     pub qd: [f64; ACTION_DIM],
     /// 그리퍼 벌림 비율
-    pub grip: f64,
-    pub grip_v: f64,
-    /// 로봇 기준 속도 [vx, vy, wz] (차동이라 vy 는 늘 0)
+    pub grip: [f64; 2],
+    pub grip_v: [f64; 2],
     pub base_v: [f64; 3],
     /// 출발점 기준 실제 자세(x, y, yaw)
     pub pose: [f64; 3],
     /// (행동 칸, 이 값 넘어 못 감) — 접촉 흉내
     pub stops: Vec<(usize, f64)>,
     /// 그리퍼 사이 물체: 이 비율 아래로 못 닫음
-    pub object_in: Option<f64>,
+    pub object_in: [Option<f64>; 2],
     /// 출발점 기준 x 가 이 값 넘으면 베이스가 못 감
     pub wall_x: Option<f64>,
 }
@@ -96,17 +94,17 @@ pub struct MockPlant {
 impl Default for MockPlant {
     fn default() -> Self {
         let mut q = [0.0; ACTION_DIM];
-        q[act::ARM].copy_from_slice(&crate::limo::ARM_HOME); // limo_omx_eval.yaml reset_joint_pos
+        q[act::TORSO].copy_from_slice(&[1.025, -1.45, -0.47, 0.0]); // r1pro.yaml reset_joint_pos
         MockPlant {
             dt: 1.0 / crate::HZ,
             q,
             qd: [0.0; ACTION_DIM],
-            grip: 1.0,
-            grip_v: 0.0,
+            grip: [1.0, 1.0],
+            grip_v: [0.0; 2],
             base_v: [0.0; 3],
             pose: [0.0; 3],
             stops: vec![],
-            object_in: None,
+            object_in: [None, None],
             wall_x: None,
         }
     }
@@ -114,17 +112,31 @@ impl Default for MockPlant {
 
 impl MockPlant {
     pub fn proprio(&self) -> Vec<f32> {
-        let mut st = crate::State { base_v: self.base_v, grip: self.grip, grip_v: self.grip_v, ..Default::default() };
-        st.arm.copy_from_slice(&self.q[act::ARM]);
-        st.arm_v.copy_from_slice(&self.qd[act::ARM]);
-        st.eef = crate::limo::fk_eef(&st.arm);
-        st.to_proprio()
+        let mut p = vec![0f32; PROPRIO_DIM];
+        let put = |p: &mut Vec<f32>, r: std::ops::Range<usize>, v: &[f64]| {
+            for (i, x) in r.zip(v) {
+                p[i] = *x as f32;
+            }
+        };
+        put(&mut p, crate::prop::BASE_QVEL, &self.base_v);
+        put(&mut p, crate::prop::ARM_L_QPOS, &self.q[act::LEFT_ARM]);
+        put(&mut p, crate::prop::ARM_L_QVEL, &self.qd[act::LEFT_ARM]);
+        put(&mut p, crate::prop::ARM_R_QPOS, &self.q[act::RIGHT_ARM]);
+        put(&mut p, crate::prop::ARM_R_QVEL, &self.qd[act::RIGHT_ARM]);
+        put(&mut p, crate::prop::TRUNK_QPOS, &self.q[act::TORSO]);
+        put(&mut p, crate::prop::TRUNK_QVEL, &self.qd[act::TORSO]);
+        let w = |f: f64| [f * FINGER_MAX, f * FINGER_MAX];
+        put(&mut p, crate::prop::GRIP_L_QPOS, &w(self.grip[0]));
+        put(&mut p, crate::prop::GRIP_L_QVEL, &w(self.grip_v[0]));
+        put(&mut p, crate::prop::GRIP_R_QPOS, &w(self.grip[1]));
+        put(&mut p, crate::prop::GRIP_R_QVEL, &w(self.grip_v[1]));
+        p
     }
 
     pub fn step(&mut self, a: &[f32]) {
         let dt = self.dt;
         let k = 1.0 - (-25.0 * dt).exp();
-        for i in act::ARM {
+        for i in act::TORSO.chain(act::LEFT_ARM).chain(act::RIGHT_ARM) {
             let old = self.q[i];
             let mut n = old + (a[i] as f64 - old) * k;
             for &(j, lim) in &self.stops {
@@ -135,25 +147,24 @@ impl MockPlant {
             self.q[i] = n;
             self.qd[i] = (n - old) / dt;
         }
-        {
-            let target = (a[act::GRIPPER] as f64).clamp(0.0, 1.0);
-            let rate = 1.0 * dt;
-            let old = self.grip;
+        for (g, idx) in [act::LEFT_GRIPPER, act::RIGHT_GRIPPER].into_iter().enumerate() {
+            let target = (a[idx] as f64 + 1.0) / 2.0;
+            let rate = 0.25 / FINGER_MAX * dt;
+            let old = self.grip[g];
             let mut n = old + (target - old).clamp(-rate, rate);
-            if let Some(obj) = self.object_in {
+            if let Some(obj) = self.object_in[g] {
                 n = n.max(obj.min(old));
             }
-            self.grip = n;
-            self.grip_v = (n - old) / dt;
+            self.grip[g] = n;
+            self.grip_v[g] = (n - old) / dt;
         }
         let kb = 1.0 - (-15.0 * dt).exp();
-        let cmd = [a[act::BASE.start] as f64, 0.0, a[act::BASE.start + 1] as f64];
         for i in 0..3 {
-            self.base_v[i] += (cmd[i] - self.base_v[i]) * kb;
+            let cmd = (a[i] as f64).clamp(-1.0, 1.0) * act::BASE_OUT[i];
+            self.base_v[i] += (cmd - self.base_v[i]) * kb;
         }
         let (s, c) = self.pose[2].sin_cos();
-        let mut wx = c * self.base_v[0];
-        let wy = s * self.base_v[0];
+        let (mut wx, wy) = (c * self.base_v[0] - s * self.base_v[1], s * self.base_v[0] + c * self.base_v[1]);
         if let Some(w) = self.wall_x {
             if self.pose[0] >= w && wx > 0.0 {
                 wx = 0.0;
@@ -167,13 +178,14 @@ impl MockPlant {
     }
 }
 
-/// 가짜 집: 정답 바닥 격자(world, 0.05 m) + 머리 카메라 흉내(LIMO eyes 수평 화각 67.9° = ±33.95°, 0.25–6 m 광선; 0.25 는 출발 둘레 가정 반경 0.29 m 안쪽이라 지도가 몸 둘레와 이어짐) → scenemap 처럼 로그 오즈 점유 격자와
-/// 가상 스캔을 만든다. 몸통 사각형(LIMO 0.36 × 0.22 m)이 장애물 칸에 닿으면 움직이지 않고 접촉을 센다.
+/// 가짜 집: 정답 바닥 격자(world, 0.05 m) + 머리 카메라 흉내(시야 ±49.6°, 0.4–6 m 광선) → scenemap 처럼 로그 오즈 점유 격자와
+/// 가상 스캔을 만든다. 몸통 원(0.28 m)이 장애물 칸에 닿으면 움직이지 않고 접촉을 센다.
 pub struct MockWorld {
     /// true = 다닐 수 있는 바닥
     pub floor: crate::map::Grid,
     pub logodds: Vec<f32>,
     pub seen: Vec<bool>,
+    pub body_r: f64,
     pub fov: f64,
     pub range: f64,
     pub min_range: f64,
@@ -218,24 +230,29 @@ impl MockWorld {
     }
     pub fn new(floor: crate::map::Grid) -> MockWorld {
         let n = floor.w * floor.h;
-        MockWorld { floor, logodds: vec![0.0; n], seen: vec![false; n], fov: 33.95f64.to_radians(), range: 6.0, min_range: 0.25, kf_every: 6, contacts: 0, events: vec![], last_scan_hits: 0, map_us: 0, contact_log: vec![], in_contact: false, contact_steps: 0 }
+        MockWorld { floor, logodds: vec![0.0; n], seen: vec![false; n], body_r: 0.22, fov: 49.6f64.to_radians(), range: 6.0, min_range: 0.4, kf_every: 6, contacts: 0, events: vec![], last_scan_hits: 0, map_us: 0, contact_log: vec![], in_contact: false, contact_steps: 0 }
     }
     pub fn is_floor(&self, x: f64, y: f64) -> bool {
         self.floor.at(x, y) == 1
     }
-    /// 몸통 사각형(LIMO 0.36 × 0.22 m, [`crate::nav::LIMO_LEN`] × [`crate::nav::LIMO_WID`])이 yaw 로 놓였을 때 바닥만 덮나
-    /// (칸의 절반 간격으로 안을 훑는다)
-    pub fn body_ok(&self, x: f64, y: f64, yaw: f64) -> bool {
-        let (hl, hw) = (crate::nav::LIMO_LEN / 2.0, crate::nav::LIMO_WID / 2.0);
-        let step = self.floor.res * 0.5;
-        let (nl, nw) = ((2.0 * hl / step).ceil() as i64, (2.0 * hw / step).ceil() as i64);
-        let (s, c) = yaw.sin_cos();
-        for i in 0..=nl {
-            let u = -hl + 2.0 * hl * i as f64 / nl as f64;
-            for j in 0..=nw {
-                let v = -hw + 2.0 * hw * j as f64 / nw as f64;
-                if self.floor.at(x + c * u - s * v, y + s * u + c * v) != 1 {
-                    return false;
+    /// 몸통 원(반지름 body_r 0.22 m = LIMO 0.36 × 0.22 m 사각형의 외접원 0.211 m 에 여유; 10-06 전에는 R1Pro 베이스 0.36 m)이 바닥만 덮나
+    pub fn body_ok(&self, x: f64, y: f64, _yaw: f64) -> bool {
+        let r = self.body_r;
+        let k = (r / self.floor.res).ceil() as i64;
+        let (cx, cy) = self.floor.cell_of(x, y);
+        for dy in -k..=k {
+            for dx in -k..=k {
+                match self.floor.idx(cx + dx, cy + dy) {
+                    Some(i) => {
+                        let (px, py) = self.floor.center(i);
+                        // 칸(정사각형)과 원이 겹치나: 칸 안에서 원 중심에 가장 가까운 점
+                        let h = self.floor.res * 0.5;
+                        let (qx, qy) = (x.clamp(px - h, px + h), y.clamp(py - h, py + h));
+                        if (qx - x).hypot(qy - y) < r && self.floor.cells[i] != 1 {
+                            return false;
+                        }
+                    }
+                    None => return false,
                 }
             }
         }
@@ -385,7 +402,7 @@ impl Mock {
                         self.robot.debug_dump_now(&dir);
                         let _ = std::fs::OpenOptions::new().create(true).append(true).open(format!("{dir}/contacts.txt")).and_then(|mut f| {
                             use std::io::Write;
-                            writeln!(f, "{:.3} {:.3} {:.3} {:.2} cmd {:?}", before[0], before[1], before[2], self.sim_steps as f64 / crate::HZ, &self.last_action[0..2])
+                            writeln!(f, "{:.3} {:.3} {:.3} {:.2} cmd {:?}", before[0], before[1], before[2], self.sim_steps as f64 / crate::HZ, &self.last_action[0..3])
                         });
                     }
                 }

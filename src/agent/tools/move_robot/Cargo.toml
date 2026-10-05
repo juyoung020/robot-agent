@@ -3,7 +3,7 @@ name = "move_robot"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.81"
-description = "LLM 도구 move_robot: R1Pro 관절·베이스를 직접 움직이기 (스키마·검증·한계·보간·닫힌 고리, C ABI)"
+description = "LLM 도구 move_robot: LIMO(차동 베이스) + OMX-F(팔·그리퍼)를 직접 움직이기 (스키마·검증·한계·보간·닫힌 고리, C ABI)"
 publish = false
 
 [lib]

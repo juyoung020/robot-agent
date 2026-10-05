@@ -13,7 +13,7 @@ fn schema_is_small_and_strict() {
     let f = &d["function"];
     assert_eq!(f["name"], "move_robot");
     assert_eq!(f["parameters"]["required"], json!(["part", "mode"]));
-    assert_eq!(f["parameters"]["properties"]["part"]["enum"].as_array().unwrap().len(), 3);
+    assert_eq!(f["parameters"]["properties"]["part"]["enum"].as_array().unwrap().len(), 6);
     assert_eq!(f["parameters"]["properties"]["mode"]["enum"], json!(["go_to", "probe", "delta", "absolute"]));
     // 9B 맥락 16k: 도구 정의 한 개는 작게(약 450 토큰 이하)
     assert!(d.to_string().len() < 1800, "definition is {} bytes", d.to_string().len());
@@ -21,94 +21,84 @@ fn schema_is_small_and_strict() {
 
 #[test]
 fn parse_ok_and_tolerant() {
-    let c = parse(&args(r#"{"part":"arm","mode":"delta","values":[0,10,0,0,-5]}"#)).unwrap();
-    assert_eq!((c.part, c.mode, c.values.len(), c.duration_s), (Part::Arm, Mode::Delta, 5, None));
+    let c = parse(&args(r#"{"part":"left_arm","mode":"delta","values":[0,10,0,0,0,0,-5]}"#)).unwrap();
+    assert_eq!((c.part, c.mode, c.values.len(), c.duration_s), (Part::LeftArm, Mode::Delta, 7, None));
     // OpenAI arguments 문자열, 대소문자·공백, 그리퍼 숫자 하나, 숫자 문자열
-    let c = parse(&Value::String(r#"{"part":"Gripper","mode":"ABSOLUTE","values":0.5,"duration_s":"1.5"}"#.into())).unwrap();
-    assert_eq!((c.part, c.mode, c.values.clone(), c.duration_s), (Part::Gripper, Mode::Absolute, vec![0.5], Some(1.5)));
-    let c = parse(&args(r#"{"part":"base","mode":"delta","values":["0.5","90"]}"#)).unwrap();
-    assert_eq!(c.values, vec![0.5, 90.0]);
+    let c = parse(&Value::String(r#"{"part":"Right Gripper","mode":"ABSOLUTE","values":0.5,"duration_s":"1.5"}"#.into())).unwrap();
+    assert_eq!((c.part, c.mode, c.values.clone(), c.duration_s), (Part::RightGripper, Mode::Absolute, vec![0.5], Some(1.5)));
+    let c = parse(&args(r#"{"part":"base","mode":"delta","values":["0.5",0,"90"]}"#)).unwrap();
+    assert_eq!(c.values, vec![0.5, 0.0, 90.0]);
 }
 
 #[test]
 fn parse_errors_are_fixable_sentences() {
     let e = parse(&args(r#"{"part":"head","mode":"delta","values":[1]}"#)).unwrap_err();
-    assert!(e.contains("part must be one of") && e.contains("arm"), "{e}");
-    // R1 시절 부분 이름은 없다
-    for old in ["torso", "left_arm", "right_arm", "left_gripper", "right_gripper"] {
-        assert!(parse(&args(&format!(r#"{{"part":"{old}","mode":"delta","values":[1]}}"#))).is_err(), "{old}");
-    }
-    let e = parse(&args(r#"{"part":"arm","mode":"delta","values":[1,2]}"#)).unwrap_err();
-    assert!(e.contains("exactly 5"), "{e}");
-    // 베이스 delta 는 [앞 m, 돌기 °] 둘뿐 — 옆걸음 값은 없다
-    let e = parse(&args(r#"{"part":"base","mode":"delta","values":[1,0,0]}"#)).unwrap_err();
-    assert!(e.contains("exactly 2") && e.contains("turn_left"), "{e}");
-    let e = parse(&args(r#"{"part":"base","mode":"absolute","values":[1,0]}"#)).unwrap_err();
+    assert!(e.contains("part must be one of") && e.contains("left_arm"), "{e}");
+    let e = parse(&args(r#"{"part":"left_arm","mode":"delta","values":[1,2]}"#)).unwrap_err();
+    assert!(e.contains("exactly 7"), "{e}");
+    let e = parse(&args(r#"{"part":"base","mode":"absolute","values":[1,0,0]}"#)).unwrap_err();
     assert!(e.contains("no absolute mode") && e.contains("go_to"), "{e}");
-    assert!(parse(&args(r#"{"part":"arm","mode":"go_to","target":"F1"}"#)).unwrap_err().contains("base modes"));
+    assert!(parse(&args(r#"{"part":"left_arm","mode":"go_to","target":"F1"}"#)).unwrap_err().contains("base modes"));
     assert!(parse(&args(r#"{"part":"base","mode":"go_to","target":"kitchen"}"#)).unwrap_err().contains("F1 or R2"));
     assert!(parse(&args(r#"{"part":"base","mode":"go_to"}"#)).unwrap_err().contains("target"));
     assert!(parse(&args(r#"{"part":"base","mode":"probe","values":[30]}"#)).unwrap_err().contains("[turn_left_deg, forward_m]"));
     let c = parse(&args(r#"{"part":"base","mode":"go-to","target":"f2"}"#)).unwrap();
     assert_eq!((c.mode, c.target.as_deref()), (Mode::GoTo, Some("F2")));
-    assert!(parse(&args(r#"{"part":"arm","values":[0,0,0,0,0]}"#)).unwrap_err().contains("mode is required"));
-    assert!(parse(&args(r#"{"part":"arm","mode":"delta"}"#)).unwrap_err().contains("5 numbers"));
-    assert!(parse(&args(r#"{"part":"arm","mode":"delta","values":[0,0,"x",0,0]}"#)).unwrap_err().contains("values[2]"));
-    assert!(parse(&args(r#"{"part":"arm","mode":"delta","values":[0,0,0,0,0],"duration_s":-1}"#)).is_err());
+    assert!(parse(&args(r#"{"part":"torso","values":[0,0,0,0]}"#)).unwrap_err().contains("mode is required"));
+    assert!(parse(&args(r#"{"part":"torso","mode":"delta"}"#)).unwrap_err().contains("4 numbers"));
+    assert!(parse(&args(r#"{"part":"torso","mode":"delta","values":[0,0,"x",0]}"#)).unwrap_err().contains("values[2]"));
+    assert!(parse(&args(r#"{"part":"torso","mode":"delta","values":[0,0,0,0],"duration_s":-1}"#)).is_err());
     assert!(parse(&Value::String("not json".into())).unwrap_err().contains("not JSON"));
 }
 
 #[test]
-fn schema_has_no_sideways_or_two_arm_args() {
-    let d = definition().to_string();
-    for bad in ["torso", "left_arm", "right_arm", "R1", "holonomic", "left_m, turn"] {
-        assert!(!d.contains(bad), "definition mentions {bad}");
-    }
-    assert!(d.contains("cannot move sideways") && d.contains("[forward_m, turn_left_deg]"));
-}
-
-#[test]
 fn clamping_to_joint_limits() {
-    let lim = joint_limits(Part::Arm);
-    // real_limits.json omx_joint2 [-2.094395, 1.570796] 안쪽 2°
-    assert!((lim[1].0 - (-2.094395 + JOINT_MARGIN)).abs() < 1e-12);
-    let mut t = vec![7.0, -3.0, 0.0, 2.0, 0.0];
+    let lim = joint_limits(Part::LeftArm);
+    // URDF 한계 안쪽 2°
+    assert!((lim[1].0 - (-0.1745 + JOINT_MARGIN)).abs() < 1e-12);
+    let mut t = vec![3.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0];
     let c = clamp_target(&mut t, &lim);
     assert_eq!(c, vec![0, 1, 3]);
-    assert!((t[0] - (6.283185 - JOINT_MARGIN)).abs() < 1e-12);
-    assert!((t[3] - (1.745329 - JOINT_MARGIN)).abs() < 1e-12);
-    assert_eq!(joint_limits(Part::Gripper), vec![(0.0, 1.0)]);
+    assert!((t[0] - (1.3090 - JOINT_MARGIN)).abs() < 1e-12);
+    assert!((t[3] - (0.3491 - JOINT_MARGIN)).abs() < 1e-12);
+    // 오른팔 2번은 거울
+    assert!(joint_limits(Part::RightArm)[1].1 < 0.2);
+    assert_eq!(joint_limits(Part::LeftGripper), vec![(0.0, 1.0)]);
 }
 
 #[test]
 fn action_vector_layout() {
-    // 행동 8 = [vx, wz, j1..j5, 그리퍼]
-    assert_eq!(ACTION_DIM, 8);
-    assert_eq!(action_slots(Part::Base), 0..2);
-    assert_eq!(action_slots(Part::Arm), 2..7);
-    assert_eq!(action_slots(Part::Gripper), 7..8);
+    assert_eq!(action_slots(Part::Base), 0..3);
+    assert_eq!(action_slots(Part::Torso), 3..7);
+    assert_eq!(action_slots(Part::LeftArm), 7..14);
+    assert_eq!(action_slots(Part::LeftGripper), 14..15);
+    assert_eq!(action_slots(Part::RightArm), 15..22);
+    assert_eq!(action_slots(Part::RightGripper), 22..23);
     let total: usize = PARTS.iter().map(|n| action_slots(Part::from_name(n).unwrap()).len()).sum();
     assert_eq!(total, ACTION_DIM);
     for n in PARTS {
         let p = Part::from_name(n).unwrap();
         assert_eq!(action_slots(p).len(), p.dof());
     }
+    assert_eq!(gripper_to_action(0.0), -1.0);
+    assert_eq!(gripper_to_action(1.0), 1.0);
+    assert_eq!(gripper_to_action(0.5), 0.0);
 }
 
 #[test]
 fn hold_action_mirrors_proprio() {
     let mut m = Mock::default();
-    m.plant.q[act::ARM.start + 2] = 0.3;
+    m.plant.q[act::LEFT_ARM.start + 2] = 0.3;
     let mut r = Robot::default();
     let mut a = [0f32; ACTION_DIM];
     assert_eq!(r.tick(&m.plant.proprio(), &mut a), Tick::Idle);
-    assert_eq!(&a[0..2], &[0.0, 0.0]);
-    assert!((a[act::ARM.start] - limo::ARM_HOME[0] as f32).abs() < 1e-6 && (a[act::ARM.start + 1] - limo::ARM_HOME[1] as f32).abs() < 1e-6);
-    assert!((a[act::ARM.start + 2] - 0.3).abs() < 1e-6);
-    assert_eq!(a[act::GRIPPER], 1.0);
+    assert_eq!(&a[0..3], &[0.0, 0.0, 0.0]);
+    assert!((a[3] - 1.025).abs() < 1e-6 && (a[4] + 1.45).abs() < 1e-6);
+    assert!((a[act::LEFT_ARM.start + 2] - 0.3).abs() < 1e-6);
+    assert_eq!(a[act::LEFT_GRIPPER], 1.0);
     // 짧은 proprio 는 BadObs, 행동은 유지값 그대로
     assert_eq!(r.tick(&[0.0; 10], &mut a), Tick::BadObs);
-    assert!((a[act::ARM.start + 1] - limo::ARM_HOME[1] as f32).abs() < 1e-6);
+    assert!((a[3] - 1.025).abs() < 1e-6);
 }
 
 #[test]
@@ -147,12 +137,12 @@ fn duration_respects_safe_speed() {
 #[test]
 fn commanded_speed_never_exceeds_limit() {
     let mut m = Mock::default();
-    assert!(!m.robot.command(&args(r#"{"part":"arm","mode":"delta","values":[-60,-30,0,-45,0],"duration_s":0.2}"#)));
+    assert!(!m.robot.command(&args(r#"{"part":"right_arm","mode":"delta","values":[-60,-30,0,-45,0,0,0],"duration_s":0.2}"#)));
     let mut prev = m.last_action;
     let mut vmax = 0.0f64;
     loop {
         let t = m.step();
-        for i in act::ARM {
+        for i in act::RIGHT_ARM {
             vmax = vmax.max(((m.last_action[i] - prev[i]) as f64).abs() * HZ);
         }
         prev = m.last_action;
@@ -169,103 +159,93 @@ fn commanded_speed_never_exceeds_limit() {
 #[test]
 fn arm_delta_reaches_and_reports() {
     let mut m = Mock::default();
-    let r = run_tool(&args(r#"{"part":"arm","mode":"delta","values":[0,30,0,-20,0]}"#), &mut m);
+    let r = run_tool(&args(r#"{"part":"left_arm","mode":"delta","values":[0,30,0,-20,0,0,0]}"#), &mut m);
     assert_eq!(r["status"], "reached", "{r}");
     let st = r["state"].as_array().unwrap();
-    let home = limo::ARM_HOME.map(f64::to_degrees);
-    assert!((st[1].as_f64().unwrap() - (home[1] + 30.0)).abs() < 1.6 && (st[3].as_f64().unwrap() - (home[3] - 20.0)).abs() < 1.6, "{r}");
+    assert!((st[1].as_f64().unwrap() - 30.0).abs() < 1.6 && (st[3].as_f64().unwrap() + 20.0).abs() < 1.6, "{r}");
     assert_eq!(r["units"], "deg");
     assert!(r.get("clamped").is_none() && r.get("hint").is_none());
     // 끝난 뒤에도 목표를 유지한다
     for _ in 0..30 {
         m.step();
     }
-    assert!((m.plant.q[act::ARM.start + 1] - (limo::ARM_HOME[1] + 30f64.to_radians())).abs() < 0.01);
+    assert!((m.plant.q[act::LEFT_ARM.start + 1] - 30f64.to_radians()).abs() < 0.01);
 }
 
 #[test]
 fn absolute_beyond_limit_is_clamped() {
     let mut m = Mock::default();
-    let r = m.exec(&args(r#"{"part":"arm","mode":"absolute","values":[0,0,0,120,0]}"#));
+    let r = m.exec(&args(r#"{"part":"torso","mode":"absolute","values":[200,-83,0,0]}"#));
     assert_eq!(r["status"], "reached", "{r}");
-    assert_eq!(r["clamped"], json!([3]));
-    let t3 = r["target"][3].as_f64().unwrap();
-    assert!((t3 - (1.745329f64.to_degrees() - 2.0)).abs() < 0.11, "{r}");
+    assert_eq!(r["clamped"], json!([0]));
+    let t0 = r["target"][0].as_f64().unwrap();
+    assert!((t0 - (1.8326f64.to_degrees() - 2.0)).abs() < 0.11, "{r}");
 }
 
 #[test]
 fn read_state_with_zero_delta() {
     let mut m = Mock::default();
     let steps = m.sim_steps;
-    let r = m.exec(&args(r#"{"part":"arm","mode":"delta","values":[0,0,0,0,0]}"#));
+    let r = m.exec(&args(r#"{"part":"torso","mode":"delta","values":[0,0,0,0]}"#));
     assert_eq!(r["status"], "reached");
     assert_eq!(r["steps"], 0);
     assert_eq!(m.sim_steps, steps, "reading must not step the sim");
-    assert!((r["state"][1].as_f64().unwrap() - limo::ARM_HOME[1].to_degrees()).abs() < 0.1, "{r}");
+    assert!((r["state"][0].as_f64().unwrap() - 1.025f64.to_degrees()).abs() < 0.1, "{r}");
 }
 
 #[test]
 fn arm_contact_is_blocked_and_stops_pushing() {
     let mut m = Mock::default();
-    m.plant.stops.push((act::ARM.start + 1, 0.3)); // 2번 관절이 0.3 rad 에서 막힘
-    let r = m.exec(&args(r#"{"part":"arm","mode":"absolute","values":[0,80,0,0,0]}"#));
+    m.plant.stops.push((act::LEFT_ARM.start + 1, 0.3)); // 2번 관절이 0.3 rad 에서 막힘
+    let r = m.exec(&args(r#"{"part":"left_arm","mode":"absolute","values":[0,80,0,0,0,0,0]}"#));
     assert_eq!(r["status"], "blocked", "{r}");
     assert!(r["hint"].as_str().unwrap().contains("contact"));
     // 멈춘 자리에서 버틴다(계속 밀지 않는다)
-    assert!((m.robot.hold()[act::ARM.start + 1] - 0.3).abs() < 0.05, "{:?}", m.robot.hold());
+    assert!((m.robot.hold()[act::LEFT_ARM.start + 1] - 0.3).abs() < 0.05, "{:?}", m.robot.hold());
 }
 
 #[test]
 fn gripper_close_on_object_is_blocked_but_keeps_squeezing() {
     let mut m = Mock::default();
-    m.plant.object_in = Some(0.4);
-    let r = m.exec(&args(r#"{"part":"gripper","mode":"absolute","values":[0]}"#));
+    m.plant.object_in[1] = Some(0.4);
+    let r = m.exec(&args(r#"{"part":"right_gripper","mode":"absolute","values":[0]}"#));
     assert_eq!(r["status"], "blocked", "{r}");
     assert!(r["hint"].as_str().unwrap().contains("holding an object"));
     assert!((r["state"][0].as_f64().unwrap() - 0.4).abs() < 0.02);
-    assert_eq!(m.robot.hold()[act::GRIPPER], 0.0); // 계속 쥔다
-    // 물체를 놓고 다시 열고 닫기
-    m.plant.object_in = None;
-    let r = m.exec(&args(r#"{"part":"gripper","mode":"absolute","values":[1]}"#));
-    assert_eq!(r["status"], "reached", "{r}");
-    let r = m.exec(&args(r#"{"part":"gripper","mode":"absolute","values":[0]}"#));
+    assert_eq!(m.robot.hold()[act::RIGHT_GRIPPER], -1.0); // 계속 쥔다
+    // 물체 없이 열고 닫기
+    let r = m.exec(&args(r#"{"part":"left_gripper","mode":"absolute","values":[0]}"#));
     assert_eq!(r["status"], "reached", "{r}");
 }
 
 #[test]
 fn base_closed_loop_moves_and_turns() {
     let mut m = Mock::default();
-    let r = m.exec(&args(r#"{"part":"base","mode":"delta","values":[1.0,0]}"#));
+    let r = m.exec(&args(r#"{"part":"base","mode":"delta","values":[1.0,0.3,0]}"#));
     assert_eq!(r["status"], "reached", "{r}");
-    // 차동: 곧게만 간다(옆으로 안 샘)
-    assert!((m.plant.pose[0] - 1.0).abs() < 0.04 && m.plant.pose[1].abs() < 0.04, "{:?}", m.plant.pose);
+    assert!((m.plant.pose[0] - 1.0).abs() < 0.04 && (m.plant.pose[1] - 0.3).abs() < 0.04, "{:?}", m.plant.pose);
     // 속도 지령은 안전 속도 이하, 끝나면 0
-    assert_eq!(&m.last_action[0..2], &[0.0, 0.0]);
+    assert_eq!(&m.last_action[0..3], &[0.0, 0.0, 0.0]);
     let start = m.plant.pose;
-    let r = m.exec(&args(r#"{"part":"base","mode":"delta","values":[0,90]}"#));
+    let r = m.exec(&args(r#"{"part":"base","mode":"delta","values":[0,0,90]}"#));
     assert_eq!(r["status"], "reached", "{r}");
     assert!(((m.plant.pose[2] - start[2]).to_degrees() - 90.0).abs() < 2.5, "{:?}", m.plant.pose);
     // 로봇 기준: 90° 돈 뒤 전진 0.5 m 는 세계 +y
     let p0 = m.plant.pose;
-    let r = m.exec(&args(r#"{"part":"base","mode":"delta","values":[0.5,0]}"#));
+    let r = m.exec(&args(r#"{"part":"base","mode":"delta","values":[0.5,0,0]}"#));
     assert_eq!(r["status"], "reached", "{r}");
     assert!((m.plant.pose[1] - p0[1] - 0.5).abs() < 0.05 && (m.plant.pose[0] - p0[0]).abs() < 0.05, "{:?}", m.plant.pose);
-    // 앞으로 간 뒤 제자리에서 돈다 + 뒤로 가기
-    let p1 = m.plant.pose;
-    let r = m.exec(&args(r#"{"part":"base","mode":"delta","values":[-0.3,-45]}"#));
-    assert_eq!(r["status"], "reached", "{r}");
-    assert!((m.plant.pose[1] - p1[1] + 0.3).abs() < 0.05 && ((m.plant.pose[2] - p1[2]).to_degrees() + 45.0).abs() < 2.5, "{:?}", m.plant.pose);
 }
 
 #[test]
 fn base_speed_limit_and_wall() {
     let mut m = Mock::default();
-    assert!(!m.robot.command(&args(r#"{"part":"base","mode":"delta","values":[5,0]}"#)));
+    assert!(!m.robot.command(&args(r#"{"part":"base","mode":"delta","values":[5,0,0]}"#)));
     let mut vmax = 0.0f64;
     m.plant.wall_x = Some(0.6);
     loop {
         let t = m.step();
-        vmax = vmax.max(m.last_action[0] as f64);
+        vmax = vmax.max(m.last_action[0] as f64 * act::BASE_OUT[0]);
         if t == Tick::Done {
             break;
         }
@@ -280,16 +260,16 @@ fn base_speed_limit_and_wall() {
 #[test]
 fn errors_are_observations() {
     let mut m = Mock::default();
-    let r = run_tool(&args(r#"{"part":"arm","mode":"delta","values":[1]}"#), &mut m);
+    let r = run_tool(&args(r#"{"part":"left_arm","mode":"delta","values":[1]}"#), &mut m);
     assert_eq!(r["status"], "error");
-    assert!(r["message"].as_str().unwrap().contains("exactly 5"));
+    assert!(r["message"].as_str().unwrap().contains("exactly 7"));
     // 관측 전 명령
     let mut rb = Robot::default();
-    assert!(rb.command(&args(r#"{"part":"arm","mode":"delta","values":[1,0,0,0,0]}"#)));
+    assert!(rb.command(&args(r#"{"part":"torso","mode":"delta","values":[1,0,0,0]}"#)));
     assert_eq!(rb.take_result().unwrap()["status"], "error");
     // 움직이는 중 또 명령
-    assert!(!m.robot.command(&args(r#"{"part":"arm","mode":"delta","values":[5,0,0,0,0]}"#)));
-    assert!(m.robot.command(&args(r#"{"part":"arm","mode":"delta","values":[5,0,0,0,0]}"#)));
+    assert!(!m.robot.command(&args(r#"{"part":"torso","mode":"delta","values":[5,0,0,0]}"#)));
+    assert!(m.robot.command(&args(r#"{"part":"torso","mode":"delta","values":[5,0,0,0]}"#)));
     assert!(m.robot.take_result().unwrap()["message"].as_str().unwrap().contains("still executing"));
 }
 
@@ -297,12 +277,12 @@ fn errors_are_observations() {
 fn other_parts_hold_while_one_moves() {
     let mut m = Mock::default();
     let before = *m.robot.hold();
-    m.exec(&args(r#"{"part":"arm","mode":"delta","values":[10,0,0,0,0]}"#));
+    m.exec(&args(r#"{"part":"right_arm","mode":"delta","values":[10,0,0,0,0,0,0]}"#));
     let after = m.robot.hold();
-    for i in act::BASE.chain([act::GRIPPER]) {
+    for i in act::TORSO.chain(act::LEFT_ARM).chain([act::LEFT_GRIPPER, act::RIGHT_GRIPPER]) {
         assert_eq!(before[i], after[i], "slot {i}");
     }
-    assert!((after[act::ARM.start] - (before[act::ARM.start] + 10f64.to_radians())).abs() < 1e-9);
+    assert!((after[act::RIGHT_ARM.start] - 10f64.to_radians()).abs() < 1e-9);
 }
 
 #[test]
@@ -314,7 +294,7 @@ fn ffi_roundtrip() {
         let p = m.plant.proprio();
         let mut a = [0f32; ACTION_DIM];
         assert_eq!(ffi::mr_tick(r, p.as_ptr(), p.len(), a.as_mut_ptr()), 0);
-        let c = CString::new(r#"{"part":"arm","mode":"delta","values":[0,0,0,0,0]}"#).unwrap();
+        let c = CString::new(r#"{"part":"torso","mode":"delta","values":[0,0,0,0]}"#).unwrap();
         assert_eq!(ffi::mr_command(r, c.as_ptr()), 1);
         let mut small = [0 as std::ffi::c_char; 4];
         let need = ffi::mr_take_result(r, small.as_mut_ptr(), small.len());
@@ -357,7 +337,7 @@ fn exec(m: &mut Mock, s: &str) -> Value {
 #[test]
 fn read_base_returns_map_summary() {
     let mut m = Mock::with_world(two_rooms(), [1.5, 3.0, 0.0]);
-    let r = exec(&mut m, r#"{"part":"base","mode":"delta","values":[0,0]}"#);
+    let r = exec(&mut m, r#"{"part":"base","mode":"delta","values":[0,0,0]}"#);
     let map = &r["map"];
     assert!(map["free_m2"].as_f64().unwrap() > 3.0, "{r}");
     assert!(map["around"]["F"].as_str().unwrap().contains("depth"), "{r}");
@@ -397,10 +377,10 @@ fn go_to_unknown_point_is_rejected_with_hint() {
 }
 
 #[test]
-fn delta_backwards_into_unseen_is_stopped() {
-    // 카메라는 앞만 본다: 뒤(모르는 곳)로 1 m 가라 하면 아는 빈칸 끝에서 멈춤
+fn delta_into_unseen_side_is_stopped() {
+    // 카메라는 앞만 본다: 옆(모르는 곳)으로 1 m 가라 하면 아는 빈칸 끝에서 멈춤
     let mut m = Mock::with_world(two_rooms(), [2.5, 3.0, 0.0]);
-    let r = exec(&mut m, r#"{"part":"base","mode":"delta","values":[-1.0,0]}"#);
+    let r = exec(&mut m, r#"{"part":"base","mode":"delta","values":[0,1.0,0]}"#);
     assert_eq!(r["status"], "blocked", "{r}");
     assert!(r["stopped_by"].as_str().unwrap().contains("unknown"), "{r}");
 }
@@ -408,10 +388,10 @@ fn delta_backwards_into_unseen_is_stopped() {
 #[test]
 fn base_final_approach_no_undershoot() {
     let mut m = Mock::default();
-    let r = m.exec(&args(r#"{"part":"base","mode":"delta","values":[0.2,0]}"#));
+    let r = m.exec(&args(r#"{"part":"base","mode":"delta","values":[0.2,0,0]}"#));
     assert_eq!(r["status"], "reached", "{r}");
     assert!((m.plant.pose[0] - 0.2).abs() < 0.012, "{:?}", m.plant.pose);
-    let r = m.exec(&args(r#"{"part":"base","mode":"delta","values":[0,30]}"#));
+    let r = m.exec(&args(r#"{"part":"base","mode":"delta","values":[0,0,30]}"#));
     assert_eq!(r["status"], "reached", "{r}");
     assert!((m.plant.pose[2].to_degrees() - 30.0).abs() < 1.2, "{:?}", m.plant.pose);
 }
@@ -505,17 +485,25 @@ fn gt_pose_is_used_for_one_tick_only_and_reset_forgets_it() {
 }
 
 #[test]
-fn body_footprint_is_limo() {
+fn body_footprint_per_robot() {
     use crate::nav::Body;
-    // LIMO: 사각형, 부풀림 = 외접원 + 0.03. 기본 NavState 도 같은 값
-    let l = Body::limo_omx();
+    // R1Pro(기본·환경 변수 없음)는 바뀌기 전과 같은 값
+    let r1 = Body::r1pro();
+    let d = robot_nav::NavState::default();
+    let n = robot_nav::NavState::with_body(&r1);
+    assert!(n.dwa.fp.round && n.dwa.fp.hl == d.dwa.fp.hl && n.dwa.fp.hw == d.dwa.fp.hw && n.dwa.fp.hl == 0.37);
+    assert_eq!((n.params.robot_r, n.params.start_free_r, n.params.start_min_clear), (0.40, 0.45, 0.33));
+    assert_eq!(Body::parse("").map(|b| b.name), None);
+    assert_eq!(Body::parse("r1pro").unwrap().robot_r, 0.40);
+    // LIMO: 사각형, 부풀림 = 외접원 + 0.03
+    let l = Body::parse("limo_omx").unwrap();
     assert!(!l.fp.round && (l.fp.hl - 0.18).abs() < 1e-12 && (l.fp.hw - 0.11).abs() < 1e-12);
     assert!((l.robot_r - (0.18f64.hypot(0.11) + 0.03)).abs() < 1e-12);
     assert!(l.start_min_clear > 0.1 && l.start_free_r > l.robot_r);
-    let d = robot_nav::NavState::default();
-    let n = robot_nav::NavState::with_body(&l);
-    assert!(!n.dwa.fp.round && n.dwa.fp.hl == d.dwa.fp.hl && n.dwa.fp.hw == d.dwa.fp.hw && n.dwa.fp.hl == 0.18);
-    assert_eq!((n.params.robot_r, n.params.start_free_r, n.params.start_min_clear), (d.params.robot_r, d.params.start_free_r, d.params.start_min_clear));
+    let r = Body::parse("rect:0.5x0.4").unwrap();
+    assert!((r.fp.hl - 0.25).abs() < 1e-12 && (r.fp.hw - 0.2).abs() < 1e-12);
+    assert!(Body::parse("circle:0.3").unwrap().fp.round);
+    assert!(Body::parse("rect:0.5").is_none() && Body::parse("rect:x").is_none() && Body::parse("tank").is_none() && Body::parse("circle:9").is_none());
 }
 
 // ---------------------------------------------------------------- 베이스 모드 explore (frontier.rs, 에이전트 쪽)
@@ -523,7 +511,7 @@ fn body_footprint_is_limo() {
 #[test]
 fn explore_mode_picks_shortest_frontier_and_logs_calls() {
     let mut m = Mock::with_world(two_rooms(), [1.5, 3.0, 0.0]);
-    let last = exec(&mut m, r#"{"part":"base","mode":"delta","values":[0,0]}"#);
+    let last = exec(&mut m, r#"{"part":"base","mode":"delta","values":[0,0,0]}"#);
     let want = crate::frontier::pick(&last).expect("a reachable frontier");
     let r = crate::frontier::run_tool_ctx(&args(r#"{"part":"base","mode":"explore"}"#), &mut m, &last);
     let calls = r["_calls"].as_array().unwrap();
@@ -536,7 +524,7 @@ fn explore_mode_picks_shortest_frontier_and_logs_calls() {
 #[test]
 fn explore_mode_runs_until_no_frontier() {
     let mut m = Mock::with_world(two_rooms(), [1.5, 3.0, 0.0]);
-    let last = exec(&mut m, r#"{"part":"base","mode":"delta","values":[0,0]}"#);
+    let last = exec(&mut m, r#"{"part":"base","mode":"delta","values":[0,0,0]}"#);
     let r = crate::frontier::run(&json!({"part":"base","mode":"explore","max_steps":50}), &mut m, &last);
     assert_eq!(r["explore"]["end"], "no_frontier", "{}", r["explore"]);
     assert_eq!(m.world.as_ref().unwrap().contacts, 0);

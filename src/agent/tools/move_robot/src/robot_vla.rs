@@ -193,7 +193,7 @@ impl Robot {
         let dt = self.dt;
         match self.gt_pose.take() {
             Some(g) => self.nav.integrate_gt(g, dt),
-            None => self.nav.integrate(st.base_v, dt),
+            None => self.nav.integrate([st.base_v[0], st.base_v[2]], dt),
         }
         let Some(mut run) = self.vla.run.take() else {
             if !self.vla.filter.init {
@@ -289,6 +289,10 @@ impl Robot {
                 h[1] = 0.0;
                 self.vla.filter.prev = h;
                 self.vla.last_cmd = Some(h);
+                // 도구 실행기(mr_tick)도 이 팔·그리퍼 자리에서 이어 간다(홈으로 되돌아가지 않게)
+                for (i, v) in h.iter().enumerate().skip(2) {
+                    self.hold[i] = *v;
+                }
                 Self::write8(out, &h);
                 let contacts = (self.vla.contacts_body + self.vla.contacts_arm).saturating_sub(run.contacts0.0 + run.contacts0.1);
                 let mc = self.nav.have_map.then_some(run.min_clear);

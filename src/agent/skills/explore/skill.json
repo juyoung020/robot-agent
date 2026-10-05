@@ -3,7 +3,7 @@
   "tools": [
     {"name": "move_robot", "desc": "tool.md", "modes": ["go_to", "probe", "delta", "absolute"]}
   ],
-  "observe": {"tool": "move_robot", "args": {"part": "base", "mode": "delta", "values": [0, 0, 0]}},
+  "observe": {"tool": "move_robot", "args": {"part": "base", "mode": "delta", "values": [0, 0]}},
   "baseline": {"name": "frontier", "tool": "move_robot", "args": {"part": "base", "mode": "explore", "max_steps": 1}},
   "end": {
     "name": "no_frontier",

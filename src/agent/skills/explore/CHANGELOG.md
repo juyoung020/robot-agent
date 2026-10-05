@@ -34,3 +34,7 @@
 기준선(프런티어 탐사) → `move_robot` 베이스 모드 `explore`(`tools/move_robot/src/frontier.rs`), 결과 줄이기·결정 기록 칸 → `tools/move_robot/src/llm_view.rs`,
 가짜 집 정답 기준 → `tools/move_robot/src/mock_eval.rs`, `decisions-agg` → `src/agent/devtools`. 스킬 설정은 `skill.json`(데이터).
 같은 조건 확인: `mock_eval.sh`(기준선 6 출발)의 decisions·timeline·summary 가 옛 바이너리와 벽시계·시각 칸 말고 모두 같고, LLM 짧은 판(2 층 집 s0, 6 호출)도 같은 프롬프트 지문 `3b1ee39244394fa6`·같은 고름·같은 토큰(13 655 + 312).
+
+| 판 | 무엇을 | 왜 | 잰 효과 |
+|---|---|---|---|
+| `common-v2`, `explore-tool-v2` (`explore-v4` 그대로) | 로봇 소개를 LIMO(차동 2륜: 앞뒤·제자리 돌기, 옆으로 못 감, 머리 RGB-D) + OMX-F 팔 하나로. 도구 설명의 부분 목록을 `arm [5 deg]`·`gripper` 로, 베이스 delta 는 `[forward_m, turn_left_deg]` | 로봇은 LIMO + OMX-F 하나뿐 — 옛 소개(R1Pro: 전방향 베이스·몸통·두 팔)와 부분 이름이 이 몸과 달랐다 | 가짜 집 6 출발 기준선(LLM 없음): 덮음 0.986–0.999, 접촉 0, 호출 15–33. LLM 판은 아직 안 재었다 |

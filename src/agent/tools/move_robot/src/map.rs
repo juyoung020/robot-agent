@@ -145,7 +145,9 @@ pub struct NavParams {
 
 impl Default for NavParams {
     fn default() -> Self {
-        NavParams { robot_r: 0.40, safe_r: 0.7, stop_margin: 0.10, frontier_min_m: 0.5, gain_r: 2.5, max_frontiers: 5, start_free_r: 0.45, start_min_clear: 0.33 }
+        // 몸 크기 값은 LIMO + OMX-F([`crate::nav::Body::limo_omx`])
+        let b = crate::nav::Body::limo_omx();
+        NavParams { robot_r: b.robot_r, safe_r: 0.7, stop_margin: 0.10, frontier_min_m: 0.5, gain_r: 2.5, max_frontiers: 5, start_free_r: b.start_free_r, start_min_clear: b.start_min_clear }
     }
 }
 

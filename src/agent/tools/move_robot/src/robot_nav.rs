@@ -100,7 +100,7 @@ impl Default for NavState {
 }
 
 impl NavState {
-    /// 로봇별 몸 크기([`nav::Body`])를 넣은 새 상태. R1Pro 면 [`NavState::default`] 와 같다.
+    /// 몸 크기([`nav::Body`])를 넣은 새 상태. LIMO + OMX-F 면 [`NavState::default`] 와 같다.
     pub fn with_body(body: &nav::Body) -> NavState {
         let mut n = NavState::default();
         n.dwa.fp = body.fp;
@@ -110,23 +110,23 @@ impl NavState {
         n
     }
 
-    /// 매 스텝: base_qvel(로봇 기준)로 map 자세를 앞으로
-    pub fn integrate(&mut self, v: [f64; 3], dt: f64) {
+    /// 매 스텝: base_qvel(로봇 기준 [vx, wz] — 차동)로 map 자세를 앞으로
+    pub fn integrate(&mut self, v: [f64; 2], dt: f64) {
         self.now += dt;
         if self.skip_integrate {
             // 지도 자세가 막 들어온 스텝: 자세는 그 자세 그대로 두지만(이 스텝의 움직임이 이미 들어 있음) 로봇은 이 스텝에도
             // 움직였으므로 이동 거리(odo_m)는 센다. 전에는 여기서 거리까지 건너뛰어 keyframe 6 스텝마다 1 스텝씩(1/6 ≈ 16 %)
             // path_m·moved_m 이 짧았다(LIMO 11.0 m 대 정답 13.1 m).
             self.skip_integrate = false;
-            self.odo_m += v[0].hypot(v[1]) * dt;
+            self.odo_m += v[0].abs() * dt;
             return;
         }
         let (s, c) = self.pose[2].sin_cos();
-        self.pose[0] += (c * v[0] - s * v[1]) * dt;
-        self.pose[1] += (s * v[0] + c * v[1]) * dt;
-        self.pose[2] += v[2] * dt;
-        self.odo_m += v[0].hypot(v[1]) * dt;
-        self.track(v[0].hypot(v[1]));
+        self.pose[0] += c * v[0] * dt;
+        self.pose[1] += s * v[0] * dt;
+        self.pose[2] += v[1] * dt;
+        self.odo_m += v[0].abs() * dt;
+        self.track(v[0].abs());
     }
 
     /// GT 자세(map 틀: x, y, yaw)가 있는 스텝: base_qvel 적분 대신 그 자세를 그대로 쓴다(Map_Vla).
@@ -221,7 +221,8 @@ pub struct NavMove {
     pub turn_yaw: f64,
     pub fwd_m: f64,
     pub fwd_start: [f64; 2],
-    pub v_cmd: [f64; 3],
+    /// 지령 [vx m/s, wz rad/s] (차동)
+    pub v_cmd: [f64; 2],
     pub t_max: f64,
     pub stall: u32,
     pub stuck: u32,
@@ -262,7 +263,7 @@ impl Robot {
             turn_yaw: pose[2],
             fwd_m: 0.0,
             fwd_start: [pose[0], pose[1]],
-            v_cmd: [0.0; 3],
+            v_cmd: [0.0; 2],
             t_max: 10.0,
             stall: 0,
             stuck: 0,
@@ -337,13 +338,13 @@ impl Robot {
     }
 
     /// Nav 한 스텝. 끝나면 Some(결과).
-    pub(crate) fn tick_nav(&mut self, m: &mut NavMove, t: f64, meas_v: [f64; 3]) -> Option<Value> {
+    pub(crate) fn tick_nav(&mut self, m: &mut NavMove, t: f64, meas_v: [f64; 2]) -> Option<Value> {
         let s: Safety = self.safety.clone();
         let p = self.nav.params.clone();
         let dp = self.nav.dwa.clone();
         let pose = self.nav.pose;
         let xy = [pose[0], pose[1]];
-        let mut des = [0.0f64; 3]; // 로봇 기준 vx, vy, wz
+        let mut des = [0.0f64; 2]; // vx, wz
         let margin = p.stop_margin;
         let turn_to = |target: f64, wmax: f64| -> (f64, f64) {
             let e = ang_diff(target, pose[2]);
@@ -385,7 +386,7 @@ impl Robot {
                 let e_full = m.turn_yaw - pose[2];
                 let (e, w) = turn_to(m.turn_yaw, s.nav_wmax);
                 let (e, w) = if e_full.abs() > std::f64::consts::PI { (e_full, e_full.signum() * w.abs()) } else { (e, w) };
-                des[2] = w;
+                des[1] = w;
                 if e.abs() < 1.5f64.to_radians() {
                     m.phase = if m.fwd_m > 0.005 { 1 } else { 2 };
                     m.fwd_start = xy;
@@ -405,7 +406,7 @@ impl Robot {
                 } else {
                     let v = s.probe_vmax.min((2.0 * s.base_acc * remain.min(room)).sqrt()).max(s.base_creep.min(remain));
                     des[0] = v;
-                    des[2] = sat(2.0 * ang_diff(m.turn_yaw, pose[2]), s.nav_wmax);
+                    des[1] = sat(2.0 * ang_diff(m.turn_yaw, pose[2]), s.nav_wmax);
                 }
             }
             // ---------------- go_to: 경로 따라가기(DWA)
@@ -428,7 +429,7 @@ impl Robot {
                     let herr = ang_diff((carrot[1] - xy[1]).atan2(carrot[0] - xy[0]), pose[2]);
                     let can_turn = |d: f64| dp.fp.turn_clear(&self.nav.cm, xy[0], xy[1], pose[2], pose[2] + d) >= TURN_MIN_CLEAR;
                     if herr.abs() > 30f64.to_radians() && can_turn(herr.signum() * 10f64.to_radians()) {
-                        des[2] = sat(2.0 * herr, s.nav_wmax).abs().max(0.3) * herr.signum();
+                        des[1] = sat(2.0 * herr, s.nav_wmax).abs().max(0.3) * herr.signum();
                         m.stuck = 0;
                     } else {
                         let vmax = s.nav_vmax.min((2.0 * s.base_acc * remain).sqrt() + s.base_creep);
@@ -461,22 +462,20 @@ impl Robot {
                             m.stuck += 1;
                         } else if guard_blocked && herr.abs() > 8f64.to_radians() && can_turn(herr.signum() * 10f64.to_radians()) {
                             // 앞이 막혔지만 가야 할 쪽은 옆: 제자리에서 그쪽으로 돈다(둘레에 지도 밖 장애물 없음)
-                            des[2] = sat(2.0 * herr, s.nav_wmax).abs().max(0.3) * herr.signum();
+                            des[1] = sat(2.0 * herr, s.nav_wmax).abs().max(0.3) * herr.signum();
                             m.stuck = 0;
                         } else if o.ok && v_ok > 0.02 {
                             des[0] = v_ok;
-                            des[1] = o.vy;
-                            des[2] = o.w;
+                            des[1] = o.w;
                             m.stuck = 0;
-                        } else if o.ok && (o.v < -0.01 || o.w.abs() > 0.05 || o.vy.abs() > 0.01) {
-                            // 뒤로 빠지기 / 옆으로 빠지기 / 제자리 돌기(DWA 가 굴려 보고 안전하다고 한 것)
+                        } else if o.ok && (o.v < -0.01 || o.w.abs() > 0.05) {
+                            // 뒤로 빠지기 / 제자리 돌기(DWA 가 굴려 보고 안전하다고 한 것)
                             des[0] = o.v;
-                            des[1] = o.vy;
-                            des[2] = o.w;
+                            des[1] = o.w;
                             m.stuck += (o.v >= -0.01) as u32;
                         } else if herr.abs() > 8f64.to_radians() && can_turn(herr.signum() * 10f64.to_radians()) {
                             // 앞으로 갈 안전한 궤적이 없으면 먼저 가야 할 쪽으로 제자리 돌기
-                            des[2] = sat(2.0 * herr, s.nav_wmax).abs().max(0.3) * herr.signum();
+                            des[1] = sat(2.0 * herr, s.nav_wmax).abs().max(0.3) * herr.signum();
                             m.stuck += 1;
                         } else {
                             m.stuck += 1;
@@ -535,7 +534,7 @@ impl Robot {
             (NavKind::GoTo, 1) => match m.look_yaw {
                 Some(ly) if dp.fp.turn_clear(&self.nav.cm, xy[0], xy[1], pose[2], ly) >= TURN_MIN_CLEAR || ang_diff(ly, pose[2]).abs() < 3f64.to_radians() => {
                     let (e, w) = turn_to(ly, s.nav_wmax);
-                    des[2] = w;
+                    des[1] = w;
                     if e.abs() < 3f64.to_radians() {
                         m.phase = 2;
                     }
@@ -548,7 +547,7 @@ impl Robot {
                     m.stuck = 10;
                 }
                 let (e, w) = turn_to(m.look_target, s.nav_wmax);
-                des[2] = w;
+                des[1] = w;
                 if e.abs() < 3f64.to_radians() {
                     m.phase = 0;
                     self.replan(m);
@@ -563,7 +562,7 @@ impl Robot {
                 m.settle += 1;
             }
             (NavKind::GoTo, 4) => {
-                // 되짚기: 다음 trail 점으로 0.12 m/s, 몸 방향 그대로(로봇 기준 속도로 바꿈)
+                // 되짚기: 다음 trail 점으로 0.12 m/s. 점이 뒤쪽이면 뒤로 가며 조향한다(차동이라 옆걸음 없음)
                 m.settle += 1;
                 while let Some(q) = m.retrace.first() {
                     if (q[0] - xy[0]).hypot(q[1] - xy[1]) < 0.06 {
@@ -576,16 +575,19 @@ impl Robot {
                     Some(q) if m.settle < 240 => {
                         let (dx, dy) = (q[0] - xy[0], q[1] - xy[1]);
                         let d = dx.hypot(dy).max(1e-6);
-                        let (sn, cs) = pose[2].sin_cos();
-                        let (wx, wy) = (dx / d * 0.12, dy / d * 0.12);
+                        // 점의 몸 기준 방향 φ. 뒤쪽(|φ| > 90°)이면 후진: 뒤 방향과의 오차 e 만큼 돌며 간다
+                        let phi = ang_diff(dy.atan2(dx), pose[2]);
+                        let (rev, e) = if phi.abs() > std::f64::consts::FRAC_PI_2 { (true, ang_diff(phi, std::f64::consts::PI)) } else { (false, phi) };
                         // 몸 방향이 그때와 다를 수 있다: 0.1 m 앞 자세가 지금보다 좁아지며 닿을 듯하면 멈춤
                         let ahead = dp.fp.clear(&self.nav.cm, xy[0] + dx / d * 0.1, xy[1] + dy / d * 0.1, pose[2]);
                         let now_c = dp.fp.clear(&self.nav.cm, xy[0], xy[1], pose[2]);
                         if ahead < 0.0 && ahead < now_c {
                             m.retrace.clear();
                         } else {
-                            des[0] = cs * wx + sn * wy;
-                            des[1] = -sn * wx + cs * wy;
+                            des[1] = sat(1.5 * e, s.nav_wmax);
+                            if e.abs() < 35f64.to_radians() {
+                                des[0] = if rev { -0.12 } else { 0.12 };
+                            }
                         }
                     }
                     _ => {
@@ -599,25 +601,25 @@ impl Robot {
             (_, _) => {
                 // 2: 0 지령으로 멈출 때까지
                 m.settle += 1;
-                let still = meas_v[0].hypot(meas_v[1]) < 0.01 && meas_v[2].abs() < 0.02;
+                let still = meas_v[0].abs() < 0.01 && meas_v[1].abs() < 0.02;
                 if (still && m.settle >= 3) || m.settle >= 12 {
                     finish = Some(m.outcome.unwrap_or("reached"));
                 }
             }
         }
         // 가감속 한도
-        let lim = [s.base_acc * self.dt, s.base_acc * self.dt, s.base_wacc * self.dt];
-        for i in 0..3 {
+        let lim = [s.base_acc * self.dt, s.base_wacc * self.dt];
+        for i in 0..2 {
             m.v_cmd[i] += (des[i] - m.v_cmd[i]).clamp(-lim[i], lim[i]);
         }
         if m.phase == 2 {
-            m.v_cmd = [0.0; 3];
+            m.v_cmd = [0.0; 2];
         }
         let _ = m.phase;
         // 막힘(접촉): 지령은 움직이는데 측정은 거의 0
-        let cmd_sp = m.v_cmd[0].hypot(m.v_cmd[1]);
-        let moving_cmd = cmd_sp > 0.05 || m.v_cmd[2].abs() > 0.1;
-        let barely = meas_v[0].hypot(meas_v[1]) < 0.2 * cmd_sp.max(0.05) && meas_v[2].abs() < 0.2 * m.v_cmd[2].abs().max(0.1);
+        let cmd_sp = m.v_cmd[0].abs();
+        let moving_cmd = cmd_sp > 0.05 || m.v_cmd[1].abs() > 0.1;
+        let barely = meas_v[0].abs() < 0.2 * cmd_sp.max(0.05) && meas_v[1].abs() < 0.2 * m.v_cmd[1].abs().max(0.1);
         m.stall = if moving_cmd && barely { m.stall + 1 } else { 0 };
         if m.stall >= 30 && finish.is_none() && m.phase != 5 {
             m.stop = Some(("contact: base pushed but did not move; backed off".into(), 0.0));
@@ -627,12 +629,12 @@ impl Robot {
             m.phase = 5;
             m.back_start = xy;
             m.stall = 0;
-            m.v_cmd = [0.0; 3];
+            m.v_cmd = [0.0; 2];
         }
         if t > m.t_max && finish.is_none() && m.phase != 2 && m.phase != 5 {
             m.outcome = Some("timeout");
             m.phase = 2;
-            m.v_cmd = [0.0; 3];
+            m.v_cmd = [0.0; 2];
         }
         let f = finish?;
         Some(self.nav_result(m, f, t))
@@ -940,7 +942,7 @@ mod odo_tests {
             if k % 6 == 0 {
                 n.skip_integrate = true;
             }
-            n.integrate([0.3, 0.0, 0.0], 1.0 / 30.0);
+            n.integrate([0.3, 0.0], 1.0 / 30.0);
         }
         assert!((n.odo_m - 0.6).abs() < 1e-9, "odo_m {}", n.odo_m);
     }

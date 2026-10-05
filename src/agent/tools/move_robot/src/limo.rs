@@ -1,7 +1,7 @@
-//! LIMO + OMX-F 몸(부분·한계·관측·순기구학). VLA 실행기([`crate::vla`])와 그 안전 거르개가 쓴다.
+//! LIMO + OMX-F 몸(부분·한계·관측·순기구학). 도구 실행기([`crate::Robot`])와 VLA 실행기([`crate::vla`])가 같이 쓴다.
 //!
-//! - 부분: `base`(vx m/s, wz rad/s — 차동, POLICY 9절 기본) · `arm`(omx_joint1..5, rad, 관절 목표 위치) · `gripper`(벌림 0 = 닫힘 … 1 = 열림)
-//! - 행동 8 = [vx, wz, j1, j2, j3, j4, j5, gripper] (VLA_INPUT 5절, 물리 단위). 시뮬 접착부(move_robot_limo.py)가 평가기 행동 9 로 바꾼다.
+//! - 부분: `base`(vx m/s, wz rad/s — 차동 2륜, 옆으로 못 감) · `arm`(omx_joint1..5, rad, 관절 목표 위치) · `gripper`(벌림 0 = 닫힘 … 1 = 열림)
+//! - 행동 8 = [vx, wz, j1, j2, j3, j4, j5, gripper] (VLA_INPUT 5절, 물리 단위). 시뮬 접착부(move_robot_limo.py)가 평가기 행동 9(옆 속도 0)로 옮긴다.
 //! - 관절 한계: `src/robot/real_limits.json`(실제 OMX-F 범위; 업스트림 URDF 의 ±2π 는 자리표시). 시험이 이 파일과 같은지 본다.
 //! - 순기구학: `src/robot/map_vla_description`(map_vla.urdf.xacro + omx_f_arm.urdf.xacro) 의 관절 원점 그대로, base_footprint 기준.
 //!   영점 자세 손끝 = (0.273, −0.002, 0.361) m (SIM_PORTING M0, rviz TF) 과 시험으로 맞춘다.
@@ -31,38 +31,50 @@ pub mod prop {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum LimoPart {
+pub enum Part {
     Base,
     Arm,
     Gripper,
 }
 
-pub const LIMO_PARTS: [&str; 3] = ["base", "arm", "gripper"];
+pub const PARTS: [&str; 3] = ["base", "arm", "gripper"];
 
-impl LimoPart {
-    pub fn from_name(s: &str) -> Option<LimoPart> {
+impl Part {
+    pub fn from_name(s: &str) -> Option<Part> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "base" => Some(LimoPart::Base),
-            "arm" | "omx" | "arm_0" => Some(LimoPart::Arm),
-            "gripper" | "gripper_0" | "hand" => Some(LimoPart::Gripper),
+            "base" => Some(Part::Base),
+            "arm" | "omx" | "arm_0" => Some(Part::Arm),
+            "gripper" | "gripper_0" | "hand" => Some(Part::Gripper),
             _ => None,
         }
     }
     pub fn name(self) -> &'static str {
-        LIMO_PARTS[self as usize]
+        PARTS[self as usize]
     }
+    /// 도구 `values` 개수(베이스 delta = [앞 m, 왼쪽으로 돌기 °])
     pub fn dof(self) -> usize {
         match self {
-            LimoPart::Base => 2,
-            LimoPart::Arm => 5,
-            LimoPart::Gripper => 1,
+            Part::Base => 2,
+            Part::Arm => 5,
+            Part::Gripper => 1,
+        }
+    }
+    pub fn is_gripper(self) -> bool {
+        self == Part::Gripper
+    }
+    /// LLM 에게 보이는 단위
+    pub fn units(self) -> &'static str {
+        match self {
+            Part::Base => "[forward m, turn_left deg]",
+            Part::Arm => "deg",
+            Part::Gripper => "0=closed..1=open",
         }
     }
     pub fn slots(self) -> std::ops::Range<usize> {
         match self {
-            LimoPart::Base => act::BASE,
-            LimoPart::Arm => act::ARM,
-            LimoPart::Gripper => act::GRIPPER..act::GRIPPER + 1,
+            Part::Base => act::BASE,
+            Part::Arm => act::ARM,
+            Part::Gripper => act::GRIPPER..act::GRIPPER + 1,
         }
     }
 }
@@ -92,7 +104,7 @@ pub fn grip_frac(angle: f64) -> f64 {
 /// proprio 에서 읽은 몸 상태(안 단위)
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LimoState {
-    /// 로봇 기준 vx, vy, wz
+    /// proprio 의 base_qvel(로봇 기준 vx, vy, wz). 차동이라 vy 는 쓰지 않는다
     pub base_v: [f64; 3],
     pub arm: [f64; 5],
     pub arm_v: [f64; 5],
@@ -120,6 +132,14 @@ impl LimoState {
         s.grip = grip_frac(p[prop::GRIP_QPOS.start] as f64);
         s.grip_v = p[prop::GRIP_QVEL.start] as f64 / GRIPPER_LIM.1;
         Ok(s)
+    }
+    /// 관절 부분의 위치·속도(안 단위 rad / 비율). 베이스는 빈 값
+    pub fn joints(&self, part: Part) -> (Vec<f64>, Vec<f64>) {
+        match part {
+            Part::Arm => (self.arm.to_vec(), self.arm_v.to_vec()),
+            Part::Gripper => (vec![self.grip], vec![self.grip_v]),
+            Part::Base => (vec![], vec![]),
+        }
     }
     pub fn to_proprio(&self) -> Vec<f32> {
         let mut p = vec![0f32; PROPRIO_DIM];

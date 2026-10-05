@@ -207,9 +207,7 @@ fn room_with_wall(wall_x: f64) -> MockWorld {
             }
         }
     }
-    let mut mw = MockWorld::new(Grid { res, ox, oy, w, h, cells });
-    mw.body_r = 0.2;
-    mw
+    MockWorld::new(Grid { res, ox, oy, w, h, cells })
 }
 
 #[test]

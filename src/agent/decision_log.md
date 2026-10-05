@@ -36,7 +36,7 @@ decisions-agg <dirs> --by prompt    # 프롬프트 판 × 정책
 
 ## VLA ↔ move_robot 전환 (상태)
 
-- 접점: 평가기 쪽 `src/behavior-2026/src/sim/explore/run_explore.py` 가 도구 호출 `{"executor":"vla","skill":"<단계 문장>","max_s":20}` 를 가로챈다.
+- 접점: 평가기 쪽 `src/sim/explore/run_explore.py` 가 도구 호출 `{"executor":"vla","skill":"<단계 문장>","max_s":20}` 를 가로챈다.
   (R1 에서 π0.5 네이티브 엔진으로 돌리던 길은 10-06 에 π0.5 와 함께 지웠다. VLA = RecallVLA, `training/vla`.)
 - 리모 + OMX-F(10-04): 같은 호출에 `objects:[id…]` 를 더해 libmove_robot VLA 실행기(`mr_vla_*`)가 받는다 — 정책(지금은 각본·재생 대역) → `move_robot`
   안전 거르개 → 끝 신호 + 자동 확인 + 예산 → `{"status":"done|failed|timeout|handback","reason","evidence","steps","min_clear_m","contacts"}`.

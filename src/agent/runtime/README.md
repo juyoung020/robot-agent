@@ -14,7 +14,7 @@
 
 ```bash
 cd src/agent/runtime && cargo build --release -j4 && cargo test --release -j4      # 시험 2개(explore 설정 읽기·LLM 에게 보이는 정의, 두 방 기준선 탐사)
-set -a; . ~/.config/behavior-2026/kau.env; set +a                                   # LLM 키는 환경변수로만
+set -a; . ~/.config/robot-agent/kau.env; set +a                                   # LLM 키는 환경변수로만
 ./target/release/run-skill --skill explore --policy llm|baseline \
     [--addr 127.0.0.1:8771 | --mock <gt.pgm> --gt <gt.json> [--start x,y,yaw_deg]] --out <dir> \
     [--max-calls N] [--max-sim-s S] [--max-wall-s S] [--keep 3] [--temperature T] [--thinking] [--no-nudge] [--style compact] [--task NAME] [--run-id ID]

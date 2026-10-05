@@ -21,10 +21,10 @@ pub unsafe extern "C" fn mr_free(r: *mut Robot) {
     }
 }
 
-/// 한 스텝. `action` 에 23 개를 쓴다. 반환: 0 대기, 1 움직이는 중, 2 이번에 끝남(결과 준비), -1 proprio 이상(유지값), -2 인자 이상.
+/// 한 스텝. `action` 에 8 개(vx, wz, j1..j5, 그리퍼)를 쓴다. 반환: 0 대기, 1 움직이는 중, 2 이번에 끝남(결과 준비), -1 proprio 이상(유지값), -2 인자 이상.
 ///
 /// # Safety
-/// `proprio` 는 `n` 개, `action` 은 23 개 이상 쓸 수 있는 float 배열.
+/// `proprio` 는 `n` 개, `action` 은 8 개 이상 쓸 수 있는 float 배열.
 #[no_mangle]
 pub unsafe extern "C" fn mr_tick(r: *mut Robot, proprio: *const f32, n: usize, action: *mut f32) -> c_int {
     if r.is_null() || proprio.is_null() || action.is_null() {
