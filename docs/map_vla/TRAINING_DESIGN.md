@@ -218,6 +218,8 @@ B 24, L 337(실제 344), 기억 요약 인코더 켬: **30.4–30.8 표본/s**(�
 2. 학습 뷰어 리플레이에서 정책 지도(주황)와 진짜 파이프라인 결과를 겹쳐 눈으로 본다.
 3. 차이가 크면 ③의 **잡음·매개변수만 다시 맞춘다**(objprob 엔진별 재맞춤과 같은 방식). 코드 구조는 바꾸지 않는다.
 
+**입력 비교를 다시 돌리는 법(10-06)**: ① `pick_cmp … --dump K --out DIR`(GPU 판 + 지도 칸·목표 원인) ② `flock og.lock nice -n 19 python training/viewer/tools/og_replay/og_cmp.py --eps 'DIR/ep_*.jsonl' --out OUT`(같은 판을 OmniGibson + libsgrt — (장면, 과제)마다 한 번 싣기) ③ `og_cmp_report.py OUT --gpu-dir DIR`. 자세한 것과 기준값은 `training/RL/map_cmp/README.md` "pick_cmp + og_cmp", 포트 받아들임 목표는 GPU_MAP_PORT 2.1. GPU 지도 칸 배치가 바뀌면 `map_cmp/tools/slot_adapter.h` 만 고친다.
+
 **마지막 학습 단계에서 차이를 메운다**: 대부분은 ③으로 학습하고, 마지막 짧은 DAgger 미세 조정만 **OmniGibson + ② 진짜 파이프라인 입력**으로 한다. 리플레이용 OmniGibson 재현 도구(`training/viewer/tools/og_replay`)를 넓혀 쓴다.
 
 ## 7. 위험과 사용자에게 물을 것
