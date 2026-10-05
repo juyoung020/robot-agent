@@ -7,7 +7,7 @@
 - 로봇: LIMO + OMX(limo_omx_eval.yaml), 스텝마다 GPU 판의 참 자세(창 + wx·wy)·팔 관절·그리퍼로 옮김(물리 스텝 없이 렌더만 — 궤적 그대로).
   집을 물체는 GPU 판의 물체 자리(inputs 섹션 특권 값)를 따라 옮긴다(처음 자세 대비 이동·회전).
 - 인지: libsgrt(sgrt_glue.py 와 같은 C ABI) = ObjectSAM yolo26n-seg-obj-416 + SigLIP 2 이름·벡터 + scenemap objprob(지금 기본). 몸통 카메라 eyes 640×480
-  RGB-D, keyframe 마다. 자세 = SGRT_POSE slam(오도메트리 = 궤적 + 스캔 맞추기), GT 는 비교용으로만.
+  RGB-D, keyframe 마다. 자세 = SGRT_POSE carto(Cartographer: 시뮬 2D 라이다 + 오도메트리 = 궤적), GT 는 비교용으로만.
 - 화면: libsgrt 의 sgview 스트림(SGRT_STREAM)을 이 프로세스가 소켓으로 받아 시뮬 시각을 붙여 stream.sgs 로(og2sg 와 같은 형식). 끝에 memory/(sgrt_save),
   cam/ JPEG, meta.json, underlay.json(og2sg --underlay), episode.trp(정책 지도: 창 → 세계 좌표로 옮긴 사본).
 """

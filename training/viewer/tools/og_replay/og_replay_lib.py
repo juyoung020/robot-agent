@@ -312,7 +312,7 @@ class Perception:
             os.environ.pop("SGRT_STREAM", None)
         os.environ.setdefault("SGRT_STREAM_HZ", "20")
         os.environ.setdefault("SGRT_ROBOT", "limo_omx")
-        os.environ.setdefault("SGRT_POSE", "slam")   # 자세 = 오도메트리(궤적) + 스캔 맞추기, GT 는 비교용으로만
+        os.environ.setdefault("SGRT_POSE", "carto")   # 자세 = Cartographer(시뮬 2D 라이다 + 오도메트리 = 궤적), GT 는 비교용으로만
         os.environ.setdefault("SGRT_IMAGE_LAG", "0")   # 이 스텝 자세에서 바로 렌더한 그림
         os.environ.setdefault("SGRT_INSPECT", "1")
         os.environ.setdefault("SGRT_LIB", os.path.join(DEPS, "libsgrt.so"))
@@ -324,6 +324,12 @@ class Perception:
         self.L, self.H = self.mem.L, self.mem.h
         self.prop = np.zeros(12, np.float32)
         self.n_kf = 0
+        # 시뮬 2D 라이다(LIMO X2L, src/sim/lidar/limo_lidar.py) → sgrt_push_scan → libsgrt Cartographer. 옛 libsgrt(함수 없음)·SGRT_LIDAR=0 이면 끔
+        self.lidar = None
+        if getattr(self.mem, "has_scan", False) and os.environ.get("SGRT_LIDAR", "1") != "0":
+            sys.path.insert(0, os.path.join(SG, "../sim/lidar"))
+            from limo_lidar import LimoLidar
+            self.lidar = LimoLidar(robot)
 
     def step(self, stamp, st, world, want_cam=False, last=False):
         """st: x, y, yaw, vx, wz, q(5), qg (세계 좌표). 이미 world.set_robot 한 뒤 부른다. 그림이 필요하면(keyframe 또는 want_cam) 그려서 돌려준다"""
@@ -335,6 +341,9 @@ class Perception:
         p[6:11] = list(st.q)
         p[11] = st.qg
         self.L.sgrt_push_pose(self.H, stamp, st.x, st.y, st.yaw)
+        if self.lidar is not None and self.lidar.due(stamp):
+            rg, a0, da, dti, rmin, rmax = self.lidar.scan(stamp)
+            self.L.sgrt_push_scan(self.H, stamp, rg.size, rg.ctypes.data, a0, da, dti, rmin, rmax)
         want = bool(self.L.sgrt_want_image(self.H))
         rgb = wr = None
         out = StepOut(None, None, want)
