@@ -15,12 +15,6 @@
 
 #include "scenemap/png.hpp"
 
-#ifdef SM_HAVE_SPARK_DSG
-#include <spark_dsg/dynamic_scene_graph.h>
-#include <spark_dsg/edge_attributes.h>
-#include <spark_dsg/node_attributes.h>
-#include <spark_dsg/node_symbol.h>
-#endif
 
 namespace scenemap {
 namespace {
@@ -216,92 +210,6 @@ std::string yaml(const SaveInput& in) {
   return o.str();
 }
 
-#ifdef SM_HAVE_SPARK_DSG
-// ROOMS 층: 방 노드('R', id) — 이름·위치(무게중심, z 0)·바닥 상자·종류 확률, metadata{area_m2, name_confidence, evidence, ...},
-// 방→물체 변, 방–방 변(metadata relation door·pos·width)
-void sceneRooms(const SaveInput& in, spark_dsg::DynamicSceneGraph& g) {
-  using namespace spark_dsg;
-  if (!in.rooms) return;
-  const RoomSeg& R = *in.rooms;
-  for (size_t k = 0; k < R.rooms.size(); ++k) {
-    const RoomGeom& r = R.rooms[k];
-    const RoomLabel* L = roomLabel(in, k);
-    auto a = std::make_unique<RoomNodeAttributes>();
-    a->position = Eigen::Vector3d(r.centroid[0], r.centroid[1], 0);
-    a->name = L ? L->name : "room " + std::to_string(r.id);
-    const Eigen::Vector3f dim(float(r.bmax[0] - r.bmin[0]), float(r.bmax[1] - r.bmin[1]), 0.f);
-    const Eigen::Vector3f ctr(float(r.bmax[0] + r.bmin[0]) / 2, float(r.bmax[1] + r.bmin[1]) / 2, 0.f);
-    a->bounding_box = BoundingBox(dim, ctr);
-    a->last_update_time_ns = uint64_t(std::max(0.0, R.stamp) * 1e9);
-    nlohmann::json ev = nlohmann::json::array();
-    if (L) {
-      a->semantic_class_probabilities = L->probs;
-      for (const RoomEvidence& e : L->evidence) ev.push_back({{"object", e.obj}, {"name", e.name}, {"type", e.type}, {"weight", e.w}});
-    }
-    a->metadata.add({{"area_m2", r.area_m2},
-                     {"name_confidence", L ? L->conf : 0.f},
-                     {"evidence", ev},
-                     {"type", L ? L->type : ""},
-                     {"external_name", L && L->external},
-                     {"max_clear_m", r.max_clear},
-                     {"grid_value", std::min<size_t>(k + 1, 255)}});
-    g.emplaceNode(DsgLayers::ROOMS, NodeSymbol('R', r.id), std::move(a));
-  }
-  for (int i = 0; i < in.n_objs; ++i)
-    if (const uint32_t rid = objRoom(in, i)) g.insertEdge(NodeSymbol('R', rid), NodeSymbol('O', in.objs[i].id));
-  for (const RoomDoor& d : R.doors) {
-    auto e = std::make_unique<EdgeAttributes>(d.width);
-    e->metadata.add({{"relation", "door"}, {"pos", {d.pos[0], d.pos[1]}}, {"width", d.width}});
-    g.insertEdge(NodeSymbol('R', d.a), NodeSymbol('R', d.b), std::move(e));
-  }
-}
-
-bool sceneDsg(const SaveInput& in, const SaveOut& ok, const fs::path& path) {
-  using namespace spark_dsg;
-  DynamicSceneGraph g;
-  for (int i = 0; i < in.n_objs; ++i) {
-    const sm_object& b = in.objs[i];
-    auto a = std::make_unique<ObjectNodeAttributes>();
-    a->position = Eigen::Vector3d(b.pos[0], b.pos[1], b.pos[2]);
-    a->name = b.name ? b.name : "";
-    a->bounding_box = BoundingBox(Eigen::Vector3f(float(b.extent[0]), float(b.extent[1]), float(b.extent[2])), a->position.cast<float>());
-    a->last_update_time_ns = uint64_t(std::max(0.0, b.last_seen) * 1e9);
-    a->is_active = b.state != SM_GONE;
-    a->metadata.add({{"state", stateName(b.state)},
-                     {"n_obs", b.n_obs},
-                     {"score", b.score},
-                     {"first_pos", {b.first_pos[0], b.first_pos[1], b.first_pos[2]}},
-                     {"structural", bool(b.structural)},
-                     {"movable", i >= int(in.movable.size()) || in.movable[i] != 0}});
-    if (hasView(in, ok, i)) {
-      const BestView& v = *in.views[i];
-      std::vector<double> T(v.cam_T, v.cam_T + 12);
-      a->metadata.add({{"rgbd",
-                        {{"rgb", objPath(b.id, "rgb")},
-                         {"depth", objPath(b.id, "depth")},
-                         {"mask", objPath(b.id, "mask")},
-                         {"stamp", v.stamp},
-                         {"box_px", {v.box[0], v.box[1], v.box[2], v.box[3]}},
-                         {"det_box_px", {v.det_box[0], v.det_box[1], v.det_box[2], v.det_box[3]}},
-                         {"mask_area", v.mask_area},
-                         {"depth_m", v.depth_m},
-                         {"score", v.score},
-                         {"cam_T", T}}}});
-    }
-    if (hasPly(ok, i))
-      a->metadata.add({{"points",
-                        {{"path", plyPath(b.id)}, {"n", in.clouds[i].size()}, {"voxel", in.voxel}, {"stamp", in.clouds[i].stamp}}}});
-    g.emplaceNode(DsgLayers::OBJECTS, NodeSymbol('O', b.id), std::move(a));
-  }
-  sceneRooms(in, g);
-  g.metadata.add({{"stamp", in.stamp}, {"robot_pose", {in.pose[0], in.pose[1], in.pose[2]}}, {"grid", "map.pgm"}});
-  const fs::path tmp = path.string() + ".tmp.json";
-  g.save(tmp);
-  std::error_code ec;
-  fs::rename(tmp, path, ec);
-  return !ec;
-}
-#endif
 
 
 // ---- scene.json 빠른 쓰기(Spark-DSG 1.1.3 JSON 형식 그대로 — 기본 spark_dsg 가 읽음, 라이브러리 없이 문자열로) ----
@@ -790,17 +698,7 @@ int saveScene(const SaveInput& in, const std::string& dir, SaveOut* out_) {
     ok &= writeAtomic(d / "map.yaml", yaml(in));
     if (in.rooms) ok &= writeAtomic(d / "rooms.pgm", roomsPgm(in));
   }
-  // scene.json: 기본은 빠른 직접 쓰기(같은 Spark-DSG JSON 형식). SM_DSG_SAVE=spark 면 Spark-DSG 라이브러리로(비교용)
-  static const bool use_lib = [] { const char* e = std::getenv("SM_DSG_SAVE"); return e && std::string(e) == "spark"; }();
-#ifdef SM_HAVE_SPARK_DSG
-  if (use_lib) {
-    const auto tj = std::chrono::steady_clock::now();
-    ok &= sceneDsg(in, out, d / "scene.json");
-    out.json_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tj).count();
-  } else
-#endif
-  ok &= sceneJsonFast(in, out, d / "scene.json", &out);
-  (void)use_lib;
+  ok &= sceneJsonFast(in, out, d / "scene.json", &out);   // Spark-DSG JSON 형식 그대로 직접 씀(시험이 spark_dsg 로 다시 읽음)
   ok &= writeAtomic(d / "view.json", viewJson(in, out));   // 마지막에: 뷰어는 view.json 이 바뀌면 다시 읽는다
   return ok ? 0 : -1;
 }

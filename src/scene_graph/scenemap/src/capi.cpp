@@ -156,7 +156,7 @@ struct sm_ctx {
   uint64_t walls_grid_ver = ~0ull;
   // 벽 방향(10-05): slam 지도는 출발 자세 기준이라 벽이 지도 축에서 기울 수 있다(radio r3: 41°). 주된 방향 θ 를 가끔(kWallAngleEvery 초)
   // 재어 들고, |θ| > kAlignTol 이면 돌린 격자에서 뽑는다(wallSegmentsAtAngle — 전부 다시, kWallAlignedEvery 초에 한 번까지).
-  // 축에 맞는 지도(gt 자세·축 맞은 출발)는 예전 증분 추출 그대로. 진단: SM_WALLS_AXIS=1 이면 옛 동작(축만)
+  // 축에 맞는 지도(gt 자세·축 맞은 출발)는 증분 추출
   double wall_th = 0, wall_th_t = -1e300, walls_full_t = -1e300;
   // 단계별 시간(timing.hpp). 쓰기는 입력·스냅숏 스레드, 읽기는 sm_get_timing — 작은 잠금 하나
   std::mutex tmu;
@@ -658,9 +658,8 @@ void refreshWalls(sm_ctx* c) {
   }
   const bool rects_changed = !(rects == c->walls_rects);
   const double now = c->st.last_image_stamp;
-  static const bool axis_only = std::getenv("SM_WALLS_AXIS") != nullptr;
   bool th_changed = false;
-  if (!axis_only && c->grid8 && (grid_changed || rects_changed) && now - c->wall_th_t >= kWallAngleEvery) {
+  if (c->grid8 && (grid_changed || rects_changed) && now - c->wall_th_t >= kWallAngleEvery) {
     const scenemap::WallGrid wg{c->grid8->data(), gr.width(), gr.height(), double(gr.res()), gr.x0() * double(gr.res()), gr.y0() * double(gr.res())};
     const double th = scenemap::wallAngle(wg, &rects);
     c->wall_th_t = now;
@@ -695,17 +694,7 @@ void refreshWalls(sm_ctx* c) {
   c->walls_rects = std::move(rects);
   c->walls_x0 = gr.x0(); c->walls_y0 = gr.y0();
   c->walls_grid_ver = c->grid8_ver;
-  static const bool check = std::getenv("SM_WALLS_CHECK") != nullptr;   // 진단: 증분 결과를 처음부터 계산한 것과 비교
-  if (check) {
-    const auto full = scenemap::wallSegments(wg, scenemap::kMinLen, scenemap::kMaxThick, 0.6, &c->walls_rects);
-    const auto& inc = *c->wallsp;
-    bool eq = full.size() == inc.size();
-    for (size_t i = 0; eq && i < full.size(); ++i)
-      eq = full[i].ax == inc[i].ax && full[i].ay == inc[i].ay && full[i].bx == inc[i].bx && full[i].by == inc[i].by;
-    static int n = 0, bad = 0;
-    ++n; if (!eq) ++bad;
-    if (!eq || n % 50 == 0) std::fprintf(stderr, "[walls-check] updates %d mismatches %d (segments %zu vs %zu, ignore %zu)\n", n, bad, inc.size(), full.size(), c->walls_rects.size());
-  }
+
 }
 
 // keyframe 뒤 장면 그래프: agent, (검출이 있었으면) 물체, 주기마다 바뀐 격자 둘레 place. mu 아래

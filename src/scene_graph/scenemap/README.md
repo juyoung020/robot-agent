@@ -50,7 +50,7 @@
 ## 만들기
 
 CUDA 없음. C++20, zlib 필요. `tools/build_all.sh scenemap`(→ `build/scenemap`), 시험 `ctest --test-dir build/scenemap`. sgrt 를 빌드하면 `../runtime` 이 이 폴더를 같이 빌드한다.
-Spark-DSG 는 우리 사본 `../spark_dsg` 를 쓴다(`SM_HAVE_SPARK_DSG`). scene.json 은 라이브러리 없이 직접 쓰므로 Spark-DSG 는 `SM_DSG_SAVE=spark`(비교용)와 시험의 다시 읽기 확인에만 쓰인다.
+scene.json 은 Spark-DSG JSON 형식 그대로 라이브러리 없이 직접 쓴다. 우리 사본 `../spark_dsg` 는 시험이 그 파일을 다시 읽어 형식을 확인할 때만 쓴다.
 
 ### 도구 (`tools/`, 같이 빌드됨)
 
@@ -74,13 +74,10 @@ Spark-DSG 는 우리 사본 `../spark_dsg` 를 쓴다(`SM_HAVE_SPARK_DSG`). scen
 
 | 이름 | 뜻 |
 |---|---|
-| `SM_DSG_SAVE=spark` | scene.json 을 Spark-DSG 라이브러리로 쓴다(비교용, `SM_HAVE_SPARK_DSG` 빌드에서만) |
-| `SM_WALLS_CHECK` | 있으면 벽 증분 계산을 처음부터 계산한 것과 비교 |
 | `SM_KEEP` | `test_scene_json` 이 출력 폴더를 지우지 않음 |
 | `SM_SLAM_LOG=<파일>` | keyframe 마다 넣은 자세·정답(맞춤)·스캔 점 수·넣음·적분 이동 CSV |
 | `SM_OBJ_PARAMS="key=val,…"` | objmap 바뀜 판정 매개변수 덮어쓰기(이름은 `ObjParams` 그대로 — `objmap.cpp` `envOverrides`, 모르는 이름은 stderr 에 알림). A/B 비교용 |
 | `SM_OBJ_LOG` | 있으면 objmap 사건(후보·확정·옮겨짐·사라짐·병합 …)과 옮겨짐 잇기(`[link]`)를 stderr 에 |
-| `SM_WALLS_AXIS` | 있으면 capi 벽 추출을 축 정렬만(비교용) |
 | `SM_OBJ_PARAMS=inspect=1` | 살펴본 정도 켜기(`sm_set_inspect` 와 같음 — 진단용) |
 | `SM_AP_LOG` | objprob: 물체 쌍 같은 것 확률(`[ap-pair]`, p > 0.2)·병합(`[ap-merge]`)을 stderr 에. 매개변수는 `SM_OBJ_PARAMS` 의 `ap_*`(`objmap.cpp` `envOverrides`) |
 | `SM_ABS_LOG=<id>` · `SM_LINK_LOG=<id>` · `SM_MOVE_LOG=<id\|0>` | 물체 하나의 사라짐 근거(보인 표본 수·화소 크기·놓침) / 새 물체 하나의 잇기 후보 / 움직임 따라가기(0 = 전부) |

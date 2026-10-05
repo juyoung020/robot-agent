@@ -234,7 +234,7 @@ int sm_snap_points(const sm_snapshot_t*, uint32_t id, sm_cloud* out);
  *   view.json  — 계획기·뷰어용 요약(자세, 물체 표, 최근 사건)
  *   map.pgm    — 2D 점유 격자(+ map.yaml: 해상도·원점)
  *   (방이 있으면 scene.json ROOMS 층·방→물체·방–방 변, view.json rooms·room_doors·objects[].room, rooms.pgm)
- * scene.json 은 Spark-DSG 없이도 늘 빠른 쓰기(같은 JSON 형식)로 쓴다 — SM_DSG_SAVE=spark 는 라이브러리 빌드 때만. 0 = 성공. */
+ * scene.json 은 Spark-DSG JSON 형식 그대로 라이브러리 없이 쓴다. 0 = 성공. */
 int sm_save_dsg(sm_ctx*, const char* dir);
 /* sm_save_dsg + best view PNG(dir/objects/O<id>_rgb.png · O<id>_depth.png, 지난 저장 뒤 바뀐 것·없는 것만 씀)와 시간.
  * sm_save_dsg 도 같은 일을 한다(stats 만 없음). scene.json 노드 metadata.rgbd, view.json objects[].rgbd 가 경로를 가리킴. */
