@@ -17,8 +17,8 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-SV="$ROOT/src/scene_graph/sgview"
-BIN="$SV/target/release/sgview"
-[ -x "$BIN" ] || (cd "$SV" && cargo build --release)
+. "$ROOT/config/paths.env"
+BIN="$RA_BUILD/bin/sgview"
+[ -x "$BIN" ] || "$ROOT/tools/build_all.sh" sgview
 echo "sgview: http://localhost:$PORT  ($DIR${LIVE:+, live stream on 127.0.0.1:9001})"
 exec "$BIN" "$DIR" --port "$PORT" $LIVE

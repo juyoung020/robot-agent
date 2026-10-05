@@ -18,16 +18,17 @@ while [ $# -gt 0 ]; do
 done
 [ ${#pos[@]} -ge 1 ] && POL=${pos[0]}; [ ${#pos[@]} -ge 2 ] && TASK=${pos[1]}; [ ${#pos[@]} -ge 3 ] && TAG=${pos[2]}
 
-BUILD=${SGRT_BUILD:-$HOME/sgrt_build_explore}
-[ -d "$BUILD" ] || { echo "[live] 빌드 폴더 없음: $BUILD (cmake -S $BH/src/scene_graph/runtime -B $BUILD)"; exit 1; }
+. "$ROOT/config/paths.env"
+BUILD=${SGRT_BUILD:-$RA_BUILD/sgrt}
+[ -d "$BUILD" ] || { echo "[live] 빌드 폴더 없음: $BUILD (cmake -S $BH/src/scene_graph/runtime -B $BUILD, 또는 tools/build_all.sh sgrt)"; exit 1; }
 cmake --build "$BUILD" -j"${BUILD_JOBS:-4}" --target sgrt >/dev/null   # -j4: 시뮬·학습과 같이 돌 때 RAM
 grep -aqF sgrt_objprob_enabled "$BUILD/libsgrt.so" || { echo "[live] libsgrt 에 objprob 앞단이 없다(옛 빌드): $BUILD"; exit 1; }
 grep -aqF SGRT_STREAM "$BUILD/libsgrt.so" ||  # strings|grep -q 는 pipefail 에서 SIGPIPE(141)로 항상 실패
   { echo "[live] libsgrt 에 SGRT_STREAM 이 없다(옛 빌드): $BUILD"; exit 1; }
-AG=$ROOT/src/agent/runtime/target/release/run-skill   # 에이전트 런타임(스킬 explore 는 --skill explore)
-[ -x "$AG" ] || { echo "[live] 에이전트 런타임 없음: (cd $ROOT/src/agent/runtime && cargo build --release -j4)"; exit 1; }
-SV=$ROOT/src/scene_graph/sgview/target/release/sgview
-[ -x "$SV" ] || (cd "$ROOT/src/scene_graph/sgview" && cargo build --release)
+AG=${RA_BUILD:-$ROOT/build}/bin/run-skill   # tools/build_all.sh agent
+[ -x "$AG" ] || { echo "[live] 에이전트 런타임 없음: $ROOT/tools/build_all.sh agent"; exit 1; }
+SV=$RA_BUILD/bin/sgview
+[ -x "$SV" ] || "$ROOT/tools/build_all.sh" sgview
 
 export SGRT_ROBOT=${SGRT_ROBOT:-limo_omx}   # 우리 로봇은 LIMO + OMX-F 하나(R1 Pro 는 10-06 에 뺌 — run_explore.sh 도 같은 기본)
 export SGRT_LIB=$BUILD/libsgrt.so SGRT_POSE=$POSE SGRT_STREAM=127.0.0.1:9001 SGRT_MAP_EVERY=${SGRT_MAP_EVERY:-1}
