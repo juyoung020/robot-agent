@@ -1,0 +1,10 @@
+# archive — 더 안 쓰는 코드·설정 (원래 자리 그대로)
+
+빌드·시험에서 뺀 것. 지우지 않고 `git mv` 로 옮겼다(원래 경로를 `archive/` 아래에 그대로). 다시 쓰려면 같은 경로로 되돌린다.
+
+| 언제 | 무엇(원래 경로) | 까닭 |
+|---|---|---|
+| 2026-10-06 | `training/BC/config/bc_a2*.json`(7 개), `bc_pnp_b4_dagger.json`, `bc_pnp_lite.json` | 처음 지도 C0/C1(미리 채운 참 지도)로 학습하는 설정. 10-06 사용자 결정 — 학습·평가는 빈 지도 C2 에서 자라는 지도만(CURRICULUM_BEHAVIOR2026 5.7). `bc_run` 은 이제 `--debug-gt-map` 없이는 이 설정을 멈춤. 잰 값은 BC README·CURRICULUM 5.6.2 에 남음 |
+| 2026-10-06 | `training/RL/config/ppo_a2.json`, `ppo_a2_notok.json`, `ppo_a2_nofront.json`, `ppo_b.json` | 같은 까닭(단계 `map` [p0, p1] > 0). `ppo_run` 도 `--debug-gt-map` 없이는 멈춤 |
+
+아직 옮기지 않은 것(쓰는 곳이 남음 — 바꿀 것이 생기면 옮김): 상태 있는 대본 교사(`training/RL/env/include/teacher.h` — 잡기 가능 표·서는 자리 찾기·`pnp_teach` 기본 교사가 같은 함수를 씀), B6 제자리 돌기 탐사(`teacher_sl.h SLD_EXPLORE` — 프런티어 탐사 교사가 생기면 바꿈), student-lite·flow 머리(설정 `mlp_w`·`head` 로 아직 고름), 따로 된 RL 관측 코드(관측 하나로 합치면).
