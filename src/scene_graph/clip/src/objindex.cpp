@@ -617,12 +617,11 @@ void build(sgs_index* X) {
     o.reg_c = labelFor(X, o.reg, &add);
   }
   for (const json& jo : v.value("objects", json::array())) {
-    // objprob 형식 {"top": [[이름, p] …], "p", "entropy", "rolled", "external"}(scenemap README "확률 모드" 저장 형식), 옛 형식 [[이름, p] …]
+    // objprob 형식 {"top": [[이름, p] …], "p", "entropy", "rolled", "external"}(scenemap README "확률 모드" 저장 형식)
     const json* np = jo.contains("name_post") ? &jo["name_post"] : nullptr;
-    if (np && np->is_object()) {
-      if (np->value("external", false)) X->obj[size_t(X->by_id[jo.value("id", 0u)])].ap_external = true;
-      np = np->contains("top") ? &(*np)["top"] : nullptr;
-    }
+    if (!np || !np->is_object()) continue;
+    if (np->value("external", false)) X->obj[size_t(X->by_id[jo.value("id", 0u)])].ap_external = true;
+    np = np->contains("top") ? &(*np)["top"] : nullptr;
     if (!np || !np->is_array()) continue;
     Obj& o = X->obj[size_t(X->by_id[jo.value("id", 0u)])];
     for (const json& e : *np)

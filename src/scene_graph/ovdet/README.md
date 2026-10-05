@@ -52,19 +52,7 @@ const sm_detections* d = ovd_detect(h, &img, &timing);   // per image; valid unt
 
 ObjectSAM (default, `yolo26n-seg-obj-416.plan`) has one name, `object`, and needs no prompt (`ovd_set_prompt(h, NULL, 0, …)`). It is built by `training/fastsam/build_engine.py`. SigLIP 2 (`../clip`) names each mask afterwards.
 
-### Closed-vocabulary YOLO-seg engines (YOLO11 / YOLO26, COCO-80)
-
-The same code runs Ultralytics YOLO11-seg and YOLO26-seg engines. Their head layout: `output0` 1 x (4 + 80 + 32) x A and `output1` 1 x 32 x h x w.
-
-- **Export:** use `end2end=False`. That is the default ONNX export for these models (metadata `end2end: False`), so ovdet runs its own CUDA NMS. The NMS-free YOLO26 end2end output is not used.
-- **Input size:** taken from the engine, for example 640 or 416. The mask grid can be any size, such as 104 x 104 for a 416 input.
-- **Names:** `config/coco80.txt`, copied next to the plan as `<plan>.names.txt` (`build_engines.py --names`).
-- **Prompt:** prompt names are matched to the 80 classes; names that are not found are reported in `err`. A NULL prompt means all classes. sgrt uses all classes for closed-vocabulary engines (`SGRT_PROMPT`, see `runtime/include/sgrt.h`).
-
-```
-cd models/ovdet/onnx416 && python -c "from ultralytics import YOLO; YOLO('../pt/yolo26s-seg.pt').export(format='onnx', imgsz=416, opset=13, end2end=False)"
-$TRT_PY tools/build_engines.py models/ovdet/onnx416/yolo26s-seg-416.onnx --names config/coco80.txt --workspace-gb 1
-```
+The same code also runs closed-vocabulary YOLO11/YOLO26-seg engines (COCO-80 head, `end2end=False` export, names file next to the plan, prompt = class subset). The pipeline does not use them.
 
 ## Build (Linux; CUDA 12.8, TensorRT 10)
 

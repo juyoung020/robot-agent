@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
-"""YOLO-seg ONNX (ObjectSAM, YOLO26/YOLO11-seg) -> TensorRT FP16 plan, <onnx>.names.txt (or --names) copied next to it as <plan>.names.txt.
-YOLO11/YOLO26-seg (closed vocabulary, COCO-80): export with end2end=False (classic 1 x 116 x A head; ovdet does the NMS),
-then --names config/coco80.txt:
-  python -c "from ultralytics import YOLO; YOLO('yolo26s-seg.pt').export(format='onnx', imgsz=416, opset=13, end2end=False)"
-  python build_engines.py yolo26s-seg-416.onnx --names ../config/coco80.txt
-ObjectSAM (class-free 'object'):
+"""ObjectSAM(YOLO26-seg, class-free 'object') ONNX -> TensorRT FP16 plan, <onnx>.names.txt (or --names) copied next to it as <plan>.names.txt.
+Export the ONNX with end2end=False (classic head; ovdet does the NMS):
   python build_engines.py models/ovdet/onnx/ObjectSAM-416.onnx --out models/ovdet/x86_sm120
 """
 import argparse

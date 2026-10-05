@@ -10,7 +10,7 @@
  *   — 물체 안에서 이름끼리 견주는 상대 확률이라 날 코사인(작고 흔들림)보다 안정적이다. U 밖의 질의(자유 글·tail 이름)는
  *     그 질의를 라벨 하나로 더한 분포로 셈(물체마다 시점 normalizer 만 있으면 됨 — 질의 하나에 µs).
  *   이름 사후 P_name(c | o) ∝ 바탕(c) · Λ_reg(c) · Λ_ext(c)
- *     바탕 = objprob 이름 사후(view.json "name_post" — {"top":[[이름,p]..],..,"external"} 또는 옛 [[이름,p]..])가 있으면 그것, 없으면 P_app.  Λ_reg = 등록 이름 우도비(reg_lr, objprob 사후가 있으면 1),
+ *     바탕 = objprob 이름 사후(view.json "name_post" — {"top":[[이름,p]..],..,"external"})가 있으면 그것, 없으면 P_app.  Λ_reg = 등록 이름 우도비(reg_lr, objprob 사후가 있으면 1),
  *     Λ_ext = 확인(sgs_confirm)의 우도비 곱(user / close_look). 확인은 기억 폴더 confirmations.jsonl 에 쌓이고(근거 = 원본),
  *     cache/objsearch/names.json 은 언제든 다시 셀 수 있는 캐시.
  *

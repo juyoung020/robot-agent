@@ -27,7 +27,6 @@ scenemap 이 오도메트리 적분으로 이어 가므로 원점이 같아야 �
 | `config/limo_x2l.lua` | 리모 EAI X2L(실제·시뮬 공용): 0.15–8 m, 빠진 광선 3 m |
 | `config/openloris_hokuyo.lua` | OpenLORIS Hokuyo UTM-30LX: 0.2–12 m |
 | `tools/carto_run.cpp` | 스트림 폴더(`scans.bin` + `odom.csv` + `frames.csv`) → 궤적 `traj.csv`·최적화 노드·`carto_map.pgm`·`metrics.json`(ATE 첫 프레임 맞춤·SE(2), 오도메트리만 대비). GPU·검출 없이 몇 초 — 설정 맞출 때 |
-| `tools/carto_vs_slam2d.sh` · `_table.py` | OpenLORIS 7 판을 realbag_run 기본(Cartographer)으로 돌리고(검출 캐시 하나), 옛 slam2d 판이 있으면 같이 표로 낸다 |
 | `tools/carto_drift.py` | 떠밀림 통계 → GPU 학습 지도 SLAM 떠밀림 흉내 보정 json(아래) |
 | `calib/carto_drift.json` | 그 결과(OpenLORIS 7 판 + 시뮬 LIMO 판) |
 
