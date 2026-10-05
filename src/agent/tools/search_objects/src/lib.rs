@@ -33,10 +33,10 @@ pub const CONFIRM: &str = "confirm_object";
 pub const LIST: &str = "list_place";
 /// list_place 가 돌려주는 최대 물체 수
 pub const PLACE_MAX: usize = 15;
+/// list_place(물체) 가 둘레를 훑는 반경(m, 기준 물체 상자까지 수평 거리) — search_objects 에는 쓰지 않는다
+pub const NEAR_M: f64 = 1.5;
 pub const STATES: [&str; 4] = ["seen", "moved", "held", "gone"];
 pub const SOURCES: [&str; 2] = ["user", "close_look"];
-/// `near` 필터 반경(m, 기준 물체 상자까지 수평 거리)
-pub const NEAR_M: f64 = 1.5;
 /// 두 후보 점수가 이만큼 안이고 1 m 넘게 떨어져 있으면 어느 것인지 물어야 함
 const TIE: f64 = 0.1;
 /// 이름 후보 점수가 이보다 낮으면 약함
@@ -67,7 +67,6 @@ pub fn search_definition() -> Value {
             "k": {"type": "integer", "minimum": 1, "maximum": 10, "description": "max matches (default 5)"},
             "room": {"type": "string", "description": "optional room name or id (e.g. kitchen, R2)"},
             "state": {"type": "string", "enum": STATES},
-            "near": {"type": "string", "description": "optional object id: only objects within 1.5 m of it"},
             "max_age_s": {"type": "number", "description": "only objects seen within this many seconds"},
             "seen_after_s": {"type": "number", "description": "only objects seen at or after this memory time (now_s of an earlier result)"}
         },
@@ -105,7 +104,6 @@ pub struct SearchArgs {
     pub k: usize,
     pub room: Option<String>,
     pub state: Option<String>,
-    pub near: Option<u32>,
     /// 마지막으로 본 뒤 이 초 안
     pub max_age_s: Option<f64>,
     /// 기억 시각(now_s) 이 값 이후에 본 것
@@ -165,10 +163,6 @@ pub fn parse_search(args: &Value) -> Result<SearchArgs, String> {
             return Err(format!("state must be one of {} (got '{s}')", STATES.join(", ")));
         }
     }
-    let near = match &a["near"] {
-        Value::Null => None,
-        v => Some(parse_id(v).ok_or_else(|| format!("near must be an object id like O12 (got {v})"))?),
-    };
     let num = |k: &str| -> Result<Option<f64>, String> {
         match &a[k] {
             Value::Null => Ok(None),
@@ -181,7 +175,7 @@ pub fn parse_search(args: &Value) -> Result<SearchArgs, String> {
         }
     };
     let (max_age_s, seen_after_s) = (num("max_age_s")?, num("seen_after_s")?);
-    Ok(SearchArgs { query, k, room: opt_str(&a, "room"), state, near, max_age_s, seen_after_s })
+    Ok(SearchArgs { query, k, room: opt_str(&a, "room"), state, max_age_s, seen_after_s })
 }
 
 pub fn parse_list(args: &Value) -> Result<Place, String> {
@@ -254,7 +248,6 @@ pub fn time_ok(o: &ObjInfo, now: f64, max_age_s: Option<f64>, seen_after_s: Opti
 pub fn format_search(core: &Value, mem: &dyn Memory, a: &SearchArgs, name_of: &dyn Fn(u32) -> Option<String>) -> Value {
     let rooms: Option<Vec<i64>> = a.room.as_ref().map(|r| mem.find_rooms(r));
     let pose = mem.pose();
-    let near = a.near.and_then(|id| mem.get(id).cloned());
     let mut out = vec![];
     let mut kept: Vec<(&Value, &ObjInfo)> = vec![];
     for h in core["hits"].as_array().into_iter().flatten() {
@@ -269,11 +262,6 @@ pub fn format_search(core: &Value, mem: &dyn Memory, a: &SearchArgs, name_of: &d
         }
         if !time_ok(o, mem.now(), a.max_age_s, a.seen_after_s) {
             continue;
-        }
-        if let Some(n) = &near {
-            if n.id == o.id || n.xy_dist_to_box(o.pos[0], o.pos[1]) > NEAR_M {
-                continue;
-            }
         }
         kept.push((h, o));
         if kept.len() >= a.k {
@@ -464,7 +452,7 @@ pub fn format_list(place: &Place, mem: &dyn Memory, info: &dyn Fn(u32) -> Option
     res.insert("now_s".into(), json!(mem.now().round()));
     res.insert("n".into(), json!(n));
     if n > PLACE_MAX {
-        res.insert("hint".into(), json!(format!("{} more not shown; narrow with search_objects (room, near, max_age_s)", n - PLACE_MAX)));
+        res.insert("hint".into(), json!(format!("{} more not shown; narrow with search_objects (room, max_age_s)", n - PLACE_MAX)));
     } else if n == 0 {
         res.insert("hint".into(), json!("nothing remembered there; explore or ask the user"));
     }
@@ -550,11 +538,6 @@ impl ObjectSearch {
         if let Some(r) = &a.room {
             if mem.find_rooms(r).is_empty() {
                 return error_obs(SEARCH, &format!("unknown room '{r}'; rooms: {}", room_list(mem)));
-            }
-        }
-        if let Some(n) = a.near {
-            if mem.get(n).is_none() {
-                return error_obs(SEARCH, &format!("unknown object id O{n} for near"));
             }
         }
         self.last_query = a.query.clone();

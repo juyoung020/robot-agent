@@ -136,7 +136,7 @@ skillspec (Rust, 순수 함수, 의존성 0)
 | `main.rs` | 명령: `chat`, `serve`(앱 WS), `ask "<질문>" --scene scene.json`, `eval <set>`, `replay` | |
 | `agent.rs` | 대화 한 턴: Router → (T0/T1/T2) → 답 스트리밍. 반복 한도 6, 도구 없는 글은 최종 답으로 | 수업 week02 루프 |
 | `router.rs` | 의도 분류 `Where / Command / Status / Cancel / Chat` — 규칙(한국어 어미·동사 사전) 먼저, 애매하면 T1 에 맡김 | |
-| `memview.rs` | `sm_snapshot` FFI 래퍼 `MemSnapshot`(수명 안전): `find`, `near`, `objects`, `movable`, `view`, `reachable`, `pose`. 오프라인용 `scene.json`(Spark-DSG) 읽기 구현도 같은 trait `Memory` | behavior-2026 `graph.rs` `SceneQuery` |
+| `memview.rs` | `sm_snapshot` FFI 래퍼 `MemSnapshot`(수명 안전): `find`, `objects`, `movable`, `view`, `reachable`, `pose`. 오프라인용 `scene.json`(Spark-DSG) 읽기 구현도 같은 trait `Memory` | behavior-2026 `graph.rs` `SceneQuery` |
 | `rooms.rs` | 방 추론(3.5절) `RoomMap::room_at(x,y) -> Option<RoomLabel>` | |
 | `landmark.rs` | 가까운 기준물(고정 가구) 고르기 — 이름·거리·상대 높이만, 관계 계산 없음(3.6절) | |
 | `lexicon.rs` | 한국어 ↔ 라벨: `컵/머그잔/텀블러 → cup`, `쓰레기통/휴지통 → trash can`, 방 `부엌/주방 → kitchen` … 표(TOML) + 표에 없으면 LLM 질의 1회 | |
@@ -161,7 +161,7 @@ skillspec (Rust, 순수 함수, 의존성 0)
 
 | 도구 | 인자 | 결과(요약) | 끝냄 |
 |---|---|---|---|
-| `search_objects` (10-05, 옛 `find_object`) | `query: string`(한국어 가능), `k: int=5`, `room?`, `state?`, `near?`, `max_age_s?`, `seen_after_s?` | 3 단계 중 ①② 를 도구 안에서: ① 이름·동의어·상위어 검색 → 없거나 약하면 ② **이름 무시 생김새 재검색**(물체별 시점 벡터로 P(질의어 \| 모습)). 결과는 글만: `{query, searched, ask_user?, hint?, matches:[{id, name, name_p, alt:[{name,p}], match_type: name/appearance, registered?, p_query·p_registered(appearance 일 때), attrs:[색·재질·크기], room, landmark{id,name,dist_m,dz_m}, state, last_seen_ago_s, pos, size, pos_sd?, rel{x,y,z,dist_m,bearing_deg}, match}], now_s}` — `ask_user` 는 후보마다가 아니라 결과 맨 위 하나(만든 것: [`tools/search_objects`](tools/search_objects/)), 없으면 `matches:[]` + `ask_user` + `hint` | |
+| `search_objects` (10-05, 옛 `find_object`) | `query: string`(한국어 가능), `k: int=5`, `room?`, `state?`, `max_age_s?`, `seen_after_s?` | 3 단계 중 ①② 를 도구 안에서: ① 이름·동의어·상위어 검색 → 없거나 약하면 ② **이름 무시 생김새 재검색**(물체별 시점 벡터로 P(질의어 \| 모습)). 결과는 글만: `{query, searched, ask_user?, hint?, matches:[{id, name, name_p, alt:[{name,p}], match_type: name/appearance, registered?, p_query·p_registered(appearance 일 때), attrs:[색·재질·크기], room, landmark{id,name,dist_m,dz_m}, state, last_seen_ago_s, pos, size, pos_sd?, rel{x,y,z,dist_m,bearing_deg}, match}], now_s}` — `ask_user` 는 후보마다가 아니라 결과 맨 위 하나(만든 것: [`tools/search_objects`](tools/search_objects/)), 없으면 `matches:[]` + `ask_user` + `hint` | |
 | `confirm_object` (10-05) | `id`, `name`, `source: enum(user, close_look)` | ③ 이름 고치기 — 물체 이름 사후에 강한 관측으로 반영, 다음부터 ① 에서 바로 찾음. 확인 기록은 보정 데이터 | |
 | `describe_object` | `id`, `with_image: bool=false` | 크기·높이·관측 수·처음 자리에서 움직인 거리 + (선택) best view RGB 256 px(`sm_snap_view`) | |
 | `list_place` (10-05) | `place: string`(방 이름·`R2` 또는 가구 id `O12`) | 그 방 물체, 또는 그 가구 상자에서 수평 1.5 m 안 물체(최대 15, 옮길 수 있는 것 먼저). 줄은 찾기와 같은 칸 + 가구면 `dist_m`·`dz_m` — **관계말 없음**(만든 것: [`tools/search_objects`](tools/search_objects/)) | |

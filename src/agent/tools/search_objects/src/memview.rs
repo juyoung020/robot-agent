@@ -54,19 +54,6 @@ pub trait Memory {
     fn get(&self, id: u32) -> Option<&ObjInfo> {
         self.objects().iter().find(|o| o.id == id)
     }
-    /// 물체 id 둘레 r m 안의 물체(자기 빼고, 가까운 순): (id, 수평 거리)
-    fn near(&self, id: u32, r: f64) -> Vec<(u32, f64)> {
-        let Some(c) = self.get(id) else { return vec![] };
-        let mut v: Vec<(u32, f64)> = self
-            .objects()
-            .iter()
-            .filter(|o| o.id != id)
-            .map(|o| (o.id, o.xy_dist_to_box(c.pos[0], c.pos[1])))
-            .filter(|(_, d)| *d <= r)
-            .collect();
-        v.sort_by(|a, b| a.1.total_cmp(&b.1));
-        v
-    }
 }
 
 /// 도구가 쓰는 기억: 보기([`Memory`]) + 새로 읽기 + (실시간이면) 지도에 이름 관측 넣기.

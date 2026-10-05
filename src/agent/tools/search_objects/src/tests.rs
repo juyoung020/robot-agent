@@ -28,8 +28,8 @@ fn schemas_are_small_and_strict() {
 
 #[test]
 fn parse_tolerant_and_errors_fixable() {
-    let a = parse_search(&Value::String(r#"{"query":" 라디오 ","k":"3","state":"Seen","near":"o12"}"#.into())).unwrap();
-    assert_eq!((a.query.as_str(), a.k, a.state.as_deref(), a.near), ("라디오", 3, Some("seen"), Some(12)));
+    let a = parse_search(&Value::String(r#"{"query":" 라디오 ","k":"3","state":"Seen"}"#.into())).unwrap();
+    assert_eq!((a.query.as_str(), a.k, a.state.as_deref()), ("라디오", 3, Some("seen")));
     assert_eq!(parse_search(&args(r#"{"query":"cup","k":99}"#)).unwrap().k, 10);
     assert!(parse_search(&args(r#"{"k":3}"#)).unwrap_err().contains("query is required"));
     assert!(parse_search(&args(r#"{"query":"cup","state":"lost"}"#)).unwrap_err().contains("seen, moved, held, gone"));
@@ -126,8 +126,6 @@ fn name_hit_no_question_filters_and_ties() {
     let r = format_search(&core, &fk, &a, &|_| None);
     assert_eq!(r["matches"].as_array().unwrap().len(), 1);
     assert!(r.get("ask_user").is_none(), "one strong name hit -> no question: {r}");
-    let a = parse_search(&args(r#"{"query":"radio","near":"O33"}"#)).unwrap();
-    assert_eq!(format_search(&core, &fk, &a, &|_| None)["matches"][0]["id"], "O27");
     let a = parse_search(&args(r#"{"query":"radio","state":"gone"}"#)).unwrap();
     let r = format_search(&core, &fk, &a, &|_| None);
     assert!(r["matches"].as_array().unwrap().is_empty() && r["ask_user"].as_str().unwrap().contains("nothing in memory"));
