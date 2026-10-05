@@ -42,15 +42,15 @@
 
 <br><br>
 
-<img src="docs/assets/curriculum_1_explore.gif" width="760" alt="커리큘럼 1 — 탐색">
+<img src="docs/assets/curriculum_2_goto.gif" width="760" alt="커리큘럼 2 — 목표 지점으로 가기">
 
-<sub>학습 뷰어의 리플레이 탭 — 커리큘럼 1단계 <b>탐색</b>: 지시 "move the pen from the floor into the carryall" 의 <b>펜을 찾기</b>(빈 지도에서 돌아다니며 펜을 지도에 확정하고 카메라에 넣으면 성공, 19 초). RL 교사(house_single_floor, 빈 지도에서 자라는 지도)의 판을 OmniGibson 에서 다시 돌려 실제 인지(ObjectSAM + SigLIP 2 + scenemap, 점구름)로 본 모습. 왼쪽 위 = 몸통 카메라·손목 카메라, 1배속</sub>
+<sub>학습 뷰어의 리플레이 탭 — 커리큘럼 2단계 <b>목표 지점 주면 가기</b>. RL 교사가 받는 목표 = 지도 위 한 점(초록 기둥 "목표 지점", 앱에서 사용자가 누르는 바닥 지점), 그 점 0.3 m 안에 서면 성공(이 판 7.6 m, 18 초). 교사(house_single_floor, 빈 지도에서 자라는 지도, 20 분 학습·성공률 75 %)의 판을 OmniGibson 에서 다시 돌려 실제 인지(ObjectSAM + SigLIP 2 + scenemap, 점구름)로 본 모습. 왼쪽 위 = 몸통 카메라·손목 카메라, 1배속</sub>
 
 <br><br>
 
-<img src="docs/assets/curriculum_2_goto.gif" width="760" alt="커리큘럼 2 — 지점으로 가기">
+<img src="docs/assets/curriculum_3_find.gif" width="760" alt="커리큘럼 3 — 물체 찾기">
 
-<sub>커리큘럼 2단계 <b>지점으로 가기</b>: 지시 "go here" — 목표는 지도 위 한 점(앱에서 사용자가 누르는 바닥 지점), 그 점 0.3 m 안에 서면 성공(이 판 7.6 m, 18 초). 20 분 학습·성공률 75 %. 같은 방식(실제 인지, 카메라 둘, 1배속). 단계 정의는 <a href="training/curriculum/README.md">커리큘럼</a></sub>
+<sub>커리큘럼 3단계 <b>물체 찾기</b>. 교사가 받는 목표 = 물체 종류(빨간 기둥 "목표 물체: pen" — 정답 위치를 덧그린 것, 교사는 모름). 빈 지도에서 돌아다니며 펜을 지도에 확정하고 카메라에 넣으면 성공(19 초). 같은 방식, 1배속. 단계 정의(1 지도 쌓기 → 2 지점 가기 → 3 물체 찾기 → 4 잡기 → 5 찾아서 잡기)는 <a href="training/curriculum/README.md">커리큘럼</a></sub>
 
 </div>
 
@@ -78,7 +78,7 @@
 
 1. **물체 기억** — 로봇이 본 물체를 2D 지도 위에 등록하고, 옮겨지거나 사라지면 고친다. 물체는 ObjectSAM 으로 자르고 SigLIP 2 로 이름·임베딩을 붙이며, 같은 물체는 확률로 합친다(scenemap). 위치는 Cartographer SLAM.
 2. **에이전트 (LLM)** — 사람과 채팅으로 대화하고, 물체 기억에서 찾아(이름·생김새) 무엇을 집어 어디에 놓을지 정한다. Qwen3.5-9B.
-3. **RecallVLA** — 카메라 영상과 물체 기억을 **기억 인코더**(물체 인코더 → 기억 요약 인코더 → 기억 토큰)에 넣고, 그 토큰과 카메라를 보고 로봇 팔·바퀴를 움직인다. 정답 지도 없이, 빈 지도에서 frontier 탐사와 SLAM 으로 지도가 자라는 그 상황 안에서 과제(탐색 → 목표로 가기 → 집기 → 가서 집기)를 해내도록 학습한다. 학습은 **교사·학생** 두 단계다: 시뮬 상태를 아는 **RL 정책이 교사**로 과제를 먼저 익히고, **RecallVLA 는 학생**으로 그 교사의 시연을 **모방학습**(BC·DAgger)해 카메라와 물체 기억만으로 따라 한다. Qwen3.5-0.8B + SigLIP 2 → 다음 단계 문장 + 행동([사양](docs/map_vla/MAPVLA_SPEC.md), [커리큘럼](training/curriculum/README.md)).
+3. **RecallVLA** — 카메라 영상과 물체 기억을 **기억 인코더**(물체 인코더 → 기억 요약 인코더 → 기억 토큰)에 넣고, 그 토큰과 카메라를 보고 로봇 팔·바퀴를 움직인다. 정답 지도 없이, 빈 지도에서 frontier 탐사와 SLAM 으로 지도가 자라는 그 상황 안에서 과제(지도 쌓기 → 목표 지점 가기 → 물체 찾기 → 잡기 → 찾아서 잡기)를 해내도록 학습한다. 학습은 **교사·학생** 두 단계다: 시뮬 상태를 아는 **RL 정책이 교사**로 과제를 먼저 익히고, **RecallVLA 는 학생**으로 그 교사의 시연을 **모방학습**(BC·DAgger)해 카메라와 물체 기억만으로 따라 한다. Qwen3.5-0.8B + SigLIP 2 → 다음 단계 문장 + 행동([사양](docs/map_vla/MAPVLA_SPEC.md), [커리큘럼](training/curriculum/README.md)).
 
 ## 로봇
 

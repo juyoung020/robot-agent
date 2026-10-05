@@ -1,5 +1,5 @@
 {
-  "comment": "커리큘럼 3단계 시연: 물체로 가기(B3 다가가기 — 지시된 물체 앞, 집기 직전 자세로 서기), house_single_floor 하나, 빈 지도 C2. training/curriculum/README.md",
+  "comment": "커리큘럼 3단계 시연: 물체 찾기(B2 — 빈 지도에서 목표 물체 종류를 지도에 확정하고 카메라에 넣기), house_single_floor 하나, 빈 지도 C2. README.md",
   "n_env": 4096,
   "horizon": 64,
   "epochs": 5,
@@ -45,7 +45,7 @@
     ],
     "mix": [
       0.0,
-      0.0
+      1.0
     ],
     "split": 0,
     "strict": 0,
@@ -67,7 +67,7 @@
   "curriculum": {
     "stages": [
       {
-        "name": "B3approach",
+        "name": "B2find",
         "env": 3,
         "map": [
           0.0,
@@ -76,7 +76,7 @@
         "b": {
           "mix": [
             0.0,
-            0.0
+            1.0
           ],
           "pnp": [
             0,
@@ -86,7 +86,7 @@
         },
         "act_mask": 3,
         "promote": 2.0,
-        "metric": 5
+        "metric": 4
       }
     ],
     "window": 20,

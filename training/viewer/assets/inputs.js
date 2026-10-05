@@ -169,7 +169,7 @@ function condHtml(SC, I) {
 // 팔 닿는 띠(목표 둘레 r 0.30·0.38 m 고리 — 가반 하중 보통·뻗음), 잡기 가능 색칠(창 안 집을 후보: 초록 = 잡기 모형 됨, 빨강 = 안 됨 + 까닭).
 // off = 창 → 그리는 틀(OG 판은 창 가운데 wx·wy, .trp 판은 0). 돌려줌 { cond, env, feas } 묶음(켜고 끔)
 export function buildOverlays(T, SC, I, off, label) {
-  const ox = off[0] || 0, oy = off[1] || 0, out = { cond: new T.Group(), env: new T.Group(), feas: new T.Group(), hover: [] };
+  const ox = off[0] || 0, oy = off[1] || 0, out = { cond: new T.Group(), env: new T.Group(), feas: new T.Group(), goal: new T.Group(), hover: [] };
   const P = SC.pnp || {}, st = P.stance || {}, boxes = SC.boxes || [];
   const tgt = boxes.find(b => b.kind === "target"), place = boxes.find(b => b.kind === "place");
   const foot = (x, y, yaw, col, op, w) => {
@@ -179,6 +179,21 @@ export function buildOverlays(T, SC, I, off, label) {
     const a = new T.ArrowHelper(new T.Vector3(1, 0, 0), new T.Vector3(0, 0, 0.01), 0.28, col, 0.07, 0.05);
     g.add(r, e, a); g.renderOrder = 6; return g;
   };
+  // 목표 표시(과제 지시 그대로 — 정책이 받은 목표): "go here" 면 지도 위 점, 아니면 목표 물체. 기둥 + 이름표
+  {
+    const pole = (x, y, z0, col, text) => {
+      const c = new T.Mesh(new T.CylinderGeometry(0.035, 0.035, 1.2, 16), new T.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.9 }));
+      c.rotation.x = Math.PI / 2; c.position.set(x + ox, y + oy, z0 + 0.6); c.renderOrder = 7; out.goal.add(c);
+      const d = new T.Mesh(new T.RingGeometry(0.18, 0.26, 48), new T.MeshBasicMaterial({ color: col, side: T.DoubleSide, transparent: true, opacity: 0.8, depthWrite: false }));
+      d.position.set(x + ox, y + oy, Math.max(0.02, z0)); d.renderOrder = 7; out.goal.add(d);
+      if (label) out.goal.add(label(text, x + ox, y + oy, z0 + 1.4, 0.3, "rgba(255,255,255,0.92)"));
+    };
+    const it = ((SC.world && SC.world.instr_text) || "").toLowerCase();
+    if (it.startsWith("go here")) {   // 지점으로 가기: 목표 = 지도 위 점(기록에서는 놓을 점, 없으면 목표 상자 가운데)
+      const g = P.place_pt || (tgt && tgt.c);
+      if (g) pole(g[0], g[1], 0, 0x0ca30c, "목표 지점");
+    } else if (tgt) pole(tgt.c[0], tgt.c[1], Math.max(0, tgt.c[2] - tgt.h[2]), 0xe34948, `목표 물체: ${tgt.name}`);
+  }
   for (const c of st.cands || []) out.cond.add(foot(c[0], c[1], c[2], 0x3987e5, 0.6));
   if (st.gst4 && (st.gst4[0] || st.gst4[1])) out.cond.add(foot(st.gst4[0], st.gst4[1], st.gst4[2], 0x4a3aa7, 0.8));
   const ch = I && I.chosen_stance;
