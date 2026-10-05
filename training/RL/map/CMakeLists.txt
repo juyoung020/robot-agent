@@ -46,7 +46,7 @@ enable_testing()
 add_test(NAME map_bit_identical COMMAND map_verify 1024 300)
 add_test(NAME map_negative_control COMMAND map_verify 1024 120 --negative)
 add_test(NAME map_bit_identical_arm COMMAND map_verify 1024 300 --arm)
-# BEHAVIOR 집(E2, data/b1k_scenes 필요): 지도 + 환경 되먹임
+# BEHAVIOR 집(E2, training/data/b1k_scenes 필요): 지도 + 환경 되먹임
 add_test(NAME map_bit_identical_behavior COMMAND map_verify 512 300 --stage 3 --curr 0.34,0.33)
 add_test(NAME map_negative_behavior COMMAND map_verify 512 120 --stage 3 --negative)
 

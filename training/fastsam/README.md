@@ -23,7 +23,7 @@ FastSAM-s 416(TensorRT, `src/scene_graph/ovdet`)을 다시 학습한다.
 ## 결과 요약
 
 **설치한 엔진**
-- `FastSAM-s-416-obj`: FastSAM-s 재학습 v2 — 버림(엔진 지움), 문턱 0.05 보정. `.pt`·`.onnx` 는 (지움)((지움)). 옛 학습 판은 `data/datasets/fastsam_obj/archive/`.
+- `FastSAM-s-416-obj`: FastSAM-s 재학습 v2 — 버림(엔진 지움), 문턱 0.05 보정. `.pt`·`.onnx` 는 (지움)((지움)). 옛 학습 판은 `training/data/fastsam_obj/archive/`.
 - `models/ovdet/x86_sm120/yolo26n-seg-obj-416.plan`: **ObjectSAM** — YOLO26n 학생(`n26_uw`, 덜 나눔 벌점), 문턱 0.03 보정. **기본 엔진(10-05)**. 공개판 ObjectSAM v1.0(`ObjectSAM-416.*`).
   - 앞 학생(v0, t 0.04)은 (지움).
 - 옛 엔진 `FastSAM-s-416.plan` 은 `models/ovdet/x86_sm120/` 에 그대로 있다(라벨 선생·평가 기준, `--engine`/`SGRT_ENGINE` 으로 고름). 기본값은 ObjectSAM 이다.
@@ -88,10 +88,10 @@ FastSAM-s 416(TensorRT, `src/scene_graph/ovdet`)을 다시 학습한다.
 
 | 출처 | 쓴 것 | 고른 방법 | 위치(git 밖) |
 |---|---|---|---|
-| BEHAVIOR 2026 시뮬 | 51 장면 중 `*_garden` 을 뺀 46. 학습 36 장면 + 과제 템플릿 판, 평가 10 장면 | 아래 "시뮬 렌더" | `data/datasets/fastsam_obj/sim/` |
-| COCO 2017 + COCO-panoptic | train 12,000 장(실내 9,000 + 그 밖 3,000), 평가 val 1,500 장(실내 1,000 + 500) | 실내 = 벽·바닥·천장 stuff 가 이미지의 10 % 이상. 평가는 LVIS v1 val 에도 있는 val2017 이미지 | `data/datasets/fastsam_obj/real/` |
+| BEHAVIOR 2026 시뮬 | 51 장면 중 `*_garden` 을 뺀 46. 학습 36 장면 + 과제 템플릿 판, 평가 10 장면 | 아래 "시뮬 렌더" | `training/data/fastsam_obj/sim/` |
+| COCO 2017 + COCO-panoptic | train 12,000 장(실내 9,000 + 그 밖 3,000), 평가 val 1,500 장(실내 1,000 + 500) | 실내 = 벽·바닥·천장 stuff 가 이미지의 10 % 이상. 평가는 LVIS v1 val 에도 있는 val2017 이미지 | `training/data/fastsam_obj/real/` |
 | LVIS v1 | 위 COCO 이미지의 인스턴스(1,203 범주). panoptic thing 과 IoU > 0.7 이면 LVIS 쪽을 버림 | 학습에서 120 범주를 뺌(`heldout_lvis.txt`, COCO 80 과 안 겹치는 c·f 빈도에서 시드 0) | 같은 곳 |
-| ADE20K SceneParsing 2016 + 2017 instance | train 실내 6,000 장, val 실내 1,021 장 | 실내 = 천장 ≥ 2 % 또는 벽 + 바닥 ≥ 15 % | `data/datasets/fastsam_obj/raw/` |
+| ADE20K SceneParsing 2016 + 2017 instance | train 실내 6,000 장, val 실내 1,021 장 | 실내 = 천장 ≥ 2 % 또는 벽 + 바닥 ≥ 15 % | `training/data/fastsam_obj/raw/` |
 
 **'처음 보는 범주' 시험**
 - LVIS 120 범주는 학습 라벨에서 지운다. 옛 엔진 마스크가 있으면 그것만 남는다. 실제로 배포한 뒤 처음 보는 물체가 놓이는 처지와 같다.
@@ -128,7 +128,7 @@ FastSAM-s 416(TensorRT, `src/scene_graph/ovdet`)을 다시 학습한다.
 
 **자원**
 - OG 는 `flock /tmp/claude-1000/og.lock` 을 장면마다 따로 잡는다.
-- Kit 이 장면마다 0.6–1 GB 남기는 임시 폴더는 프로세스 전용 TMPDIR(`data/datasets/fastsam_obj/tmp/<scene>_<pid>`)로 모으고 끝에 지운다.
+- Kit 이 장면마다 0.6–1 GB 남기는 임시 폴더는 프로세스 전용 TMPDIR(`training/data/fastsam_obj/tmp/<scene>_<pid>`)로 모으고 끝에 지운다.
 
 **장면 나누기(`scenes.sh`)**
 - 평가 장면은 집 단위로 뺀다. 같은 건물의 다른 층·좌우 짝도 같이 뺀다.
@@ -179,7 +179,7 @@ FastSAM-s 416(TensorRT, `src/scene_graph/ovdet`)을 다시 학습한다.
 **기록**
 - sim_detcmp radio r3(LIMO + OMX frontier 탐사, house_double_floor_lower, 146 s, 정답 34).
 - realbag_run 은 slam·gt 자세 두 판으로 돌린다.
-- 옛 규칙(plain)과 scenemap 확률 모드(objprob, `--objprob --label-prior data/datasets/objprob/fit1/label_prior.json`) 둘 다 본다.
+- 옛 규칙(plain)과 scenemap 확률 모드(objprob, `--objprob --label-prior training/data/objprob/fit1/label_prior.json`) 둘 다 본다.
 - 채점은 `src/scene_graph/tools/realbag/objprob_eval.py` 로 한다(detcmp_eval 표 + 잘못 합침·문창계단).
 
 **빌드**
@@ -329,7 +329,7 @@ cd training/fastsam
 # 1) 시뮬 렌더 + 광선 라벨(OG conda env behavior, og.lock)
 bash render_all.sh eval; bash render_all.sh train; bash render_tasks.sh
 # 2) 실제 사진 고르기·받기(raw: panoptic_annotations_trainval2017.zip, lvis_v1_{train,val}.json.zip,
-#    ADEChallengeData2016.zip, ChallengeData2017/annotations_instance.tar → data/datasets/fastsam_obj/raw)
+#    ADEChallengeData2016.zip, ChallengeData2017/annotations_instance.tar → training/data/fastsam_obj/raw)
 $FS_PY select_real.py
 # 3) 라벨(옛 엔진 자기 증류 + 정답), 조각으로 나눠 동시에
 for k in 0 1 2 3; do $FS_PY build_data.py --source coco_train --shard $k/4 & done
@@ -339,26 +339,26 @@ $FS_PY build_data.py --source sim_val; $FS_PY build_data.py --source coco_val
 # 4) 학습 → 문턱 고르기 → 보정 → 엔진
 $FS_PY train.py --name <run> --epochs 30 --sim-rep 3
 bash cand_eval.sh <run> last        # 임시 엔진 + 옛 엔진과 짝 평가
-$FS_PY sweep_t.py data/datasets/fastsam_obj/cand/cand_<run>_last.plan --ts 0.25 0.18 0.14 0.11 0.09 0.07 0.05 \
-    --out data/datasets/fastsam_obj/eval/sweep_<run>.json
-$FS_PY calibrate.py data/datasets/fastsam_obj/runs/<run>/weights/last.pt <out.pt> --t <best_t>
+$FS_PY sweep_t.py training/data/fastsam_obj/cand/cand_<run>_last.plan --ts 0.25 0.18 0.14 0.11 0.09 0.07 0.05 \
+    --out training/data/fastsam_obj/eval/sweep_<run>.json
+$FS_PY calibrate.py training/data/fastsam_obj/runs/<run>/weights/last.pt <out.pt> --t <best_t>
 bash export.sh <out.pt> <이름>      # → models/ovdet/{pt,x86_sm120}/<이름>.*
 # 5) 지연 시간(빈 GPU 에서)
 $FS_PY bench_latency.py old=models/ovdet/x86_sm120/FastSAM-s-416.plan new=models/ovdet/x86_sm120/yolo26n-seg-obj-416.plan \
-    --images data/datasets/sim_detcmp/streams/radio_limo_r3/rgb --n 300
+    --images training/data/sim_detcmp/streams/radio_limo_r3/rgb --n 300
 # 6) 끝에서 끝·실제 bag
 bash e2e.sh <이름> models/ovdet/x86_sm120/<이름>.plan objprob   # 그리고 objprob
 bash realcheck.sh <이름> models/ovdet/x86_sm120/<이름>.plan
 # 7) ObjectSAM(YOLO26n 학생 n26_uw): 같은 목록·라벨, 덜 나눔 벌점
-$FS_PY train.py --name n26_v1 --init data/datasets/fastsam_obj/runs/n26_v0/weights/last.pt \
-    --list data/datasets/fastsam_obj/yolo/train_fs_v2.txt --epochs 30 --lr0 0.003 --workers 4
-$FS_PY train.py --name n26_uw --init data/datasets/fastsam_obj/runs/n26_v1/weights/last.pt \
-    --list data/datasets/fastsam_obj/yolo/train_fs_v2.txt --epochs 15 --lr0 0.002 --workers 4 --under-w 3
-#    (증류 판: FASTSAM_YOLO=data/datasets/fastsam_obj/yolo_kd STATS_TAG=_kd build_data.py --teacher FastSAM-s-416-obj.plan …,
-#     train.py --data data/datasets/fastsam_obj/yolo_kd — images·labels/val 은 yolo/ 로 링크)
+$FS_PY train.py --name n26_v1 --init training/data/fastsam_obj/runs/n26_v0/weights/last.pt \
+    --list training/data/fastsam_obj/yolo/train_fs_v2.txt --epochs 30 --lr0 0.003 --workers 4
+$FS_PY train.py --name n26_uw --init training/data/fastsam_obj/runs/n26_v1/weights/last.pt \
+    --list training/data/fastsam_obj/yolo/train_fs_v2.txt --epochs 15 --lr0 0.002 --workers 4 --under-w 3
+#    (증류 판: FASTSAM_YOLO=training/data/fastsam_obj/yolo_kd STATS_TAG=_kd build_data.py --teacher FastSAM-s-416-obj.plan …,
+#     train.py --data training/data/fastsam_obj/yolo_kd — images·labels/val 은 yolo/ 로 링크)
 # 8) 양자화: 보정 묶음 → Q/DQ ONNX → INT8 엔진 → 평가(RAM: 학습과 같이 돌리지 말 것)
-$FS_PY quant_engine.py calib --out data/datasets/fastsam_obj/quant/calib512.npy --list data/datasets/fastsam_obj/yolo/train_fs_v2.txt
-$FS_PY quant_engine.py qdq <model.onnx> <model_qdq.onnx> --calib data/datasets/fastsam_obj/quant/calib512.npy --algo entropy --exclude 'model\.23/'
+$FS_PY quant_engine.py calib --out training/data/fastsam_obj/quant/calib512.npy --list training/data/fastsam_obj/yolo/train_fs_v2.txt
+$FS_PY quant_engine.py qdq <model.onnx> <model_qdq.onnx> --calib training/data/fastsam_obj/quant/calib512.npy --algo entropy --exclude 'model\.23/'
 $TRT_PY quant_engine.py build <model_qdq.onnx> <out.plan> --mode int8
 # 9) 공개판: sanitize_release.py <cal.pt> <out_dir> ObjectSAM-416 → .pt·.onnx, 위 qdq 로 -int8-qdq.onnx
 ```

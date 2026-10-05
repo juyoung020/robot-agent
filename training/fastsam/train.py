@@ -67,7 +67,7 @@ def patch_under_weight(w):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--name', required=True)
-    ap.add_argument('--init', default=f'{c.HOME}/ovdet_models/pt/FastSAM-s.pt')
+    ap.add_argument('--init', default=f'{c.OVDET}/pt/FastSAM-s.pt')
     ap.add_argument('--epochs', type=int, default=30)
     ap.add_argument('--batch', type=int, default=32)
     ap.add_argument('--lr0', type=float, default=0.002)

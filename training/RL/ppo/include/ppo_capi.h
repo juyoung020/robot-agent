@@ -65,7 +65,7 @@ typedef struct PpoConfig {
   int32_t map_nav_k;      /* 지도 다가가기 거리장 주기(스텝, 0 = 기본 10 — map MapCurr::nav_k) */
   PpoBCurr bcurr;         /* 처음 BEHAVIOR 커리큘럼 값(B1/B2 비율·장면 비트·split·엄격·지시문 heldout) — 장치 값, 바꾸기는 ppo_set_bcurr·장치 커리큘럼 */
   char b_scenes[256];     /* 만들 장면 이름(쉼표, 빈 = RASC 폴더 전부) */
-  char b_rasc_dir[256];   /* RASC 폴더(빈 = $RA_B1K_SCENES, 없으면 data/b1k_scenes) */
+  char b_rasc_dir[256];   /* RASC 폴더(빈 = $RA_B1K_SCENES, 없으면 training/data/b1k_scenes) */
   uint32_t env_stages;    /* 쓰는 환경 단계 비트(1 << 단계, 커리큘럼 env 의 합). 0 = stage 하나. 장치 단계 바꾸기가 띄울 환경 커널 무리를 정함 */
   int32_t pad_es;
 } PpoConfig;

@@ -1,7 +1,7 @@
 // 처리량: 판 수를 늘려 가며 지도 단계의 keyframe 갱신/초를 잰다(G1 환경 + 장치 안 접근 제어로 몬다).
 //   map_bench [steps=200] [maxN=32768] [minN=0]
 // 줄마다: 움직임 거르기 그대로(자연) / 매 스텝 keyframe(force). 지도 커널 시간만 이벤트로 재고, keyframe 수는 장치 카운터로 센다.
-// MAP_STAGE=3: BEHAVIOR 집(E2, data/b1k_scenes, B1–B3 섞음, 환경 ← 지도 거리장 되먹임). MAP_NAVK=K: 거리장 주기(기본 10), MAP_NAVK=0 이면 거리장 커널 끔(측정용)
+// MAP_STAGE=3: BEHAVIOR 집(E2, training/data/b1k_scenes, B1–B3 섞음, 환경 ← 지도 거리장 되먹임). MAP_NAVK=K: 거리장 주기(기본 10), MAP_NAVK=0 이면 거리장 커널 끔(측정용)
 #include <cstdio>
 #include <cstdlib>
 #include <vector>

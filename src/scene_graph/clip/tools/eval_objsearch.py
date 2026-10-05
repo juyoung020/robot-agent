@@ -24,7 +24,7 @@ import statistics
 import time
 RA_ROOT = os.environ.get("RA_ROOT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../.."))
 RA_MODELS = os.environ.get("OVDET_MODELS", os.path.join(RA_ROOT, "models/ovdet"))
-RA_EMBED = os.environ.get("RA_EMBED_WORK", os.path.join(RA_ROOT, "data/embed_work"))
+RA_EMBED = os.environ.get("RA_EMBED_WORK", os.path.join(RA_ROOT, "training/data/embed"))
 RA_BENCH = os.path.join(RA_ROOT, "data/clip_bench")
 RA_BUILD = os.environ.get("RA_BUILD", os.path.join(RA_ROOT, "build"))
 
@@ -93,7 +93,7 @@ class Search:
         if encode:
             ec = EncCfg()
             L.sgc_default_config(C.byref(ec))
-            ec.engine = f"{home}/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan".encode()
+            ec.engine = f"{RA_MODELS}/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan".encode()
             ec.margin = 0.0
             self.enc = L.sgc_create(C.byref(ec), err, 512)
             assert self.enc, err.value

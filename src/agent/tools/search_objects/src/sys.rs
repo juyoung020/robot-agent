@@ -128,12 +128,16 @@ pub struct Index {
 // 색인은 한 스레드에서 쓴다(sgsearch.h). 소유권을 다른 스레드로 넘기는 것은 괜찮다.
 unsafe impl Send for Index {}
 
+/// 실행 파일·라벨 표 폴더: $RA_MODELS·$OVDET_MODELS, 없으면 저장소 models/ (config/paths.env 와 같은 규칙)
+fn models_dir() -> String { std::env::var("RA_MODELS").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../models").to_string()) }
+fn ovdet_dir() -> String { std::env::var("OVDET_MODELS").unwrap_or_else(|_| format!("{}/ovdet", models_dir())) }
+
 impl Index {
     pub fn open(mem_dir: &str, p: &Paths) -> Result<Index, String> {
         let h = home();
-        let labels = p.labels.clone().or_else(|| std::env::var("SGRT_LABELS").ok()).unwrap_or_else(|| format!("{h}/embed_work/labels/objects-v1"));
-        let sample = std::env::var("SGC_IMG_SAMPLE").unwrap_or_else(|_| format!("{h}/ovdet_models/x86_sm120/siglip2_b32/img_sample_lvis10k.f16"));
-        let keep = vec![cstr(&labels), cstr(&format!("{h}/.cache/sgclip")), cstr(&sample), cstr(mem_dir)];
+        let labels = p.labels.clone().or_else(|| std::env::var("SGRT_LABELS").ok()).unwrap_or_else(|| std::env::var("RA_LABELS").unwrap_or_else(|_| format!("{}/labels/objects-v1", models_dir())));
+        let sample = std::env::var("SGC_IMG_SAMPLE").unwrap_or_else(|_| format!("{}/x86_sm120/siglip2_b32/img_sample_lvis10k.f16", ovdet_dir()));
+        let keep = vec![cstr(&labels), cstr(&format!("{h}/.cache/sgclip")), cstr(&sample), cstr(mem_dir)];   // paths-ok (색인 캐시)
         let mut err = [0u8; 512];
         unsafe {
             let l = sgc_labels_open_ex(keep[0].as_ptr(), keep[1].as_ptr(), keep[2].as_ptr(), err.as_mut_ptr() as *mut c_char, err.len());
@@ -153,7 +157,7 @@ impl Index {
             }
             if !p.no_image {
                 let eng = p.image_engine.clone().or_else(|| std::env::var("SGC_ENGINE").ok())
-                    .unwrap_or_else(|| format!("{h}/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan"));
+                    .unwrap_or_else(|| format!("{}/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan", ovdet_dir()));
                 if std::path::Path::new(&eng).exists() {
                     let ce = cstr(&eng);
                     let mut ec: EncConfig = std::mem::zeroed();

@@ -173,7 +173,7 @@ N = 4,096 이면 189 MB. keyframe 블록은 이번 시야 근처 물체(상자�
 - 시야 밖(B4 시작 자리)은 둘 다 등록하지 않는다. 이것은 지도가 아니라 고르기 문제이고, 찾을 수 있음 거르개로 풀었다(CURRICULUM 5.7.1, `env/include/findable.h`). 포트 뒤에도 `pick_cmp --find --findstart` 로 B4 목표 확정 0.978 / 교사 0.770(포트 전)과 견준다.
 
 ### 2.2 인지 흉내 맞춤(10-06, 진행 중) — `training/RL/map_calib/percept`
-- 흐름: og_cmp 진짜 기록(`data/datasets/og_cmp/<날짜>/{og,fo}` + 같은 판 GPU 내보내기 `sel`·`fsel`) → `fit_percept.py` → `percept_calib.json`(입력 해시·파이프라인 git·엔진·objprob 매개변수 해시, 받아들임 목표)
+- 흐름: og_cmp 진짜 기록(`training/data/og_cmp/<날짜>/{og,fo}` + 같은 판 GPU 내보내기 `sel`·`fsel`) → `fit_percept.py` → `percept_calib.json`(입력 해시·파이프라인 git·엔진·objprob 매개변수 해시, 받아들임 목표)
   → `percept_header.py` → `training/RL/map/include/percept_params.h`(값마다 `#ifndef` — 맞추는 동안 -D 로 덮음). GPU 쪽 통계 = `gpu_stats.py`(pick_cmp 판, og_cmp_report 와 같은 정의 + 참 물체 수·유령 종류).
 - **검출 확률**: 같은 keyframe 의 GPU 보이는 화소(af·nv/5)와 진짜 검출(목표가 sm_last_assoc 에 있나)을 짝지어 p = σ(b0 + b1·ln(px/600)) — b0 −1.11, b1 1.63(106 keyframe).
   GPU 화소는 상자 투영이라 진짜 실루엣 화소의 약 1.5–1.8 배다(짝 비교) — 그래서 진짜 화소가 아니라 GPU 값으로 맞춤. 앞 keyframe 검출·놓침 로짓 항 +0.61 / −0.22(진짜 화소 기준 205 keyframe).
@@ -226,7 +226,7 @@ N = 4,096 이면 189 MB. keyframe 블록은 이번 시야 근처 물체(상자�
   (1) og_replay 진짜 파이프라인이 낸 μ 를 정답 종류로 묶은 평균(BEHAVIOR 물체, OmniGibson 렌더 — 다른 에이전트 도구 결과를 읽기만), (2) 없으면 글 벡터 + 영상–글 평균 차(모달리티 차) **(가정)**.
 - **실제 런타임도 같이 바꿈**(코디네이터 10-06): 지금 실제 이름도 PE-L 길이다(`src/scene_graph/runtime/src/sgrt_clip.cpp`·`sgrt.cpp` 가 `embed_work/labels/objects-v1`(P 공간 라벨) + 머리 `h` 를 읽음).
   P5 는 두 쪽을 함께: 라벨 표 = SigLIP 2 글 탑 + 레포의 고정 PCA(자료는 `config/paths.env` 변수 아래), 실제 이름 = SigLIP 2 영상 대 SigLIP 2 글, 학습 표(`vla_vocab.h`·`vec_tab.h`·`net.h`·BC `app_head.h`).
-  순서: ① 바꾼 뒤 실제 이름 품질 확인(OpenLORIS office1-5 `realbag_run` + `objprob_eval`: 찾음·중복·이름 정확도를 지금 값과) ② 그 뒤에만 PE-L 길을 (git 태그 `pre-clean-2026-10-06`)(training/embed 머리·P·한국어 학생 스크립트, 런타임 머리 `h` 코드). 가중치·작업 파일은 data/embed_work 에 둠(지우지 않음).
+  순서: ① 바꾼 뒤 실제 이름 품질 확인(OpenLORIS office1-5 `realbag_run` + `objprob_eval`: 찾음·중복·이름 정확도를 지금 값과) ② 그 뒤에만 PE-L 길을 (git 태그 `pre-clean-2026-10-06`)(training/embed 머리·P·한국어 학생 스크립트, 런타임 머리 `h` 코드). 가중치·작업 파일은 training/data/embed 에 둠(지우지 않음).
 - **objprob 계산 하나**(사용자 결정 10-06): scenemap `objprob.cpp` 와 `objprob_gpu.h` 가 같은 헤더 `src/scene_graph/scenemap/include/scenemap/objprob_math.h`(`__host__ __device__`, STL 없음)의
   같은 것 로지스틱·이름 사후·상위어·κ·칼만·이름 분포 겹침을 부른다(자료 배치·묶음만 다름). 확인: realbag_run OpenLORIS office1-5 출력 바이트 같음(바꾸기 전후), 합성 검출 열로 CPU 대 GPU 맞춤 시험.
 - **이름 표**: `kVocab`·`kApLabels`(진짜 64 라벨) + BEHAVIOR 과제 synset 이름 → 표 행 하나로(빠진 24 개 포함). 레포 밖 `~/embed_work/labels/objects-v1` 의존은 표를 레포(`training/data/names_v2`)로 옮기고 만드는 스크립트를 레포 안에서 돌게.

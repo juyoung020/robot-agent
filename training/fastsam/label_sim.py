@@ -1,6 +1,6 @@
 """sim_render.py 출력 → 픽셀마다 물체 번호(정답 instance). 장면 visual mesh 에 광선(embree)을 쏜다.
 
-  $FS_PY label_sim.py $RA_DATASETS/fastsam_obj/sim/Rs_int [--every 1]
+  $FS_PY label_sim.py $RA_TRAIN_DATA/fastsam_obj/sim/Rs_int [--every 1]
 
 출력: <i>_ins.png(uint16, 0 = 맞은 것 없음, k = objects.json[k-1]), 장면 폴더 label_stats.json(깊이 일치율).
 OG 깊이와 광선 깊이가 2 cm·2 % 안에서 다르면(알파 잘림 잎·유리 뒤 등) 그 픽셀은 65535(모름 = 학습·평가에서 빼는 칸).

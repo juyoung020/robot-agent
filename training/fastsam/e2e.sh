@@ -7,12 +7,12 @@
 set -euo pipefail
 . "$(dirname "$0")/env_local.sh"
 N=$1; ENG=$2; MODE=$3
-DATA=${FASTSAM_DATA:-$RA_DATASETS/fastsam_obj}
+DATA=${FASTSAM_DATA:-$RA_TRAIN_DATA/fastsam_obj}
 BIN=${REALBAG_BIN:-$RA_BUILD/realbag}
 
-S=$RA_DATASETS/sim_detcmp/streams/radio_limo_r3
+S=$RA_TRAIN_DATA/sim_detcmp/streams/radio_limo_r3
 GTPGM=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)/src/sim/explore/gt/house_double_floor_lower__turning_on_radio.pgm
-PD=$RA_DATASETS/objprob
+PD=$RA_TRAIN_DATA/objprob
 PRIOR=${LABEL_PRIOR:-$PD/fit1/label_prior.json}
 FLAG=--objprob
 EV=$RA_ROOT/src/scene_graph/tools/realbag/objprob_eval.py
@@ -21,7 +21,7 @@ EXTRA=(--det fastsam --engine "$ENG")
 [ "$MODE" = objprob ] && EXTRA+=($FLAG --label-prior "$PRIOR")
 rm -rf "$R"; mkdir -p "$R"
 COMMON=(--det-every 1 --max-depth 4 --conf 0.25)
-"$BIN/realbag_run" "$S" "$R/slam" --pose slam "${COMMON[@]}" "${EXTRA[@]}" --dump "$R/dets.gz" --sg "$R/sg" > "$R/slam.log" 2>&1 &
+"$BIN/realbag_run" "$S" "$R/slam" --pose carto "${COMMON[@]}" "${EXTRA[@]}" --dump "$R/dets.gz" --sg "$R/sg" > "$R/slam.log" 2>&1 &
 P=$!; peak=0
 while kill -0 $P 2>/dev/null; do
   m=$(nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits 2>/dev/null | awk -F', ' -v p=$P '$1==p{print $2}')

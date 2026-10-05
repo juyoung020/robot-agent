@@ -1,7 +1,7 @@
 """BEHAVIOR 장면 → LIMO 높이 카메라 RGB + 물체 단위 instance 분할(정답).
 
   flock $OG_LOCK python sim_render.py   # OmniGibson python --scene Rs_int --n 200 \
-      --out $RA_DATASETS/fastsam_obj/sim/Rs_int
+      --out $RA_TRAIN_DATA/fastsam_obj/sim/Rs_int
 
 카메라: LIMO 몸통 카메라(우리 LIMO + OMX OmniGibson 설정과 같음)
   - 높이 0.18 m, 앞을 수평으로 봄, H-FOV 67.9°(Orbbec Dabai), 640×480(실제 Dabai 4:3).

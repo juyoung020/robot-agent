@@ -118,7 +118,7 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 | `SGRT_STREAM_HZ` | `60` | 요약(view) 만드는 주기 Hz, 0.5–240 으로 자름 |
 | `SGRT_RECORD` | 없음(끔) | 파일 경로. 받은 입력(proprio·외부 자세·라이다 스캔 'L'·keyframe 깊이·RGB·검출)을 이진(`SGRC` 판 1)으로 기록. `tools/sgrt_replay`(Cartographer 포함)·`scenemap/tools/sm_bench` 가 재생 |
 | `SGRT_CLIP_GRAPH` | sgclip 기본(1) | 배치 크기별 CUDA graph 쓰기(`sgc_config.use_graph`) |
-| `SGRT_LABELS` | `data/embed_work/labels/objects-v1` | 라벨 표 폴더(이름 찾기). 색인 캐시는 `<out_dir>/cache/index` |
+| `SGRT_LABELS` | `models/labels/objects-v1` | 라벨 표 폴더(이름 찾기). 색인 캐시는 `<out_dir>/cache/index` |
 | `SGC_IMG_SAMPLE` | `models/ovdet/x86_sm120/siglip2_b32/img_sample_lvis10k.f16`(있으면) | 라벨 표 투영을 맞출 영상 임베딩 표본(sgclip 변수, sgrt_clip 이 읽어 넘김) |
 | `SGRT_LIB` | `build/sgrt/libsgrt.so` | 글루: 읽을 라이브러리 |
 | `SGRT_ENGINE` | `models/ovdet/x86_sm120/yolo26n-seg-obj-416.plan` (ObjectSAM — YOLO26n 학생, 이름 없는 분할) | 글루: 검출 엔진. 이름 표는 `<엔진>.names.txt`. 선생 FastSAM-s = `FastSAM-s-416.plan` |
@@ -142,7 +142,7 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 
 판 시작(`sgrt_begin`)의 과제 이름은 엔진 프롬프트가 아니라 낱말 표에 더한다(이미 있는 낱말·라벨은 빼고, SigLIP 2 라벨 표에 있는 것만). `SGRT_CLIP`(ClipMem)은 안 켠다 — 물체 벡터 `objects/O<id>_emb.f16`(μ)·`_views.f16` 은 scenemap 이 저장하고 `sgsearch`·`search_objects` 가 읽는다. 끝날 때 stderr 에 keyframe 당 SigLIP 2·다시 담기 시간.
 
-확인: radio r3 기록(`data/datasets/limo_rec/r3.bin`)을 `sgrt_replay` 로 — 730 keyframe, 마스크 17.8 개/kf, SigLIP 2 3.7 ms/kf, 다시 담기 0.33 ms/kf, 살아 있는 노드 104(같은 기록을 realbag 스트림으로 바꾼 `realbag_run` 판 96 — 깊이 4 m 자름·영상 늦춤이 다름).
+확인: radio r3 기록(`data/limo_rec/r3.bin`)을 `sgrt_replay` 로 — 730 keyframe, 마스크 17.8 개/kf, SigLIP 2 3.7 ms/kf, 다시 담기 0.33 ms/kf, 살아 있는 노드 104(같은 기록을 realbag 스트림으로 바꾼 `realbag_run` 판 96 — 깊이 4 m 자름·영상 늦춤이 다름).
 
 ## 시험 (ctest)
 

@@ -119,7 +119,7 @@ LLM ── tool_call ──▶ ObjectSearch::run_tool (src/lib.rs) ── 인자
 | 무엇 | 환경 변수 | 기본 |
 |---|---|---|
 | `libsgclip_c.so`(빌드 때) | `SGCLIP_LIB_DIR` | `build/sgclip` |
-| 라벨 표 | `SGRT_LABELS` | `data/embed_work/labels/objects-v1` |
+| 라벨 표 | `SGRT_LABELS` | `models/labels/objects-v1` |
 | 글 인코더(토크나이저·토큰 임베딩·엔진) | `SGC_TEXT_DIR` | `models/ovdet/x86_sm120/siglip2_b32` |
 | 영상 엔진(대체 벡터) | `SGC_ENGINE` | `models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan`(없으면 대체 벡터 없이) |
 
@@ -134,7 +134,7 @@ cargo test --release                     # 시험 9개(GPU 없이; 끝까지 시
 ./target/release/search-objects live-check ../../../../build/bin/libsgrt.so /tmp/livemem
 cargo build --release --features llm
 ./target/release/search-objects schema
-cp -r data/datasets/sim_detcmp/A_fastsam/gt/memory /tmp/mem        # 기억 폴더에 캐시·확인 기록이 생기므로 복사본에서
+cp -r training/data/sim_detcmp/A_fastsam/gt/memory /tmp/mem        # 기억 폴더에 캐시·확인 기록이 생기므로 복사본에서
 ./target/release/search-objects call /tmp/mem search_objects '{"query":"라디오"}' confirm_object '{"id":"O234","name":"radio","source":"user"}'
 ./target/release/search-objects demo /tmp/mem 라디오            # 각본(LLM 없이)
 set -a; . ~/.config/robot-agent/kau.env; set +a

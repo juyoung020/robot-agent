@@ -16,7 +16,7 @@ import open_clip
 from train_head import Head
 
 ap = argparse.ArgumentParser(); ap.add_argument('dir'); ap.add_argument('--min', type=float, default=0.999)
-ap.add_argument('--head', default=os.path.join(os.environ.get('RA_EMBED_WORK', os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../data/embed_work')), 'runs/sb32_pe_300k/head.pt')); a = ap.parse_args()
+ap.add_argument('--head', default=os.path.join(os.environ.get('RA_EMBED_WORK', os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../training/data/embed')), 'runs/sb32_pe_300k/head.pt')); a = ap.parse_args()
 NI, E, V, bug = map(int, open(f'{a.dir}/meta.txt').read().split())
 tok = torch.from_numpy(np.fromfile(f'{a.dir}/tokens.f32', np.float32).reshape(NI, 64, 768))
 pc = np.fromfile(f'{a.dir}/pooled_cpp.f32', np.float32).reshape(NI, 768)

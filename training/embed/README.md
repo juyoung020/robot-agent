@@ -36,7 +36,7 @@
 - **A**: `$CLIP_BENCH/evalset.json`(CLIP 조사 것, 읽기만). 567개.
   - 내용: turning_on_radio 시연 ep 0·57·133 FastSAM crop 542개 + 시뮬 기억 best view 25개. 집은 house_double_floor_lower.
   - 지표는 `clip_bench/score.py` 를 import 해서 그대로 쓴다. 우리 재현값(OpenAI B/32 box 0.280, SigLIP 2 B/32 pool 0.340)은 그쪽 값과 같다.
-- **B**(다른 집): `make_evalset_other.py` → `data/embed_work/eval_other/`. 406개.
+- **B**(다른 집): `make_evalset_other.py` → `training/data/embed/eval_other/`. 406개.
   - putting_up_Christmas_decorations_inside ep 1800–1802, house_single_floor.
   - 같은 규칙: 마스크 60 % 이상이 한 정답 물체, IoU ≥ 0.2, 범주당 ≤ 60.
   - 구조물이 아닌 것은 약 190개(소파·아침 식탁·스탠드·트리·의자 …).
@@ -137,8 +137,8 @@
 
 ```
 export PY=$EMBED_PY        # training/README.md 의 venv
-$PY build_crops.py --n 300000            # data/embed_work/data/lvis_crops/shard_*.tar + .jsonl (이미지는 받아서 자르고 버림, 약 40분)
-$PY build_sim_crops.py --every 150       # data/embed_work/data/sim_radio (FastSAM, 같은 집)
+$PY build_crops.py --n 300000            # training/data/embed/data/lvis_crops/shard_*.tar + .jsonl (이미지는 받아서 자르고 버림, 약 40분)
+$PY build_sim_crops.py --every 150       # training/data/embed/data/sim_radio (FastSAM, 같은 집)
 $PY make_evalset_other.py --every 75     # 평가 B
 $PY evalset.py score siglip2_b32 pe_l14  # 평가셋 임베딩 + zero-shot (EVALSET=other 로 B)
 $PY build_labels.py && $PY encode_labels.py --nllb siglip2_b32 pe_l14
@@ -147,7 +147,7 @@ $PY train_head.py --base siglip2_b32 --teacher pe_l14 --views pool,poolaug,box,a
 $PY eval_head.py sb32_pe_300k            # KO_RUN=ko_small_ho 로 한국어 학생 열 추가
 $PY train_ko.py --name ko_small_ho --holdout && $PY eval_ko.py ko_small_ho
 $PY export_head.py sb32_pe_300k && $PY export_labels.py --head sb32_pe_300k
-g++ -O3 -march=native -std=c++17 lookup_bench.cpp -o data/embed_work/lookup_bench
+g++ -O3 -march=native -std=c++17 lookup_bench.cpp -o training/data/embed/lookup_bench
 ```
 
 - `extract.py` 주의
@@ -167,7 +167,7 @@ g++ -O3 -march=native -std=c++17 lookup_bench.cpp -o data/embed_work/lookup_benc
 
 ## 라벨 표 형식 (런타임과 맞추는 약속)
 
-라벨 표 하나 = 폴더 하나: `labels/<name>-<version>/`. 지금 것은 `data/embed_work/labels/objects-v1/`(65 MB)이다.
+라벨 표 하나 = 폴더 하나: `labels/<name>-<version>/`. 지금 것은 `models/labels/objects-v1/`(65 MB)이다.
 
 ```
 labels/objects-v1/
@@ -221,10 +221,10 @@ VLA_INPUT 의 "얼린 SigLIP 2 글 인코더 → 128-d 투영" 은 이 공간의
 
 ```
 HF_HUB_OFFLINE=1 $EMBED_PY training/embed/vla_tables.py           # 이름·지시 (CPU 약 12 s, 내려받기 없음)
-$EMBED_PY training/embed/export_head_f32.py                       # 머리 h → data/embed_work/runs/sb32_pe_300k/head_h.f32 (git 밖)
-data/checkpoints/bc/build/app_table --views 32                                               # 생김새 (C++/CUDA, 1 s)
+$EMBED_PY training/embed/export_head_f32.py                       # 머리 h → training/data/embed/runs/sb32_pe_300k/head_h.f32 (git 밖)
+training/runs/bc/build/app_table --views 32                                               # 생김새 (C++/CUDA, 1 s)
 python3 training/embed/vla_vocab_gen.py                                          # 확신도 표 → training/RL/map/include/vla_vocab.h, manifest
-data/checkpoints/bc/build/app_table --views 12 --dump D [--negative 1|2|3] && $EMBED_PY training/BC/tools/app_ref.py D   # 검증
+training/runs/bc/build/app_table --views 12 --dump D [--negative 1|2|3] && $EMBED_PY training/BC/tools/app_ref.py D   # 검증
 ```
 
 | 파일(`training/data/vla_v1/`, 합 440 KB) | 내용 |
@@ -281,7 +281,7 @@ data/checkpoints/bc/build/app_table --views 12 --dump D [--negative 1|2|3] && $E
   - 뽑기 약 10시간(추정).
   - 디스크: crop 약 40 GB(20 KB/개) + 임베딩 약 20 GB(FP16, 6보기).
   - 머리 학습은 10분 안쪽이다.
-- 지금 디스크(`data/embed_work`)는 18 GB 다(crop 9.2, 임베딩 5.0, 한국어 목표 2.6, 기타).
+- 지금 디스크(`training/data/embed`)는 18 GB 다(crop 9.2, 임베딩 5.0, 한국어 목표 2.6, 기타).
   - 따로 venv 7.5 GB, HF 캐시 약 8 GB(So400m 4.3, PE-L 2.6, EVA-L 0.8 …)를 쓴다.
 
 ## 남은 일

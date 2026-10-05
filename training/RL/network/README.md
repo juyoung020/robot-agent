@@ -59,7 +59,7 @@ G3 와 비트가 같다(`d0 + scale·db` 를 db ≠ 0 일 때만). rl_games 의 
 
 ### V3 (`fp8_verify`, BC CMake 의 대상)
 ```
-data/checkpoints/bc/build/fp8_verify probe | quant | gemm [--negative] | bench
+training/runs/bc/build/fp8_verify probe | quant | gemm [--negative] | bench
 ```
 | 검사 | 결과 |
 |---|---|

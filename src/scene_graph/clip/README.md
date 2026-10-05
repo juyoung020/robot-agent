@@ -48,7 +48,7 @@ cmake -S src/scene_graph/clip -B build/sgclip && cmake --build build/sgclip -j &
 # 3) sgrt 에 같이 들어감(runtime/CMakeLists.txt add_subdirectory) — objprob 이 마스크마다 SigLIP 2 이름·임베딩
 ```
 
-- 라벨 표: `SGRT_LABELS`(기본 `data/embed_work/labels/objects-v1`, training/embed `export_labels.py` 가 만든다).
+- 라벨 표: `SGRT_LABELS`(기본 `models/labels/objects-v1`, training/embed `export_labels.py` 가 만든다).
 - 투영 표본: `SGC_IMG_SAMPLE`(기본 `models/ovdet/x86_sm120/siglip2_b32/img_sample_lvis10k.f16` — LVIS crop 9,753개를 같은 엔진으로 뽑은 FP16 임베딩). 없으면 라벨 글 PCA(1단계 순위가 나쁨).
 - 시험 기준 파일: `tools/make_parity.py` → `parity.bin`, `queries_f32.bin`(없으면 그 시험은 건너뜀).
 
@@ -114,7 +114,7 @@ RecallVLA 실행기는 같은 색인에 자기 질의 벡터(SigLIP 2 글 공간
 **결과 JSON**(`sgs_search_json`, 도구가 기억 자리 정보를 붙여 LLM 글로): `{query, resolved{kind, label, ko, senses}, step2, best_name, n_name_hits,
 hits:[{id, name, name_ko, name_p, registered, alt:[[이름, p]…], attrs, vec, nv, match, match_type, p_name, p_query, q_rank, p_registered, p_img?, like?}], n_objects, us}`
 
-**측정**(`tools/eval_objsearch.py`, BEHAVIOR `house_double_floor_lower` LIMO 탐사 기억 = `data/datasets/sim_detcmp/A_fastsam`(FastSAM-s + SigLIP 2,
+**측정**(`tools/eval_objsearch.py`, BEHAVIOR `house_double_floor_lower` LIMO 탐사 기억 = `training/data/sim_detcmp/A_fastsam`(FastSAM-s + SigLIP 2,
 등록 이름 어휘 62 개 — 정답과 맞는 이름이 적음), 확률 모드 전이라 대체 벡터(best view 사진 1 장). 질의 = 지도에 있는 정답 종류 18 개를 사람이 부를 말로
 ("chair" → straight_chair, "refrigerator" → fridge …), 관련 물체 = 정답 짝 + 정답 상자 안에 중심이 든 물체(같은 물건의 조각·중복).
 "이름 못 찾는 물체" = 이름만 찾기가 돌려주지 않는 관련 물체(18 질의 모두 있음). 없는 물체 질의 40 개(컵·노트북·자전거 …).

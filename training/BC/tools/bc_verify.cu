@@ -33,8 +33,8 @@ static std::vector<T_> dl(const T_* d, size_t n) {
 static std::vector<double> bfv(const std::vector<uint16_t>& v) { std::vector<double> o(v.size()); for (size_t i = 0; i < v.size(); ++i) o[i] = bf2f(v[i]); return o; }
 static std::vector<double> fv(const std::vector<float>& v) { return std::vector<double>(v.begin(), v.end()); }
 
-// 교사 체크포인트: --teacher > $RA_CHECKPOINTS/ppo/teacher.bin (기본 data/checkpoints — 이 파일에서 세 칸 위가 저장소)
-static std::string ckpt_root() { const char* e = std::getenv("RA_CHECKPOINTS"); if (e && *e) return e; std::string f = __FILE__; for (int i = 0; i < 4; ++i) f = f.substr(0, f.find_last_of('/')); return f + "/data/checkpoints"; }
+// 교사 체크포인트: --teacher > $RA_CHECKPOINTS/ppo/teacher.bin (기본 training/runs — 이 파일에서 세 칸 위가 저장소)
+static std::string ckpt_root() { const char* e = std::getenv("RA_CHECKPOINTS"); if (e && *e) return e; std::string f = __FILE__; for (int i = 0; i < 4; ++i) f = f.substr(0, f.find_last_of('/')); return f + "/training/runs"; }
 static std::string g_teacher = ckpt_root() + "/ppo/teacher.bin";
 static std::string g_text = "";
 static bool g_lite = false;

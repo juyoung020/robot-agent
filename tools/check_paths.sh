@@ -7,7 +7,7 @@
 # 안 보는 것: *.md·docs/·refs/(역사·설명), config/ 자신, 이 도구와 훅, conda 환경($HOME/miniconda3 · ~/.config 설정).
 # 한 줄만 예외로 하려면 그 줄에 `paths-ok` 를 적는다.
 cd "$(git rev-parse --show-toplevel)" || exit 2
-PAT='(~|\$HOME|\$\{HOME\}|/home/[a-z][a-z0-9_-]*)/|behavior-2026|(^|[^A-Za-z0-9_])(ra_[a-z0-9_]+|realbag_build[a-z0-9_]*|sgrt_build[a-z0-9_]*)(/|$|[[:space:]"'\''])'
+PAT='(~|\$HOME|\$\{HOME\}|\$ENV\{HOME\}|\{h\}|\{HOME\}|/home/[a-z][a-z0-9_-]*)/|Path\.home\(\)|behavior-2026|(^|[^A-Za-z0-9_])(ra_[a-z0-9_]+|realbag_build[a-z0-9_]*|sgrt_build[a-z0-9_]*)(/|$|[[:space:]"'\''])'
 OKPAT='paths-ok|(~|\$HOME|\$\{HOME\})/(miniconda3|\.config/|\.cache/|\.cargo|\.local/bin)'
 SKIP='^(docs/|refs/|config/|training/fastsam/publish_objectsam\.sh|CLAUDE\.md|tools/check_paths\.sh|tools/audit\.py|tools/git-hooks/)|\.(md|pdf|png|jpg|glb|lock|npy|f16|f32|bin|jsonl)$'
 if [ "${1:-}" = "--staged" ]; then

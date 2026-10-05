@@ -44,7 +44,7 @@ static bool g_a2 = false;       // --a2: A2 환경(가구) + 지도 토큰에 �
 static bool g_act8 = false;     // --act8: 행동 8 모두 학습(act_mask 0xff — 팔·그리퍼 포함, VLA_INPUT 5절)
 static bool g_aug = false;      // --aug: 학습 때 흔들기 켬(속도 잡음·직전 명령·이름 흔들기·칸 지우기·지도 끄기, obs.h ObsAug)
 static bool g_beh = false;      // --beh: BEHAVIOR 장면 묶음을 만들어 환경·지도에 붙임(상자 방 단계면 결과 비트가 같아야 함). 단계 3 이면 늘 켬
-static int g_stage = -1;        // --stage S: v6/v7 의 환경 단계(−1 = 설정 그대로). 3 = BEHAVIOR B1–B3(장면 묶음 data/b1k_scenes)
+static int g_stage = -1;        // --stage S: v6/v7 의 환경 단계(−1 = 설정 그대로). 3 = BEHAVIOR B1–B3(장면 묶음 training/data/b1k_scenes)
 static bool g_gdrop = false;    // --gdrop: obs 검사에서 학생용 목표 표시 감추기 0.5 를 켬(교사 학습기는 늘 0 — CPU == GPU 길만 봄)
 static float g_ppt = 0.f, g_pgo = 0.f, g_p4 = 0.f, g_p5 = 0.f, g_p6 = 0.f;   // --pnp p4,p5,p6: 잡기 물리 판(E6) 비율
    // --point p_point,p_goto: BEHAVIOR 판 목표 점 섞음(VLA_INPUT 2.1)

@@ -244,3 +244,9 @@ config/paths.local.env
 /data/
 /third_party/*
 !/third_party/README.md
+
+# 학습 입력(큰 자료)·학습 결과 — training/data 의 작은 표(pnp_v1·vla_v1)만 깃에
+/training/data/*
+!/training/data/pnp_v1/
+!/training/data/vla_v1/
+/training/runs/

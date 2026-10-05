@@ -16,11 +16,11 @@
 ```
 cd training/RL/tools/b1kconv
 cargo build --release -j 4
-./target/release/b1kconv convert --out data/b1k_scenes          # 7 장면 → data/b1k_scenes/<장면>.rasc + .expect + .pnp.tsv, task_table.md, feasibility.tsv, summary.txt (약 4 s, 최대 RSS 약 240 MB)
-./target/release/b1kconv verify  --out data/b1k_scenes          # 파일을 다시 읽어 원본 JSON·BDDL 과 값 비교 (0 다름이어야 통과)
+./target/release/b1kconv convert --out training/data/b1k_scenes          # 7 장면 → training/data/b1k_scenes/<장면>.rasc + .expect + .pnp.tsv, task_table.md, feasibility.tsv, summary.txt (약 4 s, 최대 RSS 약 240 MB)
+./target/release/b1kconv verify  --out training/data/b1k_scenes          # 파일을 다시 읽어 원본 JSON·BDDL 과 값 비교 (0 다름이어야 통과)
 ./target/release/b1kconv negative                        # 깨진 입력 3 종이 오류로 멈춰야 통과(종료 코드 0)
 ./target/release/b1kconv header --check cpp/rasc_format.h   # 헤더가 지금 배치와 같은지
-tools/build_all.sh b1kconv 4 && build/b1kconv/rasc_test data/b1k_scenes/*.rasc   # 또는 ctest
+tools/build_all.sh b1kconv 4 && build/b1kconv/rasc_test training/data/b1k_scenes/*.rasc   # 또는 ctest
 ```
 출력 파일은 모두 `<이름>.tmp.<pid>` 에 쓰고 fsync 뒤 rename 한다(읽는 쪽이 반쯤 쓴 파일을 보지 않음). `--outer k=v,…` / `--inner k=v,…` 로 집기·놓기 한도(`pick_z place_top inside_margin max_mass max_w min_side min_top reach_side reach_front edge_side edge_front topdown_z edge_dist threshold`), `--scene NAME` 으로 장면 하나만, `--b1k PATH` 로 BEHAVIOR-1K 위치, `--doc PATH` 로 비교할 문서를 바꾼다. 배치(레코드)를 고치면 `b1kconv header --out cpp/rasc_format.h` 로 헤더를 다시 만든다(해시가 바뀌어 옛 파일은 로더가 거절).
 

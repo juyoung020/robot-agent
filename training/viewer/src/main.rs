@@ -1,7 +1,7 @@
 // trainview — 학습 뷰어 서버 (docs/map_vla/TRAIN_VIEWER.md 5절). 읽기 전용: 실행 폴더의 파일만 읽고 아무것도 쓰지 않는다.
 // 틀은 sgview 와 같다: std TcpListener + 연결마다 스레드, 요청 줄을 직접 읽음, GET 만, Connection: close, SSE 는 /api/live.
 //
-//   trainview --root data/checkpoints/ppo --root data/trainview_work/student_pnp [--port 7810] [--bind 127.0.0.1]
+//   trainview --root training/runs/ppo --root data/trainview_work/student_pnp [--port 7810] [--bind 127.0.0.1]
 mod http;
 mod live;
 mod replay;

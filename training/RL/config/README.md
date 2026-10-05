@@ -45,7 +45,7 @@ G4 에서 더한 키:
 
 ## ppo_b — BEHAVIOR 집 장면(env 3, 커리큘럼 B1–B3) 키와 가정
 
-env 3 단계가 하나라도 있으면 실행기가 `beh` 1 로 학습기를 만든다 → 장면 묶음(`env/src/bscene_host.cpp`, RASC `data/b1k_scenes` 7 장면, 호스트 약 9 s·장치 61.2 MB)을 환경·지도에 붙인다. 상자 방 단계(A0–A2)는 장면 묶음이 붙어도 결과 비트가 같다(`ppo/README.md` E2 절).
+env 3 단계가 하나라도 있으면 실행기가 `beh` 1 로 학습기를 만든다 → 장면 묶음(`env/src/bscene_host.cpp`, RASC `training/data/b1k_scenes` 7 장면, 호스트 약 9 s·장치 61.2 MB)을 환경·지도에 붙인다. 상자 방 단계(A0–A2)는 장면 묶음이 붙어도 결과 비트가 같다(`ppo/README.md` E2 절).
 
 | 키 | 값 | 근거 / 가정 |
 |---|---|---|

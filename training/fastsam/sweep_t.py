@@ -1,7 +1,7 @@
 """후보 엔진 하나를 문턱 여럿으로(옛 엔진과 짝 비교) → 게이트를 지나는 가장 높은 문턱(헛것이 가장 적은 것) 고르기.
 
   $FS_PY sweep_t.py <cand.plan> --ts 0.25 0.2 0.15 0.12 0.1 0.08 0.06 --sets sim_eval coco_val ade_val \
-      --out $RA_DATASETS/fastsam_obj/eval/sweep_<name>.json [--every 2]
+      --out $RA_TRAIN_DATA/fastsam_obj/eval/sweep_<name>.json [--every 2]
 
 게이트(버킷마다, 프레임 짝 부트스트랩): 평균 Δfound ≥ −0.01 이고 97.5 % 위 끝 ≥ 0(뚜렷이 나빠지지 않음).
 게이트 버킷: whole·small·medium·furniture·large·dws·unseen_whole(있는 것만). all·unseen·nested 는 보고만.

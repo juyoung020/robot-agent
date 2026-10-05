@@ -1,5 +1,5 @@
 // 처리량: 판 수를 늘려 가며 환경 스텝/초(= 판·제어스텝/초, 제어 스텝 하나 = 물리 서브스텝 10)를 잰다.  env_bench [steps=300] [stage=1] [maxN]
-// stage 3 = BEHAVIOR 집(B1–B3 섞음, data/b1k_scenes($RA_B1K_SCENES), 지도 되먹임 없음). 잡기 물리(E6): env_bench 300 3 4096 --pnp p4,p5,p6 [--phys BITS] [--teacher] [--mix p1,p2]
+// stage 3 = BEHAVIOR 집(B1–B3 섞음, training/data/b1k_scenes($RA_B1K_SCENES), 지도 되먹임 없음). 잡기 물리(E6): env_bench 300 3 4096 --pnp p4,p5,p6 [--phys BITS] [--teacher] [--mix p1,p2]
 //   --teacher: 행동 = 대본 교사(teacher 커널 시간 따로: 앞·계획·행동 커널을 각각 재고, 계획한 판이 있는 스텝/없는 스텝으로 나눔)
 //   --feas: 잡기 가능 표(env pnp_feasibility) + PF_FEAS 고르기(교사가 표의 서는 자리를 씀)
 #include <cstdio>

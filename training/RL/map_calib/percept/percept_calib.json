@@ -4,8 +4,8 @@
   "files": 40,
   "sha256": "0ff38caadda8bed1",
   "dirs": [
-   "data/datasets/og_cmp/2026-10-06/og",
-   "data/datasets/og_cmp/2026-10-06/fo"
+   "training/data/og_cmp/2026-10-06/og",
+   "training/data/og_cmp/2026-10-06/fo"
   ],
   "pipeline": {
    "git": "75ecd76aaefc86c33abfadc071924ee7593675c9",

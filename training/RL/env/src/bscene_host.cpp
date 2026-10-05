@@ -279,13 +279,13 @@ bool dump_combos(const SceneBuild& b, const std::string& path, std::string* err)
   std::fclose(f);
   return true;
 }
-// config/paths.env 와 같은 규칙: $RA_B1K_SCENES, 없으면 $RA_ROOT/data/b1k_scenes, 그것도 없으면 이 소스 자리에서 저장소 뿌리(빌드마다 정의를 안 더하게)
+// config/paths.env 와 같은 규칙: $RA_B1K_SCENES, 없으면 $RA_ROOT/training/data/b1k_scenes, 그것도 없으면 이 소스 자리에서 저장소 뿌리(빌드마다 정의를 안 더하게)
 std::string default_rasc_dir() {
   if (const char* e = std::getenv("RA_B1K_SCENES"); e && *e) return e;
-  if (const char* e = std::getenv("RA_ROOT"); e && *e) return std::string(e) + "/data/b1k_scenes";
+  if (const char* e = std::getenv("RA_ROOT"); e && *e) return std::string(e) + "/training/data/b1k_scenes";
   std::string f = __FILE__;   // <저장소>/training/RL/env/src/bscene_host.cpp
   const size_t k = f.rfind("/training/RL/env/src/");
-  return (k == std::string::npos ? std::string(".") : f.substr(0, k)) + "/data/b1k_scenes";
+  return (k == std::string::npos ? std::string(".") : f.substr(0, k)) + "/training/data/b1k_scenes";
 }
 
 void window_dijkstra(const SceneBuild::Sc& s, float wx, float wy, float sx, float sy, std::vector<float>& dist) {

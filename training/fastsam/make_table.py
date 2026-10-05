@@ -1,6 +1,6 @@
 """Results table (markdown) from sweep_t.py outputs: one column per (candidate, threshold), original engine first.
 
-  python make_table.py v1=sweep_fs_v1:0.07 v2=sweep_fs_v2:0.05 n26=sweep_n26:0.04 --eval-dir $RA_DATASETS/fastsam_obj/eval
+  python make_table.py v1=sweep_fs_v1:0.07 v2=sweep_fs_v2:0.05 n26=sweep_n26:0.04 --eval-dir $RA_TRAIN_DATA/fastsam_obj/eval
 """
 import argparse
 import json

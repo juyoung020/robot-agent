@@ -8,10 +8,12 @@ import os
 import numpy as np
 
 HOME = os.path.expanduser('~')
-DATA = os.environ.get('FASTSAM_DATA', f'{HOME}/datasets/fastsam_obj')
-LIB = os.environ.get('OVDET_LIB', f'{HOME}/ovdet_build/libovdet.so')     # optional TensorRT path (ovdet C API)
-BASE_PLAN = os.environ.get('BASE_PLAN', f'{HOME}/ovdet_models/x86_sm120/FastSAM-s-416.plan')   # original engine (or .onnx)
-B1K = os.environ.get('B1K_ROOT', f'{HOME}/BEHAVIOR-1K')                    # BEHAVIOR-1K checkout (datasets/ inside)
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
+DATA = os.environ.get('FASTSAM_DATA') or os.path.join(os.environ.get('RA_TRAIN_DATA', f'{_ROOT}/training/data'), 'fastsam_obj')
+LIB = os.environ.get('OVDET_LIB', f'{_ROOT}/build/sgrt/ovdet/libovdet.so')     # optional TensorRT path (ovdet C API)
+OVDET = os.environ.get('OVDET_MODELS') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../models/ovdet')
+BASE_PLAN = os.environ.get('BASE_PLAN', f'{OVDET}/x86_sm120/FastSAM-s-416.plan')   # original engine (or .onnx)
+B1K = os.environ.get('B1K_ROOT', f'{_ROOT}/third_party/BEHAVIOR-1K')                    # BEHAVIOR-1K checkout (datasets/ inside)
 
 # 배경(구조물) = 벽·천장·바닥만. 문·창·계단은 물체로 남긴다(지도의 방·문 토큰, 계단 위험).
 SIM_STRUCT = {'walls', 'floors', 'ceilings', 'roof', 'baseboard'}

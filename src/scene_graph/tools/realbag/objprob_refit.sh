@@ -15,8 +15,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)/config/paths.env"
 BIN=${REALBAG_BIN:-$RA_BUILD/bin}/realbag_run
 PY=${PY:-python3}
-OUT=${OUT:-$RA_DATASETS/objprob/refit/$N}
-S=$RA_DATASETS/sim_detcmp/streams/radio_limo_r3
+OUT=${OUT:-$RA_TRAIN_DATA/objprob/refit/$N}
+S=$RA_TRAIN_DATA/sim_detcmp/streams/radio_limo_r3
 OL=$RA_DATASETS/realbags/streams
 GTPGM=${GTPGM:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)/src/sim/explore/gt/house_double_floor_lower__turning_on_radio.pgm}
 PARAMS_BASE=${PARAMS_BASE:-$HERE/objprob_params/FastSAM-s-416.json}

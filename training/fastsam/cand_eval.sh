@@ -4,7 +4,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 [ -f "$HERE/env_local.sh" ] && source "$HERE/env_local.sh"
-DATA=${FASTSAM_DATA:-$RA_DATASETS/fastsam_obj}
+DATA=${FASTSAM_DATA:-$RA_TRAIN_DATA/fastsam_obj}
 R=$1; W=${2:-best}; shift 2 || true
 SETS=${*:-sim_eval coco_val ade_val}
 N=cand_${R}_$W

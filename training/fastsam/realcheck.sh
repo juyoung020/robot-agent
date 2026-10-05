@@ -5,15 +5,15 @@
 set -euo pipefail
 . "$(dirname "$0")/env_local.sh"
 N=$1; ENG=$2; MODE=${3:-plain}
-DATA=${FASTSAM_DATA:-$RA_DATASETS/fastsam_obj}
+DATA=${FASTSAM_DATA:-$RA_TRAIN_DATA/fastsam_obj}
 BIN=${REALBAG_BIN:-$RA_BUILD/realbag}
-PD=$RA_DATASETS/objprob
+PD=$RA_TRAIN_DATA/objprob
 FLAG=--objprob
 X=(); [ "$MODE" = objprob ] && X=($FLAG --label-prior "$PD/fit1/label_prior.json")
 for s in ol_office1-1 ol_office1-5; do
   R=$DATA/realcheck/${N}_${MODE}_$s
   rm -rf "$R"; mkdir -p "$DATA/realcheck"
-  "$BIN/realbag_run" "$RA_DATASETS/realbags/streams/$s" "$R" --pose slam --max-depth 4 --det fastsam --engine "$ENG" "${X[@]}" \
+  "$BIN/realbag_run" "$RA_DATASETS/realbags/streams/$s" "$R" --pose carto --max-depth 4 --det fastsam --engine "$ENG" "${X[@]}" \
     > "$R.log" 2>&1
 done
 $FS_PY - "$DATA/realcheck" "$N" "$MODE" <<'E'

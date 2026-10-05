@@ -1,12 +1,12 @@
 #!/bin/bash
 # BEHAVIOR 장면 전부 렌더(sim_render.py, 장면마다 og.lock 을 따로 잡음) → 광선 라벨(label_sim.py).
 #   bash render_all.sh [train|eval|all]
-# 출력: $FASTSAM_DATA/sim/<scene>/ (기본 $RA_DATASETS/fastsam_obj)
+# 출력: $FASTSAM_DATA/sim/<scene>/ (기본 $RA_TRAIN_DATA/fastsam_obj)
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 [ -f "$HERE/env_local.sh" ] && source "$HERE/env_local.sh"
 OG_LOCK=${OG_LOCK:-/tmp/og.lock}
-DATA=${FASTSAM_DATA:-$RA_DATASETS/fastsam_obj}
+DATA=${FASTSAM_DATA:-$RA_TRAIN_DATA/fastsam_obj}
 WHICH=${1:-all}
 source "$HERE/scenes.sh"
 mkdir -p "$DATA/sim" "$DATA/logs"

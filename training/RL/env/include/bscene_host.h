@@ -26,7 +26,7 @@
 namespace bsc {
 
 struct BuildOpt {
-  std::string dir;                 // RASC 폴더(기본 $RA_B1K_SCENES, 없으면 <저장소>/data/b1k_scenes — config/paths.env)
+  std::string dir;                 // RASC 폴더(기본 $RA_B1K_SCENES, 없으면 <저장소>/training/data/b1k_scenes — config/paths.env)
   std::string vla;                 // vla_v1 폴더(기본: 저장소 training/data/vla_v1)
   std::vector<std::string> only;   // 장면 이름만(비면 폴더의 *.rasc 전부, RASC scene_index 순)
   int cap_room = 4096;             // (장면, 방 표, split) 판 수 상한
@@ -126,7 +126,7 @@ bool upload(SceneBuild& b, std::string* err);                                // 
 void free_dev(SceneBuild& b);
 std::string stats_text(const SceneBuild& b);                                 // 사람이 읽는 표
 std::string default_vla_dir();                                               // 이 파일 기준 저장소 training/data/vla_v1
-std::string default_rasc_dir();                                              // $RA_B1K_SCENES, $RA_ROOT/data/b1k_scenes, <저장소>/data/b1k_scenes
+std::string default_rasc_dir();                                              // $RA_B1K_SCENES, $RA_ROOT/training/data/b1k_scenes, <저장소>/training/data/b1k_scenes
 std::string default_pnp_dir();                                               // 저장소 training/data/pnp_v1
 
 // 확인 도구가 쓰는 호스트 계산(같은 규칙)

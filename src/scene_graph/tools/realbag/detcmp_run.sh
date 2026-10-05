@@ -1,7 +1,7 @@
 #!/bin/bash
 # 같은 스트림에 검출기 하나를 slam·gt 자세로 돌린다(검출은 slam 판에서 한 번, gt 판은 캐시 --load — 두 판의 검출이 바이트 같음).
 #   detcmp_run.sh <stream dir> <out root> <name> <realbag_run 검출 옵션…>
-#   예) detcmp_run.sh data/datasets/sim_detcmp/streams/radio_limo_r3 data/datasets/sim_detcmp A --det fastsam
+#   예) detcmp_run.sh training/data/sim_detcmp/streams/radio_limo_r3 training/data/sim_detcmp A --det fastsam
 # 결과: <root>/runs/<name>_{slam,gt}/(metrics.json·objects.csv·walls.csv·memory/), <root>/sg/<name>/ 재생 판(slam), <root>/dets/<name>.gz,
 #       <root>/logs/<name>_*.log, <root>/runs/<name>_slam/gpu_mb.txt(검출 판 동안 이 프로세스 GPU 사용 최대, nvidia-smi 0.2 s)
 set -euo pipefail

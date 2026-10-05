@@ -253,9 +253,9 @@ fn main() {
     fs::write(out.join("config.json"), serde_json::to_string_pretty(&v).unwrap()).unwrap();
 
     let home = std::env::var("HOME").unwrap_or_default();   // 설정에 적은 ~ 펼치기용
-    // 교사 체크포인트: 설정 "teacher" > $RA_CHECKPOINTS/ppo/teacher.bin (기본 data/checkpoints)
+    // 교사 체크포인트: 설정 "teacher" > $RA_CHECKPOINTS/ppo/teacher.bin (기본 training/runs)
     let ckpts = std::env::var("RA_CHECKPOINTS").ok().filter(|s| !s.is_empty())
-        .unwrap_or_else(|| format!("{}/../../data/checkpoints", env!("CARGO_MANIFEST_DIR")));
+        .unwrap_or_else(|| format!("{}/../../training/runs", env!("CARGO_MANIFEST_DIR")));
     let teacher = v.get("teacher").and_then(|x| x.as_str()).map(|s| s.replace('~', &home)).unwrap_or_else(|| format!("{}/ppo/teacher.bin", ckpts));
     unsafe {   // C ABI 구조체 배치 확인(bc_capi.h 와 어긋나면 바로 멈춤)
         assert_eq!(bc_struct_size(0) as usize, std::mem::size_of::<BcConfig>(), "C ABI size mismatch: BcConfig");

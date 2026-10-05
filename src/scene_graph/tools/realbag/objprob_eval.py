@@ -194,7 +194,7 @@ def main():
     ap.add_argument('floor_pgm')
     ap.add_argument('runs')
     ap.add_argument('--json')
-    ap.add_argument('--labels', default=os.environ.get('RA_LABELS', os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../../data/embed_work/labels/objects-v1')))
+    ap.add_argument('--labels', default=os.environ.get('RA_LABELS', os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../../models/labels/objects-v1')))
     a = ap.parse_args()
     res = []
     for r in a.runs.split(','):

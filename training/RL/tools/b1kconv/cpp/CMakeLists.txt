@@ -8,7 +8,7 @@ endif()
 if(DEFINED ENV{RA_B1K_SCENES})
   set(_rasc_def "$ENV{RA_B1K_SCENES}")
 else()
-  set(_rasc_def "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../data/b1k_scenes")   # config/paths.env RA_B1K_SCENES
+  set(_rasc_def "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../training/data/b1k_scenes")   # config/paths.env RA_B1K_SCENES
 endif()
 set(RASC_DIR "${_rasc_def}" CACHE PATH "directory with <scene>.rasc + <scene>.expect")
 

@@ -28,7 +28,7 @@ RL 전문가가 시뮬에서 성공한 궤적(영상, state, 지도 토큰, 행�
 - 토큰마다 학생 속도(포크 tf_verify bench, B 256, GPU 를 다른 일과 나눠 씀): 학습 한 스텝 99 ms, prefix 앞 23 ms, 추론(prefix + 오일러 10) 55 ms, 장치 2.67 GB. nsys(B 128): 어텐션 커널 셋(FP32 스칼라)이 커널 시간의 약 57 % — 텐서 코어 어텐션이 다음 이득.
 
 ### 호환
-- v1 교사 체크포인트(`data/checkpoints/ppo/g5/t4/on_s1`)는 v2 관측과 모양이 달라 `bc_load_teacher` 가 −2 를 돌려준다 → 기존 BC 설정(`config/bc_a2*.json`)은 v2 교사를 새로 학습한 뒤에 다시 돈다. 학생 체크포인트도 새 머리 `BCSTUD03`(arch 1) / 모양이 바뀐 `BCSTUD02`.
+- v1 교사 체크포인트(`training/runs/ppo/g5/t4/on_s1`)는 v2 관측과 모양이 달라 `bc_load_teacher` 가 −2 를 돌려준다 → 기존 BC 설정(`config/bc_a2*.json`)은 v2 교사를 새로 학습한 뒤에 다시 돈다. 학생 체크포인트도 새 머리 `BCSTUD03`(arch 1) / 모양이 바뀐 `BCSTUD02`.
 
 ## E2 BEHAVIOR 판·지시문 벡터·목표 표시 감추기(2026-10-04) — 잰 값(학습 아님)
 - **지시문**: 지시 표 `txt` = [0, 64) vla_v1(상자 방 과제 바꿔 말하기) + [64, 772) pnp_v1 집기·놓기 지시(708 행). 표본의 행 = 지도 토큰 `instr1`(환경이 판 시작 때 고른 문장, `BCurr::eval_instr` 면 heldout)이 있으면 pnp 행, 없으면 예전 해시(`text_row_tok`) — 롤아웃·모으기가 같은 토큰을 보므로 같은 행. 글 토큰(arch 1 `G_TXT`, arch 0 `text`)과 X0 지시문 칸(`../RL/observation/README.md`) 둘로 들어감.
@@ -73,7 +73,7 @@ RL 전문가가 시뮬에서 성공한 궤적(영상, state, 지도 토큰, 행�
 - **LN 융합은 하지 않았다**: LN 은 행 768 전체가 필요한데 앞 잔차 GEMM 블록은 열 256 만 본다. 뒤 GEMM(qkv·fc1)의 A 읽기에서 정규화하면 cp.async 를 못 쓰고(FP32 읽기·변환이 주 고리에 들어감) 바이트 이득은 LN 하나당 약 0.45 ms(블록의 2.5 %)뿐이라 GEMM 이 느려질 위험이 더 크다고 봤다(재지 않음 — 추정).
 - 묶음·그래프(과제 5): 이미 한 번의 `run` 이 카메라 2 대·판 전부(M = 2N × 64)를 GEMM 하나로 하고, BC 는 렌더 + 인코더를 롤아웃·갱신 그래프에 잡는다. `vit_verify bench` 즉시 실행 218.6 ms 대 그래프 219.0 ms → 실행 부담이 없어 따로 할 일 없음.
 
-**정확성(PyTorch FP32 기준값 `data/checkpoints/bc/vit`, 영상 32 장 × 64 토큰, `vit_verify enc`)**
+**정확성(PyTorch FP32 기준값 `training/runs/bc/vit`, 영상 32 장 × 64 토큰, `vit_verify enc`)**
 
 | 설정 | 예전 코사인 평균 / 하위 1 % | 새 판 | GPU 대 FP64 / EMUL 바닥(2 층, 12 층) | 음성 대조 |
 |---|---|---|---|---|
@@ -121,12 +121,12 @@ RL 전문가가 시뮬에서 성공한 궤적(영상, state, 지도 토큰, 행�
 
 ## G6 — FP8(계획서 7·9.1·11절): 인코더는 FP8 이 기준 미달 → FP16 누산으로 1.2 배, 학생 FP8 은 수치 비교용(기본 끔)
 
-### 1. 얼린 SigLIP 2 인코더 FP8 — 잰 값(PyTorch FP32 기준값 = G5 와 같은 `data/checkpoints/bc/vit`, 영상 32 장 × 패치 64 = 토큰 2,048 개)
+### 1. 얼린 SigLIP 2 인코더 FP8 — 잰 값(PyTorch FP32 기준값 = G5 와 같은 `training/runs/bc/vit`, 영상 32 장 × 패치 64 = 토큰 2,048 개)
 처방: 블록 GEMM 48 개(qkv·proj·fc1·fc2 × 12)를 E4M3 × E4M3(FP32 누산, `../RL/network/src/gemm_fp8.cuh` `tn_k`). 활성값은 **토큰(행)마다**, 가중치는 **출력 채널마다** 2 의 거듭제곱 배율
 (LN 커널이 FP8 + 배율을 바로 씀 `ln8_k`, 어텐션 출력·GELU 출력은 `rowq_k`). 패치 임베딩(첫 층)·LN·softmax·QKᵀ·PV·잔차는 FP16/FP32 그대로(7.1).
 CPU 참조판 EMUL 에도 같은 FP8 처방(`tools/vit_ref.cpp` `set_f8`)을 넣어 "GPU 대 FP64 ≤ 2 × 바닥"을 따로 본다(구현 확인), 기준값 코사인은 정밀도 확인.
 
-| 설정(`VIT_FP8=...  vit_verify enc data/checkpoints/bc/vit`) | 코사인 평균 | 하위 1 % | 판정(≥ 0.999 / ≥ 0.99) |
+| 설정(`VIT_FP8=...  vit_verify enc training/runs/bc/vit`) | 코사인 평균 | 하위 1 % | 판정(≥ 0.999 / ≥ 0.99) |
 |---|---|---|---|
 | G5 FP16(FP32 누산) | 0.999605 | 0.999016 | 통과 |
 | **FP8 전부(48 GEMM)** | **0.951900** | **0.575918** (최저 −0.03) | 실패. GPU 대 FP64 상대 2.94e-1, FP8 바닥 2.92e-1 → **비율 1.01**(구현은 처방대로, 정밀도가 모자람). 음성 대조 4/4(행 배율 빠뜨림 포함) |
@@ -193,12 +193,12 @@ student-lite(아래 절) 위에 VLA_INPUT 1·5절의 나머지 입력·출력을
 | `config/bc_a2_img*.json`, `bc_a2_lite_*.json` | JSON | 영상 학생, 대조 실행 |
 
 ```
-cmake -S training/BC -B data/checkpoints/bc/build && cmake --build data/checkpoints/bc/build -j
-data/checkpoints/bc/build/vit_verify render-graph 256                     # 작업 1
-data/checkpoints/bc/build/vit_verify dump DIR 16 && $CLIP_PY training/BC/tools/siglip_ref.py DIR && data/checkpoints/bc/build/vit_verify enc DIR --negative
-data/checkpoints/bc/build/bc_verify v5 | v5 --negative | v6 | v7 [--lite]
-data/checkpoints/bc/build/bc_verify bench 1024 64 256 20
-cd training/BC/driver && ./target/release/bc_run ../config/bc_a2_img.json --out data/checkpoints/bc/runs/img_s1
+cmake -S training/BC -B training/runs/bc/build && cmake --build training/runs/bc/build -j
+training/runs/bc/build/vit_verify render-graph 256                     # 작업 1
+training/runs/bc/build/vit_verify dump DIR 16 && $CLIP_PY training/BC/tools/siglip_ref.py DIR && training/runs/bc/build/vit_verify enc DIR --negative
+training/runs/bc/build/bc_verify v5 | v5 --negative | v6 | v7 [--lite]
+training/runs/bc/build/bc_verify bench 1024 64 256 20
+cd training/BC/driver && ./target/release/bc_run ../config/bc_a2_img.json --out training/runs/bc/runs/img_s1
 ```
 
 ### 1. 렌더를 CUDA 그래프로 — 잡힌다(렌더 엔진 그대로, 감싸기 없음)
@@ -332,17 +332,17 @@ cd training/BC/driver && ./target/release/bc_run ../config/bc_a2_img.json --out 
 
 ### 빌드·실행
 ```
-cmake -S training/BC -B data/checkpoints/bc/build && cmake --build data/checkpoints/bc/build -j
-data/checkpoints/bc/build/bc_verify v5 | v5 --negative | v6 | v7      # 통과 = 종료 코드 0 (--teacher CKPT, 기본 data/checkpoints/ppo/g5/t4/on_s1/ckpt_final.bin)
-data/checkpoints/bc/build/bc_verify bench [N T mb K]
-data/checkpoints/bc/build/render_bench [E] [reps]
-cd training/BC/driver && BC_BUILD_DIR=data/checkpoints/bc/build cargo build --release
-./target/release/bc_run ../config/bc_a2.json --out data/checkpoints/bc/runs/<이름>
+cmake -S training/BC -B training/runs/bc/build && cmake --build training/runs/bc/build -j
+training/runs/bc/build/bc_verify v5 | v5 --negative | v6 | v7      # 통과 = 종료 코드 0 (--teacher CKPT, 기본 training/runs/ppo/g5/t4/on_s1/ckpt_final.bin)
+training/runs/bc/build/bc_verify bench [N T mb K]
+training/runs/bc/build/render_bench [E] [reps]
+cd training/BC/driver && BC_BUILD_DIR=training/runs/bc/build cargo build --release
+./target/release/bc_run ../config/bc_a2.json --out training/runs/bc/runs/<이름>
 ```
 출력: `log.csv`(그래프마다), `results.json`(평가마다 처음 지도 C0/C1/C2 별·완성도 칸별 성공·충돌·시간초과·스텝), `student_*.bin`.
 
 ### 교사
-A2 토큰 켬 씨앗 1(`data/checkpoints/ppo/g5/t4/on_s1/ckpt_final.bin`, `../RL/ppo/README.md` "A2 학습": 결정적 0.946·충돌 0.032, 빈 지도 0.948). 정책 사슬 A1–A4 + 칸 MLP 만 앞 계산한다(bf16 사본, 가치 사슬 안 씀).
+A2 토큰 켬 씨앗 1(`training/runs/ppo/g5/t4/on_s1/ckpt_final.bin`, `../RL/ppo/README.md` "A2 학습": 결정적 0.946·충돌 0.032, 빈 지도 0.948). 정책 사슬 A1–A4 + 칸 MLP 만 앞 계산한다(bf16 사본, 가치 사슬 안 씀).
 라벨 = 교사 결정적 행동 clamp(μ, ±1) (vx, wz). 나머지 행동 6 개는 이 단계(approach)에서 0 고정(CURRICULUM 3절, 교사와 같음).
 
 ### 학생(student-lite)과 교사의 정보 차이(5.4)

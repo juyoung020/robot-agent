@@ -4,7 +4,7 @@
 //     [--negative-grasp (GPU 만 폭·무게 검사 끔 — 반드시 실패, --arm 으로 무작위 팔이 넓은·무거운 것도 쥐게)] [--negative-armcoll (GPU 만 팔 막기 끔)] [--phys BITS (GPU·CPU 같이 끄기 PF_*)]
 //     [--find (--feas + 찾을 수 있음 표 env pnp_findability + PF_FIND·PF_FINDSTART)] [--feas (잡기 가능 표 env pnp_feasibility + PF_FEAS 고르기 — 교사가 표의 서는 자리를 씀)] [--negative-teacher (GPU 교사만 계획 결과를 조금 비틂 — 반드시 실패)]
 //     --teacher 이면 교사 버퍼(TBuf 계획·웨이포인트·팔 계획, 목록·작업 메모리 빼고)도 매 스텝 GPU == CPU 비트 비교
-//   BEHAVIOR(--stage 3): [--scenes DIR(기본 data/b1k_scenes, $RA_B1K_SCENES)] [--mix p1,p2 (B1·B2 비율, 나머지 B3; 기본 0.34,0.33)] [--strict] [--split 0|1|2] [--only 장면,...]
+//   BEHAVIOR(--stage 3): [--scenes DIR(기본 training/data/b1k_scenes, $RA_B1K_SCENES)] [--mix p1,p2 (B1·B2 비율, 나머지 B3; 기본 0.34,0.33)] [--strict] [--split 0|1|2] [--only 장면,...]
 //     --follow: 홀수 판은 대본 정책(참 장면 다익스트라를 거꾸로 따라가고 끝에서 멈춤·목표를 봄) — 성공 길(B1 방·점, B3 잡는 점 작업 공간)까지 비트 동일을 보려고
 //     --negative-scene: GPU 만 B1 목표 방을 지움(bug 2) — 반드시 실패. 지도 되먹임 없이 돌린다(거리 = 직선, B2 = 보임만) — 지도와 함께는 map_verify
 // --arm: GPU·CPU 모두 팔을 풀고(arm_free) 행동 8 을 모두 무작위로(팔·그리퍼 경로, VLA_INPUT 5절).

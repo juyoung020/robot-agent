@@ -280,7 +280,7 @@ extern "C" {
 }
 
 fn labels_dir() -> String {
-    std::env::var("SGRT_LABELS").unwrap_or_else(|_| format!("{}/embed_work/labels/objects-v1", std::env::var("HOME").unwrap()))
+    std::env::var("SGRT_LABELS").unwrap_or_else(|_| format!("{}/../../../../models/labels/objects-v1", env!("CARGO_MANIFEST_DIR")))
 }
 
 fn write_views(path: &Path, vs: &[Vec<f32>]) {

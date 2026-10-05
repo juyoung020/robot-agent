@@ -1,7 +1,7 @@
 """BEHAVIOR 장면 진짜 메시 → 재생 탭 바탕 층용 줄인 메시(장면마다 한 번, 캐시).
 
   $FS_PY export_mesh.py [장면 …]   # 기본: RL 장면 7 개
-  입력: $RA_DATASETS/fastsam_obj/sim/<장면>/{scene_mesh.npz, objects.json} (training/fastsam/sim_render.py 가 OmniGibson 에서 뽑은
+  입력: $RA_TRAIN_DATA/fastsam_obj/sim/<장면>/{scene_mesh.npz, objects.json} (training/fastsam/sim_render.py 가 OmniGibson 에서 뽑은
         보이는 visual 메시, 세계 좌표, 면 → 물체 번호). 출력: $RA_TRAINVIEW_WORK/scene_mesh/<장면>.smsh
 
 물체마다 꼭짓점을 격자(기본 4 cm, 큰 구조물 8 cm)로 묶어(vertex clustering) 면 수를 줄인다 — 모양은 남고 크기는 수십 분의 일.

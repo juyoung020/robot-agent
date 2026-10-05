@@ -3,7 +3,7 @@
 
   python3 training/RL/map_calib/percept/fit_percept.py [--og DIR ...] [--report og_report.json] [--out percept_calib.json]
 
-기본 입력: data/datasets/og_cmp/2026-10-06/{og,fo} (og_cmp 2026-10-06 판: B4 15·B6 9·찾을 수 있는 자세 16 판).
+기본 입력: training/data/og_cmp/2026-10-06/{og,fo} (og_cmp 2026-10-06 판: B4 15·B6 9·찾을 수 있는 자세 16 판).
 맞추는 것:
   - 검출 확률(GPU 지도가 목표를 보인다고 한 keyframe 마다 진짜 검출 짝이 목표인가): p = σ(b0 + b1·ln(px/600)) — px = 같은 keyframe 의
     GPU 보이는 화소(pick_cmp af·nv/5; 상자 투영이라 진짜 실루엣 화소의 약 1.5 배 — 그래서 진짜 화소가 아니라 GPU 값으로 맞춤).
@@ -19,7 +19,7 @@ import math
 import os
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
-DEF = os.path.join(ROOT, 'data/datasets/og_cmp/2026-10-06')
+DEF = os.path.join(ROOT, 'training/data/og_cmp/2026-10-06')
 ap = argparse.ArgumentParser()
 ap.add_argument('--og', nargs='*', default=[os.path.join(DEF, 'og'), os.path.join(DEF, 'fo')])
 ap.add_argument('--report', default=os.path.join(DEF, 'og_report.json'))

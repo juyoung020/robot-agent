@@ -9,7 +9,7 @@
 // --negative-way / --negative-live: GPU 토큰 커널만 경유 지점 내리막 차례를 뒤집음 / 지금 보는 중 칸 위치를 지도 자리로(v2 토큰 음성 대조)
 // --arm: 팔을 푼 G1 환경(arm_free)에 팔·그리퍼 행동을 넣어 들기·놓기 규칙을 지나게 한다.
 // --stage 2: A2(가구가 몸통과 부딪힘, 지도는 환경의 가구 상자를 그대로 씀). 기본 1(A1)
-// --stage 3: BEHAVIOR 집(E2, data/b1k_scenes 또는 --scenes DIR; --mix p1,p2, --strict, --only 장면,...). 장면 묶음 덧붙임(BMapEnv)도 비교하고,
+// --stage 3: BEHAVIOR 집(E2, training/data/b1k_scenes 또는 --scenes DIR; --mix p1,p2, --strict, --only 장면,...). 장면 묶음 덧붙임(BMapEnv)도 비교하고,
 //   방 토큰을 RASC 로더(rasc.h)로 다시 잰 방(독립 길)과 견준다. --negative-room: GPU 토큰의 방 자리를 1.5 m 밀어 반드시 실패
 // 비교: 환경 상태, MapCore, 격자 로그 오즈·본 칸·점유 비트, 벽 선분, 토큰 물체 속도 상태, 지도 토큰(1,280 B), 완성도. 시작 때 FP16 변환을
 // __float2half_rn 과 float 2^32 개 전수로 견준다.

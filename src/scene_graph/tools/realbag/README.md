@@ -12,7 +12,7 @@ ROS 를 설치하지 않고 실제 로봇 bag 을 우리 파이프라인(ovdet �
 | `realbag_run` objprob(늘 켬) | 확률 물체 모델(objprob)(scenemap README "scenemap 확률 모드") — 물체 지도의 유일한 규칙(켜고 끄는 플래그 없음). 낱말 표·라벨 사전·매개변수 읽기는 libsgrt 와 같이 쓰는 `runtime/src/objprob_front.hpp`. 분할 조각 + SigLIP 2 조각 임베딩을 scenemap 에 주고(`sm_set_det_embeddings`), 통째 다시 담기 요청을 SigLIP 2 로 돌려줌. 배경 낱말(계단·문틀·창틀·덤불 → 구조물 쪽, `kVocabAp`)·라벨 크기 사전·상위어(`kApLabels`). `--label-prior label_prior.json`(아래 맞추기가 정답 없이 잰 라벨 사전). 검출 캐시는 RBD2(검출마다 임베딩 FP16 — `--load` 로 GPU 없이 objprob 를 다시 돌림, 통째 다시 담기만 GPU). `--engine` 으로 다른 분할 엔진 |
 | `realbag_run --inspect` | 살펴본 정도(scenemap README "살펴본 정도", `sm_set_inspect`): `memory/view.json`·`scene.json` 물체에 `inspect`(가장 가까이 본 거리·본 시점 수·윗면 본 비율). `metrics.json` 에 `objmap_us`(objmap 단계 평균 µs/검출 keyframe)·`inspect` |
 | `objprob_fit.py` | (오프라인) objprob 맞추기: RBD2 캐시 + 깊이·정답 자세 + 정답 물체 → κ(모습 품질), 같은 것 로지스틱(관측↔물체, 물체↔물체, 문턱 표·작은 것↔가구·같은 종류 이웃 거짓 같음), 라벨 사전(정답 없이 EM), 기하 구조물 표. `objprob_params.json`(엔진별 매개변수 파일 — 아래)도 씀 |
-| `objprob_refit.sh <이름> <엔진.plan\|-> [r3 캐시] [office1-1 캐시] [office1-5 캐시]` | 엔진 하나의 objprob 다시 맞추기·비교: 캐시가 없으면 그 엔진으로 radio r3(det-every 1)·OpenLORIS office1-1·1-5(det-every 3) 검출을 한 번(GPU, 짧게), `objprob_fit.py`, 문턱(same_p/merge_p) 몇 쌍 × 새 매개변수와 비교 기준(`PARAMS_BASE`, 기본 옛 엔진 파일)으로 r3 slam·gt 재생 → `objprob_eval.py`, OpenLORIS 재생 → 기하 대용. 결과 `data/datasets/objprob/refit/<이름>/` |
+| `objprob_refit.sh <이름> <엔진.plan\|-> [r3 캐시] [office1-1 캐시] [office1-5 캐시]` | 엔진 하나의 objprob 다시 맞추기·비교: 캐시가 없으면 그 엔진으로 radio r3(det-every 1)·OpenLORIS office1-1·1-5(det-every 3) 검출을 한 번(GPU, 짧게), `objprob_fit.py`, 문턱(same_p/merge_p) 몇 쌍 × 새 매개변수와 비교 기준(`PARAMS_BASE`, 기본 옛 엔진 파일)으로 r3 slam·gt 재생 → `objprob_eval.py`, OpenLORIS 재생 → 기하 대용. 결과 `training/data/objprob/refit/<이름>/` |
 | `objprob_refit_table.py <out>[,<out>…]` | 위 결과 표(찾음·중복·잘못 합침·stuff 헛노드·문창계단·OpenLORIS) |
 | `objprob_params/<엔진>.json` | 엔진별 objprob 매개변수: `obj_params`(`sm_set_obj_params` 문자열 — 로지스틱 `ap_w*`·`ap_wm*`, κ `kap_*`, 문턱, 그 밖 `ap_*`), `label_prior`(옆 파일). `realbag_run` 은 `--objprob-params` 가 없으면 엔진 파일 이름(.plan 뺀 것)으로 고름 — `--load` 캐시는 그 엔진을 `--engine` 으로 알려 줘야 함. `none` = 내장 기본값. `FastSAM-s-416.json` = 내장 기본값과 같음(radio r3 바이트 같음 확인). `yolo26n-seg-obj-416.json` = ObjectSAM(YOLO26n 학생)에 다시 맞춘 것(conf 0.25, 문턱 0.5/0.7) — **기본 엔진**이라 `--engine` 없이도 이 파일이 실림. libsgrt 도 같은 폴더에서 고름 |
 | `objprob_eval.py` | `detcmp_eval.py` 표 + 잘못 합침(노드 점 구름이 서로 다른 정답 둘 이상 — 작은 것+가구 / 같은 종류 이웃), 문·창·계단(찾음·맞는 이름·물체 이름 노드), 글 질의 R@1(μ·모습·이름) |
@@ -22,9 +22,9 @@ ROS 를 설치하지 않고 실제 로봇 bag 을 우리 파이프라인(ovdet �
 
 ```bash
 python3 -m venv ~/realbag_venv && ~/realbag_venv/bin/pip install rosbags numpy opencv-python-headless
-$REALBAG_PY src/scene_graph/tools/realbag/bag2stream.py openloris office1-1.bag data/datasets/realbags/streams/ol_office1-1
+$REALBAG_PY src/scene_graph/tools/realbag/bag2stream.py openloris office1-1.bag data/realbags/streams/ol_office1-1
 tools/build_all.sh realbag   # → build/realbag
-build/realbag/realbag_run data/datasets/realbags/streams/ol_office1-1 out/ol11 --dump dets/ol11.gz --sg data/trainview_work/real_bags/ol_office1-1   # ObjectSAM + SigLIP 2 + objprob(기본)
+build/realbag/realbag_run data/realbags/streams/ol_office1-1 out/ol11 --dump dets/ol11.gz --sg data/trainview_work/real_bags/ol_office1-1   # ObjectSAM + SigLIP 2 + objprob(기본)
 sgview <run>/replays/<ep>.sg/memory --port 8080 --ingest 127.0.0.1:9001 &
 build/realbag/sgs_play <run>/replays/<ep>.sg/stream.sgs 127.0.0.1:9001 --rate 1 --loop
 ```

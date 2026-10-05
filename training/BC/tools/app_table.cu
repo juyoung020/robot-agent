@@ -149,7 +149,7 @@ void put16(const std::string& p, const std::vector<float>& v) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string out = "training/data/vla_v1", dump, head = std::string(std::getenv("RA_EMBED_WORK") ? std::getenv("RA_EMBED_WORK") : "data/embed_work") + "/runs/sb32_pe_300k/head_h.f32";
+  std::string out = "training/data/vla_v1", dump, head = std::string(std::getenv("RA_EMBED_WORK") ? std::getenv("RA_EMBED_WORK") : "training/data/embed") + "/runs/sb32_pe_300k/head_h.f32";
   int V = 12, profile = 1, bug = 0;
   uint64_t seed = 20261004;
   for (int i = 1; i < argc; ++i) {

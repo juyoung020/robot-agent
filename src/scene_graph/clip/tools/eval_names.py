@@ -4,7 +4,7 @@ Uses the FP32 reference mask embeddings of the 567 eval crops (make_parity.py qu
 roll-up names with the study's leniency (clip_bench/score.py ok(): synset keys, aliases, last word) plus WordNet
 hypernym credit for rolled-up names. Settings: exact vs default IVF, main tier only vs all, roll-up delta.
 
-    python eval_names.py [--lib build/sgclip/libsgclip_c.so] [--labels data/embed_work/labels/objects-v1]
+    python eval_names.py [--lib build/sgclip/libsgclip_c.so] [--labels models/labels/objects-v1]
 """
 import argparse
 import ctypes
@@ -19,7 +19,7 @@ sys.path.insert(0, RA_BENCH)
 import score as SC  # noqa: E402
 RA_ROOT = os.environ.get("RA_ROOT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../.."))
 RA_MODELS = os.environ.get("OVDET_MODELS", os.path.join(RA_ROOT, "models/ovdet"))
-RA_EMBED = os.environ.get("RA_EMBED_WORK", os.path.join(RA_ROOT, "data/embed_work"))
+RA_EMBED = os.environ.get("RA_EMBED_WORK", os.path.join(RA_ROOT, "training/data/embed"))
 RA_BENCH = os.path.join(RA_ROOT, "data/clip_bench")
 RA_BUILD = os.environ.get("RA_BUILD", os.path.join(RA_ROOT, "build"))
 sys.argv = _a

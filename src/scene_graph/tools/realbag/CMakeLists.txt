@@ -5,7 +5,7 @@ set(OVDET_CUDA_ROOT "/usr/local/cuda-12.8" CACHE PATH "CUDA toolkit root")
 set(CMAKE_CUDA_COMPILER ${OVDET_CUDA_ROOT}/bin/nvcc)
 set(CMAKE_CUDA_ARCHITECTURES 120 CACHE STRING "GPU architectures")
 project(realbag LANGUAGES CXX CUDA)
-# 저장소 안 기본 경로(common/ra_paths.h): models/ovdet, data/embed_work/labels — config/paths.env 와 같은 규칙
+# 저장소 안 기본 경로(common/ra_paths.h): models/ovdet, training/data/embed/labels — config/paths.env 와 같은 규칙
 get_filename_component(RA_ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../.." ABSOLUTE)
 add_compile_definitions(RA_ROOT_DIR="${RA_ROOT_DIR}")
 include_directories(${CMAKE_CURRENT_LIST_DIR}/../../common)

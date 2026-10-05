@@ -5,7 +5,7 @@ set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 [ -f "$HERE/env_local.sh" ] && source "$HERE/env_local.sh"
 OG_LOCK=${OG_LOCK:-/tmp/og.lock}
-DATA=${FASTSAM_DATA:-$RA_DATASETS/fastsam_obj}
+DATA=${FASTSAM_DATA:-$RA_TRAIN_DATA/fastsam_obj}
 T=$B1K_ROOT/datasets/2026-challenge-task-instances/scenes
 source "${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
 conda activate "${OG_CONDA_ENV:-behavior}"

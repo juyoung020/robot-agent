@@ -118,7 +118,7 @@
   labs/<이름>/                            # 같은 모양
 ```
 
-- (구현) 실제 뿌리는 학습기 `--out` 폴더(`data/checkpoints/*`)와 `data/trainview_work/*` 다 — 12절. 지금 학습기가 쓰는 파일은 13절 표.
+- (구현) 실제 뿌리는 학습기 `--out` 폴더(`training/runs/*`)와 `data/trainview_work/*` 다 — 12절. 지금 학습기가 쓰는 파일은 13절 표.
 - 전부 **선택**이다. 있는 것만 화면에 뜬다. 없는 것은 "무엇이 없어서 안 그렸다" 를 적는다.
 - 학습기는 이 폴더에 **덧붙이기**(`progress`, `episodes`)와 **이름 바꾸기**(`replays`, `evals`)만 한다. 뷰어는 아무것도 쓰지 않는다.
 
@@ -575,7 +575,7 @@ trainfmt/             (쓰는 쪽과 같이 쓰는 형식 크레이트, 4.6)
 | 무엇 | 선택지(설계 때) | 정한 것 |
 |---|---|---|
 | 뷰어 자리 | `training/viewer/` / `src/` 아래 / sgview 안 | `training/viewer/`(서버 `trainview`, 형식 크레이트 `trainfmt/`) |
-| 실행 뿌리 | 모델마다 / 하나 | 학습기의 `--out` 폴더(`data/checkpoints/*` 아래)가 곧 실행 폴더, 뷰어는 `--root` 여럿(뿌리 밑 깊이 4 까지 `run.json`·`progress.jsonl` 있는 폴더) |
+| 실행 뿌리 | 모델마다 / 하나 | 학습기의 `--out` 폴더(`training/runs/*` 아래)가 곧 실행 폴더, 뷰어는 `--root` 여럿(뿌리 밑 깊이 4 까지 `run.json`·`progress.jsonl` 있는 폴더) |
 | `args.json` 대 `run.json` | training/README 는 `args.json` | `run.json` 하나(설정 전부 `config`). 학습기는 옛 `config.json`·`log.csv`·`results.json` 도 그대로 씀(training/README 맞춤) |
 | sgview 코드 나누기 | 옮겨 쓰기 / 모듈로 빼기 | 재생 탭은 sgview 페이지를 **고치지 않고** iframe 으로 띄우고, 서버(`src/sg.rs`)가 sgview 실시간 경로를 판 재생으로 흉내. three.js·로봇 GLB·페이지는 `build.rs` 가 sgview 에서 읽어 바이너리에 넣음 |
 | three.js 판 | sgview 2021 UMD / 새 모듈판 | sgview 것(`build.rs` 가 `three.min.js`·`OrbitControls.js`·`GLTFLoader.js` 를 가져옴) |
