@@ -30,17 +30,17 @@ ENGX=(); [ "$ENG" != - ] && ENGX=(--engine "$ENG")
 # 1) 검출 캐시
 if [ -z "$R3D" ]; then
   R3D=$OUT/det/r3.gz; mkdir -p "$OUT/det"
-  "$BIN" "$S" "$OUT/det/r3_slam" --pose carto "${COMMON[@]}" --det fastsam "${ENGX[@]}" --objprob --objprob-params none --dump "$R3D" > "$OUT/logs/det_r3.log" 2>&1
+  "$BIN" "$S" "$OUT/det/r3_slam" --pose carto "${COMMON[@]}" --det fastsam "${ENGX[@]}" --objprob-params none --dump "$R3D" > "$OUT/logs/det_r3.log" 2>&1
 fi
 if [ -z "$O11" ]; then
   for k in 1 5; do
-    "$BIN" "$OL/ol_office1-$k" "$OUT/det/ol1${k}_slam" "${OLX[@]}" --det fastsam "${ENGX[@]}" --objprob --objprob-params none \
+    "$BIN" "$OL/ol_office1-$k" "$OUT/det/ol1${k}_slam" "${OLX[@]}" --det fastsam "${ENGX[@]}" --objprob-params none \
       --dump "$OUT/det/ol1$k.gz" > "$OUT/logs/det_ol1$k.log" 2>&1
   done
   O11=$OUT/det/ol11.gz; O15=$OUT/det/ol15.gz
 fi
 WALLRUN=$OUT/det/r3_slam
-[ -d "$WALLRUN" ] || { "$BIN" "$S" "$OUT/wallrun" --pose carto "${COMMON[@]}" --load "$R3D" --objprob --objprob-params "$PARAMS_BASE" > "$OUT/logs/wallrun.log" 2>&1; WALLRUN=$OUT/wallrun; }
+[ -d "$WALLRUN" ] || { "$BIN" "$S" "$OUT/wallrun" --pose carto "${COMMON[@]}" --load "$R3D" --objprob-params "$PARAMS_BASE" > "$OUT/logs/wallrun.log" 2>&1; WALLRUN=$OUT/wallrun; }
 
 # 2) 맞추기
 [ -f "$OUT/fit/objprob_params.json" ] || "$PY" "$HERE/objprob_fit.py" "$S" "$R3D" "$OUT/fit" --walls "$WALLRUN/walls.csv" --metrics "$WALLRUN/metrics.json" \
@@ -66,14 +66,14 @@ run() {   # run <판 이름> <params json> <same_p> <merge_p>
   local tag=$1 pj=$2 sp=$3 mp=$4 X=()
   local env="ap_same_p=$sp,ap_merge_p=$mp${EXTRA_KV:+,$EXTRA_KV}"
   for pose in slam gt; do
-    SM_OBJ_PARAMS=$env "$BIN" "$S" "$OUT/runs/${tag}_$pose" --pose $pose "${COMMON[@]}" --load "$R3D" --objprob --objprob-params "$pj" \
+    SM_OBJ_PARAMS=$env "$BIN" "$S" "$OUT/runs/${tag}_$pose" --pose $pose "${COMMON[@]}" --load "$R3D" --objprob-params "$pj" \
       > "$OUT/logs/${tag}_$pose.log" 2>&1
   done
   "$PY" "$HERE/objprob_eval.py" "$S" "$GTPGM" "$OUT/runs/${tag}_slam,$OUT/runs/${tag}_gt" --json "$OUT/runs/${tag}_eval.json" > "$OUT/runs/${tag}_eval.txt" 2>&1
   local ol=""
   for k in 1 5; do
     local cache=$O11; [ $k = 5 ] && cache=$O15
-    SM_OBJ_PARAMS=$env "$BIN" "$OL/ol_office1-$k" "$OUT/runs/${tag}_ol1$k" "${OLX[@]}" --load "$cache" --objprob --objprob-params "$pj" \
+    SM_OBJ_PARAMS=$env "$BIN" "$OL/ol_office1-$k" "$OUT/runs/${tag}_ol1$k" "${OLX[@]}" --load "$cache" --objprob-params "$pj" \
       > "$OUT/logs/${tag}_ol1$k.log" 2>&1
     ol="$ol ol1-$k $(olcheck "$OUT/runs/${tag}_ol1$k")"
   done

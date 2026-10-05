@@ -20,9 +20,9 @@
 | `scan.*` | 깊이 → 베이스 기준 가상 2D 스캔. 높이 띠 안 점 = 장애물(방위 칸마다 가장 가까운 것), 띠 아래 바닥 점 = 빈 광선 끝. 로봇 몸·팔은 뺀다 |
 | `grid.*` | 2D 점유 격자(로그 오즈), 필요하면 넓어짐. 보이는 값(−1 모름, 0..100 %)을 늘 고쳐 두고, 바뀐 영역(dirty)을 추적 |
 | `mapper2d.*` | 자세는 밖에서(SM_POSE_EXT = Cartographer 기본·GT·ODOM): keyframe 사이·외부 자세가 없을 때 `base_qvel` 적분, keyframe 깊이 가상 스캔을 그 자세로 격자에 넣기(넣기 정책), 마지막 스캔. 옛 `slam2d.*`(깊이 스캔 맞추기로 자세를 고치던 것)는 10-06 `archive/src/scene_graph/scenemap` |
-| `objmap.*` | 검출 마스크 + 깊이 + 자세 → 물체 3D 위치·크기 → 같은 물체 판단 → 갱신. 확정·옮겨짐·사라짐·들기·받침 따라가기. 이름 종류(옮길 수 있음 / 구조물 — 노드 안 됨 / 고정 가구). 끝에 `../da` 로 중복 병합 |
+| `objmap.*` | 검출 마스크 + 깊이 + 자세 → 물체 3D 위치·크기 → 같은 물체 판단(objprob 하나) → 갱신. 확정·옮겨짐·사라짐·들기·받침 따라가기. 이름 종류(옮길 수 있음 / 구조물 — 노드 안 됨 / 고정 가구 / 구조 물체 — 문·창·계단). 다음 keyframe 앞 `apMergePass` 가 이름 없이 같은 것 병합 |
 | `objprob_math.h` | objprob 계산 한 곳(10-06): 같은 것 로지스틱·기하 특징·κ(viewKappa)·이름 사후 정규화·상위어 고르기·이름 분포 겹침·칼만 — `__host__ __device__` 인라인, STL 없음. scenemap(double, `OpmStd`)과 GPU 학습 지도(`training/RL/map`, float 결정적 수학)가 같이 부름. 규칙을 바꾸면 여기를 고침(두 쪽이 함께 바뀜). 맞춤 시험 `training/RL/map/tools/objprob_parity.cpp` |
-| `objprob.*` | 확률 물체 모델(아래 "scenemap 확률 모드"): vMF 임베딩 사후(r = Σκz)·상위 K 모습·이름 범주 사후(상위어로 올림·엔트로피·바깥 관측)·같은 것 로지스틱 특징·평면 맞춤(PCA)·접촉 칸. `ObjParams::objprob` 일 때만 쓰임 |
+| `objprob.*` | 확률 물체 모델(아래 "scenemap 확률 모드"): vMF 임베딩 사후(r = Σκz)·상위 K 모습·이름 범주 사후(상위어로 올림·엔트로피·바깥 관측)·같은 것 로지스틱 특징·평면 맞춤(PCA)·접촉 칸. 물체 지도의 유일한 규칙 |
 | `inspect.*` | 살펴본 정도(아래 "살펴본 정도"): 물체마다 가장 가까이 본 거리·본 시점 수·윗면 본 비율. `ObjParams::insp.on` 일 때만, 판단에는 안 씀 |
 | `bestview.*` | 물체별 best view: 품질 = 유효 마스크 넓이 × 점수가 가장 큰(같으면 최근) 모습. 상자 + 변마다 10 % 여유, 긴 변 최대 256 px. RGB 자르기는 호출자 함수 또는 호스트 RGBA |
 | `cloud.*` | 물체 점 구름: 복셀(기본 0.02 m)마다 점 하나, 물체당 한도(기본 4000), 물체가 움직이면 원점만 옮김 |
@@ -159,17 +159,17 @@ swapped 는 여전히 0: 같은 이름 쌍(의자 ↔ 의자, 스탠드 둘 ↔ 
 7. 병합(da): 이름이 달라도 3D IoU ≥ 0.5 면 합침, 이름 표 합.
 8. 값은 그대로: `min_points`·`confirm`·`prune_s`·`moved_d`·`gone_misses` 3·`gone_min_s` 2·`occl`·`da_*`·`big`·`grow_max`·`max_ext`.
 
-## scenemap 확률 모드(`objprob`) — 확률론적 물체 수준 매핑: 분할 조각 + SigLIP 2 (10-05, `ObjParams::objprob`)
+## scenemap 확률 모드(`objprob`) — 확률론적 물체 수준 매핑: 분할 조각 + SigLIP 2 (10-05)
 
-> 10-05 결정: 쓰는 길은 ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 + objprob — libsgrt·realbag_run 에서 기본으로 켬(scenemap 라이브러리 자체는 `sm_set_object_model` 을 불러야 켜짐). 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞음 — 기기 위 시간은 아직 안 잼. 아래 표의 FastSAM-s 판들은 그 전 비교 기록이다.
+> 10-05 결정: 쓰는 길은 ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 + objprob — 물체 지도의 유일한 규칙이라 늘 켜져 있다(옛 이름 규칙은 10-06 에 지움 — 아래 표의 "옛 규칙" 열은 그 전 비교 기록). 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞음 — 기기 위 시간은 아직 안 잼. 아래 표의 FastSAM-s 판들은 그 전 비교 기록이다.
 
 용어(stuff·things, PCA 와 RANSAC 등)는 robot-agent `docs/terms.md`.
 
-켜지 않으면(`sm_set_object_model` 을 안 부르면) 위의 이름 기준 규칙 그대로다(radio r3 FastSAM-s-416 검출로 objects·events 바이트 같음 확인).
+검출마다 임베딩(`sm_set_det_embeddings`)과 글 모델(`sm_set_text_model`)이 있어야 물체가 생긴다. `sm_set_object_model(c, 0)` 은 -2(끄는 길 없음).
 켜는 길: `sm_set_labels` → `sm_set_text_model`(글 임베딩 줄 → 라벨, SigLIP logit 척도·치우침) → `sm_set_label_stats`(라벨 log 사전·크기 가우스·
-상위어·"object") → `sm_set_object_model(c, 1)`. keyframe 마다 `sm_set_det_embeddings`(검출마다 768-d L2) → `sm_push_image_*` →
+상위어·"object"). keyframe 마다 `sm_set_det_embeddings`(검출마다 768-d L2) → `sm_push_image_*` →
 `sm_reencode_requests`(통째 다시 담기 마스크) → 호출자 SigLIP → `sm_set_object_embeddings`. 진단 셈 `sm_get_objprob_stats`.
-예: `tools/realbag/realbag_run --objprob`(검출·SigLIP·다시 담기 모두 호출자).
+예: `tools/realbag/realbag_run`(검출·SigLIP·다시 담기 모두 호출자).
 
 **흐름(objmap.cpp `update`)**
 1. 기하 구조물 거르기(조각마다 RANSAC 평면 맞춤 — 안쪽 문턱 1 cm + 0.25 cm·d², 안쪽 점 비율 ≥ 0.8, 합친 물체는 2 cm·≥ 0.92 일 때만 평면): 얇은 수평면이 천장 높이 위(`ceil_z` 2.0 m 와 정답 없이 잰 천장 − 0.35 m 중 낮은 쪽)면 천장, 바닥 높이면 바닥.

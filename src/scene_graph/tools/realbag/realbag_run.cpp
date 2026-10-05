@@ -8,12 +8,10 @@
 //                              스트림에 scans.bin 이 없으면 경고하고 odom. --carto-config <lua>(기본 openloris → openloris_hokuyo.lua),
 //                              끝에 <out>/carto_map.pgm·metrics.json "carto". gt = 정답 베이스 자세(여러 판을
 //                              한 지도에 이을 때 — 판 사이 재위치 추정이 없으므로). slam·odom 에서도 정답은 진단(sm_get_pose_diag)에만 넣는다
-//     --det fastsam|yolo|none  검출(기본 fastsam = 이름 없는 분할 엔진 + SigLIP 2 이름(dom_bench_det --classify 와 같은 길). 분할 엔진 기본은
-//                              ObjectSAM(YOLO26n 학생, yolo26n-seg-obj-416.plan — objprob_front.hpp kDefaultEngine), 원래 FastSAM-s 는
-//                              --engine models/ovdet/x86_sm120/FastSAM-s-416.plan.
-//     --det yolo               닫힌 어휘 YOLO 분할(기본 yolo26s-seg-416, COCO 80) — 엔진 어휘 전부
-//     --namer siglip|engine    이름 붙이기(기본 fastsam = siglip, yolo = engine 클래스). siglip = 검출기 마스크마다 SigLIP 2 조각 임베딩을
-//                              아래 낱말 글 임베딩과 맞춤(세 검출기를 같은 이름 표로 비교할 때)
+//     --det fastsam|none       검출(기본 fastsam = 이름 없는 분할 엔진 + 마스크마다 SigLIP 2 조각 임베딩 → 낱말 글 임베딩 최댓값 이름
+//                              (dom_bench_det --classify 와 같은 길). 분할 엔진 기본은 ObjectSAM(YOLO26n 학생, yolo26n-seg-obj-416.plan —
+//                              objprob_front.hpp kDefaultEngine), 원래 FastSAM-s 는 --engine models/ovdet/x86_sm120/FastSAM-s-416.plan.
+//                              none = 검출 없이 지도만
 //     --det-every K            K 프레임마다 검출(기본 3 — 스트림 15 Hz 면 5 Hz, sgrt kf_every 6 @ 30 Hz 와 같음). 나머지 프레임은 깊이로 지도만
 //     --dump dets.gz | --load a.gz[,b.gz…]   검출·이름 캐시(--load 면 GPU 없이 scenemap 만, 여러 판이면 판마다 하나)
 //     --live host:port [--rate R]       sgview(--ingest)로 실시간 스트림, R 배속으로 걸음 맞춤(기본 1)
@@ -22,8 +20,7 @@
 //     --snap-at t1,t2,…        그 시각(스트림 초)에 기억 저장(<out>/snap_<t>/ — 손 확인용)
 //     --max-depth M            이보다 먼 깊이는 버림(기본 4 m — RealSense D435·Kinect 잡음, 시뮬은 8 m)
 //     --frames N · --conf 0.25 · --engine plan · --clip plan · --labels dir · --gap S(판 사이 시각 틈, 기본 5)
-//     --objprob | --no-objprob  확률 물체 모델(objprob)(scenemap README "scenemap 확률 모드") — siglip 이름 검출(또는 RBD2 캐시)의 조각 임베딩 + 통째 다시 담기.
-//                              기본 켬(siglip 이름 길·RBD2 캐시일 때 — 엔진 클래스 이름·RBD1 캐시는 끔), --no-objprob = 옛 이름 규칙
+//     (물체 지도는 objprob 하나 — scenemap README "scenemap 확률 모드": 검출 조각 임베딩(--load 는 RBD2 캐시) + 통째 다시 담기. 끄는 스위치 없음)
 //     --label-prior f.json     objprob 라벨 log 사전(objprob_fit.py label_prior.json). 진단: RB_REENC_DUMP=<dir> 이면 다시 담기 마스크 그림(앞 400 개)
 //     --objprob-params f.json  objprob 엔진별 매개변수(obj_params = sm_set_obj_params 문자열, label_prior = 옆 파일). 없으면 objprob_params/<엔진>.json,
 //                              "none" = 안 씀(내장 기본값). --label-prior 가 파일의 사전보다 이김
@@ -59,8 +56,7 @@ using objprob_front::Word;
 #ifndef RB_PARAMS_DIR
 #define RB_PARAMS_DIR "objprob_params"
 #endif
-constexpr int32_t kDumpMagic = 0x52424431;   // 'RBD1'
-constexpr int32_t kDumpMagic2 = 0x52424432;  // 'RBD2': RBD1 + 프레임마다 임베딩 dim(0 = 없음)·n × dim FP16
+constexpr int32_t kDumpMagic = 0x52424432;   // 'RBD2': 프레임마다 검출 + 임베딩 dim(0 = 없음)·n × dim FP16
 void putI(gzFile z, int32_t v) { gzwrite(z, &v, 4); }
 bool getI(gzFile z, int32_t* v) { return gzread(z, v, 4) == 4; }
 size_t maskWords(const sm_detections& D) { return (size_t(D.mask_w) * D.mask_h + 31) / 32; }
@@ -246,18 +242,16 @@ bool loadPgm(const std::string& dir, Pgm* m) {
 
 // ---------------- 검출 ----------------
 struct Detector {
-  std::string mode;   // fastsam | yolo | none
+  std::string mode;   // fastsam | none | load
   OvdHandle* det = nullptr;
   sgc_encoder* enc = nullptr;
   sgc_labels* lt = nullptr;
   std::vector<std::string> labels;   // scenemap 프롬프트 표
-  std::string namer, engine_path;     // siglip | engine
-  std::vector<int> prompt_cls;       // engine 이름: 검출 cls → labels 번호
-  std::vector<int> text_cls;         // siglip 이름: 글 줄 → labels 번호
-  std::vector<float> text;           // siglip: 글 임베딩
+  std::string engine_path;
+  std::vector<int> text_cls;         // 글 줄 → labels 번호
+  std::vector<float> text;           // 낱말 글 임베딩
   std::vector<int32_t> cls;
-  bool objprob = false;               // objprob: 배경 낱말(kVocabAp)도 글 표에
-  std::vector<float> emb;            // siglip: 검출마다 SigLIP 2 마스크 임베딩(n × SGC_DIM, L2 정규화) — 확률 물체 모델(objprob)이 씀
+  std::vector<float> emb;            // 검출마다 SigLIP 2 마스크 임베딩(n × SGC_DIM, L2 정규화) — 확률 물체 모델(objprob)이 씀
   double det_ms = 0, clip_ms = 0;
   int n_calls = 0;
 
@@ -266,16 +260,12 @@ struct Detector {
     labels.push_back(l);
     return int(labels.size()) - 1;
   }
-  bool init(const std::string& m, const std::string& engine_in, const std::string& clip_plan, const std::string& labels_dir, float conf,
-            const std::string& namer_in) {
+  bool init(const std::string& m, const std::string& engine_in, const std::string& clip_plan, const std::string& labels_dir, float conf) {
     mode = m;
     if (mode == "none") return true;
-    namer = namer_in.empty() ? (mode == "fastsam" ? "siglip" : "engine") : namer_in;
-    if (mode == "fastsam" && namer != "siglip") { std::fprintf(stderr, "fastsam needs --namer siglip\n"); return false; }
+    if (mode != "fastsam") { std::fprintf(stderr, "unknown --det %s (fastsam|none)\n", mode.c_str()); return false; }
     std::string engine = engine_in;
-    if (engine.empty())
-      engine = ra::models() + (mode == "yolo" ? "/archive/x86_sm120/yolo26s-seg-416.plan"   // yolo: 비교용, 보관 엔진(2026-10-05)
-                                      : std::string("/x86_sm120/") + kDefaultEngine);
+    if (engine.empty()) engine = ra::models() + std::string("/x86_sm120/") + kDefaultEngine;
     engine_path = engine;
     char err[2048] = {0};
     OvdConfig oc;
@@ -286,22 +276,10 @@ struct Detector {
     oc.conf_th = conf;
     det = ovd_create(&oc, err, sizeof err);
     if (!det) { std::fprintf(stderr, "ovd_create: %s\n", err); return false; }
-    if (mode == "yolo") {   // 닫힌 어휘(COCO 등): 엔진 어휘 전부. engine 이름 = kVocab 에 있으면 그 지도 이름, 없으면 엔진 이름 그대로
-      ovd_set_prompt(det, nullptr, 0, nullptr, 0);
-      if (namer == "engine")
-        for (int i = 0; i < ovd_vocab_size(det); ++i) {
-          std::string lab = ovd_vocab_name(det, i);
-          for (const Word& w : kVocab) if (lab == w.text) { lab = w.label; break; }
-          prompt_cls.push_back(labelId(lab));
-        }
-      std::fprintf(stderr, "yolo: %d engine classes\n", ovd_vocab_size(det));
-    } else {
-      ovd_set_prompt(det, nullptr, 0, nullptr, 0);   // FastSAM: 'object' 하나
-    }
-    if (namer != "siglip") { std::fprintf(stderr, "naming: engine classes -> %zu labels\n", labels.size()); return true; }
+    ovd_set_prompt(det, nullptr, 0, nullptr, 0);   // 분할 엔진: 'object' 하나
     return initSiglip(clip_plan, labels_dir);
   }
-  // SigLIP 2 이름(세 검출기 모두 같은 글 표·같은 라벨 표): 마스크 조각 임베딩 · 글 임베딩 최댓값. objprob 는 검출 캐시(--load)여도 부름(통째 다시 담기·글 모델)
+  // SigLIP 2 이름: 마스크 조각 임베딩 · 글 임베딩 최댓값. 검출 캐시(--load)여도 부름(통째 다시 담기·글 모델)
   bool initSiglip(const std::string& clip_plan, const std::string& labels_dir) {
     char err[2048] = {0};
     sgc_config cc;
@@ -314,7 +292,7 @@ struct Detector {
     std::vector<float> e(SGC_DIM);
     std::string missing;
     std::vector<Word> words(std::begin(kVocab), std::end(kVocab));
-    if (objprob) words.insert(words.end(), std::begin(kVocabAp), std::end(kVocabAp));
+    words.insert(words.end(), std::begin(kVocabAp), std::end(kVocabAp));   // 배경 낱말도 글 표에
     for (const Word& w : words) {
       const int row = sgc_labels_find(lt, w.text);
       if (row < 0 || sgc_labels_text_emb(lt, row, e.data()) != 0) { missing += std::string(" '") + w.text + "'"; continue; }
@@ -376,9 +354,7 @@ struct Detector {
     ++n_calls;
     cls.assign(size_t(D->n), 0);
     emb.clear();
-    if (namer == "engine") {
-      for (int k = 0; k < D->n; ++k) cls[size_t(k)] = prompt_cls[size_t(D->cls[k])];
-    } else if (D->n > 0) {
+    if (D->n > 0) {
       sgc_frame fr{};
       fr.rgb = rgb.data(); fr.on_device = 0; fr.row_stride = int64_t(W) * 3; fr.pix_stride = 3; fr.w = W; fr.h = H;
       fr.mask_w = D->mask_w; fr.mask_h = D->mask_h; fr.mask_sx = D->mask_sx; fr.mask_sy = D->mask_sy; fr.mask_ox = D->mask_ox;
@@ -424,7 +400,7 @@ struct Detector {
 };
 
 // 검출 캐시: 머리 magic nl [len name]… 다음 프레임마다 key(프레임 번호) n img_w img_h | cls score box mask_w mask_h ms[4] bits
-//   (RBD2: 그 뒤 dim, n × dim FP16 임베딩 — 검출이 0 개여도 dim 은 씀)
+//   (그 뒤 dim, n × dim FP16 임베딩 — 검출이 0 개여도 dim 은 씀)
 void writeDets(gzFile z, int key, const sm_detections& D, const std::vector<float>& emb) {
   putI(z, key); putI(z, D.n); putI(z, D.img_w); putI(z, D.img_h);
   const int dim = D.n > 0 && emb.size() == size_t(D.n) * SGC_DIM ? SGC_DIM : 0;
@@ -452,13 +428,11 @@ struct DumpReader {
   std::vector<int32_t> cls;
   std::vector<float> score, box;
   std::vector<uint32_t> bits;
-  std::vector<float> emb;             // RBD2: 이 프레임 임베딩(n × SGC_DIM, 없으면 빔)
-  bool v2 = false;
+  std::vector<float> emb;             // 이 프레임 임베딩(n × SGC_DIM, 없으면 빔)
   bool open(const std::string& p, std::vector<std::string>* labels) {
     z = gzopen(p.c_str(), "rb");
     int32_t magic = 0, nl = 0;
-    if (!z || !getI(z, &magic) || (magic != kDumpMagic && magic != kDumpMagic2) || !getI(z, &nl)) return false;
-    v2 = magic == kDumpMagic2;
+    if (!z || !getI(z, &magic) || magic != kDumpMagic || !getI(z, &nl)) return false;
     labels->resize(size_t(nl));
     for (auto& l : *labels) { int32_t k = 0; getI(z, &k); l.resize(size_t(k)); gzread(z, l.data(), unsigned(k)); }
     have = getI(z, &key);
@@ -483,15 +457,13 @@ struct DumpReader {
       D->cls = cls.data(); D->score = score.data(); D->box = box.data(); D->mask_bits = bits.data();
     }
     emb.clear();
-    if (v2) {
-      int32_t dim = 0;
-      getI(z, &dim);
-      if (dim > 0) {
-        std::vector<uint16_t> h(size_t(n) * dim);
-        gzread(z, h.data(), unsigned(2 * h.size()));
-        emb.resize(h.size());
-        sgc_f16_to_f32(h.data(), emb.data(), int32_t(h.size()));
-      }
+    int32_t dim = 0;
+    getI(z, &dim);
+    if (dim > 0) {
+      std::vector<uint16_t> h(size_t(n) * dim);
+      gzread(z, h.data(), unsigned(2 * h.size()));
+      emb.resize(h.size());
+      sgc_f16_to_f32(h.data(), emb.data(), int32_t(h.size()));
     }
     have = getI(z, &key);
     return true;
@@ -505,12 +477,12 @@ const char* stateName(int s) { return s == SM_SEEN ? "seen" : s == SM_GONE ? "go
 int main(int argc, char** argv) {
   if (argc < 3) {
     std::fprintf(stderr, "usage: realbag_run <stream dir>[,<stream dir>...] <out dir> [--robot limo_omx] [--pose carto|odom|gt] "
-                         "[--det fastsam|yolo|none] [--namer siglip|engine] [--det-every 3] [--dump f.gz|--load f.gz] [--live host:port] [--rate 1] [--sg run_dir] "
-                         "[--ref-map memdir] [--snap-at t,..] [--frames N] [--objprob [--label-prior f.json]] [--inspect]\n");
+                         "[--det fastsam|none] [--det-every 3] [--dump f.gz|--load f.gz] [--live host:port] [--rate 1] [--sg run_dir] "
+                         "[--ref-map memdir] [--snap-at t,..] [--frames N] [--label-prior f.json] [--objprob-params f.json] [--inspect]\n");
     return 2;
   }
   std::string carto_config;
-  std::string robot = "limo_omx", pose = "carto", det_mode = "fastsam", namer, engine, dump_path, load_path, live, sg_run, ref_map, snap_at;
+  std::string robot = "limo_omx", pose = "carto", det_mode = "fastsam", engine, dump_path, load_path, live, sg_run, ref_map, snap_at;
   std::string clip_plan = ra::models() + "/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan";
   std::string labels_dir = ra::labels();
   int det_every = 3;
@@ -521,8 +493,6 @@ int main(int argc, char** argv) {
   std::string label_prior;   // objprob 라벨 사전(objprob_fit.py label_prior.json: 이름 → log 사전, 정답 없이 조각 임베딩 EM 으로 잰 것)
   std::string obj_params_file;   // objprob 엔진별 매개변수(objprob_params/<엔진>.json). 비면 엔진 이름으로 고름, "none" = 안 씀
   bool inspect = false;   // 살펴본 정도(scenemap README "살펴본 정도", sm_set_inspect) — view.json·scene.json objects[].inspect
-  int objprob_flag = -1;   // 확률 물체 모델(objprob)(분할 조각 + SigLIP 2 임베딩 — 이름 없는 같은 것·기하 구조물·vMF 벡터·이름 사후·통째 다시 담기).
-                           // -1(기본) = SigLIP 2 이름 길(--det fastsam, --namer siglip, RBD2 캐시)이면 켬, --objprob = 켬, --no-objprob = 옛 규칙
   for (int i = 3; i < argc; ++i) {
     const std::string a = argv[i];
     auto nx = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -531,8 +501,8 @@ int main(int argc, char** argv) {
     else if (a == "--load") load_path = nx(); else if (a == "--live") live = nx(); else if (a == "--rate") rate = std::stod(nx());
     else if (a == "--sg") sg_run = nx(); else if (a == "--ref-map") ref_map = nx(); else if (a == "--snap-at") snap_at = nx();
     else if (a == "--frames") max_frames = std::stol(nx()); else if (a == "--conf") conf = std::stof(nx());
-    else if (a == "--engine") engine = nx(); else if (a == "--namer") namer = nx(); else if (a == "--clip") clip_plan = nx(); else if (a == "--labels") labels_dir = nx();
-    else if (a == "--objprob") objprob_flag = 1; else if (a == "--no-objprob") objprob_flag = 0; else if (a == "--label-prior") label_prior = nx(); else if (a == "--inspect") inspect = true; else if (a == "--objprob-params") obj_params_file = nx();
+    else if (a == "--engine") engine = nx(); else if (a == "--clip") clip_plan = nx(); else if (a == "--labels") labels_dir = nx();
+    else if (a == "--label-prior") label_prior = nx(); else if (a == "--inspect") inspect = true; else if (a == "--objprob-params") obj_params_file = nx();
     else if (a == "--carto-config") carto_config = nx();
     else if (a == "--gap") gap = std::stod(nx()); else if (a == "--max-depth") max_depth = std::stof(nx()); else if (a == "--save-s") save_s = std::stod(nx());
     else { std::fprintf(stderr, "unknown %s\n", a.c_str()); return 2; }
@@ -554,25 +524,7 @@ int main(int argc, char** argv) {
   { std::stringstream ss(snap_at); std::string t; while (std::getline(ss, t, ',')) if (!t.empty()) snap_times.push_back(std::stod(t)); }
 
   // 검출
-  // objprob 기본: 마스크마다 SigLIP 2 임베딩이 있는 길(fastsam·--namer siglip·RBD2 캐시)이면 켬. 엔진 클래스 이름(yolo)·RBD1 캐시·none 은 옛 규칙
-  bool objprob = objprob_flag == 1;
-  if (objprob_flag < 0) {
-    if (!load_path.empty()) {
-      objprob = true;
-      std::stringstream ss(load_path);
-      for (std::string p; std::getline(ss, p, ',');) {
-        gzFile z = gzopen(p.c_str(), "rb");
-        int32_t mg = 0;
-        if (!z || !getI(z, &mg) || mg != kDumpMagic2) objprob = false;
-        if (z) gzclose(z);
-      }
-    } else {
-      objprob = det_mode == "fastsam" || (det_mode != "none" && namer == "siglip");
-    }
-  }
-  std::fprintf(stderr, "objprob %s\n", objprob ? "on" : "off (old rules)");
   Detector D;
-  D.objprob = objprob;
   std::vector<DumpReader> dr;   // 판마다 하나(--load a.gz,b.gz,…). 이름 표는 모두 같아야 함
   if (!load_path.empty()) {
     std::stringstream ss(load_path);
@@ -586,18 +538,16 @@ int main(int argc, char** argv) {
     }
     if (dr.size() != streams.size()) { std::fprintf(stderr, "--load needs one dump per stream (%zu vs %zu)\n", dr.size(), streams.size()); return 1; }
     D.mode = "load";
-  } else if (!D.init(det_mode, engine, clip_plan, labels_dir, conf, namer)) {
+  } else if (!D.init(det_mode, engine, clip_plan, labels_dir, conf)) {
     return 1;
   }
-  if (objprob) {
-    if (!D.enc && !D.initSiglip(clip_plan, labels_dir)) return 1;
-    for (const ApLabel& a : kApLabels) D.labelId(a.label);   // 상위어 라벨(furniture …)·object 를 표에 더함
-  }
+  if (!D.enc && !D.initSiglip(clip_plan, labels_dir)) return 1;
+  for (const ApLabel& a : kApLabels) D.labelId(a.label);   // 상위어 라벨(furniture …)·object 를 표에 더함
   if (D.labels.empty()) D.labels.push_back("object");
   gzFile dz = nullptr;
   if (!dump_path.empty()) {
     dz = gzopen(dump_path.c_str(), "wb1");
-    putI(dz, kDumpMagic2);
+    putI(dz, kDumpMagic);
     putI(dz, int32_t(D.labels.size()));
     for (auto& l : D.labels) { putI(dz, int32_t(l.size())); gzwrite(dz, l.data(), unsigned(l.size())); }
   }
@@ -612,7 +562,7 @@ int main(int argc, char** argv) {
     sm_set_labels(c, lp.data(), int(lp.size()));
   }
   std::string obj_kv;   // 엔진별 매개변수 파일의 obj_params(sm_set_obj_params)
-  if (objprob && obj_params_file != "none") {
+  if (obj_params_file != "none") {
     // 엔진별 매개변수: --objprob-params 가 없으면 objprob_params/<엔진 파일 이름에서 .plan 뺀 것>.json(엔진을 안 주면 기본 엔진 —
     // --load 캐시는 그 엔진을 --engine 으로 알려 줘야 맞는 파일을 고름). 파일: {"obj_params": "key=val,…", "label_prior": "옆 파일.json"}
     std::string pf = obj_params_file;
@@ -626,7 +576,7 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "objprob params %s (label prior %s)\n", pf.c_str(), label_prior.c_str());
     }
   }
-  if (objprob) {   // objprob: 글 모델(낱말 줄 → 라벨)·라벨 크기 사전·상위어·엔진별 매개변수(objprob_front.hpp)
+  {   // 글 모델(낱말 줄 → 라벨)·라벨 크기 사전·상위어·엔진별 매개변수(objprob_front.hpp)
     std::string er;
     if (!objprob_front::enable(c, &D.labels, D.text, D.text_cls, label_prior, obj_kv, &er)) {
       std::fprintf(stderr, "%s%s\n", er.c_str(), er.find("unknown key") != std::string::npos ? (" in " + obj_params_file).c_str() : "");
@@ -803,13 +753,13 @@ int main(int argc, char** argv) {
       }
 #endif
       sm_image im{t, 0, S.w, S.h, kf ? rgba.data() : nullptr, dm.data(), S.fx, S.fy, S.cx, S.cy};
-      if (objprob && have_det) {
+      if (have_det) {
         const std::vector<float>& E = D.mode == "load" ? dr[si].emb : D.emb;
         if (E.size() == size_t(Dt.n) * SGC_DIM) sm_set_det_embeddings(c, E.data(), Dt.n, SGC_DIM);
-        else if (Dt.n > 0) { std::fprintf(stderr, "objprob: no embeddings in this dump (needs RBD2 from a siglip run)\n"); return 1; }
+        else if (Dt.n > 0) { std::fprintf(stderr, "objprob: no embeddings in this dump (needs a dump from a siglip run)\n"); return 1; }
       }
       sm_push_image_rgb(c, &im, have_det ? &Dt : nullptr, nullptr);
-      if (objprob && have_det) {   // 통째 다시 담기: 합친 물체·더 좋은 모습을 구름 투영 마스크로 SigLIP 2
+      if (have_det) {   // 통째 다시 담기: 합친 물체·더 좋은 모습을 구름 투영 마스크로 SigLIP 2
         const sm_reenc_req* rq = nullptr;
         const uint32_t* rb = nullptr;
         const int nr = sm_reencode_requests(c, &rq, &rb);
@@ -1097,7 +1047,7 @@ int main(int argc, char** argv) {
   }
   sm_snapshot_release(snap);
   std::string apj = "null";
-  if (objprob) {   // objprob 진단 셈·다시 담기 시간(SigLIP 호출 = 검출 조각 + 통째)
+  {   // objprob 진단 셈·다시 담기 시간(SigLIP 호출 = 검출 조각 + 통째)
     int64_t a[16] = {0};
     sm_get_objprob_stats(c, a);
     const char* nm[16] = {"obs", "struct_wall_big", "struct_wall_name", "struct_ceiling", "struct_floor", "struct_det_name", "assoc", "new", "merge",
@@ -1132,11 +1082,11 @@ int main(int argc, char** argv) {
   }
   const std::string metrics =
       Obj().str("streams", snames).str("robot", robot).str("pose", pose).str("det", D.mode == "load" ? "load:" + load_path : D.mode)
-          .str("namer", D.namer).str("engine", D.engine_path).num("det_gpu_mb", double(D.deviceBytes()) / 1048576.0)
+          .str("engine", D.engine_path).num("det_gpu_mb", double(D.deviceBytes()) / 1048576.0)
           .raw("se2_map_to_gt", "[" + jnum(Tu.c) + "," + jnum(Tu.s) + "," + jnum(Tu.tx) + "," + jnum(Tu.ty) + "]")
           .num("det_every", det_every).num("max_depth", max_depth).num("frames", double(n_frames)).num("det_frames", double(n_detf))
           .num("dets_per_frame", n_detf ? double(n_dets) / n_detf : 0).num("det_ms", D.n_calls ? D.det_ms / D.n_calls : 0)
-          .num("clip_ms", D.n_calls ? D.clip_ms / D.n_calls : 0).raw("objprob", apj).num("objmap_us", objmap_us).num("inspect", inspect ? 1 : 0).str("objprob_params", objprob ? obj_params_file : std::string()).num("duration_s", t_end).num("wall_s", wall).num("gt_path_m", gt_len)
+          .num("clip_ms", D.n_calls ? D.clip_ms / D.n_calls : 0).raw("objprob", apj).num("objmap_us", objmap_us).num("inspect", inspect ? 1 : 0).str("objprob_params", obj_params_file).num("duration_s", t_end).num("wall_s", wall).num("gt_path_m", gt_len)
           .raw("ate_se2_cam", ateJ(a_est)).raw("ate_se2_odom", ateJ(a_odo)).raw("ate_first_cam", ateJ(a_est1)).raw("ate_first_odom", ateJ(a_odo1))
           .num("yaw_rms_deg", yaw_rms * 180 / M_PI).raw("carto", cartoj)
           .raw("pose_diag", Obj().num("n", pd.n).num("rms_xy", pd.rms_xy).num("max_xy", pd.max_xy).num("last_xy", pd.last_xy)

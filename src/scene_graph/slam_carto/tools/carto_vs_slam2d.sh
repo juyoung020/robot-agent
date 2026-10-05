@@ -10,7 +10,7 @@ BIN=$RA_BUILD/realbag/realbag_run
 PY=${PY:-python3}   # 표는 표준 라이브러리만
 OL=$RA_DATASETS/realbags/streams
 O=${1:-$RA_DATASETS/realbags/carto_cmp}
-X=(--max-depth 4 --conf 0.25 --objprob)
+X=(--max-depth 4 --conf 0.25)
 mkdir -p "$O/det" "$O/logs"
 for k in ${KS:-1 2 3 4 5 6 7}; do
   d=$OL/ol_office1-$k
