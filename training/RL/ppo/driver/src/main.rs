@@ -501,6 +501,11 @@ fn main() {
     // BEHAVIOR(env 3) 기본값: CURRICULUM_BEHAVIOR2026 5.4 의 env_verify 기본 섞음(B1 0.34·B2 0.33·B3 나머지), 학습 인스턴스, 느슨 거르개
     let bbase = parse_bspec(v.get("beh").unwrap_or(&Value::Null), &BSpec { p1: 0.34, p2: 0.33, ..Default::default() });
     let stages = parse_stages(&cur, cfg.stage, promote_default, &bbase);
+    // GT 지도 막기(2026-10-06 사용자 결정 — 학습·평가는 빈 지도 C2 에서 자라는 지도만): 처음 지도 C0/C1(미리 채움)은 --debug-gt-map 일 때만
+    if stages.iter().any(|s| s.p0 > 0.0 || s.p1 > 0.0) && !args.iter().any(|x| x == "--debug-gt-map") {
+        eprintln!("ppo_run: config asks for a prefilled (GT) start map (stage map [p0, p1] > 0). Training uses the growing map only (C2, CURRICULUM_BEHAVIOR2026 5.7). Pass --debug-gt-map to run it anyway (debug only).");
+        std::process::exit(2);
+    }
     let window = gi(&cur, "window", 20) as usize;
     let stop_success = gf(&cur, "stop_success", 2.0);
     let ckpt_every = gi(&v, "ckpt_every", 200);

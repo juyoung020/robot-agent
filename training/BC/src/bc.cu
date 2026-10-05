@@ -602,7 +602,13 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
       if (cfg.b_gcand && cfg.teacher_script) env::pnp_stance_cands(*scenes);   // 잡기 서는 자리 후보(상태 없는 교사)
       if (cfg.b_sltol) env::set_sl_tol(*scenes, cfg.b_sltol);   // 상태 없는 교사 단계 문턱
       dev_bytes += scenes->dev_bytes;
-      if (b0.scene_mask == 0) b0.scene_mask = (1u << scenes->host.nsc) - 1u;
+      // 집 나누기(CURRICULUM_BEHAVIOR2026 1·5.7 — 학습 집 / 평가 집, 이름으로): 학습·DAgger 는 학습 집만, 평가 집은 평가에서만
+      for (int k = 0; k < scenes->host.nsc && k < 32; ++k) {
+        const std::string& nm = scenes->sc[k].name;
+        const bool ev = nm == "Rs_int" || nm == "hotel_suite_large" || nm == "house_double_floor_upper";
+        (ev ? house_eval : house_train) |= 1u << k;
+      }
+      if (b0.scene_mask == 0) b0.scene_mask = cfg.b_house_split ? house_train : (1u << scenes->host.nsc) - 1u;
       if (b0.p1 == 0.f && b0.p2 == 0.f && b0.p4 + b0.p5 + b0.p6 == 0.f) { b0.p1 = bsc::kBCurrDefault.p1; b0.p2 = bsc::kBCurrDefault.p2; }   // 비율을 안 주면 env_verify 기본 섞음
     }
     BCK(cudaMemcpy(bcurr_d, &b0, sizeof b0, cudaMemcpyHostToDevice));
@@ -1285,6 +1291,16 @@ int bc_set_demo_frac(void* h, float frac) {
   const long long q = frac <= 0.f ? 0 : frac >= 1.f ? 65536 : (long long)(frac * 65536.f + 0.5f);
   b->set_dev(reinterpret_cast<uint8_t*>(b->data_d) + offsetof(bc::Data, pad2), &q, sizeof q);
   return 0;
+}
+int bc_set_houses(void* h, int32_t which) {
+  auto* b = static_cast<Bc*>(h);
+  if (!b->scenes) return -1;
+  const uint32_t m = which == 0 ? b->house_train : which == 1 ? b->house_eval : (b->house_train | b->house_eval);
+  b->set_dev(reinterpret_cast<uint8_t*>(b->bcurr_d) + offsetof(bsc::BCurr, scene_mask), &m, sizeof m);
+  // 평가 집의 인스턴스는 대회 공개 평가 쪽(split 1)에 있을 수 있음 → 평가 집이면 인스턴스 둘 다(2), 학습 집이면 설정 값
+  const int sp = which == 0 ? b->cfg.b_split : 2;
+  b->set_dev(reinterpret_cast<uint8_t*>(b->bcurr_d) + offsetof(bsc::BCurr, split), &sp, sizeof sp);
+  return (int)m;
 }
 int bc_set_beta(void* h, float beta) {
   auto* b = static_cast<Bc*>(h);

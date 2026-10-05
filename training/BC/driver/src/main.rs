@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 // BC 학생 실행기(계획서 GPU_TRAINING.md 1.1: Rust = 설정·실행 순서·로그). 계산은 모두 libbc(C++/CUDA, 그래프 둘).
 //
 //   bc_run <config.json> [--out DIR]
@@ -102,7 +103,7 @@ struct BcConfig {
     b_gcand: i32,
     b_sltol: i32,
     mlp_w: i32,
-    pad_cfg: i32,
+    b_house_split: i32,
 }
 
 #[repr(C)]
@@ -155,6 +156,7 @@ extern "C" {
     fn bc_load_text_table(h: H, path: *const std::os::raw::c_char) -> i32;
     fn bc_sldiag(h: H, tag: *const std::os::raw::c_char) -> i32;
     fn bc_set_beta(h: H, beta: f32) -> i32;
+    fn bc_set_houses(h: H, which: i32) -> i32;
     fn bc_set_keep(h: H, keep: i64) -> i32;
     fn bc_set_demo_frac(h: H, frac: f32) -> i32;
 }
@@ -277,8 +279,8 @@ fn main() {
         adam_b2: 0.999,
         adam_eps: 1e-8,
         max_grad_norm: gf(&v, "max_grad_norm", 1.0) as f32,
-        map_p0: gf(&v, "map_p0", 0.2) as f32,
-        map_p1: gf(&v, "map_p1", 0.6) as f32,
+        map_p0: gf(&v, "map_p0", 0.0) as f32,
+        map_p1: gf(&v, "map_p1", 0.0) as f32,
         map_kmin: gi(&v, "map_kmin", 1) as i32,
         map_kmax: gi(&v, "map_kmax", 8) as i32,
         map_reveal_r: gf(&v, "map_reveal_r", 1.5) as f32,
@@ -341,8 +343,13 @@ fn main() {
         b_gcand: v.get("beh").and_then(|b| b.get("gcand")).and_then(|x| x.as_i64()).unwrap_or(0) as i32,   // 잡기 서는 자리 후보(상태 없는 교사)
         b_sltol: v.get("beh").and_then(|b| b.get("sltol")).and_then(|x| x.as_i64()).unwrap_or(0) as i32,   // 상태 없는 교사 단계 문턱(1 = 배울 수 있는 값)
         mlp_w: gi(&v, "mlp_w", 0) as i32,   // MLP 학생 몸통 폭(0 = 256)
-        pad_cfg: 0,
+        b_house_split: v.get("beh").and_then(|b| b.get("house_split")).and_then(|x| x.as_i64()).unwrap_or(1) as i32,   // 학습 집 / 평가 집 나누기(기본 켬)
     };
+    // GT 지도 막기(2026-10-06 사용자 결정): 처음 지도 C0/C1(미리 채운 참 지도)은 --debug-gt-map 일 때만. 학습·평가는 빈 지도 C2 에서 자라는 지도
+    if (c.map_p0 > 0.0 || c.map_p1 > 0.0) && !args.iter().any(|x| x == "--debug-gt-map") {
+        eprintln!("bc_run: config asks for a prefilled (GT) start map (map_p0 {} map_p1 {}). Training uses the growing map only (C2, CURRICULUM_BEHAVIOR2026 5.7). Pass --debug-gt-map to run it anyway (debug only).", c.map_p0, c.map_p1);
+        std::process::exit(2);
+    }
     let r0 = gi(&v, "record_rollouts", 4) as usize;
     let u0 = gi(&v, "bc_updates", 100) as usize;
     let nd = gi(&v, "dagger_iters", 4) as usize;
@@ -379,7 +386,7 @@ fn main() {
         c.vision, c.text, if c.head != 0 { "flow" } else { "mse" }, c.chunk, c.flow_steps, c.render_profile);
     let mut results = serde_json::Map::new();
 
-    let eval = |run: &mut Run, name: &str, actor: i32, results: &mut serde_json::Map<String, Value>| {
+    let eval_one = |run: &mut Run, name: &str, actor: i32, results: &mut serde_json::Map<String, Value>| {
         run.phase = format!("eval_{}", name);
         let t = Instant::now();
         unsafe { bc_reset_env(run.h, eval_seed); bc_set_mode(run.h, actor, 0); }
@@ -408,6 +415,18 @@ fn main() {
         if pn > 0.0 { tj["grounding"] = json!({"episodes": gn, "nearest_is_target": if gn > 0.0 { gk / gn } else { 0.0 }, "pnp_episodes": pn, "pnp_success": ps / pn}); }
         results.insert(name.to_string(), tj);
         fs::write(out.join("results.json"), serde_json::to_string_pretty(&Value::Object(results.clone())).unwrap()).unwrap();
+    };
+    let house_split = c.b_house_split != 0 && (c.beh != 0 || c.stage >= 3);
+    let eval = |run: &mut Run, name: &str, actor: i32, results: &mut serde_json::Map<String, Value>| {
+        if house_split {   // 평가는 평가 집(이름 그대로)과 학습 집(<이름>_trainhouses) 따로 — 학습 롤아웃은 학습 집으로 되돌림
+            unsafe { bc_set_houses(run.h, 0) };
+            eval_one(run, &format!("{}_trainhouses", name), actor, results);
+            unsafe { bc_set_houses(run.h, 1) };
+            eval_one(run, name, actor, results);
+            unsafe { bc_set_houses(run.h, 0) };
+        } else {
+            eval_one(run, name, actor, results);
+        }
     };
     // 학습률 일정(갱신 그래프마다, 비동기 장치 값): "lr_sched": "cos" 면 앞 warmup 몫은 선형으로 올리고 그 뒤 cos 로 lr → lr_min (BC + DAgger 모든 갱신 그래프를 한 줄로)
     let sched_cos = v.get("lr_sched").and_then(|x| x.as_str()) == Some("cos");

@@ -21,6 +21,16 @@ pub struct RunFolder {
     hook: Option<trainfmt::replay_hook::ReplayHook>,
 }
 
+// 실제 인식(scene_graph) 소스 판 — behavior-2026 서브모듈 HEAD(정보용: GPU 지도는 우리 포트라 자동으로 따라가지 않음, TRAINING_DESIGN 6.1)
+fn scene_graph_git() -> Value {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../src/behavior-2026");
+    let out = std::process::Command::new("git").arg("-C").arg(&repo).args(["log", "-1", "--format=%H %cs %s", "--", "src/scene_graph"]).output();
+    match out {
+        Ok(o) if o.status.success() => json!(String::from_utf8_lossy(&o.stdout).trim().to_string()),
+        _ => Value::Null,
+    }
+}
+
 fn round_of(phase: &str) -> f64 {
     let d: String = phase.chars().filter(|c| c.is_ascii_digit()).collect();
     d.parse().unwrap_or(0.0)
@@ -60,6 +70,10 @@ pub fn open(out: &Path, cfg_path: &str, v: &Value, c: &BcConfig, teacher: &str, 
         "num_params": params,
         "device_bytes": dev_bytes,
         "curriculum": {"start_maps": ["C0", "C1", "C2"], "map": [c.map_p0, c.map_p1]},
+        // 지도 방식(2026-10-06): growing = 빈 지도 C2 에서 로봇 관측으로 자람(학습 기본), debug-gt = 미리 채운 참 지도(--debug-gt-map)
+        "map_mode": if c.map_p0 > 0.0 || c.map_p1 > 0.0 { "debug-gt (prefilled start map)" } else { "growing (C2, GPU map approximation training/RL/map)" },
+        "scene_graph_git": scene_graph_git(),
+        "house_split": if c.b_house_split != 0 { json!({"train": ["house_single_floor", "house_double_floor_lower", "restaurant_diner", "office_cubicles_right"], "eval": ["Rs_int", "hotel_suite_large", "house_double_floor_upper"], "rule": "training/DAgger rollouts on train houses only; evals reported per split (<name> = held-out houses, <name>_trainhouses)"}) } else { json!("off") },
         "refs": {"train/grad_norm": c.max_grad_norm},
         "x_default": "time/iterations",
         "logged": {

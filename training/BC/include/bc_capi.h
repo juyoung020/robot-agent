@@ -78,9 +78,9 @@ typedef struct BcConfig {
   int32_t b_feas;           /* 1 = 잡기 가능 표(env pnp_feasibility, 시작 때 GPU 약 30 s)를 만들고 B4–B6 판을 그 단계로 될 수 있는 짝에서만 뽑음(BCurr::phys PF_FEAS) —
                                대본 교사는 표의 서는 자리를 씀. teacher_script 1 이면 표는 늘 만듦(고르기는 이 값) */
   int32_t b_gcand;          /* 1 = 잡기 서는 자리 후보(env pnp_stance_cands): 상태 없는 교사(teacher_script 2)가 물체가 처음 자리일 때 로봇에 가까운 후보에 섬(2026-10-06) */
-  int32_t b_sltol;          /* 상태 없는 교사 단계 문턱: 0 = 정밀(상태 있는 교사와 같음), 1 = 배울 수 있는 값(env teacher_sl.h sl_tol) */
+  int32_t b_sltol;          /* 상태 없는 교사 비트(env set_sl_tol): 1 = 배울 수 있는 단계 문턱(teacher_sl.h sl_tol), 2 = 특권은 지도에 확정된 집을 물체만(B4–B6 모두, 아니면 탐사) */
   int32_t mlp_w;            /* MLP 학생(arch 0) 몸통 폭 A1·A2(8 의 배수, 0 = 256 = 예전 student-lite) — 2026-10-06 */
-  int32_t pad_cfg;          /* 맞춤(0) */
+  int32_t b_house_split;    /* 1 = 학습·DAgger 롤아웃은 학습 집만(house_single_floor·house_double_floor_lower·restaurant_diner·office_cubicles_right), 평가 집(Rs_int·hotel_suite_large·house_double_floor_upper)은 평가에서만(bc_set_houses) */
 } BcConfig;
 
 typedef struct BcLog {
@@ -114,6 +114,8 @@ int bc_reset_env(void* h, uint64_t env_seed);
 int bc_set_mode(void* h, int32_t actor, int32_t record);
 /* DAgger β: 학생 그래프(actor 1)에서 판마다(에피소드 번호 해시) 이 확률로 교사가 몲 — 다음 bc_set_mode 부터. 학생 앞 계산은 늘 하므로 어긋남·진단은 모든 판 */
 int bc_set_beta(void* h, float beta);
+/* 장면 비트를 학습 집(0)·평가 집(1)·둘 다(2)로(장치 값, 다음 판 리셋부터). 돌려줌 = 비트, −1 = 장면 없음 */
+int bc_set_houses(void* h, int32_t which);
 /* 자료 고리의 앞 keep 표본(교사 시연)을 덮어쓰지 않게 — 그 뒤 고리는 [keep, cap) 에서 돎. 비동기(다음 그래프부터). keep ≥ cap 이면 지키지 않고 −1 */
 int bc_set_keep(void* h, int64_t keep);
 /* 미니배치에서 지킨 시연(bc_set_keep)을 뽑는 몫(0 = 자료 전체 균등). 비동기 */

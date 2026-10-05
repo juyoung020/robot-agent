@@ -42,7 +42,8 @@ int main(int argc, char** argv) {
   bsc::BuildOpt bo;
   bsc::BCurr bcu = bsc::kBCurrDefault;
   int pos = 0, nav_k = 0;
-  bool teach = false, tsl = false, gcand = false, sltol = false;
+  bool teach = false, tsl = false, gcand = false;
+  int sltol = 0;
   long teach_mis = 0, pnp_end[2] = {0, 0}, pnp_moved = 0;
   std::string tv_dump;
   for (int a = 1; a < argc; ++a) {
@@ -70,7 +71,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--teacher")) teach = true;   // 홀수 판(B4–B6) = 대본 교사(지도 거리장으로 다가감), GPU 교사 == CPU 교사 비교
     else if (!std::strcmp(argv[a], "--teacher-sl")) { teach = true; tsl = true; }
     else if (!std::strcmp(argv[a], "--gcand")) gcand = true;   // 잡기 가능 표 + 서는 자리 후보(상태 없는 교사가 로봇에 가까운 것) + PF_FEAS
-    else if (!std::strcmp(argv[a], "--sltol")) sltol = true;   // 상태 없는 교사 배울 수 있는 단계 문턱   // 상태 없는 교사(teacher_sl.h, B6 지도 확정 전 탐사가 지도 되먹임을 읽음)
+    else if (!std::strcmp(argv[a], "--sltol")) sltol |= 1;   // 상태 없는 교사 배울 수 있는 단계 문턱
+    else if (!std::strcmp(argv[a], "--slknown")) sltol |= 2;   // 상태 없는 교사 특권은 지도에 확정된 집을 물체만   // 상태 없는 교사(teacher_sl.h, B6 지도 확정 전 탐사가 지도 되먹임을 읽음)
     else if (!std::strcmp(argv[a], "--point") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &bcu.p_point, &bcu.p_goto);   // 목표 점 섞음
     else if (!std::strcmp(argv[a], "--negative-goal")) { negative = true; neg_bug = 11; }   // 목표 칸 회전 없음(토큰)
     else if (!std::strcmp(argv[a], "--negative-tv")) { negative = true; neg_bug = 12; }     // 위에서 본 지도 거꾸로 돌림(토큰 교사 격자)
@@ -110,7 +112,7 @@ int main(int argc, char** argv) {
     for (size_t k = 0; k < sb.sc.size(); ++k)
       if (!rasc::load(rscenes[k], ((bo.dir.empty() ? bsc::default_rasc_dir() : bo.dir) + "/" + sb.sc[k].name + ".rasc").c_str(), &err)) { std::printf("%s\n", err.c_str()); return 1; }
     if (gcand) { env::pnp_feasibility(sb); env::pnp_stance_cands(sb); bcu.phys |= bsc::PF_FEAS; }
-    if (sltol) env::set_sl_tol(sb, 1);
+    if (sltol) env::set_sl_tol(sb, sltol);
     std::printf("BEHAVIOR scenes %d, entries %d; mix B1 %.2f B2 %.2f strict %d\n", sb.host.nsc, sb.host.nent, bcu.p1, bcu.p2, bcu.strict);
   }
   DeviceEnv genv(N, stage, seed, arm, sb.dev, bcu);

@@ -61,7 +61,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--negative-teacher-sl")) { negative = true; neg_teach = true; teach = true; tsl = true; nbug = 0; }
     else if (!std::strcmp(argv[a], "--feas")) feas = true;
     else if (!std::strcmp(argv[a], "--gcand")) gcand = true;
-    else if (!std::strcmp(argv[a], "--sltol")) sltol = 1;   // 상태 없는 교사 배울 수 있는 단계 문턱   // 잡기 서는 자리 후보(pnp_stance_cands) — 상태 없는 교사가 가까운 것을 고름
+    else if (!std::strcmp(argv[a], "--sltol")) sltol |= 1;   // 상태 없는 교사 배울 수 있는 단계 문턱(teacher_sl.h sl_tol)
+    else if (!std::strcmp(argv[a], "--slknown")) sltol |= 2;   // 상태 없는 교사 특권은 지도에 확정된 집을 물체만(B4·B5 도 탐사)
     else if (!std::strcmp(argv[a], "--negative-teacher")) { negative = true; neg_teach = true; teach = true; nbug = 0; }
     else if (!std::strcmp(argv[a], "--scenes") && a + 1 < argc) bo.dir = argv[++a];
     else if (!std::strcmp(argv[a], "--mix") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &cu.p1, &cu.p2);

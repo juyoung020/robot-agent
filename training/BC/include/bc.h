@@ -158,6 +158,7 @@ struct Bc {
   gmap::MapCurr* curr_d = nullptr;
   Mode* mode_d = nullptr;
   Data* data_d = nullptr;
+  uint32_t house_train = 0, house_eval = 0;   // 장면 비트: 학습 집 / 평가 집(이름, CURRICULUM_BEHAVIOR2026 1절)
   int beta_q = 0;             // DAgger β(판 단위로 교사가 몰 확률) × 65536 — 다음 bc_set_mode(actor 1) 부터 Mode::pad0
   int host_actor = 0;         // 호스트가 마지막으로 정한 actor(어느 롤아웃 그래프를 띄울지)
   int cur_t = 0;              // 롤아웃 스텝(잡을 때 고정되는 호스트 값 — arch 1 추론 잡음 열쇠)

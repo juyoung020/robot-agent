@@ -33,7 +33,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--all")) all_eps = true;
     else if (!std::strcmp(argv[a], "--sl")) sl = true;   // 상태 없는 교사(teacher_sl.h)
     else if (!std::strcmp(argv[a], "--gcand")) gcand = true;
-    else if (!std::strcmp(argv[a], "--sltol")) sltol = 1;   // 상태 없는 교사 배울 수 있는 단계 문턱(teacher_sl.h sl_tol)   // 잡기 서는 자리 후보(상태 없는 교사가 로봇에 가까운 것을 고름)
+    else if (!std::strcmp(argv[a], "--sltol")) sltol |= 1;   // 상태 없는 교사 배울 수 있는 단계 문턱(teacher_sl.h sl_tol)
+    else if (!std::strcmp(argv[a], "--slknown")) sltol |= 2;   // 상태 없는 교사 특권은 지도에 확정된 집을 물체만(B4·B5 도 탐사)
     else if (!std::strcmp(argv[a], "--agree")) agree = true;   // 상태 있는 교사가 몰고, 같은 상태에서 상태 없는 교사 라벨을 견줌
     else if (pos == 0) { N = std::atoi(argv[a]); ++pos; }
     else if (pos == 1) { T = std::atoi(argv[a]); ++pos; }

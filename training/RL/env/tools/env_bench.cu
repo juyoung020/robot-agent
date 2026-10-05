@@ -28,7 +28,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--teacher-sl")) { teach = true; tsl = true; }   // 상태 없는 교사(teacher_sl.h): 교사 시간 = 앞 + 계획 + 행동 합
     else if (!std::strcmp(argv[a], "--feas")) feas = true;
     else if (!std::strcmp(argv[a], "--gcand")) gcand = true;
-    else if (!std::strcmp(argv[a], "--sltol")) sltol = 1;
+    else if (!std::strcmp(argv[a], "--sltol")) sltol |= 1;   // 상태 없는 교사 배울 수 있는 단계 문턱(teacher_sl.h sl_tol)
+    else if (!std::strcmp(argv[a], "--slknown")) sltol |= 2;   // 상태 없는 교사 특권은 지도에 확정된 집을 물체만(B4·B5 도 탐사)
   }
   bsc::SceneBuild sb;
   if (stage >= kStageBeh) {

@@ -60,7 +60,7 @@ DEV bool sl_keyeq(const float* a, const float* b, int n) {
 // 1 = 배울 수 있는 값 — 학생(지도 토큰의 물체 자리 잡음 σ 약 2 cm, 회귀 오차)이 문턱을 넘어 다음 단계 라벨을 보게. 팔 계획은 어느 쪽이든 지금 베이스 자세에서 함
 struct SlTol { float arrive, arrive_yaw, still_v, still_w, armq, fine, corr_lat, app_r; };
 DEV SlTol sl_tol(const bsc::SceneSet& ss) {
-  if (ss.sl_tol) return SlTol{0.01f, 0.03f, 0.03f, 0.1f, 0.12f, 0.03f, 0.035f, 0.40f};
+  if (ss.sl_tol & 1) return SlTol{0.01f, 0.03f, 0.03f, 0.1f, 0.12f, 0.03f, 0.035f, 0.40f};
   return SlTol{KT::arrive, KT::arrive_yaw, 0.01f, 0.02f, 0.05f, KT::q_tol_fine, 0.035f, 0.12f};
 }
 
@@ -134,7 +134,7 @@ TDEV int sl_decide(const Core& c, const BState& b, const PState& p, const bsc::E
   if (x.held) {
     if (b.kind == bsc::EK_B4) { x.mode = SLD_LIFT; return 0; }
     x.pl = true;   // 놓기 과제(나르는 자세가 아니면 아래에서 들기·접기 — 놓을 자리 둘레가 아닐 때만)
-  } else if (b.kind == bsc::EK_B6 && fb.conf != nullptr && !(fb.tag[i] == c.ep && fb.conf[i] != 0)) {   // 지도 확정 전: 물체 자리를 안 씀
+  } else if ((b.kind == bsc::EK_B6 || (ss.sl_tol & 2)) && fb.conf != nullptr && !(fb.tag[i] == c.ep && fb.conf[i] != 0)) {   // 지도 확정 전: 물체 자리를 안 씀(sl_tol 비트 1: B4·B5 도 — 교사 특권은 로봇 지도에 확정된 물체만, 2026-10-06)
     x.mode = SLD_EXPLORE;
     return 0;
   }
