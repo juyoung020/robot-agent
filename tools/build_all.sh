@@ -55,7 +55,8 @@ for t in "${TARGETS[@]}"; do
     bc_driver)  cg bc_driver "$TR/BC/driver" ;;
     agent)      export SGCLIP_LIB_DIR=$B/sgclip
                 [ -f "$B/sgclip/libsgclip_c.so" ] || "$0" sgclip
-                cg agent "$ROOT/src/agent/runtime" run-skill ;;
+                cg agent "$ROOT/src/agent/runtime" run-skill
+                cg move_robot "$ROOT/src/agent/tools/move_robot" libmove_robot.so ;;
     *) echo "모르는 대상: $t  ($0 --list)" >&2; exit 2 ;;
   esac
 done

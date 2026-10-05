@@ -78,7 +78,7 @@ scenemap slam2d 가 LIMO 에서 오도메트리 가중 맞추기로 바뀌었다
 
 | 기록 | 내용 | 쓴 것 |
 |---|---|---|
-| `~/behavior-2026-limo/outputs/explore_20261004_094010_turning_on_radio_frontier_limo` | 첫 LIMO 탐색 판(frontier, SLAM 자세, 열린 어휘 검출 272·과제 이름 20). **rec.bin 없음** | `poses.csv`(keyframe 291 개, GT·SLAM 자세), `pose_diag.json`, `gt_poses.csv.objects.json`(GT 물체 244 개, AABB), `frame.json`(map_from_world), `memory/scene.json`(확정 물체 16 개) |
+| `data/outputs/explore_20261004_094010_turning_on_radio_frontier_limo` | 첫 LIMO 탐색 판(frontier, SLAM 자세, 열린 어휘 검출 272·과제 이름 20). **rec.bin 없음** | `poses.csv`(keyframe 291 개, GT·SLAM 자세), `pose_diag.json`, `gt_poses.csv.objects.json`(GT 물체 244 개, AABB), `frame.json`(map_from_world), `memory/scene.json`(확정 물체 16 개) |
 | scratchpad `limo3` (같은 장면·같은 시작 자세, 14 s) | 제자리 363° 회전 + 0.8 m 직진, COCO-80 검출, **rec.bin 있음** | 원 오도메트리(sm_bench 재생), 검출 하나하나, 확정 물체 14 개 |
 | scratchpad `limo2` | limo3 와 같은 대본 | 오도메트리가 limo3 와 비트 단위로 같아 독립 표본이 아님 |
 | scratchpad `limo4` (40 s, 5 m) | COCO-80, rec.bin 없음 | `summary.json` pose_diag(확인용 목표), 확정 물체 19 개 |
@@ -139,7 +139,7 @@ R1(`../README.md` 3.1)과 같은 방법을 썼다. 카메라 자세는 기록의
 - **거리별 놓침.** limo3 의 보이는 쌍이 1.5–2.5 m 에만 있고(물체 5 개), 놓침도 TV 하나가 거의 다다. R1 값을 그대로 둔다.
 - **kind 3(limo4) 대조.** 모형 장면(G1 방 가운데 출발, 3 m 범위)의 한계로 xy 가 3.6 배 크다.
 - **`ext_n`, `min_hits`, `wall_h`, 깊이 잡음.** 재지 않았다. 시뮬 깊이에는 잡음이 없다.
-- **FK 1 cm 오차의 몫.** 고친 카메라(391c04b 뒤)로 찍은 판이 아직 없어서 따로 떼어 내지 못했다. (10-06: 그 뒤 판 `~/behavior-2026-limo/outputs/explore_20261004_180748_turning_on_radio_frontier_limo_gt` 이 있다 — rec.bin 없음, 이 판으로 자세 비교는 아직 안 함.)
+- **FK 1 cm 오차의 몫.** 고친 카메라(391c04b 뒤)로 찍은 판이 아직 없어서 따로 떼어 내지 못했다. (10-06: 그 뒤 판 `data/outputs/explore_20261004_180748_turning_on_radio_frontier_limo_gt` 이 있다 — rec.bin 없음, 이 판으로 자세 비교는 아직 안 함.)
 
 ## 재현
 ```

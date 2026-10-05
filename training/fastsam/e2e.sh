@@ -11,7 +11,7 @@ DATA=${FASTSAM_DATA:-$HOME/datasets/fastsam_obj}
 BIN=${REALBAG_BIN:-$HOME/realbag_build_fsobj}
 B26=${B26:-$HOME/b26-wt-fsobj}
 S=$HOME/datasets/sim_detcmp/streams/radio_limo_r3
-GTPGM=$HOME/behavior-2026/src/sim/explore/gt/house_double_floor_lower__turning_on_radio.pgm
+GTPGM=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)/src/sim/explore/gt/house_double_floor_lower__turning_on_radio.pgm
 OLD=ap''rime   # 옛 이름(바뀌기 전 빌드·폴더용)
 PD=$HOME/datasets/objprob; [ -d "$PD" ] || PD=$HOME/datasets/$OLD
 PRIOR=${LABEL_PRIOR:-$PD/fit1/label_prior.json}

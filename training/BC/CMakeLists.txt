@@ -24,9 +24,9 @@ set(INC ${RL}/env/include ${RL}/map/include ${RL}/network/include ${RL}/network/
         ${CMAKE_CURRENT_LIST_DIR}/include)
 
 # 학습 경로: 환경 + 지도 + 신경망 커널(RL 소스 그대로) + BC 학습기
-# 다른 작업 트리(서브모듈 비어 있음)에서는 -DENGINE_DIR=<본 트리>/src/behavior-2026/src/sim/engine 로 읽기만
+# 렌더 코드(RenderBatch): training/render_engine (10-06 옛 저장소에서 옮김)
 if(NOT DEFINED ENGINE_DIR)
-  set(ENGINE_DIR ${CMAKE_CURRENT_LIST_DIR}/../../src/behavior-2026/src/sim/engine)
+  set(ENGINE_DIR ${CMAKE_CURRENT_LIST_DIR}/../render_engine)
 endif()
 # G6: 인코더(vit.cu)와 학습 신경망 FP8 실행(net_fp8.cu)은 FP8 mma(sm_120a 전용)를 쓰므로 이 둘만 compute_120a/sm_120a 로(아래 SM120A). 나머지는 sm_120 그대로.
 set(SM120A -gencode=arch=compute_120a,code=sm_120a)

@@ -17,7 +17,7 @@ PY=${PY:-$HOME/realbag_venv/bin/python}
 OUT=${OUT:-$HOME/datasets/objprob/refit/$N}
 S=$HOME/datasets/sim_detcmp/streams/radio_limo_r3
 OL=$HOME/datasets/realbags/streams
-GTPGM=${GTPGM:-$HOME/behavior-2026/src/sim/explore/gt/house_double_floor_lower__turning_on_radio.pgm}
+GTPGM=${GTPGM:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)/src/sim/explore/gt/house_double_floor_lower__turning_on_radio.pgm}
 PARAMS_BASE=${PARAMS_BASE:-$HERE/objprob_params/FastSAM-s-416.json}
 TH=${TH-"0.6/0.7 0.5/0.7 0.7/0.7 0.6/0.8 0.7/0.8 0.5/0.6"}
 CONF=${CONF:-0.25}   # 검출 conf(보정한 엔진은 0.25 = 보정 문턱 t. 더 높이면 실효 t 가 오름)

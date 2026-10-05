@@ -236,7 +236,7 @@
 | RL/map 남은 일 2 (LIMO 기록으로 다시 맞춤) | 일부 | `7a474a0`, `c6b5cc5`. 거리별 놓침만 R1 | 위 "검출 실수" 와 같음 | map |
 | RL/map 남은 일 3 keyframe 커널 970 µs | 안 함 | — | 필요할 때 | map |
 | RL/map 남은 일 4 C1 격자 일부를 실제 탐사 경로로 | 안 함 | `map.h:185` 원판 공개 | 환경 개선 때 | map |
-| RL/map_calib/limo: 고친 카메라 판 자세 비교, rec.bin 기록 | 안 함 | `~/behavior-2026-limo/outputs/explore_20261004_180748_*_limo_gt` 있음(rec.bin 없음) | 180748 판으로 자세 비교, rec.bin 켜고 한 판 | map |
+| RL/map_calib/limo: 고친 카메라 판 자세 비교, rec.bin 기록 | 안 함 | `data/outputs/explore_20261004_180748_*_limo_gt` 있음(rec.bin 없음) | 180748 판으로 자세 비교, rec.bin 켜고 한 판 | map |
 | RL/map_cmp 잡음 켠 비교 | 안 함 | — | — | map |
 | RL/ppo 다음 2 A2 씨앗 2 충돌 0.055 | 일부 | `21c7d26` 씨앗 1 만 | 위 A2 와 같음 | policy |
 | RL/ppo 다음 3 광선 씨앗 더 / 4 정책 자기 지도로 경로 거리 / 3 씨앗 비교 | 안 함 | `env.h:255 path_prepare` 는 참 장면 | 환경 개선 때(경로 거리를 정책 지도로) | env |

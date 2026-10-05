@@ -1,6 +1,6 @@
 //! 에이전트 쪽 실행 경로. LLM 루프는 [`run_tool`] 하나만 부른다.
 //!
-//! - [`TcpSim`]: 평가기 안 접착부(`behavior-2026/src/sim/move_robot/move_robot_sim.py --listen`)에 도구 인자 한 줄을 보내고
+//! - [`TcpSim`]: 평가기 안 접착부(`src/sim/move_robot/move_robot_sim.py --listen`)에 도구 인자 한 줄을 보내고
 //!   결과 한 줄을 받는다(줄 단위 JSON, 호출마다 연결 하나). 실행기(닫힌 고리)는 저쪽 프로세스 안 같은 Rust 코드다.
 //! - [`Mock`]: 같은 실행기 + 가짜 로봇([`MockPlant`]). Isaac Sim 없이 시험·시연.
 
