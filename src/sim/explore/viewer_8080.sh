@@ -5,9 +5,8 @@
 set -u
 RUN=$(cd "$1" && pwd); MEM=$RUN/memory
 REPO=$(cd "$(dirname "$0")/../../.." && pwd)
-SV=$REPO/src/scene_graph/sgview
-BIN=$SV/target/release/sgview
-[ -x "$BIN" ] || (cd "$SV" && cargo build --release) || { echo "[viewer] sgview build failed"; exit 1; }
+BIN=$REPO/build/bin/sgview
+[ -x "$BIN" ] || "$REPO/tools/build_all.sh" sgview || { echo "[viewer] sgview build failed"; exit 1; }
 for i in $(seq 1 240); do [ -f "$MEM/view.json" ] && break; sleep 5; done
 [ -f "$MEM/view.json" ] || { echo "[viewer] no view.json in $MEM"; exit 1; }
 for pid in $(ps -eo pid,args | awk '/release\/sgview/ && /--port 8080/ && !/awk/ {print $1}'); do kill "$pid"; done
