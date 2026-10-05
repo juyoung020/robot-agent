@@ -272,7 +272,6 @@ bool sceneDsg(const SaveInput& in, const SaveOut& ok, const fs::path& path) {
                      {"score", b.score},
                      {"first_pos", {b.first_pos[0], b.first_pos[1], b.first_pos[2]}},
                      {"structural", bool(b.structural)},
-                     {"handled", bool(b.handled)},
                      {"movable", i >= int(in.movable.size()) || in.movable[i] != 0}});
     if (hasView(in, ok, i)) {
       const BestView& v = *in.views[i];
@@ -374,8 +373,6 @@ void objectNode(J& j, const SaveInput& in, const SaveOut& ok, int i) {
   j.unum(uint64_t(std::max(0.0, b.last_seen) * 1e9));
   j.raw(",\"metadata\":{\"first_pos\":");
   j.vec3(b.first_pos);
-  j.raw(",\"handled\":");
-  j.raw(b.handled ? "true" : "false");
   j.raw(",\"movable\":");
   j.raw(i >= int(in.movable.size()) || in.movable[i] != 0 ? "true" : "false");
   j.raw(",\"n_obs\":");

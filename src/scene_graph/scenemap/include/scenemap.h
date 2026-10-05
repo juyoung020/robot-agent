@@ -1,7 +1,7 @@
 /* scenemap C ABI (README.md). libsgrt(src/scene_graph/runtime)·realbag_run·도구가 같은 프로세스에서 부른다.
  *
  * 스레드: sm_push_* · sm_reset 은 한 스레드(관측 스레드)에서. sm_snapshot 과 sm_snap_* 는 아무 스레드에서
- * (읽기 전용 스냅숏, 참조 카운트). sm_set_labels·sm_mark_handled 는 계획기 스레드에서 온다(scenemap 이 잠금, 다음 스냅숏부터 보임).
+ * (읽기 전용 스냅숏, 참조 카운트). sm_set_labels 는 다른 스레드에서 와도 됨(scenemap 이 잠금, 다음 스냅숏부터 보임).
  * 시각: stamp 는 전부 시뮬 시각 [s](판 시작 = 0). 영상 k 의 stamp = 장면 시각 k-1, proprio 는 그 스텝 상태의 stamp.
  * 짝짓기: 영상은 stamp 가 같은 proprio(없으면 그 앞 가장 가까운 것)의 순기구학 카메라 자세로 올린다. base_qvel 은
  * proprio i 가 (i-1 → i) 구간 속도다.
@@ -60,7 +60,7 @@ typedef struct {
   uint32_t n_obs;
   double last_seen;           /* 시뮬 시각 */
   int32_t state;              /* SM_SEEN.. */
-  int32_t handled;            /* 계획기 표시 */
+  int32_t reserved;           /* 안 씀(0) — 구조 배치 유지(파이썬·Rust 가 같은 배치로 읽음) */
   int32_t structural;
 } sm_object;
 
@@ -84,15 +84,12 @@ int     sm_reset(sm_ctx*);                                    /* 새 판: 지도
 /* 입력 */
 int     sm_push_proprio(sm_ctx*, const sm_proprio*);
 int     sm_push_image(sm_ctx*, const sm_image*, const sm_detections* dets /* NULL: 격자만(물체 지도 안 고침) */);
-int     sm_mark_handled(sm_ctx*, uint32_t id);
 /* 질의(스냅숏) */
 int     sm_snapshot(sm_ctx*, sm_snapshot_t** out);
 void    sm_snapshot_release(sm_snapshot_t*);
 sm_pose2  sm_snap_pose(const sm_snapshot_t*);
 sm_status sm_snap_status(const sm_snapshot_t*);
 int     sm_snap_objects(const sm_snapshot_t*, const sm_object** out);        /* 개수, 배열은 스냅숏 수명 동안 */
-int     sm_snap_find(const sm_snapshot_t*, const char* name, uint32_t* ids, float* scores, int cap);   /* 점수 순 */
-int     sm_snap_near(const sm_snapshot_t*, const double p[3], double r, uint32_t* ids, int cap);        /* 가까운 순 */
 /* 격자: cells[y·width + x] 는 칸 (x, y), 칸 왼쪽 아래 모서리 = origin + (x, y)·resolution. −1 모름, 0..100 점유 % */
 int     sm_snap_map(const sm_snapshot_t*, sm_grid* out);
 /* 벽(2D): 격자에서 벽 선분을 뽑아(지도가 기울면 벽 방향을 찾아 돌려 뽑음, walls.hpp) 로봇 좌표 수치로. 격자가 바뀐 스냅숏에서만 다시 계산(같은 격자 배열이면 캐시) — 실시간 SLAM 갱신에 맞춤.
@@ -107,8 +104,6 @@ int     sm_snap_wall_segments(const sm_snapshot_t*, double* out /* 선분당 ax 
    host_port = "127.0.0.1:9001". 연결이 끊겨도 스텝은 막히지 않고 다시 붙으면 전체 상태를 보낸다. 0 성공. */
 int     sm_stream_start(sm_ctx*, const char* host_port);
 void    sm_stream_stop(sm_ctx*);
-/* 로봇 관절·상태 벡터를 스트림으로(스텝 스레드, 복사만). sm_push_proprio 가 자동으로도 보낸다. 뷰어는 URDF 를 올릴 때 이 값으로 로봇을 움직인다 */
-int     sm_stream_joints(sm_ctx*, double stamp, const float* q, int n);
 /* 물체·방·그래프·최근 사건 요약(view.json 과 같은 내용)을 스트림으로(파일 안 씀). 비동기 스레드에서 5~10 Hz 로 부르는 용도 */
 int     sm_stream_view(sm_ctx*);
 typedef struct { uint64_t frames_in, dropped, frames_sent, bytes_sent, reconnects; int32_t connected; float view_build_us; uint64_t views_built, views_skipped; } sm_stream_stats;
@@ -185,9 +180,6 @@ typedef int (*sm_crop_fn)(void* user, const sm_crop_req* reqs, int32_t n);
 int sm_push_image_ex(sm_ctx*, const sm_image*, const sm_detections*, sm_crop_fn crop, void* user);
 /* 마지막 영상의 검출 k → 물체 id(0 = 안 붙음). 검출 수를 돌려주고 ids 에 min(n, cap) 개. */
 int sm_last_assoc(sm_ctx*, uint32_t* ids, int cap);
-/* 마지막 영상의 검출 k 가 그 물체의 best view 를 바꿨는가(updated[k] = 1) 와 모습 품질(quality[k] = 유효 마스크 넓이 × 점수,
- * 안 붙은 검출 0). best view 가 바뀐 물체만 영상 임베딩을 다시 하는 신호. 검출 수를 돌려주고 min(n, cap) 개(NULL 가능) */
-int sm_last_views(sm_ctx*, uint8_t* updated, float* quality, int cap);
 
 typedef struct {
   uint32_t id, version;        /* version: 모습이 바뀔 때마다 +1 */

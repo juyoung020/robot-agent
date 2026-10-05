@@ -39,7 +39,7 @@ os.makedirs(a.out, exist_ok=True)
 class SmObj(ctypes.Structure):
     _fields_ = [("id", ctypes.c_uint32), ("name", ctypes.c_char_p), ("score", ctypes.c_float), ("pos", ctypes.c_double * 3), ("extent", ctypes.c_double * 3),
                 ("first_pos", ctypes.c_double * 3), ("n_obs", ctypes.c_uint32), ("last_seen", ctypes.c_double), ("state", ctypes.c_int32),
-                ("handled", ctypes.c_int32), ("structural", ctypes.c_int32)]
+                ("reserved", ctypes.c_int32), ("structural", ctypes.c_int32)]
 
 
 class SmPose(ctypes.Structure):

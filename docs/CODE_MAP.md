@@ -75,6 +75,49 @@
 | 스트림 형식(stream.hpp) | sgview, 학습 뷰어 재생(`sgs_play`), `og2sg`, `record_replay/gpu_sg.h` |
 | 경로 | `config/paths.env` 하나(코드는 변수만 읽음) |
 
+## 7. 파일별 상세 (읽은 것부터 채움 — 하는 일 · 주요 함수 · 부르는 곳 · 최적화 여지 · 안 쓰는 것)
+
+### `src/scene_graph/runtime`
+
+**`include/sgrt.h` · `src/sgrt.cpp`** (829 줄) — libsgrt C ABI.
+- `sgrt_create`: ovdet(분할 엔진) 만들기 → `sm_create`(SGRT_SM_CONFIG > SGRT_ROBOT) → `objprobInit`(SigLIP 2 엔진·라벨 표·엔진별 매개변수 파일) → 자세 원천(`SGRT_POSE`, carto 면 `sc_create`) → 저장 스레드·스트림 요약 스레드·기록 파일.
+- `sgrt_begin`: `sm_reset` + Cartographer 새 궤적 + `objprobBegin`(낱말 표 + 과제 이름 → 라벨 → `sm_set_text_model`·`sm_set_label_stats`·`sm_set_obj_params`).
+- `sgrt_step`(매 스텝): 기록 'P' → 바퀴 오도메트리를 Cartographer 에 넣고 그 시각 자세를 `sm_push_ext_pose` → `sm_push_proprio`. 영상이 오면: `ovd_detect` → `objprobName`(마스크마다 SigLIP 2, 낱말 표 최댓값 = 이름, `sm_set_det_embeddings`) → 기록 'I' → `sm_push_image_rgb`(best view 자르기·구름 색은 장치에서 `crop.cu`) → `objprobReenc`(통째 다시 담기). 깊이만 오면 격자만. `save_s` 마다 저장 스레드에 맡김.
+- `sgrt_push_scan`: 기록 'L' → `sc_push_scan`.
+- `sgrt_map`: 탐색·안전 정지용 격자·스캔·옮길 수 있는 물체 사본.
+- 부르는 곳: `glue/sgrt_glue.py`(OmniGibson), `training/viewer/tools/og2sg`, `tools/sgrt_replay`·`sgrt_frames`, 에이전트 `search_objects`(sgrt_scenemap).
+- 최적화 여지: `objprobName` 이 같은 스텝 안에서 SigLIP 2 결과를 기다림(검출 keyframe 당 약 4–5 ms) — 다음 영상 검출과 겹치면 지연을 줄일 수 있음(미측정). 낱말 최댓값은 CPU 768 × 낱말 수 내적 — 검출 20 × 낱말 ~150 이면 작음.
+- 안 쓰는 것: 없음(옛 ClipMem·API 6 개·옛 이름 규칙 갈래는 지움).
+
+**`src/objprob_front.hpp`** — 낱말 표 `kVocab`(글 → 지도 이름)·`kVocabAp`(구조물 배경 낱말), 라벨 크기·상위어 `kApLabels`, `engineStem`·`readParamsFile`, `buildTextTable`(라벨 표에서 글 임베딩 찾기), `enable`. realbag_run 과 같이 씀 — 이름 규칙을 바꾸면 둘이 같이 바뀜.
+
+**`src/crop.cu`·`crop.hpp`** — best view 상자 자르기(넓이 평균, 요청 32 개씩 커널 한 번)·구름 점 색 모으기. 호스트 판(`scenemap/src/bestview.cpp`)과 같은 식, `tests/test_crop.cpp` 가 비교.
+
+**`glue/sgrt_glue.py`** — OmniGibson 평가기 안 `SceneMemory`: 시뮬 proprio(24) → LIMO 12(바퀴 속도를 30 Hz 로 적분해 오도메트리), 몸통 카메라 RGB 는 GPU 텐서 그대로·깊이는 keyframe 만 고정 메모리로, 시뮬 라이다(`src/sim/lidar`)를 `sgrt_push_scan`, 정답 자세(`sgrt_push_pose`, 진단용)·정답 기록. 900 스텝마다 진단 출력.
+
+**`tools/sgrt_replay.cpp`** — 기록을 libsgrt(dlopen)로 다시 굴림, 한 줄씩 읽음(`sgrec::Reader`). 두 빌드 바이트 비교용.
+**`tools/sgrt_frames.cpp`** — raw RGB 프레임 + 평평한 2 m 깊이로 끝까지(자르기·저장 경로 확인용).
+
+### `src/scene_graph/scenemap`
+
+**`src/capi.cpp`** (2050 줄) — C ABI 전부. 상태 `sm_ctx`(뮤텍스 하나): `Mapper2D mapper`, `ObjectMap om`, 라벨·종류 표, proprio 대기열(`pending`, 영상 stamp 까지 적분), best view(`views`), 저장 캐시, 방(`RoomTracker`), 자세 큐(`gtq` 정답·`extq` Cartographer), 격자 i8 사본(`grid8`)·벽(`WallExtractor`), 스트림, 장면 그래프, objprob 입력(검출 임베딩·다시 담기 요청).
+- 이름 종류: `kStructureNames`(구조물 — 노드 안 됨)·`kStaticNames`(고정 가구)·`kStructObjNames`(문·창·계단 — structural 노드)·`kFloorLevelNames`(러그 등). 비교는 머리 명사(`headMatch`).
+- `sm_push_proprio`: 오도메트리 자세 차 → 속도(`Prop.v`), 뷰어 관절 스트림, 0.5 s 넘게 밀린 것은 적분.
+- `sm_push_image_rgb`(핵심): 영상 stamp 까지 적분 → 자세(EXT = Cartographer 자세, 없으면 적분) → 순기구학 몸·카메라 → `mapper.keyframe`(격자) → 검출 있으면 ObjFrame(map ← 카메라, 팔 끝·그리퍼, 팔 캡슐, 임베딩, 벽 선분 + 창 틈 잇기) → `om.update` → 검출↔물체·best view 후보 → 그래프 → (잠금 밖) 구름 색·자르기 → 구름 넣기 → 통째 다시 담기 요청.
+- `sm_snapshot`: 자세·격자 사본·벽·스캔·내보낼 물체(이름·movable·구름·inspect·best view) → 방 나누기(잠금 밖) → 그래프 사본.
+- `refreshWalls`: 벽 방향 θ 를 2 s 마다, 기울면 돌린 격자에서 전부(0.5 s 에 한 번까지), 축에 맞으면 바뀐 행만.
+- `sm_snap_reachable`: 격자 8방향 A*(점유 ≥ 65 % 를 0.30 m 부풀림).
+- 저장(`sm_save_dsg_ex`): 스냅숏 → objprob 메타·벡터 파일(`apSaveMeta`·`apWriteFiles`) → `saveScene`(dsg_save.cpp). 스트림 요약(`sm_stream_view`)은 바뀐 게 없으면 안 만듦.
+- 최적화 여지: 창 틈 잇기가 벽 선분 쌍 O(n²)(벽 수십 개라 작음). `sm_snap_reachable` 이 부를 때마다 W×H dist 배열을 새로 잡음 — 자주 부르면 재사용 가능. 스냅숏마다 물체 구름(shared)·이름 문자열 복사.
+- 안 쓰는 것: `robotHands`·`robotBody` 의 robot 인자(하나뿐), `SM_POSE` 값 0 은 없앰. `sm_last_views`(best view 바뀜 신호)는 지금 부르는 곳 없음 — 지울지 확인 필요.
+
+**`include/scenemap.h`** — 위 C ABI 선언·설명. 로봇은 LIMO + OMX-F 하나(`SM_ROBOT_LIMO_OMX`, proprio 12).
+
+**`include/scenemap/objmap.hpp`** — `ObjParams`(기본값 = 리모: 깊이 0.15–3 m, 손 하나, grasp_r 0.12, 그리퍼 닫힘 0.6 rad, 잡기 확인 켬, 틈 표), `MapObject`, `ObjFrame`, `ObjectMap`. 규칙 요약이 머리말.
+**`include/scenemap/scan.hpp`** — `ScanParams`(기본값 = 리모: 0.3–3 m, 높이 띠 0.05–0.50 m, self_r 0.22) · 붙은 것 거르기 · `makeScan`.
+**`include/scenemap/mapper2d.hpp`** — 외부 자세로 격자 넣기, 넣기 정책 1(사건 기반).
+**`include/scenemap/fk.hpp`** — 리모 순기구학(`computeLimoFk`: 깊이·손목 카메라, 잡는 점, 팔 끝, 팔 뼈대).
+
 ## 6. 알게 된 점·남은 문제
 
 - 실제 bag 회귀 확인은 `realbag_run … --load <dets.gz> --pose odom` 로 결정적(Cartographer 는 스레드 때문에 매번 조금 다름).

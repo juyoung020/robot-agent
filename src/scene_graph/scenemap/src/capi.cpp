@@ -100,7 +100,6 @@ struct sm_ctx {
   std::vector<std::string> labels;
   std::vector<std::string> kind_names[3];   // [1] 구조물, [2] 고정(정규화한 이름)
   std::vector<uint8_t> kinds;               // labels[i] 의 종류
-  std::vector<uint32_t> handled;
   // 로봇(sm_set_robot·config "robot"; limo_omx 하나): proprio 형식·순기구학·몸 크기 매개변수
   int robot = kRobotLimoOmx;
   bool odom_pose = true;        // LIMO: 오도메트리 자세 차로 적분(false: proprio 의 twist 3..6 을 그대로)
@@ -113,8 +112,6 @@ struct sm_ctx {
   // best view
   std::unordered_map<uint32_t, ViewSlot> views;
   std::vector<uint32_t> last_assoc;   // 마지막 영상의 검출 → 물체 id
-  std::vector<uint8_t> last_view_upd; // 마지막 영상의 검출 k 가 그 물체의 best view 가 됨(sm_last_views — 임베딩 갱신 신호)
-  std::vector<float> last_view_q;     // 검출 k 의 모습 품질(유효 마스크 넓이 × 점수, 안 붙으면 0)
   size_t ev_seen = 0;                 // 처리한 objmap 사건 수(옮겨짐·놓기 → 품질 0)
   uint32_t view_ver = 0;
   uint64_t epoch = 0;                 // sm_reset 마다 +1(잠금 밖 자르기 중 reset 이면 버림)
@@ -530,15 +527,12 @@ int sm_reset(sm_ctx* c) {
   c->det_emb_n = -1;
   c->reenc.clear(); c->reenc_pub.clear(); c->reenc_bits.clear();
   c->saved_ap_ver.clear();
-  c->handled.clear();
   c->pending.clear();
   c->have_used = false;
   c->have_odom = false;
   c->st = sm_status{};
   c->views.clear();
   c->last_assoc.clear();
-  c->last_view_upd.clear();
-  c->last_view_q.clear();
   c->ev_seen = 0;
   c->epoch++;
   c->saved_ver.clear();
@@ -622,7 +616,6 @@ namespace {
 // best view 를 바꿀 검출 하나(잠금 안에서 정하고, 잠금 밖에서 자름)
 struct ViewCand {
   uint32_t id;
-  int det;                     // 검출 번호(sm_last_views)
   double q;
   sm_crop_req req;
   std::shared_ptr<BestView> v;
@@ -845,7 +838,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   c->reenc.clear();
   c->reenc_pub.clear();
   c->reenc_bits.clear();
-  if (!dets) { c->last_assoc.clear(); c->last_view_upd.clear(); c->last_view_q.clear(); updateGraph(c, im->stamp, false); c->det_emb_n = -1; return 0; }   // 검출 없음: 격자만
+  if (!dets) { c->last_assoc.clear(); updateGraph(c, im->stamp, false); c->det_emb_n = -1; return 0; }   // 검출 없음: 격자만
   // 물체 지도: map ← 카메라 = 지도 자세 ∘ 순기구학 머리 카메라
   const Pose2 P = c->mapper.pose();
   const double cs = std::cos(P.th), sn = std::sin(P.th);
@@ -920,10 +913,6 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   const std::vector<DetAssoc>& as = c->om.lastAssoc();
   c->last_assoc.resize(as.size());
   for (size_t k = 0; k < as.size(); ++k) c->last_assoc[k] = as[k].obj_id;
-  c->last_view_upd.assign(as.size(), 0);
-  c->last_view_q.assign(as.size(), 0.f);
-  for (size_t k = 0; k < as.size(); ++k)
-    if (as[k].obj_id) c->last_view_q[k] = float(double(as[k].area_px) * (dets->score ? dets->score[k] : 1.f));
   // 옮겨짐·놓기: 지금 모습은 옛 자리 — 품질을 내려 다음 관측이 바꾸게
   const auto& ev = c->om.events();
   for (; c->ev_seen < ev.size(); ++c->ev_seen)
@@ -947,7 +936,6 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
     if (it != c->views.end() && q < it->second.q) continue;
     ViewCand vc{};
     vc.id = as[k].obj_id;
-    vc.det = int(k);
     vc.q = q;
     auto v = std::make_shared<BestView>();
     const float* b = dets->box + 4 * k;
@@ -1022,7 +1010,6 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
     vc.v->version = ++c->view_ver;
     sl.v = std::move(vc.v);
     sl.q = vc.q;
-    if (vc.det >= 0 && vc.det < int(c->last_view_upd.size())) c->last_view_upd[vc.det] = 1;
   }
   c->addT(kStCloud, usBetween(ta, TClock::now()));
   if (ap_frame) {   // objprob: 이번 구름이 쌓인 뒤 통째 다시 담기 요청(투영 마스크)
@@ -1045,23 +1032,7 @@ int sm_last_assoc(sm_ctx* c, uint32_t* ids, int cap) {
   return n;
 }
 
-int sm_last_views(sm_ctx* c, uint8_t* updated, float* quality, int cap) {
-  if (!c) return -1;
-  std::lock_guard<std::mutex> g(c->mu);
-  const int n = int(c->last_view_upd.size());
-  for (int k = 0; k < std::min(n, cap); ++k) {
-    if (updated) updated[k] = c->last_view_upd[k];
-    if (quality) quality[k] = c->last_view_q[k];
-  }
-  return n;
-}
 
-int sm_mark_handled(sm_ctx* c, uint32_t id) {
-  if (!c) return -1;
-  std::lock_guard<std::mutex> g(c->mu);
-  if (std::find(c->handled.begin(), c->handled.end(), id) == c->handled.end()) c->handled.push_back(id);
-  return 0;
-}
 
 int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
   if (!c || !out) return -1;
@@ -1101,7 +1072,6 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
       e.n_obs = o.n_obs;
       e.last_seen = o.last_seen;
       e.state = o.held_by >= 0 ? SM_HELD : o.state;
-      e.handled = std::find(c->handled.begin(), c->handled.end(), o.id) != c->handled.end();
       const int kind = c->om.kindOf(o.cls);
       e.structural = kind == SM_KIND_STATIC || kind == SM_KIND_STRUCT_OBJ || std::max({o.ext[0], o.ext[1], o.ext[2]}) > c->oparams.big;
       s->objs.push_back(e);
@@ -1177,42 +1147,7 @@ void inspMeta(const sm_snapshot_t* s, std::vector<std::string>* meta) {
 }
 }  // namespace
 
-// 이름 부분 일치(대소문자·'_'↔' ' 무시), 점수 = 일치 길이 비율 × 관측 신뢰도. 점수 순.
-int sm_snap_find(const sm_snapshot_t* s, const char* name, uint32_t* ids, float* scores, int cap) {
-  if (!s || !name) return -1;
-  auto norm = [](std::string t) {
-    for (char& ch : t) ch = ch == '_' ? ' ' : char(std::tolower(static_cast<unsigned char>(ch)));
-    return t;
-  };
-  const std::string q = norm(name);
-  std::vector<std::pair<float, uint32_t>> hit;
-  for (size_t i = 0; i < s->objs.size(); ++i) {
-    const std::string n = norm(s->names[i]);
-    if (q.empty() || n.find(q) == std::string::npos) continue;
-    hit.push_back({float(q.size()) / float(std::max<size_t>(1, n.size())) * std::max(0.05f, s->objs[i].score), s->objs[i].id});
-  }
-  std::sort(hit.begin(), hit.end(), [](auto& a, auto& b) { return a.first > b.first; });
-  const int m = std::min<int>(cap, int(hit.size()));
-  for (int i = 0; i < m; ++i) {
-    if (ids) ids[i] = hit[i].second;
-    if (scores) scores[i] = hit[i].first;
-  }
-  return m;
-}
 
-// p 에서 r 안의 물체(중심 거리), 가까운 순.
-int sm_snap_near(const sm_snapshot_t* s, const double p[3], double r, uint32_t* ids, int cap) {
-  if (!s || !p) return -1;
-  std::vector<std::pair<double, uint32_t>> hit;
-  for (const sm_object& o : s->objs) {
-    const double d = std::sqrt((o.pos[0] - p[0]) * (o.pos[0] - p[0]) + (o.pos[1] - p[1]) * (o.pos[1] - p[1]) + (o.pos[2] - p[2]) * (o.pos[2] - p[2]));
-    if (d <= r) hit.push_back({d, o.id});
-  }
-  std::sort(hit.begin(), hit.end());
-  const int m = std::min<int>(cap, int(hit.size()));
-  for (int i = 0; i < m && ids; ++i) ids[i] = hit[i].second;
-  return m;
-}
 
 int sm_snap_view(const sm_snapshot_t* s, uint32_t id, sm_view* out) {
   if (!s || !out) return -1;
@@ -1945,7 +1880,6 @@ int sm_get_objprob_stats(sm_ctx* c, int64_t out[16]) {
 }
 
 // ---- 실시간 스트림 ----
-int sm_stream_joints(sm_ctx* c, double stamp, const float* q, int n) { return c && q && c->stream.running() && c->stream.pushJoints(stamp, q, n) ? 0 : -1; }
 int sm_stream_start(sm_ctx* c, const char* host_port) { return c && host_port && c->stream.start(host_port) ? 0 : -1; }
 void sm_stream_stop(sm_ctx* c) { if (c) c->stream.stop(); }
 

@@ -604,7 +604,7 @@ static void testSave(const std::string& dir) {
       ++n;
       const auto& a = node->attributes<ObjectNodeAttributes>();
       const auto& m = a.metadata();
-      for (const char* k : {"state", "n_obs", "score", "first_pos", "structural", "handled", "movable"})
+      for (const char* k : {"state", "n_obs", "score", "first_pos", "structural", "movable"})
         CHECK(m.contains(k), "node %s missing %s", NodeSymbol(id).str().c_str(), k);
       CHECK(!a.name.empty() && a.bounding_box.isValid(), "name/bbox");
       if (!m.contains("rgbd")) continue;

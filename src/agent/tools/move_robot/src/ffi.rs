@@ -269,7 +269,7 @@ pub struct SmObject {
     pub n_obs: u32,
     pub last_seen: f64,
     pub state: i32,
-    pub handled: i32,
+    pub reserved: i32,   // scenemap.h sm_object.reserved(안 씀, 배치 유지)
     pub structural: i32,
 }
 
