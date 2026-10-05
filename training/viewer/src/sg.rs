@@ -106,7 +106,7 @@ pub fn load_sg(dir: &Path) -> Option<Episode> {
     let info = json!({
         "kind": "sg", "pipeline": meta["pipeline"], "meta": meta["meta"], "gt_path": meta["gt_path"], "map_from_world": meta["map_from_world"], "cams": meta["cams"], "wcams": meta["wcams"],
         "joint_order": meta["joint_order"], "underlay": underlay, "stream": meta["stream"], "og_run": meta["og_run"], "n_objects": meta["n_objects"],
-        "window_origin": meta["window_origin"], "world": meta["world"], "policy_trp": meta["policy_trp"], "source": meta["source"],
+        "robot": meta["robot"], "window_origin": meta["window_origin"], "world": meta["world"], "policy_trp": meta["policy_trp"], "source": meta["source"],
     });
     let mut policy = vec![];
     if let Some(pt) = meta["policy_trp"].as_str() {
