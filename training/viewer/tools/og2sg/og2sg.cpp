@@ -261,7 +261,7 @@ static int layout_only(const std::string& rasc_path, const std::string& out, con
 }
 
 int main(int argc, char** argv) {
-  std::string recp, run, out, robot = "limo_omx", rasc_path, run_out;
+  std::string recp, run, out, robot = "limo_omx", rasc_path, run_out, underlay_out, task_arg;
   bool layout = false;
   long ep_no = 0;
   double view_hz = 10, cam_hz = 2;
@@ -273,6 +273,13 @@ int main(int argc, char** argv) {
     else if (a == "--view-hz") view_hz = std::stod(nx()); else if (a == "--cam-hz") cam_hz = std::stod(nx()); else if (a == "--frames") max_frames = std::stol(nx());
     else if (a == "--rasc") rasc_path = nx(); else if (a == "--run-out") run_out = nx();
     else if (a == "--layout") layout = true; else if (a == "--ep") ep_no = std::stol(nx());
+    else if (a == "--underlay") underlay_out = nx(); else if (a == "--task") task_arg = nx();
+  }
+  if (!underlay_out.empty()) {   // 바탕 층만(세계 좌표 BEHAVIOR 집 배치) — og_replay.py 가 OG 판 폴더에 씀
+    std::string sc;
+    const std::string u = underlay_json(rasc_path, task_arg, &sc);
+    std::ofstream(underlay_out) << u;
+    return u == "null" ? 1 : 0;
   }
   if (layout) {
     std::string sc = rasc_path.substr(rasc_path.rfind('/') + 1);

@@ -91,6 +91,7 @@ pub fn load_sg(dir: &Path) -> Option<Episode> {
     let info = json!({
         "kind": "sg", "meta": meta["meta"], "gt_path": meta["gt_path"], "map_from_world": meta["map_from_world"], "cams": meta["cams"],
         "joint_order": meta["joint_order"], "underlay": underlay, "stream": meta["stream"], "og_run": meta["og_run"], "n_objects": meta["n_objects"],
+        "window_origin": meta["window_origin"], "world": meta["world"], "policy_trp": meta["policy_trp"], "source": meta["source"],
     });
     let mut policy = vec![];
     if let Some(pt) = meta["policy_trp"].as_str() {
@@ -233,7 +234,7 @@ pub fn load_trp(path: &Path) -> Option<Episode> {
     let gt: Vec<Value> = (0..nf).step_by(1).map(|f| json!([f as f64 * dt, fv(f, ci("x")), fv(f, ci("y")), fv(f, ci("yaw"))])).collect();
     let mut boxes = vec![];
     for bx in h["scene"]["boxes"].as_array().cloned().unwrap_or_default() {
-        boxes.push(json!({"kind": bx["kind"], "cat": bx["name"], "c": bx["c"], "h": bx["h"], "yaw": bx["yaw"]}));
+        boxes.push(json!({"kind": bx["kind"], "cat": bx["name"], "name": bx["obj"], "c": bx["c"], "h": bx["h"], "yaw": bx["yaw"]}));
     }
     let info = json!({"kind": "trp", "meta": h["meta"], "gt_path": gt, "map_from_world": [1, 0, 0, 0], "cams": [],
         "joint_order": ["", "", "", "", "", "", "omx_joint1", "omx_joint2", "omx_joint3", "omx_joint4", "omx_joint5", "omx_gripper_joint_1", "front_left_wheel", "front_right_wheel", "rear_left_wheel", "rear_right_wheel"],

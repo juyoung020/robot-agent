@@ -3,6 +3,7 @@
 // 실행이 바뀌면 화면부터 비운다(전투기 뷰어 교훈 17).
 import { fmt, esc, cssv } from "./charts.js";
 import { SgPanel } from "./sgpanel.js";
+import { InputsPanel, buildOverlays } from "./inputs.js";
 
 const STATE_COL = [0x2ea043, 0x8c8c8c, 0xf58c14, 0x286ee6];   // 보임 · 사라짐 · 옮겨짐 · 들고 있음 (sgview STATE_COL)
 const STATE_NAME = ["seen", "gone", "moved", "held"];
@@ -54,7 +55,7 @@ export function parseTrp(buf) {
   }
   const ci = {}; head.cols.forEach((c, i) => ci[c] = i);
   const sci = {}; (head.slot_cols || []).forEach((c, i) => sci[c] = i);
-  return { head, nc, nf, frames, slots, ns, nsc, maps, imgs, extra, ci, sci, v: (f, c) => ci[c] == null ? NaN : frames[f * nc + ci[c]], sv: (f, s, c) => sci[c] == null ? NaN : slots[(f * ns + s) * nsc + sci[c]] };
+  return { buf, head, nc, nf, frames, slots, ns, nsc, maps, imgs, extra, ci, sci, v: (f, c) => ci[c] == null ? NaN : frames[f * nc + ci[c]], sv: (f, s, c) => sci[c] == null ? NaN : slots[(f * ns + s) * nsc + sci[c]] };
 }
 
 export class Replay {
@@ -66,7 +67,11 @@ export class Replay {
     this.mode = "sg";
     // 예전 3D 그리기("3D classic")는 디버그로만(?debug=1): sgview 화면이 기본·전부이고, 3D classic 은 판마다 보상 띠와 .trp 안 카메라 JPEG 를 보는 데만 남김
     if (/[?&]debug=1/.test(location.search)) $("rp_mode").hidden = false;
-    this.sg = new SgPanel({ api, host: $("rp_sg") });
+    this.inputs = new InputsPanel($("rp_in"));
+    this.sg = new SgPanel({ api, host: $("rp_sg"), onTime: t => this.inputs.show(this.inputs.frameAt(t)) });
+    $("rp_mesh").onchange = e => this.sg.setMesh(e.target.checked);
+    $("rp_inon").onchange = e => { $("rp_in").hidden = !e.target.checked; this.resize(); };
+    for (const [id, k] of [["rp_envbox", "env"], ["rp_cond", "cond"], ["rp_feas", "feas"]]) $(id).onchange = e => { this.sg.setOv(k, e.target.checked); if (this.ov && this.ov[k]) { this.ov[k].visible = e.target.checked; this.dirty = true; } };
     $("rp_mode").onchange = e => { this.mode = e.target.value; const f = this.file; if (f) this.open(f); };
     $("rp_ul").onchange = e => this.sg.setUnderlay(e.target.checked);
     $("rp_pmap").onchange = e => this.sg.setPolicyMap(e.target.checked);
@@ -105,6 +110,7 @@ export class Replay {
     const cam = this.camera = new THREE.PerspectiveCamera(50, 1, 0.02, 200);
     cam.up.set(0, 0, 1); cam.position.set(-4, -4, 5);
     this.controls = new THREE.OrbitControls(cam, R.domElement); this.controls.target.set(0, 0, 0); this.controls.update();
+    this.controls.addEventListener("start", () => { this.userCam = this.run; });   // 사람이 시점을 움직임: 반복·같은 실행의 다른 판에서 그대로 둠
     sc.add(new THREE.HemisphereLight(0xffffff, 0x8890a8, 0.95));
     const dl = new THREE.DirectionalLight(0xffffff, 0.75); dl.position.set(-3, -4, 8); sc.add(dl);
     sc.add(new THREE.AmbientLight(0xffffff, 0.35));
@@ -212,7 +218,9 @@ export class Replay {
     else if (this.$("rp_near").checked) this.$("rp_note").textContent = "cursor is at latest — near-step filter off";
     this.$("rp_list").innerHTML = rows.map(r => {
       const m = r.meta || {};
-      return `<div class="item${this.file === r.file ? " on" : ""}" data-f="${esc(r.file)}"><div class="r1"><span><b>${esc(m.skill || "?")}</b> <span class="oc ${esc(m.outcome || "")}">${esc(m.outcome || (m.success ? "success" : "?"))}${this.meta && this.meta.synthetic ? " (synthetic)" : ""}</span>${r.pin ? " 📌" : ""}</span><span class="mono muted">ep ${m.ep ?? "?"}</span></div>
+      const src = m.pipeline === "og_real" || /_og\.sg$/.test(r.file) ? '<span class="srcb real" title="OmniGibson 렌더 → ObjectSAM + SigLIP 2 + scenemap objprob">REAL pipeline</span>'
+        : r.file.endsWith(".trp") && m.home === "B" ? '<span class="srcb" title="GT 장면(메시·상자·이름) + GPU 환경 정책 지도 — 인지 없음">GT / policy map</span>' : "";
+      return `<div class="item${this.file === r.file ? " on" : ""}" data-f="${esc(r.file)}"><div class="r1"><span>${src}<b>${esc(m.skill || "?")}</b> <span class="oc ${esc(m.outcome || "")}">${esc(m.outcome || (m.success ? "success" : "?"))}${this.meta && this.meta.synthetic ? " (synthetic)" : ""}</span>${r.pin ? " 📌" : ""}</span><span class="mono muted">ep ${m.ep ?? "?"}</span></div>
         <div class="muted small">${esc(m.home || "")} · ${esc(m.stage || "")} · map ${fmt(m.completion0 ?? m.map_completeness, 1)} · ${fmt(m.t)} s · return ${fmt(m.ret)}${m.iter != null ? " · iter " + fmt(m.iter) : ""}${m.driver ? " · " + esc(m.driver) : ""}${m.ckpt ? ` · <b>${esc(m.ckpt)}</b>` : ""}</div></div>`;
     }).join("") || '<div class="muted small">no episode matches the filters</div>';
     this.$("rp_list").querySelectorAll(".item").forEach(el => el.onclick = () => this.open(el.dataset.f));
@@ -228,6 +236,7 @@ export class Replay {
       this.robot.visible = false;
     }
     this.$("rp_hud").textContent = ""; this.$("rp_cams").innerHTML = ""; this.$("rp_empty").hidden = false;
+    this.inputs.clear(); this.$("rp_badge").hidden = true; this.ov = null;
     this.$("rp_time").max = 0; this.$("rp_tlabel").textContent = ""; this.$("rp_play").textContent = "▶";
     const cv = this.$("rp_strip"); cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
     this.$("rp_legend").innerHTML = "";
@@ -241,7 +250,7 @@ export class Replay {
     for (const id of ["rp_strip", "rp_legend"]) this.$(id).style.display = on ? "none" : "";
     // 3D classic 전용 조작은 sgview 화면에서 숨김(sgview 자체 패널에 시점·궤적 켜고 끔이 있음)
     for (const id of ["rp_camsel", "rp_ee", "rp_slam"]) { const el = this.$(id); (el.closest("label") || el).style.display = on ? "none" : ""; }
-    for (const id of ["rp_ul", "rp_pmap"]) { const el = this.$(id); el.closest("label").style.display = on ? "" : "none"; }
+    for (const id of ["rp_ul", "rp_pmap", "rp_mesh"]) { const el = this.$(id); el.closest("label").style.display = on ? "" : "none"; }
     if (!on) this.sg.close();
   }
   async open(file) {
@@ -252,6 +261,7 @@ export class Replay {
       this.setSg(true);
       this.$("rp_empty").hidden = true;
       await this.sg.open(id, st, file);
+      this.loadInputs(id, st, file);
       return;
     }
     this.setSg(false);
@@ -262,13 +272,34 @@ export class Replay {
     let tr;
     try { tr = parseTrp(await r.arrayBuffer()); } catch (e) { this.$("rp_empty").textContent = "read failed: " + e.message; return; }
     this.tr = tr; this.loadMs = performance.now() - t0;
+    this.inputs.load(tr.buf); this.setBadge(tr.head, null);
     this.$("rp_empty").hidden = true;
     this.build();
     this.$("rp_time").max = tr.nf - 1;
     this.t = 0; this.seek(0);
-    this.setCam(+this.$("rp_camsel").value, true);
+    this.setCam(+this.$("rp_camsel").value, this.userCam !== id);
     // 판을 고르면 바로 재생, 끝나면 처음부터 반복(tick)
     this.playing = true; this.$("rp_play").textContent = "❚❚";
+  }
+  // 정책 입력 패널 + 덧그림(sgview 화면): .trp 그대로 / .sg 는 안의 episode.trp
+  async loadInputs(id, st, file) {
+    const r = await fetch(`/api/replay?run=${encodeURIComponent(id)}&stream=${encodeURIComponent(st)}&id=${encodeURIComponent(file)}`);
+    if (id !== this.run || this.file !== file) return;
+    if (!r.ok) { this.inputs.clear("no policy record for this episode"); this.setBadge(null, this.sg.info); return; }
+    const tr = this.inputs.load(await r.arrayBuffer());
+    if (id !== this.run || this.file !== file || !tr) return;
+    this.sg.setTrp(tr.head);
+    // REAL 판: 정책이 본 지도(G2)를 처음부터 겹쳐 — 실제 인지와 정책 입력의 차이를 바로 보게
+    if (file.endsWith("_og.sg") && !this.$("rp_pmap").checked) { this.$("rp_pmap").checked = true; this.sg.setPolicyMap(true); }
+    this.setBadge(tr.head, this.sg.info);
+  }
+  setBadge(head, info) {
+    const b = this.$("rp_badge"), m = (info && info.meta) || (head && head.meta) || {};
+    let txt = "", real = false;
+    if (m.pipeline === "og_real") { txt = "REAL pipeline: point clouds, names, camera = OmniGibson render (LIMO eyes RGB-D) → ObjectSAM + SigLIP 2 + scenemap objprob · house mesh / stance overlays = GT"; real = true; }
+    else if (m.pipeline === "raycast_approx") txt = "APPROXIMATE: ray-cast scene meshes + perfect detection (OmniGibson replay pending)";
+    else if (head && head.scene && head.scene.world) txt = "NOT our perception — house mesh / boxes / names = GT scene, object#N boxes = GPU env policy map (GT-derived); real-pipeline OmniGibson replay: see REAL episodes";
+    b.hidden = !txt; b.textContent = txt; b.classList.toggle("real", real);
   }
   build() {
     const tr = this.tr, H = tr.head, G = this.gEp, v = tr.v;
@@ -360,6 +391,10 @@ export class Replay {
     this.$("rp_legend").innerHTML = rcols.map((c, i) => `<span><i style="background:${cssv("--s" + (1 + i % 8))}"></i>${esc(c.slice(2))}</span>`).join("") + `<span><i style="background:${cssv("--ink")}"></i>value</span><span><i style="background:${cssv("--muted")}"></i>end_p</span><span>ticks: events (contact · grasp · drop · success)</span>`;
     const objs = H.objects || [];
     this.objName = s => { const id = tr.sv(this.f, s, "id"); const o = objs.find(o => o.id === id || o.slot === s); return o ? o.name : `slot ${s}`; };
+    if (H.scene && H.scene.pnp) {
+      this.ov = buildOverlays(THREE, H.scene, H.inputs || {}, [0, 0], (t, x, y, z, h, bg) => { const l = this.label(t, x, y, z - 0.3, h); return l; });
+      for (const [k, id] of [["cond", "rp_cond"], ["env", "rp_envbox"], ["feas", "rp_feas"]]) { this.ov[k].visible = this.$(id).checked; G.add(this.ov[k]); }
+    }
     this.drawStrip();
   }
   label(text, x, y, z, h = 0.35) {
@@ -403,6 +438,7 @@ export class Replay {
     this.$("rp_tlabel").textContent = `${fmt(v("t"))} s · ${f + 1}/${tr.nf}`;
     this.setMapFrame(f);
     this.setSegFrame(f);
+    this.inputs.show(f);
     // 로봇
     this.robot.position.set(v("x"), v("y"), 0); this.robot.rotation.set(0, 0, v("yaw"));
     const jm = H.joint_map || (this.meta && this.meta.joint_map) || {};

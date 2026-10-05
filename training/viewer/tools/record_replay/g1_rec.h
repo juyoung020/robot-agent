@@ -4,6 +4,7 @@
 #pragma once
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -51,6 +52,10 @@ struct G1Rec {
   std::string driver, source_json, skill = "approach", home_prefix = "G1", tag;   // tag: 체크포인트 이름(it000200 / final) — 파일 이름·판 줄에
   double ckpt_iter = NAN;
   int max_success = 1 << 30;
+  // 덧붙임(BEHAVIOR 판, beh_rec.h): 스텝마다 그 판 기록에 섹션을 더함(판 i, 판 번호, 프레임) / 판을 쓰기 전(머리 더하기) / 쓴 뒤(경로 — OG 다시 돌리기 줄 세우기)
+  std::function<void(int, long, uint32_t, TrpWriter*)> frame_hook;
+  std::function<void(int, long, TrpWriter*)> pre_finish;
+  std::function<void(int, long, const std::string&, const std::string&)> post_finish;
   bool sg = true;   // 판마다 진짜 scenemap 을 돌려 sgview 판(.sg)으로(--no-sg 면 .trp 만)   // 성공 판은 이만큼만 쓰고(그 뒤 성공은 버림) 실패를 더 기다린다
   long next_ep = 0;
   int finished = 0, img_every = 5;
@@ -191,6 +196,7 @@ struct G1Rec {
       frame_row(c, mh.core[i], mh.met.data(), i, ai, rew[i], val.empty() ? NAN : val[i], fr == 0 ? EV_RESET : 0, e, row, sl);
       trp_frame(e.w, row, sl);
       map_rec(i, mh, e, fr);
+      if (frame_hook) frame_hook(i, e.ep, fr, e.w);
       if (img_res > 0 && e.frames % img_every == 0)
         for (int cam = 0; cam < 2; ++cam) {
           const uint8_t* p = img(i, cam);
@@ -264,6 +270,7 @@ struct G1Rec {
       path = sgdir + "/episode.trp";
       line.replace(line.find(std::string("\"replay\":\"") + file + "\""), std::string("\"replay\":\"").size() + std::strlen(file) + 1, std::string("\"replay\":\"") + f2 + "\"");
     }
+    if (pre_finish) pre_finish(i, e.ep, e.w);
     trp_set_head(e.w, "meta", line.c_str());
     const long long nb = trp_finish(e.w, path.c_str());
     trp_free(e.w);
@@ -291,6 +298,7 @@ struct G1Rec {
                                                 .num("n_objects", nobj).num("stream_frames", (double)nfr).str("source", "GPU env episode → real scenemap (limo_omx), depth/id raycast like map_cmp").done();
     }
     out.append_episode(line);
+    if (post_finish) post_finish(i, e.ep, path, line);
     ++finished;
     std::printf("  ep %ld env %d: %s, %d frames, return %.2f -> %s (%.0f KB)\n", e.ep, i, oc, e.frames + 1, e.ret, sgdir.empty() ? path.c_str() : sgdir.c_str(), nb / 1024.0);
   }

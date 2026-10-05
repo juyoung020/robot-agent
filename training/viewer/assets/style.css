@@ -174,3 +174,26 @@ pre.small { white-space: pre-wrap; max-height: 300px; overflow: auto; margin: 0;
 .recb { display: inline-block; font-size: 10px; color: #fff; background: var(--critical); border-radius: 3px; padding: 0 4px; margin-left: 5px; vertical-align: 1px; }
 .recb[hidden] { display: none; }
 .badge.stb { display: inline-flex; align-items: center; }
+
+/* 재생: 입력 패널 */
+.rp_row { display: flex; gap: 8px; }
+.rp_row #rp_view { flex: 1 1 auto; min-width: 0; }
+.rp_in { flex: 0 0 420px; height: calc(100vh - 330px); min-height: 320px; overflow: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: 12px; }
+.rp_in[hidden] { display: none; }
+.rp_in details { border-top: 1px solid var(--line); padding: 3px 0; }
+.rp_in summary { cursor: pointer; font-weight: 600; }
+.rp_in .in_head { margin-bottom: 4px; }
+.rp_in .in_cond { background: rgba(155, 120, 40, 0.07); border: 1px dashed var(--line); border-radius: 6px; padding: 3px 6px; margin-top: 6px; }
+.in_t { border-collapse: collapse; width: 100%; font-size: 11px; }
+.in_t td, .in_t th { padding: 1px 4px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.in_t tr.in_tgt td { background: rgba(227, 73, 72, 0.13); font-weight: 600; }
+.in_bars { position: relative; height: 10px; background: linear-gradient(to right, transparent 49.5%, var(--line) 49.5%, var(--line) 50.5%, transparent 50.5%); }
+.in_bar { position: absolute; top: 1px; height: 8px; opacity: 0.8; }
+.in_bars .in_bar + .in_bar { top: 3px; height: 4px; opacity: 1; }
+.in_ok { color: #1baf7a; font-weight: 700; } .in_no { color: #d03b3b; font-weight: 700; }
+.in_x0 div { word-break: break-all; }
+.rp_badge { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 3; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; background: #fff3cd; color: #6b4e00; border: 1px solid #e0c060; }
+.rp_badge.real { background: #dff5e6; color: #145a2e; border-color: #7bd389; }
+@media (max-width: 1100px) { .rp_row { flex-direction: column; } .rp_in { flex: none; height: 360px; } }
+.srcb { display: inline-block; font-size: 10px; padding: 0 5px; margin-right: 5px; border-radius: 8px; background: #fff3cd; color: #6b4e00; border: 1px solid #e0c060; }
+.srcb.real { background: #dff5e6; color: #145a2e; border-color: #7bd389; }

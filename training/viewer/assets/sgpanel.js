@@ -3,6 +3,7 @@
 //   ① 시간 막대·재생·속도(/api/sg/ctl), ② 같은 출처 iframe 안 장면에 덧그림: 참(GT) 궤적, BEHAVIOR 집 바탕 층(방 바닥 색·벽·가구·놓을 곳·집을 것·과제 물체),
 //   ③ LIMO 관절 순서(robot.json 의 joint_order 가 비어 있어 sgview 가 관절 스트림을 안 씀 → proprio 순서를 넣음), ④ 카메라 그림 을 맡는다.
 import { fmt, esc } from "./charts.js";
+import { buildOverlays } from "./inputs.js";
 
 const ROOM_COL = { kitchen: 0xeda100, bathroom: 0x1baf7a, bedroom: 0x9085e9, living_room: 0x3987e5, dining_room: 0xeb6834, corridor: 0x9a9a9a, childs_room: 0xe87ba4,
   private_office: 0x4a3aa7, storage_room: 0x8c6d46, utility_room: 0x6b6b70, garage: 0x555555, entryway: 0xb0b0b0, closet: 0x8c6d46, empty_room: 0xc8c8c8, playroom: 0xe87ba4,
@@ -10,8 +11,8 @@ const ROOM_COL = { kitchen: 0xeda100, bathroom: 0x1baf7a, bedroom: 0x9085e9, liv
 const hashCol = s => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) >>> 0; const p = [0xc8a878, 0xb59a7a, 0xa9b48c, 0x9fb3c8, 0xc9a3a3, 0xb3a3c9, 0xa3c9c0, 0xd2b48c]; return p[h % p.length]; };
 
 export class SgPanel {
-  constructor({ api, host, getSel }) {
-    this.api = api; this.host = host;
+  constructor({ api, host, getSel, onTime }) {
+    this.api = api; this.host = host; this.onTime = onTime; this.trHead = null; this.ov = null; this.ovOn = { cond: true, env: false, feas: false };
     this.sess = (() => { try { const k = sessionStorage.getItem("tv_sgsess"); if (k) return k; } catch (e) {} const k = Math.random().toString(36).slice(2, 12); try { sessionStorage.setItem("tv_sgsess", k); } catch (e) {} return k; })();
     document.cookie = `sgsess=${this.sess}; path=/; SameSite=Lax`;
     this.state = null; this.info = null; this.timer = null; this.win = null; this.ul = null; this.gt = null;
@@ -26,19 +27,21 @@ export class SgPanel {
     this.state = st;
     this.info = (await (await fetch(`/api/sg/info?sess=${this.sess}`)).json()).info || {};
     this.$("rp_time").max = Math.round(st.duration * 10); this.$("rp_time").value = 0;
-    // 같은 페이지를 다시 쓰면 sgview 가 상태를 이어 붙이므로 새로 띄움(옮김은 SSE reset 으로)
+    // 같은 페이지를 다시 쓰면 sgview 가 상태를 이어 붙이므로 새로 띄움(옮김은 SSE reset 으로).
+    // 사람이 맞춘 시점·켜고 끔은 같은 실행의 다른 판으로 옮겨도 이어 감(저장 → 새 iframe 에 되돌림)
+    this.saveView(run);
     this.host.innerHTML = "";
     const f = document.createElement("iframe");
     f.src = "/sg/?k=" + Math.random().toString(36).slice(2);
     f.style.cssText = "width:100%;height:100%;border:0;display:block";
     this.host.appendChild(f);
-    this.frame = f; this.win = null; this.ul = null; this.gt = null; this.pm = null; this._pmT = null;
+    this.frame = f; this.win = null; this.ul = null; this.gt = null; this.pm = null; this._pmT = null; this.ov = null; this.trHead = null; this.mesh = null; this.ulBoxes = [];
     f.onload = () => this.attach();
     this.run = run; this.stream = stream; this.id = id;
     this.startPoll();
     return true;
   }
-  close() { clearInterval(this.timer); this.timer = null; this.host.innerHTML = ""; this.frame = null; this.win = null; }
+  close() { this.saveView(this.run); clearInterval(this.timer); this.timer = null; this.host.innerHTML = ""; this.frame = null; this.win = null; }
   async ctl(q) {
     const st = await (await fetch(`/api/sg/ctl?sess=${this.sess}&${q}`)).json();
     if (!st.error) { this.state = st; this.update(); }
@@ -70,6 +73,7 @@ export class SgPanel {
       (m.skill === "layout" ? "" : `\nGT path green · SLAM path blue (sgview)`);
     this.drawGt(st.t);
     if (this.pmOn) this.drawPolicyMap(st.t);
+    if (this.onTime) this.onTime(st.t);
     // 카메라 그림(몸통 카메라, 2 Hz)
     const cams = i.cams || [];
     if (cams.length) {
@@ -97,16 +101,117 @@ export class SgPanel {
         const base = applyJointStream;
         applyJointStream = function () { base(); if (robotModel && jointsCur && robotModel.order.length) { const i = robotModel.order.indexOf("omx_gripper_joint_1"); if (i >= 0 && i < jointsCur.length) setJoints({ omx_gripper_joint_2: -jointsCur[i] }); } };
       })()`);
-      this.buildGt(); this.buildUnderlay(); this.update();
+      // 반복 재생(끝 → 0 초: 서버가 epoch 를 올려 SSE reset)에서 sgview 는 autoFit 을 다시 켜 시점을 처음으로 돌린다 →
+      // 사람이 한 번이라도 시점을 움직였으면 맞춤(fitViewTo·fitView)을 건너뛴다. "Fit"·"Top view" 단추는 그대로 됨(누르면 다시 따라감)
+      w.eval(`(function(){ window.__tvKeep = false;
+        controls.addEventListener("start", () => { window.__tvKeep = true; });
+        const fvt = fitViewTo; fitViewTo = function (g, inst) { if (window.__tvKeep) return; return fvt(g, inst); };
+        const fv = fitView; fitView = function (top) { if (window.__tvKeep && !window.__tvBtn) return; return fv(top); };
+        for (const id of ["b_top", "b_fit"]) { const b = document.getElementById(id); if (!b) continue; const h = b.onclick; b.onclick = e => { window.__tvKeep = false; window.__tvBtn = true; try { h && h(e); } finally { window.__tvBtn = false; } }; }
+      })()`);
+      this.restoreView();
+      this.buildGt(); this.buildUnderlay(); this.buildOv(); this.buildMesh(); this.update();
     };
     tryIt();
   }
   scene() { return this.win.eval("scene"); }
+  // 시점(카메라 자리·바라보는 점·줌)과 sgview 패널의 켜고 끔·고르기 — 판을 바꿔도 같은 실행이면 이어 감
+  frameKey(run, info) { return run + "|" + (info && info.kind) + "|" + JSON.stringify((info && info.window_origin) || null); }
+  saveView(nextRun) {
+    const w = this.win;
+    if (!w) { if (this.saved && this.saved.run !== nextRun) this.saved = null; return; }
+    try {
+      const key = this.frameKey(this.run, this.info), old = this.saved || {};
+      this.saved = { run: this.run, cams: Object.assign({}, old.run === this.run ? old.cams : {}) };
+      if (w.eval("window.__tvKeep")) this.saved.cams[key] = { p: w.eval("camera.position.toArray()"), t: w.eval("controls.target.toArray()"), z: w.eval("camera.zoom") };
+      const ui = {};
+      w.document.querySelectorAll("input[id], select[id]").forEach(el => { ui[el.id] = el.type === "checkbox" ? el.checked : el.value; });
+      this.saved.ui = ui;
+    } catch (e) { this.saved = null; }
+    if (this.saved && this.saved.run !== nextRun) this.saved = null;
+  }
+  restoreView() {
+    const w = this.win, S = this.saved;
+    if (!w || !S || S.run !== this.run) return;
+    try {
+      const C = (S.cams || {})[this.frameKey(this.run, this.info)];   // 같은 좌표 틀(OG 세계 / 창)의 판끼리만 시점을 이어 감
+      if (C) w.eval(`camera.position.fromArray(${JSON.stringify(C.p)}); controls.target.fromArray(${JSON.stringify(C.t)}); camera.zoom = ${C.z}; camera.updateProjectionMatrix(); controls.update(); window.__tvKeep = true;`);
+      else w.eval("window.__tvKeep = false;");
+      for (const [id, v] of Object.entries(S.ui || {})) {
+        const el = w.document.getElementById(id); if (!el || el.type === "range" || el.type === "text" || el.type === "number") continue;
+        if (el.type === "checkbox") { if (el.checked !== v) { el.checked = v; el.dispatchEvent(new w.Event("change")); } }
+        else if (el.tagName === "SELECT" && el.value !== v && [...el.options].some(o => o.value === v)) { el.value = v; el.dispatchEvent(new w.Event("change")); }
+      }
+      this.invalidate();
+    } catch (e) {}
+  }
+  // 정책 기록 머리(.trp / .sg 안 episode.trp) — 집기·놓기 조건·환경 상자·잡기 가능 색칠 덧그림
+  setTrp(head) { this.trHead = head; this.buildOv(); this.buildMesh(); }
+  // BEHAVIOR 집 진짜 메시(줄인 것, /api/scene_mesh) — 바탕 층(house layout)에서 상자 대신. 없으면 상자 그대로(대신 씀)
+  async buildMesh() {
+    const W = (this.info && this.info.world) || (this.trHead && this.trHead.scene && this.trHead.scene.world);
+    if (!this.win || !W || !W.scene || this.mesh || this._meshLoading) return;
+    this._meshLoading = true;
+    const win = this.win, r = await fetch(`/api/scene_mesh?scene=${encodeURIComponent(W.scene)}`);
+    this._meshLoading = false;
+    if (!r.ok || win !== this.win) return;
+    const buf = await r.arrayBuffer(), dv = new DataView(buf), hl = dv.getUint32(4, true);
+    const H = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, hl)));
+    // 배열은 iframe 쪽 생성자로(다른 창의 Float32Array 는 three 가 형을 못 알아봐 GL_INVALID_ENUM)
+    const T = win.THREE, o0 = 8 + hl, V = new win.Float32Array(new Float32Array(buf, o0, H.n_v * 3)), F = new Uint32Array(buf, o0 + 12 * H.n_v, H.n_f * 3), I = new Uint16Array(buf, o0 + 12 * H.n_v + 12 * H.n_f, H.n_v);
+    // 창 좌표 판(.trp)은 세계 − (wx, wy), OG 판은 세계 그대로
+    const wo = this.info && this.info.window_origin ? [0, 0] : [-(W.wx || 0), -(W.wy || 0)];
+    const KC = { wall: 0xbdb7ad, floor: 0xd9d0c1, door: 0x9c6b3c, window: 0x8fc5e8 };
+    const mk = (want, op) => {
+      const keep = new Uint8Array(H.n_v); let nf = 0;
+      for (let f = 0; f < H.n_f; f++) { const k = H.objects[I[F[3 * f]]].kind; if (want(k)) nf++; }
+      const idx = new win.Uint32Array(nf * 3); let j = 0;
+      for (let f = 0; f < H.n_f; f++) { const k = H.objects[I[F[3 * f]]].kind; if (!want(k)) continue; idx[j++] = F[3 * f]; idx[j++] = F[3 * f + 1]; idx[j++] = F[3 * f + 2]; }
+      const col = new win.Float32Array(H.n_v * 3), c = new T.Color();
+      for (let v = 0; v < H.n_v; v++) { const o = H.objects[I[v]]; c.setHex(KC[o.kind] ?? hashCol(o.cat)); const d = o.kind === "furniture" ? 0.5 : 0.62; col.set([c.r * d, c.g * d, c.b * d], 3 * v); }   // sgview 빛이 세서 어둡게
+      const g = new T.BufferGeometry(); g.setAttribute("position", new T.BufferAttribute(V, 3)); g.setAttribute("color", new T.BufferAttribute(col, 3)); g.setIndex(new T.BufferAttribute(idx, 1));
+      g.computeVertexNormals();
+      const m = new T.Mesh(g, new T.MeshLambertMaterial({ vertexColors: true, transparent: op < 1, opacity: op, side: T.DoubleSide, depthWrite: op >= 0.7 }));
+      m.renderOrder = op < 1 ? 3 : 1; return m;
+    };
+    const G = new T.Group(); G.name = "house_mesh"; G.position.set(wo[0], wo[1], 0);
+    G.add(mk(k => k === "floor", 0.5), mk(k => k === "wall" || k === "window" || k === "door", 0.3), mk(k => k === "furniture", 0.8));
+    // 가구 이름(바닥 자국이 큰 것만)
+    const bb = new Map();
+    for (let v = 0; v < H.n_v; v++) { const k = I[v]; let b = bb.get(k); if (!b) bb.set(k, b = [1e9, 1e9, 1e9, -1e9, -1e9, -1e9]); for (let a = 0; a < 3; a++) { b[a] = Math.min(b[a], V[3 * v + a]); b[a + 3] = Math.max(b[a + 3], V[3 * v + a]); } }
+    for (const [k, b] of bb) {
+      const o = H.objects[k];
+      if (o.kind !== "furniture" || (b[3] - b[0]) * (b[4] - b[1]) < 0.12 || b[2] > 2.0) continue;
+      G.add(this.mkLabel(o.cat.replace(/_/g, " "), (b[0] + b[3]) / 2, (b[1] + b[4]) / 2, b[5] + 0.1, 0.1, "rgba(255,248,235,0.85)"));
+    }
+    this.mesh = G; this.meshInfo = H;
+    if (this.ul) { this.ul.add(G); for (const m of this.ulBoxes || []) m.visible = this.meshOn === false; }
+    else this.scene().add(G);
+    G.visible = this.meshOn !== false;
+    this.invalidate();
+  }
+  setMesh(on) { this.meshOn = on; if (this.mesh) this.mesh.visible = on; for (const m of this.ulBoxes || []) m.visible = !on || !this.mesh; this.invalidate(); }
+  setOv(k, on) { this.ovOn[k] = on; if (this.ov && this.ov[k]) { this.ov[k].visible = on; this.invalidate(); } }
+  buildOv() {
+    if (!this.win || !this.trHead || this.ov || !(this.trHead.scene && this.trHead.scene.boxes)) return;
+    const T = this.win.THREE, off = (this.info && this.info.window_origin) || [0, 0];
+    this.ov = buildOverlays(T, this.trHead.scene, this.trHead.inputs || {}, off, (t, x, y, z, h, bg) => this.mkLabel(t, x, y, z, h, bg));
+    for (const k of ["cond", "env", "feas"]) { this.ov[k].visible = !!this.ovOn[k]; this.scene().add(this.ov[k]); }
+    if (this.hoverables) this.hoverables.push(...this.ov.hover);
+    this.invalidate();
+  }
+  mkLabel(text, x, y, z, h = 0.3, bg = "rgba(255,255,255,0.85)") {
+    const T = this.win.THREE, cv = document.createElement("canvas"), g = cv.getContext("2d"), fs = 30;
+    g.font = `600 ${fs}px system-ui, sans-serif`; cv.width = Math.ceil(g.measureText(text).width) + 16; cv.height = fs + 14;
+    g.font = `600 ${fs}px system-ui, sans-serif`; g.fillStyle = bg; g.fillRect(0, 0, cv.width, cv.height); g.fillStyle = "#222"; g.fillText(text, 8, fs + 2);
+    const sp = new T.Sprite(new T.SpriteMaterial({ map: new T.CanvasTexture(cv), depthTest: false, transparent: true }));
+    sp.scale.set(h * cv.width / cv.height, h, 1); sp.position.set(x, y, z); sp.renderOrder = 11; return sp;
+  }
   invalidate() { try { this.win.eval("invalidate()"); } catch (e) {} }
   buildGt() {
     const T = this.win.THREE, pts = this.info.gt_path || [];
     if (!pts.length) return;
-    const a = new Float32Array(pts.length * 3);
+    const a = new this.win.Float32Array(pts.length * 3);
     pts.forEach((p, i) => a.set([p[1], p[2], 0.08], 3 * i));
     const g = new T.BufferGeometry(); g.setAttribute("position", new T.BufferAttribute(a, 3)); g.setDrawRange(0, 0);
     this.gt = new T.Line(g, new T.LineBasicMaterial({ color: 0x0ca30c })); this.gt.frustumCulled = false; this.gt.renderOrder = 5;
@@ -127,7 +232,7 @@ export class SgPanel {
     this._pmT = k;
     const g = await (await fetch(`/api/sg/policymap?sess=${this.sess}&t=${k}`)).json();
     if (g.why) return;
-    const T = this.win.THREE, px = Uint8Array.from(atob(g.b64), c => c.charCodeAt(0)), rgba = new Uint8Array(g.w * g.h * 4);
+    const T = this.win.THREE, px = Uint8Array.from(atob(g.b64), c => c.charCodeAt(0)), rgba = new this.win.Uint8Array(g.w * g.h * 4);
     for (let i = 0; i < g.w * g.h; i++) { const v = px[i]; if (v === 205) continue; const occ = 255 - v; rgba[4 * i] = 235; rgba[4 * i + 1] = 104; rgba[4 * i + 2] = 52; rgba[4 * i + 3] = 40 + occ * 0.7; }
     if (!this.pm) {
       const mfw = this.info.map_from_world || [1, 0, 0, 0];
@@ -159,7 +264,7 @@ export class SgPanel {
       const { w, h, res, ox, oy } = U.grid;
       const rg = Uint8Array.from(atob(U.room_grid_b64), c => c.charCodeAt(0)); this._rg = rg;
       const rooms = U.rooms || [], col = rooms.map(r => new T.Color(ROOM_COL[r.type] ?? hashCol(r.type)));
-      const rgba = new Uint8Array(w * h * 4);
+      const rgba = new this.win.Uint8Array(w * h * 4);
       for (let i = 0; i < w * h; i++) { const k = rg[i]; if (!k) continue; const c = col[k - 1] || new T.Color(0x999999); rgba[4 * i] = c.r * 255; rgba[4 * i + 1] = c.g * 255; rgba[4 * i + 2] = c.b * 255; rgba[4 * i + 3] = 95; }
       const tex = new T.DataTexture(rgba, w, h, T.RGBAFormat); tex.needsUpdate = true; tex.magFilter = T.NearestFilter;
       const floor = new T.Mesh(new T.PlaneGeometry(w * res, h * res), new T.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
@@ -188,7 +293,7 @@ export class SgPanel {
       m.scale.set(2 * b.h[0], 2 * b.h[1], Math.max(2 * b.h[2], 0.02)); m.position.set(b.c[0], b.c[1], b.c[2]); m.rotation.z = b.yaw || 0;
       m.add(new T.LineSegments(new T.EdgesGeometry(new T.BoxGeometry(1, 1, 1)), new T.LineBasicMaterial({ color: 0x4a4038, transparent: true, opacity: 0.25 })));
       m.userData.tip = `${b.kind}: ${b.cat}${b.name ? " (" + b.name + ")" : ""}`;
-      G.add(m); this.hoverables.push(m);
+      G.add(m); this.hoverables.push(m); this.ulBoxes.push(m);
     }
     // 놓을 곳(받침 윗면, RASC v3 PLACES) · 집을 것(PICKS) · 이 과제의 물체
     for (const p of U.places || []) {

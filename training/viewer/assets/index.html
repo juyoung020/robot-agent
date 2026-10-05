@@ -87,7 +87,8 @@
       <div id="rp_list" class="list"></div>
     </aside>
     <div id="rp_main">
-      <div id="rp_view"><div id="rp_sg" class="sghost" hidden></div><div id="rp_hud" class="hud mono"></div><div id="rp_cams" class="cams"></div><div id="rp_empty" class="empty">Pick an episode from the list</div></div>
+      <div class="rp_row"><div id="rp_view"><div id="rp_sg" class="sghost" hidden></div><div id="rp_hud" class="hud mono"></div><div id="rp_cams" class="cams"></div><div id="rp_badge" class="rp_badge" hidden></div><div id="rp_empty" class="empty">Pick an episode from the list</div></div>
+        <aside id="rp_in" class="rp_in" title="정책이 이 스텝에 받은 입력(재생 시각에 맞춤)"></aside></div>
       <div class="bar">
         <select id="rp_mode" title="debug: 예전 3D 그리기(판마다 보상 띠·.trp 안 카메라 JPEG 를 보는 곳 — sgview 화면에는 없음)" hidden><option value="sg" selected>sgview</option><option value="3d">3D classic (debug)</option></select>
         <button id="rp_play">▶</button>
@@ -101,6 +102,11 @@
         <label><input type="checkbox" id="rp_slam" checked> SLAM pose path</label>
         <label title="BEHAVIOR 집 배치(방 바닥·벽·가구·놓을 곳·집을 것) 바탕 층"><input type="checkbox" id="rp_ul" checked> house layout</label>
         <label title="정책이 본 지도(GPU 근사판 G2) — sgview 의 진짜 scenemap 지도 위에 반투명 주황으로 겹침"><input type="checkbox" id="rp_pmap"> policy map</label>
+        <label title="정책 입력 패널(오른쪽): 목표 칸·몸 상태·지도 물체 칸·방향 구역·행동 대 교사 라벨·특권 상태·과제 조건"><input type="checkbox" id="rp_inon" checked> inputs</label>
+        <label title="BEHAVIOR 집 진짜 메시(OmniGibson visual 메시를 줄인 것) — 끄면 상자"><input type="checkbox" id="rp_mesh" checked> house mesh</label>
+        <label title="GPU 환경이 쓰는 상자 근사(벽·가구·창) — 진짜 가구(점구름·메시)와 견주기"><input type="checkbox" id="rp_envbox"> env boxes</label>
+        <label title="집기·놓기 조건: 서는 자리 후보(파랑)·표 자리(보라)·교사가 고른 자리(빨강), 팔 닿는 띠(0.30·0.38 m 고리), 집을 물체·놓을 곳"><input type="checkbox" id="rp_cond" checked> stances &amp; reach</label>
+        <label title="창 안 집을 후보를 잡기 모형으로 색칠: 초록 = 잡힘, 빨강 = 안 됨(까닭)"><input type="checkbox" id="rp_feas"> graspable tint</label>
       </div>
       <canvas id="rp_strip" height="110"></canvas>
       <div id="rp_legend" class="legend small"></div>

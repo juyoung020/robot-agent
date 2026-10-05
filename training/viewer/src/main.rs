@@ -217,13 +217,34 @@ fn handle(mut s: TcpStream, app: Arc<App>) {
             let Some(r) = run_of(&app, &mut s, &req) else { return };
             let Some(st) = stream_of(&mut s, &req) else { return };
             let id = req.get("id");
-            if !trainfmt::safe_name(id) || !id.ends_with(".trp") {
-                return http::bad(&mut s, "id must be a .trp file name");
+            if !trainfmt::safe_name(id) || !(id.ends_with(".trp") || id.ends_with(".sg")) {
+                return http::bad(&mut s, "id must be a .trp file or .sg folder name");
             }
-            let p = runs::stream_dir(&r.dir, &st).join("replays").join(id);
+            let mut p = runs::stream_dir(&r.dir, &st).join("replays").join(id);
+            if id.ends_with(".sg") {
+                // sgview 판(OG·진짜 scenemap): 안의 정책 기록(meta.json policy_trp = episode.trp) — 입력 패널·조건 그림용
+                let pt = std::fs::read_to_string(p.join("meta.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok())
+                    .and_then(|m| m["policy_trp"].as_str().map(|x| x.to_string())).unwrap_or_else(|| "episode.trp".into());
+                if !trainfmt::safe_name(&pt) {
+                    return http::bad(&mut s, "bad policy_trp");
+                }
+                p = p.join(pt);
+            }
             match std::fs::read(&p) {
                 Ok(b) => http::respond(&mut s, 200, "application/octet-stream", &b, gz),
                 Err(_) => http::not_found(&mut s, &format!("no replay {}", id)),
+            }
+        }
+        "/api/scene_mesh" => {
+            // BEHAVIOR 집 진짜 메시(줄인 것, tools/scene_mesh/export_mesh.py 캐시): 재생 탭 바탕 층
+            let sc = req.get("scene");
+            if !trainfmt::safe_name(sc) || sc.is_empty() {
+                return http::bad(&mut s, "scene must be a scene name");
+            }
+            let dir = std::env::var("TRAINVIEW_SCENE_MESH").unwrap_or_else(|_| format!("{}/trainview_work/scene_mesh", std::env::var("HOME").unwrap_or_default()));
+            match std::fs::read(std::path::Path::new(&dir).join(format!("{}.smsh", sc))) {
+                Ok(b) => http::respond(&mut s, 200, "application/octet-stream", &b, gz),
+                Err(_) => http::not_found(&mut s, &format!("no mesh for {}", sc)),
             }
         }
         "/api/evals" => {

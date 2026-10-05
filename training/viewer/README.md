@@ -64,6 +64,18 @@ target/release/trainview --root ~/trainview_work/smoke_v2 --root ~/trainview_wor
 - 재생 화면 서버(`src/sg.rs`)가 sgview 의 실시간 경로(`/api/mode`·`/stream`·`/file/`·`/api/robot`)를 판 재생으로 흉내(세션 쿠키 `sgsess`, 옮기면 `reset` + 그 시각 스냅숏). `.trp` 만 있는 옛 판도 같은 화면(점구름 없는 물체는 상자).
 - 짝(과제 → 장면): turning_on_radio = house_double_floor_lower, bringing_water = house_single_floor.
 
+## BEHAVIOR 집기·놓기 판 (2026-10-05)
+
+| 무엇 | 출처 | 화면 |
+|---|---|---|
+| `.trp` 판(record_bc, stage 3) | GPU 환경. 장면 머리 = 벽·문·창·가구(RASC 종류 이름)·집을 물체·놓을 곳 + `world`(장면·창 가운데·과제·인스턴스) + `pnp`(잡기 모형 0.06 m·질량 대 가반 하중·면 높이 대 팔 닿는 띠·잡기 가능 표·서는 자리 후보) + `picks`. 스텝마다 `inputs` 섹션(지도 토큰·관측 80·X0 일부·학생 μ·대본 교사 라벨·낸 행동·특권 상태, `beh_rec.h`) | 목록 "GT / policy map" — **우리 인지 아님** |
+| `<판>_og.sg` | `tools/og_replay`: 같은 궤적·시작 자세·집을 물체를 OmniGibson 에서 다시 돌림 → LIMO eyes 640×480 RGB-D → libsgrt(ObjectSAM yolo26n-seg-obj-416 + SigLIP 2 + scenemap objprob). `episode.trp` = 정책 기록(창 → 세계로 옮긴 지도) | 목록 "REAL pipeline", 정책 지도(주황) 겹침 기본 켬 |
+| 집 메시 | `tools/scene_mesh/export_mesh.py`(fastsam `scene_mesh.npz` → 줄인 `~/trainview_work/scene_mesh/<장면>.smsh`, `/api/scene_mesh`) | "house mesh" (GT) |
+
+- 자동: record_bc 가 체크포인트마다 학생·교사 앞 판 `--og-per`(기본 2)개를 `~/trainview_work/og_queue` 에 넣고 일꾼 `og_queue.sh` 를 띄움(하나만, nice 19, og.lock, 램·디스크·GPU 여유 검사, GPU 빈 메모리 < 600 MB 면 OG 쪽을 끄고 줄 뒤로).
+- 손으로: `tools/og_replay/og_replay.sh <판.trp>`.
+- 재생 탭: 오른쪽 Inputs 패널(재생 시각에 맞춤, 과제 조건은 특권으로 따로), 덧그림 토글 house mesh · env boxes · stances & reach · graspable tint. 반복 재생·같은 실행의 다른 판에서 사람이 맞춘 시점 유지.
+
 ## 학습 중 재생 판 자동 기록
 
 `trainfmt::replay_hook` — `ppo_run`·`bc_run` 의 실행 폴더 쓰개(`runfolder.rs`)가 체크포인트를 쓴 뒤(PPO `ckpt_*.bin`, BC 평가 직전의 `student_*.bin`) 부른다. 학습기 C++/CUDA 는 그대로.
