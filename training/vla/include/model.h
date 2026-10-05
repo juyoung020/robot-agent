@@ -18,10 +18,10 @@ namespace rvla {
 // 기억 경로(VCfg::mem, docs/map_vla/TRAINING_DESIGN.md 2절): RITEM 방 항목 ≤ 8, SECT 방향 구역 8(로봇 기준 45° 칸, 늘 8 — 상태 토큰만,
 // 어디로 탐사할지는 따로 머리 없이 교사 행동·단계 문장에서 배움), MEM 기억 요약 토큰(mem_lat 개, 인코더 출력).
 // 옛 경로(mem 끔)는 앞 6 묶음만 켜고 변수 배치·초기값 난수 흐름이 예전과 같다.
-enum VGrp { VG_ARM, VG_BASE, VG_GOAL, VG_OBJ, VG_WALL, VG_ROOM, VG_RITEM, VG_SECT, VG_MEM, N_VG };
+enum VGrp { VG_ARM, VG_BASE, VG_GOAL, VG_OBJ, VG_WALL, VG_ROOM, VG_RITEM, VG_SECT, VG_GRID, VG_MEM, N_VG };
 struct VGrpDesc { int n_tok, K, k_real; };
 constexpr VGrpDesc kVGrp[N_VG] = {{1, 48, 42}, {1, 16, 3}, {1, 48, 43}, {16, 304, 289}, {1, 80, 64}, {1, 16, 10},   // GOAL 48 = BC tf.h GOAL(목표 칸 2 × 14 포함, 2026-10-05)
-                                  {8, 16, 14}, {8, 16, 8}, {32, 0, 0}};                                                // MEM n_tok 은 VCfg::mem_lat
+                                  {8, 16, 14}, {8, 16, 8}, {1, 528, 512}, {32, 0, 0}};                                 // GRID = 격자 2 × 16 × 16(교사 X0 464..975 와 같은 값, 지도 그림 대신 — 10-06), MEM n_tok 은 VCfg::mem_lat
 // 기억 줄(물체만, 가구 포함, 304): 칸 289 + 편향 1(자리 289, 옛 칸과 같은 자리) + 방 종류 6(290..295) + 살펴본 정도 3(296 가장 가까이 본 거리,
 // 297 본 횟수, 298 윗면 본 비율) + 힌트(299)·q_pick 고름(300)·q_place 고름(301). 값 정의는 TRAINING_DESIGN 1절 표.
 constexpr int MEM_K = 304, MEM_ROOM0 = 290, MEM_INSP0 = 296, MEM_HINT = 299, MEM_SELP = 300, MEM_SELQ = 301, MEM_KREAL = 302;
@@ -37,7 +37,7 @@ inline int src_code(int kind, int idx) { return (kind << 28) | idx; }
 struct VCfg {
   QCfg q;
   // 영상 탑(SigLIP 2 B/32-256)
-  int vD = 768, vHeads = 12, vMLP = 3072, vL = 12, vT = 64, vK = 3072, cams = 3;   // 그림 셋: 리모 앞 카메라·OMX 손목 카메라·위에서 본 지도(map topview.h, 2026-10-05) — 같은 SigLIP 2 탑
+  int vD = 768, vHeads = 12, vMLP = 3072, vL = 12, vT = 64, vK = 3072, cams = 2;   // 그림 둘: 리모 앞 카메라·OMX 손목 카메라(위에서 본 지도 그림은 10-06 결정으로 뺌 — 격자는 GRID 토큰)
   float vEps = 1e-6f;
   bool vis_train = true;
   int obj_hid = 1024;

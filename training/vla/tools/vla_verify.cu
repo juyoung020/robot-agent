@@ -164,7 +164,7 @@ static void make_batch(HB& h, const VCfg& c, int B, int Lmin, uint64_t seed, con
       nfr[b] = N_SECT;
       if (B > 2) nri[b] = kVGrp[VG_RITEM].n_tok;   // 실제 크기 bench: 늘 가득(L 상한)
     }
-    for (auto gg : {VG_RITEM, VG_SECT}) {
+    for (auto gg : {VG_RITEM, VG_SECT, VG_GRID}) {
       const auto& d = kVGrp[gg];
       h.grp[gg].assign((size_t)B * d.n_tok * d.K, 0);
       for (int r = 0; r < B * d.n_tok; ++r) {
@@ -192,6 +192,7 @@ static void make_batch(HB& h, const VCfg& c, int B, int Lmin, uint64_t seed, con
       s.push_back(src_code(SK_GRP + VG_WALL, b));
       for (int j = 0; j < nri[b]; ++j) s.push_back(src_code(SK_GRP + VG_RITEM, b * kVGrp[VG_RITEM].n_tok + j));
       for (int j = 0; j < nfr[b]; ++j) s.push_back(src_code(SK_GRP + VG_SECT, b * kVGrp[VG_SECT].n_tok + j));
+      s.push_back(src_code(SK_GRP + VG_GRID, b));
     } else {
       const int nobj = 2 + (int)((b * 3 + seed) % 6);
       for (int j = 0; j < nobj; ++j) s.push_back(src_code(SK_GRP + VG_OBJ, b * 16 + j));
@@ -266,7 +267,7 @@ static std::vector<TRef> tensors(const Model& m) {
   }
   Vv("v.lnf_g", 1, m.v_lnfg, c.vD); Vv("v.lnf_b", 1, m.v_lnfb, c.vD);
   M("v.proj(768->H)", 1, m.v_proj); Vv("v.proj_b", 1, m.v_projb, Q.H);
-  const char* gn[N_VG] = {"arm", "base", "goal", "obj", "wall", "room", "ritem", "sect", "mem"};
+  const char* gn[N_VG] = {"arm", "base", "goal", "obj", "wall", "room", "ritem", "sect", "grid", "mem"};
   for (int g = 0; g < N_VG; ++g) {
     if (!m.grp_on(g)) continue;
     if (g != VG_MEM) M(std::string("g.") + gn[g] + ".w1", 1, m.g_w1[g]);

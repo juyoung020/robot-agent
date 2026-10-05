@@ -61,7 +61,7 @@ static bool dn_old() {
 VCfg tiny_vcfg() {
   VCfg c;
   c.q = tiny_cfg();
-  c.vD = 64; c.vHeads = 2; c.vMLP = 128; c.vL = 2; c.vT = 4; c.vK = 192; c.cams = 3;
+  c.vD = 64; c.vHeads = 2; c.vMLP = 128; c.vL = 2; c.vT = 4; c.vK = 192; c.cams = 2;
   c.obj_hid = 64;
   c.De = 64; c.Ie = 128; c.Hc = 4; c.A = 8;
   c.Bmax = 2; c.Lmax = 48; c.Mtmax = 16;
