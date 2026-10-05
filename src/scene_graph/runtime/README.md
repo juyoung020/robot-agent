@@ -109,7 +109,6 @@ mem.close()                             # 진단 출력, 마지막 저장
 | `SGRT_LASER` | `0.103,0,-0.034,0` | base ← 라이다 `x,y,z,yaw`(URDF `laser_link`) |
 | `SLAM_CARTO_LOG` | `0` | `1` = Cartographer glog INFO(맞추기 통계)를 stderr 에 |
 | `SGRT_LIDAR` | `1` | 글루: LIMO 면 시뮬 2D 라이다(`src/sim/lidar/limo_lidar.py`, X2L 흉내 6 Hz·500 광선)를 쏴 `sgrt_push_scan`. `0` = 끔(그러면 자세 = 오도메트리만) |
-| `SGRT_MAP_POLICY` | `1` | 격자 넣기 정책. 1 = 사건 기반(서 있어도 바뀐 장애물을 넣고 지움), 0 = 옛 움직임 거르기 |
 | `SGRT_IMAGE_LAG` | `1` | 영상 stamp 를 몇 스텝 앞 시각으로 둘지(0..7). 1 = 직전 스텝(평가기 영상 k = 장면 k-1). 글루도 GT 자세를 읽을 스텝을 고를 때 같은 값을 쓴다 |
 | `SGRT_SAVE_SYNC` | `0` | 0 이 아니면 주기 저장을 스텝 안에서 한다. 0 이면 저장 스레드(앞 저장이 안 끝났으면 그 주기는 건너뜀) |
 | `SGRT_STREAM` | 없음(끔) | `host:port`. sgview(`--ingest`)로 실시간 스트림. 자세·지도 변화분은 스텝 안에서 링 버퍼로, 요약은 따로 스레드가 만든다. 5 s 마다 stderr 에 스트림 통계 |

@@ -284,7 +284,7 @@ static void check_grasp() {
     float qq[N_Q] = {a[0], a[1], a[2], a[3], a[4], 0.f}, qd[N_Q] = {};
     env::Fk ef;
     env::fk(qq, qd, ef);
-    // 잡는 점(scenemap d58c978: T_eef = URDF grasp_point) = 팔 끝 + grasp_off · 링크 x(map.h hands_step 과 같은 식)
+    // 잡는 점(scenemap: T_eef = URDF grasp_point) = 팔 끝 + grasp_off · 링크 x(map.h hands_step 과 같은 식)
     const double me[3] = {ef.ee_p[0] + gmap::MP::grasp_off * ef.ee_R[0], ef.ee_p[1] + gmap::MP::grasp_off * ef.ee_R[3],
                           ef.ee_p[2] + gmap::MP::grasp_off * ef.ee_R[6] + gmap::MP::base_z};
     for (int k = 0; k < 3; ++k) fk_max = std::max(fk_max, std::fabs(me[k] - f.T_eef[0][k * 4 + 3]));

@@ -110,7 +110,6 @@ sm_ctx* sgrt_scenemap(sgrt*);
  *   gt 가 아닌 모드에서도 넣으면 떠밀림 진단(sgrt_get_pose_diag)과 기록에 쓴다.
  * 영상 시각: 평가기 관측 영상(스텝 k)은 스텝 k-1 끝의 장면이다. sgrt 는 영상 stamp 를 직전 sgrt_step 의
  *   stamp 로 넣는다(SGRT_IMAGE_LAG=1 기본 = 직전 스텝, 0..7 스텝; 실제 로봇처럼 영상과 proprio 가 같은 순간이면 0).
- * 격자 넣기 정책: SGRT_MAP_POLICY=1(기본, 사건 기반 — 서 있어도 바뀐 장애물을 넣고 지움) | 0(옛 움직임 거르기).
  * 저장: sgrt_step 의 주기 저장(save_s)은 저장 스레드에서 한다(SGRT_SAVE_SYNC=1 이면 스텝 안에서). 앞 저장이 덜 끝났으면 그 주기는 건너뜀.
  * 기록: SGRT_RECORD=<파일> 이면 sgrt 가 받은 입력(proprio·외부 자세·keyframe 깊이·RGB·검출)을 그대로 이진 파일로 쓴다 —
  *   tools/sgrt_replay(검출·Cartographer 포함)·scenemap/tools/sm_bench 가 다시 재생한다. */

@@ -249,10 +249,10 @@ int main() {
   {
     std::vector<int8_t> cells(200 * 200, -1);
     for (int y = 0; y < 200; ++y) for (int x = 0; x < 200; ++x) if (x >= 50 && x < 150 && y >= 50 && y < 150) cells[(size_t)y * 200 + x] = 0;   // 5 m 네모 빈칸(0.05 m 칸)
-    for (int y = 100; y < 104; ++y) for (int x = 60; x < 140; ++x) cells[(size_t)y * 200 + x] = 100;   // 벽: map y 5.0–5.2, x 3–7
+    for (int y = 100; y < 108; ++y) for (int x = 60; x < 140; ++x) cells[(size_t)y * 200 + x] = 100;   // 벽: map y 5.0–5.4, x 3–7(교사 표본 간격 0.4 m 보다 두껍게)
     SmTokIn in;
     in.grid.cells = cells.data(); in.grid.w = 200; in.grid.h = 200; in.grid.res = 0.05; in.grid.ox = 0; in.grid.oy = 0;
-    in.x = 5.f; in.y = 4.f; in.yaw = 1.5707963f;   // map +y 를 봄 → 벽은 앞 1.0–1.2 m
+    in.x = 5.f; in.y = 4.f; in.yaw = 1.5707963f;   // map +y 를 봄 → 벽은 앞 1.0–1.4 m
     SmTokObj cup; cup.id = 7; cup.pos[0] = 4.f; cup.pos[1] = 4.f; cup.ext[0] = cup.ext[1] = 0.2f; cup.ext[2] = 0.1f; in.objs.push_back(cup);   // 로봇 왼쪽 1 m
     in.goal[GE_PICK].kind = 1; in.goal[GE_PICK].id = 7;
     in.goal[GE_PLACE].kind = 2; in.goal[GE_PLACE].pt[0] = 5.f; in.goal[GE_PLACE].pt[1] = 3.f;   // 로봇 뒤 1 m

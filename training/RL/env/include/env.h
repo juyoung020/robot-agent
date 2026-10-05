@@ -31,9 +31,9 @@ struct K {
   static constexpr float half_len = 0.16f, half_wid = 0.11f;   // 몸통 직사각형 (모델 측정 0.319 × 0.214 m)
   static constexpr float wheel_r = 0.048f, half_track = 0.0875f; // 사양 tread 175 mm(Trossen LIMO specs); URDF 값 0.065 는 바퀴 중심선이 아님
   // 몸통 카메라 렌즈 광학 프레임(footprint 기준 (0.094, 0, 0.18): depth_camera_link + x 0.010 m 렌즈, URDF depth_camera_lens_link —
-  // scenemap LIMO cam 0 과 같음, 커밋 72a9f7a·서브모듈 cdf55ae). 기울기 0
+  // scenemap LIMO cam 0 과 같음). 기울기 0
   static constexpr float cam_x = 0.094f, cam_z = 0.18f;
-  // 가로 FOV 67.9° — Dabai 깊이 H-FOV(데이터시트). 시뮬은 RGB·깊이를 모두 67.9° 로 렌더하므로(72a9f7a) 보임 판정도 이 값(컬러 사양 71° 가 아님)
+  // 가로 FOV 67.9° — Dabai 깊이 H-FOV(데이터시트). 시뮬은 RGB·깊이를 모두 67.9° 로 렌더하므로 보임 판정도 이 값(컬러 사양 71° 가 아님)
   static constexpr float cam_hfov = 1.18508f;
   // OMX-F 실제 관절 범위(ROBOTIS 사양, src/robot/real_limits.json 과 동일) / 서보 무부하 속도
   DEV static constexpr float q_lo(int k) { return k == 0 ? -4.712389f : k == 1 || k == 2 ? -2.094395f : k == 3 ? -1.745329f : k == 4 ? -4.712389f : 0.0f; }

@@ -18,16 +18,11 @@ struct MapperParams {
   // 제자리 잡음: 문턱 아래 base_qvel 표본은 적분하지 않음(서 있을 때 yaw 가 도는 것을 막음)
   bool deadband = true;
   double still_v = 0.01, still_w = 0.01;
-  // 움직임 거르기(Cartographer MotionFilter): 지난번 넣은 뒤 이만큼 움직였거나 이만큼 keyframe 이 지났을 때만 넣는다
-  bool motion_filter = true;
-  double mf_xy = 0.05, mf_yaw = 2.0 * M_PI / 180.0;
-  int mf_kf = 50;
-  // 넣기 정책(10-03): 0 = 위 움직임 거르기만, 1 = 사건 기반(기본): 움직였거나 스캔이 지난번 넣은 것과 달라졌거나(방위 칸
-  // change_bins 개 넘게 change_cells 칸 넘게) 지난 넣기가 아직 칸 값을 바꾸고 있으면 넣는다
-  int update_policy = 1;
+  // 넣기(사건 기반): 지난번 넣은 뒤 1 cm·0.5° 넘게 움직였거나, 스캔이 지난번 넣은 것과 달라졌거나(방위 칸 change_bins 개
+  // 넘게 change_cells 칸 넘게), 지난 넣기가 아직 칸 값을 바꾸고 있으면 넣는다. still_every keyframe 마다 한 번은 넣음(안전판)
   int change_bins = 2;
   int change_cells = 1;
-  int still_every = 50;            // 정책 1 에서도 이만큼 keyframe 마다 한 번은 넣음(안전판)
+  int still_every = 50;
 };
 
 struct KeyframeStats {
@@ -49,10 +44,6 @@ class Mapper2D {
   KeyframeStats keyframe(const DepthView& d, const BodyState& b, const Pose2& pose, Timings* T = nullptr);
   // 외부 자세로 지금 자세를 바꿈(proprio 마다). 적분 중인 이동은 버린다
   void setPose(const Pose2& p) { kf_ = p; delta_ = Pose2{}; }
-  void setUpdatePolicy(int policy, int still_every) {
-    p_.update_policy = policy;
-    if (still_every > 0) p_.still_every = still_every;
-  }
   const MapperParams& params() const { return p_; }
 
   Pose2 pose() const { return compose(kf_, delta_); }

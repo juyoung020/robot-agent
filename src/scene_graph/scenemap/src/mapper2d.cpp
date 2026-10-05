@@ -42,33 +42,26 @@ KeyframeStats Mapper2D::keyframe(const DepthView& d, const BodyState& b, const P
   }
   st.n_hits = int(p_.scan.dense ? scan_.mx.size() : scan_.hx.size());
   const auto t1 = Clock::now();
-  {   // 넣기 정책(MapperParams::update_policy)
+  {   // 넣기(MapperParams — 사건 기반)
     ScopedStage t(T, kStInsert);
     ++since_ins_;
-    const bool moved = std::hypot(pose.x - last_ins_.x, pose.y - last_ins_.y) >= p_.mf_xy ||
-                       std::fabs(wrapAngle(pose.th - last_ins_.th)) >= p_.mf_yaw;
-    bool ins;
-    if (p_.update_policy == 0) {
-      ins = first_ || !p_.motion_filter || since_ins_ >= p_.mf_kf || moved;
-    } else {
-      // 스캔이 지난번 넣은 것과 다른가(방위 칸 서명), 자세가 조금이라도 바뀌었나(1 cm·0.5°)
-      int nd = 0;
-      if (ins_sig_.size() == scan_.sig.size()) {
-        const int16_t* a = ins_sig_.data();
-        const int16_t* bs = scan_.sig.data();
-        const int th = p_.change_cells;
-        for (size_t k = 0, n = scan_.sig.size(); k < n; ++k) {
-          const int dlt = int(a[k]) - int(bs[k]);
-          nd += (dlt > th || dlt < -th || ((a[k] > 0) != (bs[k] > 0)));
-        }
-      } else {
-        nd = 1 << 20;
+    // 스캔이 지난번 넣은 것과 다른가(방위 칸 서명), 자세가 조금이라도 바뀌었나(1 cm·0.5°)
+    int nd = 0;
+    if (ins_sig_.size() == scan_.sig.size()) {
+      const int16_t* a = ins_sig_.data();
+      const int16_t* bs = scan_.sig.data();
+      const int th = p_.change_cells;
+      for (size_t k = 0, n = scan_.sig.size(); k < n; ++k) {
+        const int dlt = int(a[k]) - int(bs[k]);
+        nd += (dlt > th || dlt < -th || ((a[k] > 0) != (bs[k] > 0)));
       }
-      st.scan_changed = nd > p_.change_bins;
-      const bool nudged = std::hypot(pose.x - last_ins_.x, pose.y - last_ins_.y) >= 0.01 ||
-                          std::fabs(wrapAngle(pose.th - last_ins_.th)) >= 0.5 * M_PI / 180.0;
-      ins = first_ || moved || nudged || st.scan_changed || last_changed_ > 0 || since_ins_ >= p_.still_every;
+    } else {
+      nd = 1 << 20;
     }
+    st.scan_changed = nd > p_.change_bins;
+    const bool nudged = std::hypot(pose.x - last_ins_.x, pose.y - last_ins_.y) >= 0.01 ||
+                        std::fabs(wrapAngle(pose.th - last_ins_.th)) >= 0.5 * M_PI / 180.0;
+    const bool ins = first_ || nudged || st.scan_changed || last_changed_ > 0 || since_ins_ >= p_.still_every;
     if (ins) {
       last_changed_ = grid_.insert(scan_, pose);
       st.changed_cells = last_changed_;

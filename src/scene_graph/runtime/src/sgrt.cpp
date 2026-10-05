@@ -391,7 +391,6 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
       std::fprintf(stderr, "[sgrt] SGRT_POSE=%s unknown -> carto (carto|odom|gt)\n", m.c_str());
     sgrt_set_pose_mode(s, mode);
   }
-  if (const char* pl = std::getenv("SGRT_MAP_POLICY")) sm_set_map_update(s->sm, std::atoi(pl) ? 1 : 0, 0);
   if (const char* ip = std::getenv("SGRT_INSPECT"); ip && std::atoi(ip)) sm_set_inspect(s->sm, 1);   // 살펴본 정도(view.json·scene.json "inspect")
   if (const char* lg = std::getenv("SGRT_IMAGE_LAG")) s->image_lag = std::clamp(std::atoi(lg), 0, 7);
   if (const char* ss = std::getenv("SGRT_SAVE_SYNC")) s->save_async = std::atoi(ss) == 0;

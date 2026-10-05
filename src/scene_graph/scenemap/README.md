@@ -56,7 +56,7 @@ Spark-DSG 는 우리 사본 `../spark_dsg` 를 쓴다(`SM_HAVE_SPARK_DSG`). scen
 
 | 도구 | 하는 일 |
 |---|---|
-| `sm_bench <rec.bin> [--pose odom\|gt] [--lag 0\|1] [--policy 0\|1] …` | sgrt 기록(`SGRT_RECORD`)을 C ABI 로 재생: 단계별 µs 표(Cartographer 자세는 libsgrt 안이라 `../runtime/tools/sgrt_replay` 로). `--robot limo_omx`(또는 `--sm-config '<json>'`)로 LIMO 기록 — 기록에는 로봇이 안 적히므로 sgrt 의 `SGRT_ROBOT` 과 같게 준다(없으면 limo_omx) |
+| `sm_bench <rec.bin> [--pose odom\|gt] [--lag 0\|1] …` | sgrt 기록(`SGRT_RECORD`)을 C ABI 로 재생: 단계별 µs 표(Cartographer 자세는 libsgrt 안이라 `../runtime/tools/sgrt_replay` 로). `--robot limo_omx`(또는 `--sm-config '<json>'`)로 LIMO 기록 — 기록에는 로봇이 안 적히므로 sgrt 의 `SGRT_ROBOT` 과 같게 준다(없으면 limo_omx) |
 | `rooms_pgm <memory dir> [출력 dir] [되풀이 수]` | 저장된 기억(map.pgm·map.yaml·view.json)에서 방을 나눠 표, `rooms.pgm`, `rooms_color.ppm`. 되풀이 수를 주면 시간 중앙값 |
 | `stream_sim <memory_dir> <host:port> [초] [pose_hz] [map_hz] [view_hz]` | 시뮬 없이 sgview(`--ingest`)에 합성 프레임을 높은 주기로 보내는 부하 시험 |
 | `gen_limo_fk_table <map_vla.urdf> <out.hpp>` | LIMO + OMX-F URDF → `include/scenemap/limo_omx_fk_table.hpp`(같이 빌드됨, 아래 LIMO 절) |
@@ -254,7 +254,7 @@ python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py /tmp/map_vla.urdf   # �
 
 검증: URDF 독립 계산(xml.etree + numpy 4×4, 15 자세, cam 0 = 렌즈 광학 프레임 — 0·홈·관절 한계 양끝·임의 10)과 최대 차 위치 1.1e-16 m, 회전 원소 3.3e-16(`limo_fk`). RL 환경의 `limo_omx_model.h`(urdf2hdr, f32 상수)와도 위치 1e-16 m·회전 5e-8(f32 반올림) 안.
 
-**몸 크기 매개변수**(`capi.cpp` `robotParams`)
+**몸 크기 매개변수**(`scan.hpp` ScanParams·`objmap.hpp` ObjParams 기본값)
 
 | 매개변수 | 값 | 까닭 |
 |---|---|---|

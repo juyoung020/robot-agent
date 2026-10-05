@@ -335,13 +335,10 @@ int sm_get_pose_diag(sm_ctx*, sm_pose_diag* out);
  * T_bc == NULL 이면 끄고 순기구학으로. 몸 가리기·팔 끝·잡기 규칙은 그대로 proprio 를 쓴다. sm_reset·sm_set_robot 은 바꾸지 않음. 0 성공 */
 int sm_set_cam_extrinsic(sm_ctx*, int32_t cam, const double* T_bc);
 
-/* ---- 격자 넣기 정책(추가 ABI) ----
- * policy 0: 움직임 거르기 — 5 cm·2° 움직였거나 still_every keyframe 마다 한 번.
- * policy 1(기본): 사건 기반 — 움직였거나, 가상 스캔(방위 칸 서명)이 지난번 넣은 것과 다르거나, 지난 넣기가 아직 칸 값을
+/* ---- 격자 넣기 ----
+ * 사건 기반: 움직였거나, 가상 스캔(방위 칸 서명)이 지난번 넣은 것과 다르거나, 지난 넣기가 아직 칸 값을
  *   바꾸고 있으면(로그 오즈 한계 전) 매 keyframe 넣는다(광선 빈칸 지우기 포함). 서 있는 동안 생기고 없어진 장애물이 keyframe
- *   몇 번(점유 ≈ 6 번, 비움 ≈ 10 번) 안에 격자에 보인다. 아무것도 안 바뀌면 건너뜀(still_every 마다 한 번은 넣음).
- * still_every <= 0 은 그대로. */
-int sm_set_map_update(sm_ctx*, int32_t policy, int32_t still_every);
+ *   몇 번(점유 ≈ 6 번, 비움 ≈ 10 번) 안에 격자에 보인다. 아무것도 안 바뀌면 건너뜀(50 keyframe 마다 한 번은 넣음). 설정 없음. */
 
 /* ---- 단계별 시간(추가 ABI) ----
  * 단계마다 µs 막대그래프(2^(1/4) 칸). 이름은 정적 문자열. 단계 수를 돌려주고 out 에 min(단계 수, cap) 개.

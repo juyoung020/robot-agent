@@ -3,7 +3,7 @@
 // **매 스텝 환경 상태 + 지도 전체(물체 기억·slam 자세·격자 로그 오즈·본 칸·완성도)**를 비트 단위로 비교한다.
 //   map_verify [N=2048] [steps=600] [--negative] [--force-kf] [--arm] [--stage 0|1|2] [--curr p0,p1[,kmin,kmax[,reveal_r]]] [--shuffle S]
 // --shuffle S: 판마다 스텝 S..S+19 동안 지도 장면의 과제 물체(prim 0)를 0.4 m/s 로 밈(지도만 — 움직임 따라가기·사라짐·옮겨짐 잇기를 지나게).
-// --negative-name / -move / -absent / -relink / -merge: GPU 만 바뀜 판정 규칙 하나를 끔(scenemap 3ed710f 규칙 음성 대조)
+// --negative-name / -move / -absent / -relink / -merge: GPU 만 바뀜 판정 규칙 하나를 끔(scenemap 규칙 음성 대조)
 // --curr: 커리큘럼 처음 지도(5.5) 비율. 예 --curr 1,0 = 모두 C0(전체), --curr 0,1 = 모두 C1(부분), --curr 0.34,0.33 = 섞음. 기본 0,0 = 모두 C2(예전 그대로)
 // --negative: GPU 쪽만 확정 규칙을 끈다(confirm 1, 계획서 5.2 의 음성 대조). 반드시 실패해야 한다 — 실패하면 종료 코드 0.
 // --negative-way / --negative-live: GPU 토큰 커널만 경유 지점 내리막 차례를 뒤집음 / 지금 보는 중 칸 위치를 지도 자리로(v2 토큰 음성 대조)

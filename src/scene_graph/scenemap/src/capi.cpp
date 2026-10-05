@@ -133,7 +133,6 @@ struct sm_ctx {
   Pose2 align;
   sm_pose_diag diag{};
   double diag_s2xy = 0, diag_s2yaw = 0;
-  int map_policy = 1, still_every = 50;
   FILE* slog = nullptr;               // 진단: SM_SLAM_LOG=<파일> 이면 keyframe 마다 한 줄(예측·맞추기·정답)
   KeyframeStats last_kf;
   // 스냅숏 격자 사본(보이는 값이 바뀌었을 때만 새로 — 그 사이 스냅숏은 같은 배열을 나눠 씀)
@@ -559,7 +558,6 @@ int sm_reset(sm_ctx* c) {
   c->wall_th = 0; c->wall_th_t = -1e300; c->walls_full_t = -1e300;
   c->graph.reset();
   c->obj_meta.clear();
-  c->mapper.setUpdatePolicy(c->map_policy, c->still_every);
   return 0;
 }
 
@@ -1622,15 +1620,6 @@ int sm_get_pose_diag(sm_ctx* c, sm_pose_diag* out) {
   if (!c || !out) return -1;
   std::lock_guard<std::mutex> g(c->mu);
   *out = c->diag;
-  return 0;
-}
-
-int sm_set_map_update(sm_ctx* c, int32_t policy, int32_t still_every) {
-  if (!c || policy < 0 || policy > 1) return -1;
-  std::lock_guard<std::mutex> g(c->mu);
-  c->map_policy = policy;
-  if (still_every > 0) c->still_every = still_every;
-  c->mapper.setUpdatePolicy(policy, still_every);
   return 0;
 }
 

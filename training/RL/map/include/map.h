@@ -109,29 +109,29 @@ enum State { S_SEEN = 0, S_GONE = 1, S_MOVED = 2, S_HELD = 3 };   // scenemap.h 
 DEV constexpr int qround(float x) { return x >= 0.f ? (int)(x * 256.f + 0.5f) : -(int)(-x * 256.f + 0.5f); }   // lround(x · kQ)
 
 // ---- 상수(한 곳) --------------------------------------------------------------------------------------------------------
-// 출처 표시: (scenemap) 기본값, (Dabai 데이터시트) Orbbec DaBai Datasheet V1.5 2.1.2 절, (R1 시뮬 기록 보정) ../map_calib(101b36a,
-// BEHAVIOR 의 R1 기록 — LIMO 가 아님), (맞춤) 아래 모형으로 R1 탐색 판 SLAM 잔차에 맞춘 값(README), (가정) 근거 없음.
+// 출처 표시: (scenemap) 기본값, (Dabai 데이터시트) Orbbec DaBai Datasheet V1.5 2.1.2 절, (R1 시뮬 기록 보정) 예전 R1 기록으로 맞춘 값 —
+// LIMO 로 다시 재야 함, (맞춤) 아래 모형으로 탐색 판 SLAM 잔차에 맞춘 값(README), (가정) 근거 없음.
 struct MP {
   // grid.hpp GridParams + OccGrid::kQ = 256 (scenemap)
   static constexpr int q_hit = qround(0.85f), q_miss = qround(-0.4f), q_min = qround(-4.f), q_max = qround(4.f);
   // 깊이 범위(Dabai 데이터시트: 0.3–3.0 m). 높이 띠는 scan.hpp ScanParams (scenemap)
-  // 높이 띠는 LIMO 값 0.05–0.50 m (scenemap capi.cpp robotParams·README LIMO 절: 5 cm 턱, 팔 접은 키 ≈ 0.35 m), 맞추기 점 위 끝 match_hi 3.0 (scan.hpp)
+  // 높이 띠는 LIMO 값 0.05–0.50 m (scenemap scan.hpp ScanParams·README LIMO 절: 5 cm 턱, 팔 접은 키 ≈ 0.35 m), 맞추기 점 위 끝 match_hi 3.0 (scan.hpp)
   static constexpr float zmin = 0.3f, zmax = 3.0f, band_lo = 0.05f, band_hi = 0.50f, match_hi = 3.0f;
   // 빈칸 줄: scan.cpp 는 깊이 화소 간격 scan_step 의 모든 바닥 점 중 가장 먼 것을 빈 광선 끝으로 쓴다. 그 줄 = 바닥 깊이가 zmax 안인
   // 첫 화소 줄(v = scan_step 의 배수) (가정: sgrt 깊이 간격 4, 640 × 400 → 160 × 100 점)
   static constexpr int scan_step = 4;
   static constexpr float depth_hfov = env::K::cam_hfov;        // 깊이 가로 FOV 67.9° (Dabai 데이터시트) — 환경 K::cam_hfov 와 같은 값(시뮬 RGB·깊이 모두 67.9°)
-  // mapper2d.hpp MapperParams 넣기 정책 1(scenemap 기본, 사건 기반): 움직임(mf_xy·mf_yaw), 조금 움직임(1 cm·0.5°), 스캔 서명이 달라짐
+  // mapper2d.hpp MapperParams 넣기(scenemap, 사건 기반): 움직임(1 cm·0.5°), 스캔 서명이 달라짐
   // (방위 칸 change_bins 개 넘게 change_cells 칸 넘게 — 진짜 0.5° 칸 720 개, 여기 깊이 열 하나 ≈ ins_bpc 칸), 지난 넣기가 칸 값을 바꿈, still_every 번째
-  static constexpr float mf_xy = 0.05f, mf_yaw = 0.034906585f /*2도*/, still_v = 0.01f, still_w = 0.01f;
+  static constexpr float still_v = 0.01f, still_w = 0.01f;
   static constexpr float nudge_xy = 0.01f, nudge_yaw = 0.0087266463f /*0.5도*/;
   static constexpr int change_bins = 2, change_cells = 1, still_every = 50;
-  // objmap.hpp ObjParams (scenemap). ozmax 만 Dabai 깊이 범위 3.0 m (Dabai 데이터시트; scenemap 기본 5)
+  // objmap.hpp ObjParams (scenemap). ozmax = Dabai 깊이 범위 3.0 m (Dabai 데이터시트, scenemap 기본도 3.0)
   static constexpr int min_points = 20, min_px = 6, confirm = 2, gone_misses = 3;
   static constexpr float ozmin = 0.15f, ozmax = 3.0f, da_min = 0.30f, da_k = 0.5f, da_gap = 0.10f, big = 0.5f;
   static constexpr float moved_d = 0.15f, occl = 0.10f, grow_max = 0.25f, max_ext = 4.0f;
   static constexpr int prune_steps = 100, gone_min_steps = 20;   // prune_s 10 s, gone_min_s 2 s (제어 10 Hz, 영상 = 제어 스텝 (가정))
-  // ---- 바뀜 판정(scenemap 3ed710f objmap.hpp ObjParams 기본값 — R1·LIMO 같은 값. 시각은 제어 스텝 0.1 s) ----
+  // ---- 바뀜 판정(scenemap objmap.hpp ObjParams 기본값. 시각은 제어 스텝 0.1 s) ----
   static constexpr float floor_h = 0.05f;                        // 바닥 조각: 관측 상자(10–90 백분위) 윗면 < 0.05 m 면 버림(러그·카펫 이름은 우리 이름 표에 없음)
   static constexpr float name_share = 0.2f, name_switch = 1.25f, name_key = 0.02f;   // 이름 표 몫 ≥ 0.2 면 짝 후보, 다른 이름이면 열쇠 +0.02, 1.25 배 넘어야 이름 바뀜
   static constexpr float name_merge_iou = 0.5f;                  // 병합(da): 이름이 달라도 3D IoU ≥ 0.5
@@ -145,7 +145,7 @@ struct MP {
   static constexpr float view_cell = 0.5f;                       // 본 곳 칸(나타남 판정): 0.5 m × 거리 띠 1..5 m
   static constexpr int move_n = 3, move_dt_steps = 6, moving_steps = 10;   // 움직임 따라가기: 3 번 잇달아, 관측 간격 ≤ 0.6 s, 마지막 따라감 뒤 1 s 안 = 움직이는 중
   static constexpr float move_v = 0.3f, move_min_d = 0.25f, move_max_cam_w = 0.6f;
-  // ---- 잡기 확인(scenemap d58c978 capi.cpp robotParams LIMO) ----
+  // ---- 잡기 확인(scenemap objmap.hpp ObjParams LIMO) ----
   static constexpr float grasp_max_w = 0.06f, grasp_min_gap = 0.005f, grasp_w_tol = 0.025f;   // 가운데 변 ≤ 6 cm, 빈손 틈 < 5 mm, 틈 ± 2.5 cm
   static constexpr int grip_settle_steps = 2;                    // 그리퍼 값이 0.2 s 동안 0.01 rad 안이면 쥠 끝
   static constexpr float grip_settle_eps = 0.01f;
@@ -182,8 +182,8 @@ struct MP {
   static constexpr int wall_max_rows = 4;                        // (행 수 · res) > kMaxThick 0.5 면 버림: 5 · double(0.10f) = 0.50000000745 > 0.5
   static constexpr float wall_ign_m = 0.1f, wall_ign_z = 0.4f, wall_ign_max = 5.0f;   // capi.cpp refreshWalls: 바닥 위 확정 물체 상자 + 0.1 m
   static constexpr float wall_valid = 6.0f;                      // wallStateVector: 선분 거리 ≤ kMaxRange · 1.5
-  // ---- 들기(objmap.cpp updateHands, LIMO 값 capi.cpp robotParams) ----
-  static constexpr float grasp_r = 0.12f, grip_closed = 0.6f, hand_r = 0.10f;   // omx_gripper_joint_1 < 0.6 rad 면 닫힘(d58c978: 옛 0.35 는 4 cm 를 쥔 0.41 rad 를 못 봄)
+  // ---- 들기(objmap.cpp updateHands, LIMO 값 scenemap/objmap.hpp ObjParams) ----
+  static constexpr float grasp_r = 0.12f, grip_closed = 0.6f, hand_r = 0.10f;   // omx_gripper_joint_1 < 0.6 rad 면 닫힘(옛 0.35 는 4 cm 를 쥔 0.41 rad 를 못 봄)
   static constexpr float base_z = 0.15f;                         // base_footprint → base_link (URDF base_joint)
   // ---- 방(계획서 5.1 의 5 번: 참 방 표 + 본 비율로 드러냄) ----
   static constexpr float min_room_m2 = 2.0f;                     // rooms.hpp RoomParams min_room_m2 (scenemap)
@@ -309,7 +309,7 @@ struct MapCore {
   int closed, held_slot, n_grasp_total;   // n_grasp_total: 들기 누적(리셋에 안 지움)
   float eef_b[3], eef_m[3], held_rel[3], grasp_pos[3];
   float fk_q[5];           // eef_b 를 구한 팔 관절(같으면 순기구학을 다시 하지 않음 — 결과 같음)
-  // 잡기 확인(d58c978, LIMO): 잡는 점(map), 그리퍼 멈춤 기준 값·스텝, 이번 닫힘에 골랐나. 팔 뼈대(base_footprint, 거르기 캡슐)
+  // 잡기 확인(LIMO): 잡는 점(map), 그리퍼 멈춤 기준 값·스텝, 이번 닫힘에 골랐나. 팔 뼈대(base_footprint, 거르기 캡슐)
   float gp_b[3];           // 잡는 점 base_link(eef_b 와 같은 때 다시 계산)
   float gp_m[3];           // 잡는 점(URDF grasp_point = 팔 끝 − 0.0119 m 링크 x) — 잡기·손에 든 것 거르기·손 둘레 판단(scenemap T_eef)
   float gref;              // 멈춤 판정 기준 그리퍼 값
@@ -899,7 +899,7 @@ DEV void reset_core(MapCore& m, const EnvView& e, const bsc::SceneSet* ss = null
   }
 }
 
-// ---- 물체 기억 도움 함수(scenemap 3ed710f·d58c978 규칙, CPU·GPU 같은 소스) --------------------------------------------------
+// ---- 물체 기억 도움 함수(scenemap objmap 규칙, CPU·GPU 같은 소스) --------------------------------------------------
 // 두 상자(가운데 ± 크기/2)의 축별 겹침 비율 곱(da boxOverlap)·3D IoU(da boxIou) — 얇은 변은 min_ext 로 부풀림
 DEV float box_ov(const float ac[3], const float ae[3], const float bc[3], const float be[3], float mn) {
   float r = 1.f;
@@ -922,7 +922,7 @@ DEV float box_iou(const float ac[3], const float ae[3], const float bc[3], const
   }
   return ia / (va + vb - ia);
 }
-// 그리퍼 각 → 잡는 점 손끝 틈 m(capi.cpp robotParams grip_gap: E0 쥔 각 1·2·3·4 cm, 그 위 finger_gap_hull), 사이는 선형, 밖은 끝값
+// 그리퍼 각 → 잡는 점 손끝 틈 m(scenemap/objmap.hpp ObjParams grip_gap: E0 쥔 각 1·2·3·4 cm, 그 위 finger_gap_hull), 사이는 선형, 밖은 끝값
 DEV float grip_gap(float g) {
   constexpr int NG = 7;
   const float ga[NG] = {0.f, 0.095f, 0.231f, 0.347f, 0.408f, 0.5236f, 0.7854f};
@@ -1284,7 +1284,7 @@ DEV int slot_alloc(MapCore& m, Slot* ob) {
   }
   return -1;
 }
-// 들기·놓기(objmap.cpp updateHands, 손 하나 = LIMO, grasp_check — scenemap d58c978). 잡는 점 = G1 순기구학 omx_end_effector_link 에서 링크 x 로
+// 들기·놓기(objmap.cpp updateHands, 손 하나 = LIMO, 잡기 확인). 잡는 점 = G1 순기구학 omx_end_effector_link 에서 링크 x 로
 // −0.0119 m(URDF grasp_point, E0) → base_footprint → map(믿는 자세). 그리퍼 omx_gripper_joint_1 < grip_closed 인 채 grip_settle 동안 멈추면 한 번만
 // 고른다: 잡는 점 grasp_r 안 가장 가까운 확정·안 든·사라짐 아닌 물체 중 들 수 있는 것(holdable: 큰 것·고정 종류·가운데 변 > 6 cm 아님,
 // 손끝 틈(grip_gap 표) ≥ 5 mm 이고 폭 ± 2.5 cm). 든 뒤 끝까지 닫히면(틈 < 5 mm) 놓침, 열리면 놓는다(잡은 자리에서 moved_d 넘게 옮겼으면 옮겨짐).
@@ -1781,7 +1781,7 @@ DEV int first_view(const uint8_t* view, float x, float y, float range) {
 }
 #include "objprob_gpu.h"   // objprob 합치기: ap_keys·ap_pick·ap_attach·ap_new·ap_merge_pass
 
-// 3e. 부재 확인(objmap.cpp 4 + absentEvidence, scenemap 3ed710f). 칸마다 따로(모든 스레드, 칸마다 한 스레드).
+// 3e. 부재 확인(objmap.cpp 4 + absentEvidence). 칸마다 따로(모든 스레드, 칸마다 한 스레드).
 //     확정·안 든·이번에 안 맞음·사라짐 아님(큰 것·고정 종류 포함), 잡는 점 hand_r + 0.1 밖. 근거: 상자 3×3×3 격자 27 점(근사판은 점 구름 없음)을
 //     믿는 자세로 화소에 투영 → 그 화소의 참 깊이(참 카메라·참 장면, 팔이 가린 시선은 가림)로 시야 안·안 가림 ≥ 50 %, 보이는 부분 ≥ 12 px,
 //     물체 카메라 깊이 ∈ [0.3, ozmax] 이고 검출한 가장 먼 깊이 × 1.15 + 0.2 안. 보이는 점의 30 % 이상에서 너머가 보이면 "자리 비었음"(2).
@@ -2647,7 +2647,6 @@ DEV void map_keyframe(MapCore& m, Slot* ob, Scratch& sh, const EnvView& e, int16
     m.since += 1;
     const float dx = m.ex - m.lx, dy = m.ey - m.ly, dyaw = absf(wrap_pi(m.eyaw - m.lyaw));
     const float d2 = dx * dx + dy * dy;
-    const bool moved = d2 >= MP::mf_xy * MP::mf_xy || dyaw >= MP::mf_yaw;
     const bool nudged = d2 >= MP::nudge_xy * MP::nudge_xy || dyaw >= MP::nudge_yaw;
     int nd = 0;
     for (int col = 0; col < NCOL; ++col) {
@@ -2656,7 +2655,7 @@ DEV void map_keyframe(MapCore& m, Slot* ob, Scratch& sh, const EnvView& e, int16
     }
     constexpr float bpc = (MP::depth_hfov / (float)NCOL) / (6.2831853f / 720.f);   // 깊이 열 하나 ≈ 진짜 방위 칸 수
     const bool scan_changed = (float)nd * bpc > (float)MP::change_bins;
-    const int ins = (m.first || moved || nudged || scan_changed || m.lchg || m.since >= MP::still_every) ? 1 : 0;
+    const int ins = (m.first || nudged || scan_changed || m.lchg || m.since >= MP::still_every) ? 1 : 0;
     m.ins_flag = ins;
     if (ins) {
       m.since = 0;

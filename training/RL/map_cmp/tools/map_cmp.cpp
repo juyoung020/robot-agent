@@ -1,6 +1,6 @@
 // 계획서 GPU_TRAINING.md 5.2: GPU 지도 근사판(../map, 잡음 끔 빌드) 대 진짜 scenemap(LIMO + OMX, CPU, C ABI)을 같은 입력으로.
 //
-//   map_cmp [N=50] [--mode slam|odom] [--policy 0|1] [--seed S] [--trace lane] [--stage 0|1]
+//   map_cmp [N=50] [--mode slam|odom] [--seed S] [--trace lane] [--stage 0|1]
 //
 // 한 판(N 개, 판마다 첫 에피소드만):
 //   G1 환경(GPU) → 근사판 지도 A(GPU, 확정 규칙 그대로) + 음성 대조 B(GPU, 확정 규칙 끔 = map_verify --negative 와 같은 bug 1).
@@ -210,12 +210,11 @@ double median_i(const std::vector<int>& v) {
 
 int main(int argc, char** argv) {
   int shuffle = 0;   // > 0: 바뀜 규칙 비교(옮겨짐·사라짐·움직임 따라가기)
-  int N = 50, policy = 0, pose_mode = SM_POSE_EXT, trace = -1, stage = 1, T = 2000;
+  int N = 50, pose_mode = SM_POSE_EXT, trace = -1, stage = 1, T = 2000;
   uint64_t seed = 20261004, mseed = 99;
   int pos = 0;
   for (int a = 1; a < argc; ++a) {
     if (!std::strcmp(argv[a], "--mode") && a + 1 < argc) { ++a; pose_mode = !std::strcmp(argv[a], "odom") ? SM_POSE_ODOM : SM_POSE_EXT; }
-    else if (!std::strcmp(argv[a], "--policy") && a + 1 < argc) policy = std::atoi(argv[++a]);
     else if (!std::strcmp(argv[a], "--seed") && a + 1 < argc) { seed = std::strtoull(argv[++a], nullptr, 10); mseed = seed * 7 + 1; }
     else if (!std::strcmp(argv[a], "--trace") && a + 1 < argc) trace = std::atoi(argv[++a]);
     else if (!std::strcmp(argv[a], "--stage") && a + 1 < argc) stage = std::atoi(argv[++a]);
@@ -224,8 +223,8 @@ int main(int argc, char** argv) {
   }
   const gmap::Cam K = gmap::cam_consts();
   const float fx = K.fx, cx = 0.5f * (W - 1), cy = 0.5f * (H - 1);   // 화소 u 의 중심 = (u − cx)/fx, 좌우 대칭
-  std::printf("map_cmp: N=%d episodes, stage %d, real scenemap mode %s, map update policy %d, depth %dx%d fx=fy=%.3f (H-FOV %.1f deg), range %.1f-%.1f m\n",
-              N, stage, pose_mode == SM_POSE_EXT ? "EXT" : "ODOM", policy, W, H, fx, 2 * std::atan(0.5 * W / fx) * 180 / M_PI,
+  std::printf("map_cmp: N=%d episodes, stage %d, real scenemap mode %s, depth %dx%d fx=fy=%.3f (H-FOV %.1f deg), range %.1f-%.1f m\n",
+              N, stage, pose_mode == SM_POSE_EXT ? "EXT" : "ODOM", W, H, fx, 2 * std::atan(0.5 * W / fx) * 180 / M_PI,
               gmap::MP::zmin, gmap::MP::zmax);
 
   DeviceEnv genv(N, stage, seed);
@@ -249,7 +248,6 @@ int main(int argc, char** argv) {
     if (!L.ctx) { std::fprintf(stderr, "sm_create failed\n"); return 2; }
     sm_set_labels(L.ctx, kLabels, gmap::NCLS);
     sm_set_pose_mode(L.ctx, pose_mode);
-    sm_set_map_update(L.ctx, policy, 0);
   }
   uint64_t arng = 777;
   int n_active = N;

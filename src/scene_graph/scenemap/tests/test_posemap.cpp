@@ -139,10 +139,9 @@ static void testGtPose() {
 }
 
 // 2. 서 있는 동안 상자가 생기고 없어짐: 정책 1 은 keyframe 몇 번 안에 점유·비움, 정책 0(옛 판)은 50 keyframe 까지 못 봄
-static int stillChange(int policy, int* kf_occ, int* kf_free, int* n_ins_idle) {
+static int stillChange(int* kf_occ, int* kf_free, int* n_ins_idle) {
   Run r;
   sm_set_pose_mode(r.c, SM_POSE_GT);
-  sm_set_map_update(r.c, policy, 50);
   const double pose[3] = {0, 0, 0}, v0[3] = {0, 0, 0};
   const Box box{{1.9, -0.2, 0}, {2.3, 0.2, 1.0}};
   const double bx = 1.92, by = 0.0;   // 상자 앞면 칸
@@ -170,16 +169,13 @@ static int stillChange(int policy, int* kf_occ, int* kf_free, int* n_ins_idle) {
 }
 
 static void testStillUpdate() {
-  int occ1, free1, idle1, occ0, free0, idle0;
-  const int b1 = stillChange(1, &occ1, &free1, &idle1);
-  const int b0 = stillChange(0, &occ0, &free0, &idle0);
+  int occ1, free1, idle1;
+  const int b1 = stillChange(&occ1, &free1, &idle1);
   CHECK(b1 >= 0 && b1 < 50, "empty room cell before box %d", b1);
-  CHECK(occ1 > 0 && occ1 <= 8, "policy 1: box occupied after %d keyframes", occ1);
-  CHECK(free1 > 0 && free1 <= 12, "policy 1: box cleared after %d keyframes", free1);
-  CHECK(idle1 <= 1, "policy 1: %d inserts in 20 unchanged keyframes", idle1);
-  CHECK(occ0 < 0 || occ0 > 8, "policy 0 should not see the box quickly (%d)", occ0);
-  std::printf("  서 있을 때 상자 생김/없어짐 — 정책 1: 점유 %d kf, 비움 %d kf, 안 바뀐 20 kf 동안 넣기 %d 번 | 정책 0: 점유 %d kf, 비움 %d kf\n",
-              occ1, free1, idle1, occ0, free0);
+  CHECK(occ1 > 0 && occ1 <= 8, "box occupied after %d keyframes", occ1);
+  CHECK(free1 > 0 && free1 <= 12, "box cleared after %d keyframes", free1);
+  CHECK(idle1 <= 1, "%d inserts in 20 unchanged keyframes", idle1);
+  std::printf("  서 있을 때 상자 생김/없어짐: 점유 %d kf, 비움 %d kf, 안 바뀐 20 kf 동안 넣기 %d 번\n", occ1, free1, idle1);
 }
 
 // 3. EXT(외부 SLAM 자세 없이 = 적분)·ODOM 모드에 정답 자세를 넣으면 떠밀림 진단: 0.3 m/s 직진 3 s 후 오차가 작음

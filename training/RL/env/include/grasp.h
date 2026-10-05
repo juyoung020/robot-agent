@@ -64,7 +64,7 @@ DEV float act_of_q(int k, float q) {   // 관절 목표 → 정규화 행동(자
   return clampf((q - h[k]) / act_range(k), -1.f, 1.f);
 }
 
-// ---- 그리퍼 각 ↔ 잡는 점 손끝 틈(scenemap capi.cpp robotParams grip_gap = 지도 map.h grip_gap 과 같은 표: E0 쥔 각 1·2·3·4 cm, 그 위 finger_gap_hull) ----
+// ---- 그리퍼 각 ↔ 잡는 점 손끝 틈(scenemap objmap.hpp ObjParams grip_gap = 지도 map.h grip_gap 과 같은 표: E0 쥔 각 1·2·3·4 cm, 그 위 finger_gap_hull) ----
 constexpr int NGRIP = 7;
 DEV float grip_tab_a(int i) { const float v[NGRIP] = {0.f, 0.095f, 0.231f, 0.347f, 0.408f, 0.5236f, 0.7854f}; return v[i]; }
 DEV float grip_tab_w(int i) { const float v[NGRIP] = {0.f, 0.01f, 0.02f, 0.03f, 0.04f, 0.0551f, 0.0933f}; return v[i]; }

@@ -3,7 +3,7 @@
 //
 // 물체(집을 것 = Entry::prim[0], 놓을 곳 = 놓을 자리 상자)마다: 잡는 자세 칸에서 닿는 칸(Entry::rb 비트) 중 몸이 안 닿는 자세 하나라도 있어
 // 그 자세(물체를 마주봄)의 LIMO 몸통 깊이 카메라(eyes: 베이스 앞 cam_x 0.094 m, 높이 cam_z 0.18 m, 기울기 0, 가로 67.9° · 640×400 정사각 화소)가
-// 물체를 GPU 지도 검출 규칙(training/RL/map map.h det_prefilter·vis_point·obj_detect, 커밋 b90ca87 의 값)대로 볼 수 있으면 찾을 수 있다:
+// 물체를 GPU 지도 검출 규칙(training/RL/map map.h det_prefilter·vis_point·obj_detect)대로 볼 수 있으면 찾을 수 있다:
 //   - 표본 점(물체 상자 10/50/90 % 격자 27 점)의 광학 깊이가 [ozmin 0.15, ozmax 3.0] m 안이고 시야(가로·세로) 안이며
 //     카메라 → 점 선분을 정적 상자(받침 가구 포함)·다른 과제 물체가 가리지 않으면 그 점이 보임
 //   - 보인 점 ≥ 1, 가장 긴 변의 투영 ≥ min_px 6 화소, 실루엣 넓이 어림 × 보인 비율 ≥ min_points 20 화소

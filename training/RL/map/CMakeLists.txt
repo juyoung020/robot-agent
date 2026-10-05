@@ -65,7 +65,7 @@ target_include_directories(sm_tok_test PRIVATE include ${ENV_DIR}/include ${CUDA
 target_compile_options(sm_tok_test PRIVATE -Wno-unknown-pragmas)
 add_test(NAME sm_tok COMMAND sm_tok_test)
 
-# 잡기 확인 규칙(scenemap d58c978 LIMO grasp_check) 단위 시험(CPU, map.h hands_step·팔 캡슐 가림)
+# 잡기 확인 규칙(scenemap LIMO) 단위 시험(CPU, map.h hands_step·팔 캡슐 가림)
 add_executable(map_grasp_test tools/map_grasp_test.cpp)
 target_include_directories(map_grasp_test PRIVATE include ${ENV_DIR}/include ${CUDAToolkit_INCLUDE_DIRS})
 add_test(NAME map_grasp COMMAND map_grasp_test)

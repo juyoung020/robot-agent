@@ -22,9 +22,8 @@ GPU 지도 근사판(`../map`)과 진짜 scenemap(`src/scene_graph/scenemap`, LI
 ## 빌드·실행
 ```
 tools/build_all.sh map_cmp --target map_cmp
-build/map_cmp/map_cmp 50                    # 기본: SLAM, 넣기 정책 0, 씨앗 20261004
+build/map_cmp/map_cmp 50                    # 기본: SLAM, 씨앗 20261004
 build/map_cmp/map_cmp 50 --mode odom        # 진짜 쪽 자세 = 적분만(맞추기 없음)
-build/map_cmp/map_cmp 50 --policy 1         # 진짜 쪽 넣기 정책 1(사건 기반, scenemap 기본값)
 build/map_cmp/map_cmp 50 --seed 7           # 다른 장면·궤적
 build/map_cmp/map_cmp 10 --trace 3          # 판 3 의 keyframe 마다 검출·확정 물체 목록
 ```
@@ -105,9 +104,8 @@ build/map_cmp/map_cmp 100 --shuffle 30     # 바뀜 규칙(옮겨짐·사라짐�
 
 | 설정 | 정밀도 | 재현율 | 확정까지 중앙값 차 | 위치 50 % / 90 % 차 | 격자 일치율 | 진짜 자세 오차 rms / max |
 |---|---|---|---|---|---|---|
-| 기본(SLAM, 정책 0) | 1.000 | 0.960 | 0.0 | 0.106 / 0.258 m | 0.942 | 7.3 mm, 0.07° / 53.9 mm, 0.42° |
+| 기본(SLAM) — 넣기 정책 0 때 잰 값, 정책 1 도 같았음 | 1.000 | 0.960 | 0.0 | 0.106 / 0.258 m | 0.942 | 7.3 mm, 0.07° / 53.9 mm, 0.42° |
 | `--mode odom` | 1.000 | 0.960 | 0.0 | 0.104 / 0.256 m | 0.942 | 0.2 mm, 0.006° / 1.8 mm, 0.04° |
-| `--policy 1` | 1.000 | 0.960 | 0.0 | 0.106 / 0.258 m | 0.942 | 7.3 mm, 0.07° / 53.9 mm, 0.43° |
 | `--seed 7`(keyframe 1,819) | 1.000 | 0.903 | 0.0 | 0.116 / 0.257 m | 0.933 | 2.9 mm, 0.05° / 12.7 mm, 0.33° |
 
 진짜 SLAM 맞추기는 참 오도메트리 위에서도 자세를 최대 5.4 cm 움직인다. 그래도 위 지표는 ODOM 과 거의 같다. 넣기 정책 1 도 결과가 같다. 근사판 keyframe(참 자세가 5 cm·2° 움직임)에만 영상을 넣으므로 두 정책 모두 매번 넣기 때문으로 보인다.
@@ -185,7 +183,7 @@ flock /tmp/claude-1000/og.lock nice -n 19 python training/viewer/tools/og_replay
 # 3) 보고
 python training/viewer/tools/og_replay/og_cmp_report.py OUT --gpu-dir DIR --json report.json
 ```
-- 지도 칸을 읽는 곳은 `tools/slot_adapter.h` 한 곳뿐이다. 기본은 objprob 포트(P1b) 배치이고(`objs[N][NOBJ]`·`objv`·`name_p`), 포트 전 기준값을 다시 낼 때는 `git archive b90ca87 training/RL training/viewer/tools/record_replay` 로 내보낸 곳을 `-DRL_DIR=…/training/RL` 로 주고 `-DPICK_CMP_SLOT_VOTES=ON` 으로 빌드한다(그 RL_DIR 에 `training/data` 링크).
+- 지도 칸을 읽는 곳은 `tools/slot_adapter.h` 한 곳뿐이다(`objs[N][NOBJ]`·`objv`·`name_p`). 지도 물체 배치가 바뀌면 이 파일만 고친다.
 - 걸린 시간(RTX 5070 Ti): pick_cmp 512 × 900 은 약 2 분(스텝마다 내려받음)이다. og_cmp 는 장면 싣기 house_single_floor 285 s, house_double_floor_lower 142 s, Rs_int 89 s 이고, 판마다 300 스텝에 10 s, 900 스텝에 20–30 s 걸린다. house_single_floor·Rs_int 에서는 판의 약 40 % 가 첫 그리기에서 segfault 를 냈다(같은 판이면 매번 — 원인은 모름. 운동학으로 놓은 LIMO 가 가구와 겹친 탓으로 추정).
 
 ### 원인별 수 (포트 전 GPU 지도 b90ca87, C2 자라는 지도, 상태 없는 교사, 512 판 × 900 스텝, 2026-10-06)
