@@ -8,7 +8,7 @@ DST=$1/tools
 mkdir -p "$DST"
 FILES=(common.py evalsets.py realsets.py select_real.py build_data.py train.py calibrate.py eval_det.py sweep_t.py ref_detect.py
        make_table.py bench_latency.py sim_render.py label_sim.py scenes.sh render_all.sh render_tasks.sh export.sh
-       build_engine.py cand_eval.sh heldout_lvis.txt)
+       build_engine.py cand_eval.sh heldout_lvis.txt quant_engine.py)
 for f in "${FILES[@]}"; do
   sed -e 's|~/fastsam_venv/bin/python |python |g' \
       -e "s|f'{HOME}/ovdet_models/x86_sm120/FastSAM-s-416.plan'|'models/FastSAM-s-416.onnx'|g" \

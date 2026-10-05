@@ -102,13 +102,15 @@ def main():
     ap.add_argument('--min-gt-frac', type=float, default=0.0013)
     ap.add_argument('--ade-max', type=int, default=6000)
     ap.add_argument('--max-side', type=int, default=640)
+    ap.add_argument('--teacher', default=None, help='의사 라벨을 낼 엔진(.plan/.onnx). 기본 옛 엔진 BASE_PLAN. '
+                    '증류 판: 다시 학습한 FastSAM-s-obj(v2) — 출력 폴더는 FASTSAM_YOLO 로 따로')
     a = ap.parse_args()
     k, n = map(int, a.shard.split('/'))
     split = a.split or ('val' if a.source.endswith('_val') else 'train')
     os.makedirs(f'{Y}/images/{split}', exist_ok=True)
     os.makedirs(f'{Y}/labels/{split}', exist_ok=True)
-    det = None if a.no_pseudo else c.make_detector(c.BASE_PLAN)
-    stf = open(f'{c.DATA}/logs/stats_{a.source}_{k}.jsonl', 'w')
+    det = None if a.no_pseudo else c.make_detector(a.teacher or c.BASE_PLAN)
+    stf = open(f'{c.DATA}/logs/stats_{a.source}_{k}{os.environ.get("STATS_TAG", "")}.jsonl', 'w')
     for i, s in enumerate(source(a.source, a)):
         if i % n != k:
             continue
@@ -120,10 +122,12 @@ def main():
         masks = labels_for(s, det, a, st)
         H, W = s['rgb'].shape[:2]
         ip = f'{Y}/images/{split}/{name}.jpg'
-        if max(H, W) > a.max_side:          # ADE: 큰 사진은 줄여서 새로 저장(라벨은 정규화 좌표라 그대로)
+        if os.path.exists(ip):              # 이미지 폴더를 다른 라벨 판과 같이 쓸 때(링크) 다시 쓰지 않음
+            pass
+        elif max(H, W) > a.max_side:          # ADE: 큰 사진은 줄여서 새로 저장(라벨은 정규화 좌표라 그대로)
             sc = a.max_side / max(H, W)
             Image.fromarray(s['rgb']).resize((round(W * sc), round(H * sc)), Image.BILINEAR).save(ip, quality=92)
-        elif not os.path.exists(ip):
+        else:
             os.link(s['path'], ip)
         lines = []
         for m in masks:
