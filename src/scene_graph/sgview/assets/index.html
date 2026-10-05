@@ -209,8 +209,8 @@ function paintRows(px, y0, y1) {   // px = PGM rows y0..y1; texture row 0 = min 
     const src = (r - y0) * w, dst = (h - 1 - r) * w * 4;
     for (let x = 0; x < w; x++) {
       const v = px[src + x], o = dst + x * 4;
-      if (v === 205) { rgba[o] = 140; rgba[o+1] = 148; rgba[o+2] = 170; } else { rgba[o] = rgba[o+1] = rgba[o+2] = v; }
-      rgba[o+3] = 255;
+      rgba[o] = rgba[o+1] = rgba[o+2] = v;
+      rgba[o+3] = v === 205 ? 0 : 255;   // 205 = unknown: fully transparent, only what SLAM has seen is drawn
     }
   }
 }
@@ -227,7 +227,7 @@ async function loadMap() {
     const tex = new THREE.DataTexture(rgba, w, h, THREE.RGBAFormat);
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
     const res = g.resolution;
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w * res, h * res), new THREE.MeshBasicMaterial({ map:tex, side:THREE.DoubleSide }));
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w * res, h * res), new THREE.MeshBasicMaterial({ map:tex, side:THREE.DoubleSide, alphaTest:0.5 }));
     mesh.position.set(g.origin[0] + w * res / 2, g.origin[1] + h * res / 2, 0);
     gMap.add(mesh);
     mapState = { w, h, rgba, tex, mesh, ver, key, res, ox:g.origin[0], oy:g.origin[1] };
@@ -268,7 +268,7 @@ function drawAligned() {
     dropAligned();
     const out = new Uint8Array(W * H * 4), tex = new THREE.DataTexture(out, W, H, THREE.RGBAFormat);
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(W * res, H * res), new THREE.MeshBasicMaterial({ map:tex, side:THREE.DoubleSide, transparent:true }));
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(W * res, H * res), new THREE.MeshBasicMaterial({ map:tex, side:THREE.DoubleSide, alphaTest:0.5 }));
     gMap.add(mesh);
     alignState = { W, H, out, tex, mesh };
   }
@@ -283,7 +283,7 @@ function drawAligned() {
       const xn = Math.round(fx), yn = Math.round(fy);
       if (xn < 0 || yn < 0 || xn >= w || yn >= h) { out[o+3] = 0; continue; }
       const q = (yn * w + xn) * 4;
-      out[o] = rgba[q]; out[o+1] = rgba[q+1]; out[o+2] = rgba[q+2]; out[o+3] = 255;
+      out[o] = rgba[q]; out[o+1] = rgba[q+1]; out[o+2] = rgba[q+2]; out[o+3] = rgba[q+3];
     }
   }
   const cu = u0 + W * res / 2, cv = v0 + H * res / 2;
@@ -730,6 +730,9 @@ addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.
 
 // faint floor grid under the map
 const grid = new THREE.GridHelper(80, 80, isDark ? 0x3a3a46 : 0xcfcfd8, isDark ? 0x2a2a34 : 0xe2e2e8); grid.rotation.x = Math.PI / 2; grid.position.z = -0.02; scene.add(grid);
+// the map has no fixed size, so the grid follows the view (snapped to 1 m: lines do not swim) instead of sitting on a fixed square
+function snapGrid() { const x = Math.round(controls.target.x), y = Math.round(controls.target.y); if (x !== grid.position.x || y !== grid.position.y) { grid.position.x = x; grid.position.y = y; } }
+controls.addEventListener("change", snapGrid);
 
 // ---------------- polling ----------------
 function status() {
@@ -939,10 +942,10 @@ function onMapEvent(d) {
   if (!mapState || mapState.key !== key) {
     if (mapState) { mapState.tex.dispose(); mapState.mesh.geometry.dispose(); mapState.mesh.material.dispose(); gMap.remove(mapState.mesh); }
     const rgba = new Uint8Array(d.w * d.h * 4);
-    for (let i = 0; i < d.w * d.h; i++) { rgba[4*i] = rgba[4*i+1] = rgba[4*i+2] = 205; rgba[4*i+3] = 255; }
+    for (let i = 0; i < d.w * d.h; i++) { rgba[4*i] = rgba[4*i+1] = rgba[4*i+2] = 205; rgba[4*i+3] = 0; }   // unknown = transparent
     const tex = new THREE.DataTexture(rgba, d.w, d.h, THREE.RGBAFormat);
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(d.w * d.res, d.h * d.res), new THREE.MeshBasicMaterial({ map:tex, side:THREE.DoubleSide }));
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(d.w * d.res, d.h * d.res), new THREE.MeshBasicMaterial({ map:tex, side:THREE.DoubleSide, alphaTest:0.5 }));
     mesh.position.set(d.ox + d.w * d.res / 2, d.oy + d.h * d.res / 2, 0);
     gMap.add(mesh);
     mapState = { w:d.w, h:d.h, rgba, tex, mesh, ver:"live", key, res:d.res, ox:d.ox, oy:d.oy };
@@ -954,7 +957,7 @@ function onMapEvent(d) {
   for (let y = d.y0; y <= d.y1; y++) {
     for (let x = 0; x < rw; x++) {
       const v = g[(y - d.y0) * rw + x], o = (y * w + d.x0 + x) * 4;
-      rgba[o] = rgba[o+1] = rgba[o+2] = v;   // texture row y = scenemap row y (already bottom-up): no flip
+      rgba[o] = rgba[o+1] = rgba[o+2] = v; rgba[o+3] = v === 205 ? 0 : 255;   // texture row y = scenemap row y (already bottom-up): no flip
     }
   }
   mapState.tex.needsUpdate = true;
