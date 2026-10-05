@@ -231,7 +231,7 @@ struct ObsPoints {
 
 class ObjectMap {
  public:
-  // 진단: 환경 변수 SM_OBJ_PARAMS="key=val,key=val"(바뀜 판정 매개변수 이름 — objmap.cpp kEnvKeys)이 있으면 덮어씀
+  // 진단: 환경 변수 SM_OBJ_PARAMS="key=val,key=val"(매개변수 이름 — objmap.cpp applyParams 의 표)이 있으면 덮어씀
   explicit ObjectMap(const ObjParams& p = {}) : p_(p) { envOverrides(&p_); }
   static void envOverrides(ObjParams* p);
   // "key=val,key=val"(SM_OBJ_PARAMS 와 같은 이름)을 p 에 씀. 모르는 이름 수를 돌려줌(stderr 에 알림). log = 이름마다 한 줄

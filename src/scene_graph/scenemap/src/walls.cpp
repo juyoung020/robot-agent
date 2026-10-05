@@ -250,7 +250,7 @@ double wallAngle(const WallGrid& g) {
   if (best >= M_PI / 4) best -= M_PI / 2;
   if (best < -M_PI / 4) best += M_PI / 2;
   // 돌려도 뾰족함이 8 % 도 안 늘면 축에 맞는 지도로 본다(gt 지도: 잡동사니 때문에 −1°..−1.25° 가 조금 더 높게 나오기도 함 — 점수 비 ≤ 1.05,
-  // 기울어진 slam 지도는 1.13..3.3). 그런 지도는 예전처럼 wallSegments 로.
+  // 기울어진 slam 지도는 1.13..3.3). 그런 지도는 축 정렬 추출(wallSegments)로.
   if (std::abs(best) > kAlignTol && bv < kAlignGain * v0) return 0.0;
   return best;
 }
@@ -281,7 +281,7 @@ std::vector<WallSeg> wallSegmentsAligned(const WallGrid& g, double min_len, doub
   const WallGrid gm{src, g.w, g.h, g.res, g.ox, g.oy};
   const double th = wallAngle(gm);
   if (angle_out) *angle_out = th;
-  if (std::abs(th) <= kAlignTol) return wallSegments(g, min_len, max_thick, overlap, ignore);   // 축에 맞는 지도: 예전과 같은 결과
+  if (std::abs(th) <= kAlignTol) return wallSegments(g, min_len, max_thick, overlap, ignore);   // 축에 맞는 지도: 축 정렬 추출
   return rotatedSegments(g, src, th, min_len, max_thick, overlap);
 }
 

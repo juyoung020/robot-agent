@@ -1,6 +1,6 @@
 // scenemap 확률 물체 모델(objprob)(10-05) — FastSAM 조각 + SigLIP 2 임베딩을 이름 없이 묶고, 물체마다 확률 모델을 둔다.
 //
-// 흐름(objmap.cpp ObjectMap::update, ObjParams::objprob 일 때만 — 끄면 옛 이름 기준 규칙 그대로):
+// 흐름(objmap.cpp ObjectMap::update — 물체 지도 규칙은 이것 하나):
 //   조각 → 기하 구조물 거르기(벽 선 위 세운 평면·천장 높이 수평면·바닥) → 이름 없는 같은 것 판정(가설 검정: 같은 물체 / 다른 물체의
 //   로그 우도비, 문턱 하나) → 합친 물체를 통째로 다시 담기(구름을 지금 영상에 투영한 마스크로 SigLIP — 호출자가 함) →
 //   이름 = 범주 사후 확률(문턱 아래면 상위어로) → 물체마다 벡터 저장(objects/O<id>_emb.f16·_views.f16)
