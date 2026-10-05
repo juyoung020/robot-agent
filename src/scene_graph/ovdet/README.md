@@ -77,6 +77,31 @@ bash scripts/build_linux.sh        # -> ~/ovdet_build/libovdet.so, ovdet_smoke
 
 The library is built and run on Linux, which is also the submission Docker's OS.
 
+## Per-call latency (CUDA graph)
+
+At 416 the network is small enough that one call was launch-bound. `nsys` on the YOLO26n student showed about 235 TensorRT kernel launches per frame at about 2.7 µs each, plus a host round trip in the middle of post-processing. Our own CUDA post-processing was only about 70 µs per frame: select/NMS 31, mask de-duplication 14, mask bits 13, the rest under 5.
+
+`ovd_detect` now does the following:
+
+- **One graph per frame.** Letterbox, TensorRT `enqueueV3`, post-processing and the output copies are captured once into a CUDA graph and replayed every frame.
+  - The graph is rebuilt when the input size or layout changes.
+  - A device input is first copied into the handle's buffer, so the graph always reads the same address.
+- **One host sync.** The output lanes (valid, class in the prompt) are compacted on the device (`k_compact`), so there is a single sync at the end.
+  - The host copies `max_det` lanes of mask bits and keeps the first n.
+- **Pinned staging.** A host image goes through a pinned staging buffer instead of a pageable `cudaMemcpy2DAsync`.
+- **Fallback.** `OVDET_NO_GRAPH=1` runs the same work stream-ordered, without capture.
+
+Outputs are bit-identical to the previous code: scores, boxes, classes and mask bits on 400 frames (radio r3 and COCO/ADE val), for both 416 engines, with and without the graph.
+
+Median `ovd_detect` latency on an idle RTX 5070 Ti, 300 radio r3 frames 640×480, with `OvdTiming` fields:
+
+| engine | before: total / upload+letterbox / net / post+out ms | after |
+|---|---|---|
+| yolo26n-seg-obj-416 | 0.934 / 0.222 / 0.612 / 0.103 | 0.624 / 0.158 / 0.392 / 0.081 |
+| FastSAM-s-416-obj | 0.892 / 0.217 / 0.545 / 0.112 | 0.617 / 0.115 / 0.420 / 0.071 |
+
+The network share of the student, from `trtexec` per-layer profiling, is backbone 36 %, neck 31 %, box/cls head 17 %, mask prototypes 7 % and mask coefficients 6 %. TensorRT builder optimisation level 5 gave no gain.
+
 ## Detector comparison
 
 `scripts/eval_linux.sh` runs `tools/ovdet_eval.py` on the same frames for every head:

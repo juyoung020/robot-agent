@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -323,9 +324,24 @@ __global__ void k_dedup(Lanes* L, const int* inter, float mask_iou) {
   L->valid[j] = v;
 }
 
-__global__ void k_gather(const uint32_t* bits, int words, const int* lanes, int n, uint32_t* out) {
+/// Output lanes on the device (no host round trip): valid, with a class that is in the prompt (active), in lane order.
+/// Their count goes to L->stats[2]; k_gather copies their mask bits to the front of out.
+__global__ void k_compact(Lanes* L, const uint8_t* active, int* lanes) {
+  __shared__ int wc[kMaxLanes / 32];
+  const int l = threadIdx.x;
+  const bool k = L->valid[l] && L->cls[l] >= 0 && active[L->cls[l]];
+  const unsigned b = __ballot_sync(kFull, k);
+  if ((l & 31) == 0) wc[l >> 5] = __popc(b);
+  __syncthreads();
+  int r = __popc(b & ((1u << (l & 31)) - 1u));
+  for (int w = 0; w < (l >> 5); ++w) r += wc[w];
+  if (k) lanes[r] = l;
+  if (l == 0) L->stats[2] = wc[0] + wc[1] + wc[2] + wc[3];
+}
+
+__global__ void k_gather(const uint32_t* bits, int words, const int* lanes, const Lanes* L, uint32_t* out) {
   const int o = blockIdx.y, w = blockIdx.x * blockDim.x + threadIdx.x;
-  if (o < n && w < words) out[(size_t)o * words + w] = bits[(size_t)lanes[o] * words + w];
+  if (o < L->stats[2] && w < words) out[(size_t)o * words + w] = bits[(size_t)lanes[o] * words + w];
 }
 
 // ------------------------------------------------------------------------------------------------------ host side
@@ -428,10 +444,22 @@ struct OvdHandle {
   std::vector<float> o_score, o_box;
   Pinned<uint32_t> h_bits;
   Pinned<Lanes> h_lanes;
-  size_t img_cap = 0;
+  Pinned<uint8_t> h_img;  // pinned staging of a host image: a pageable H2D copy is staged by the driver (slow)
+  size_t img_cap = 0, h_img_cap = 0;
   int last_h = -1, last_w = -1;
   int64_t bytes = 0;
   cudaEvent_t ev[5];
+  // CUDA graph of one detection (letterbox → TensorRT → post-processing → output copies), keyed by the input layout.
+  // OVDET_NO_GRAPH=1 runs the same work stream-ordered (no capture).
+  bool use_graph = true;
+  cudaGraphExec_t gexec = nullptr;
+  int g_h = -1, g_w = -1, g_ps = -1, g_bgr = -1;
+  const uint8_t* g_img = nullptr;
+  long long g_rs = -1;
+  void dropGraph() {
+    if (gexec) cudaGraphExecDestroy(gexec);
+    gexec = nullptr;
+  }
 };
 
 extern "C" {
@@ -504,6 +532,7 @@ OvdHandle* ovd_create(const OvdConfig* cfg, char* err, size_t err_len) {
     check(cudaStreamSynchronize(h->s), "warm-up");
     cudaMemGetInfo(&free1, &total);
     h->bytes = (int64_t)free0 - (int64_t)free1;
+    if (const char* e = std::getenv("OVDET_NO_GRAPH")) h->use_graph = !(e[0] && e[0] != '0');
     return h.release();
   } catch (const std::exception& e) {
     if (err && err_len) std::snprintf(err, err_len, "%s", e.what());
@@ -514,6 +543,7 @@ OvdHandle* ovd_create(const OvdConfig* cfg, char* err, size_t err_len) {
 void ovd_destroy(OvdHandle* h) {
   if (!h) return;
   cudaStreamSynchronize(h->s);
+  h->dropGraph();
   h->seg.reset();
   for (auto& e : h->ev) cudaEventDestroy(e);
   cudaStreamDestroy(h->s);
@@ -567,17 +597,29 @@ const sm_detections* ovd_detect(OvdHandle* h, const OvdImage* im, OvdTiming* tim
     const int H = im->h, W = im->w;
     if (H <= 0 || W <= 0 || (im->pix_stride != 3 && im->pix_stride != 4)) throw std::runtime_error("bad image");
     cudaEventRecord(h->ev[0], s);
-    // ---- upload (packed on device) + letterbox (Ultralytics LetterBox: centred, 114 gray pad)
+    // ---- upload (packed on device). With the graph a device image is copied too, so the graph always reads h->img.
     const uint8_t* dimg = im->data;
     long long rs = im->row_stride;
-    if (!im->on_device) {
+    if (!im->on_device || h->use_graph) {
       const size_t need = (size_t)H * W * im->pix_stride;
       if (need > h->img_cap) {
         h->img.alloc(need);
         h->img_cap = need;
       }
-      check(cudaMemcpy2DAsync(h->img.p, (size_t)W * im->pix_stride, im->data, im->row_stride,
-                              (size_t)W * im->pix_stride, H, cudaMemcpyHostToDevice, s), "upload");
+      const size_t row = (size_t)W * im->pix_stride;
+      if (im->on_device) {
+        check(cudaMemcpy2DAsync(h->img.p, row, im->data, im->row_stride, row, H, cudaMemcpyDeviceToDevice, s), "upload");
+      } else {
+        if (need > h->h_img_cap) {
+          h->h_img.alloc(need);
+          h->h_img_cap = need;
+        }
+        if ((size_t)im->row_stride == row)
+          std::memcpy(h->h_img.p, im->data, need);
+        else
+          for (int y = 0; y < H; ++y) std::memcpy(h->h_img.p + y * row, im->data + (size_t)y * im->row_stride, row);
+        check(cudaMemcpyAsync(h->img.p, h->h_img.p, need, cudaMemcpyHostToDevice, s), "upload");
+      }
       dimg = h->img.p;
       rs = (long long)W * im->pix_stride;
     }
@@ -595,40 +637,76 @@ const sm_detections* ovd_detect(OvdHandle* h, const OvdImage* im, OvdTiming* tim
       h->last_h = H;
       h->last_w = W;
     }
-    k_letterbox<<<dim3((L.nw + 255) / 256, L.nh), 256, 0, s>>>(dimg, H, W, rs, im->pix_stride, im->bgr, L, h->canvas.p);
-    cudaEventRecord(h->ev[1], s);
-    if (!h->seg->ctx->enqueueV3(s)) throw std::runtime_error("enqueue failed");
-    cudaEventRecord(h->ev[2], s);
-    // ---- candidates, NMS, mask bits, area gate, mask duplicates
-    k_class_max<<<(h->A + 255) / 256, 256, 0, s>>>(h->o0.p, h->A, h->nc, h->active.p, h->conf.p, h->cls.p);
-    const float* conf = h->conf.p;
-    const int* cls = h->cls.p;
-    cudaMemsetAsync(h->lanes.p, 0, sizeof(Lanes), s);
-    k_select<<<1, 1024, 0, s>>>(h->o0.p, h->A, conf, cls, c.conf_th, c.nms_iou, c.class_agnostic, c.max_det, h->gkeys.p,
-                                h->supT.p, h->lanes.p);
     const float g = (float)h->Pw / h->Sw;  // canvas pixel -> grid cell
     const int rt = (int)std::floor(L.top * g), rb = (int)std::ceil((L.top + L.nh) * g);
     const int rl = (int)std::floor(L.left * g), rr = (int)std::ceil((L.left + L.nw) * g);
-    k_bits<<<(h->Ph * h->Pw + 255) / 256, 256, 0, s>>>(h->o0.p, h->A, 4 + h->nc, h->o1.p, h->Ph, h->Pw, g, h->lanes.p, rt, rb, rl, rr,
-                                             h->bits.p);
-    k_area<<<kMaxLanes, 256, 0, s>>>(h->bits.p, h->words, h->lanes.p, c.area_min, c.small_area, c.small_conf);
-    if (c.mask_iou > 0) {
-      cudaMemsetAsync(h->inter.p, 0, sizeof(int) * kMaxLanes * kMaxLanes, s);
-      k_pair<<<kMaxLanes, 256, 0, s>>>(h->bits.p, h->words, h->lanes.p, h->inter.p);
-      k_dedup<<<1, kMaxLanes, 0, s>>>(h->lanes.p, h->inter.p, c.mask_iou);
+    const int ncopy = std::min(c.max_det, kMaxLanes);  // at most max_det lanes are ever valid
+    // ---- letterbox → network → candidates, NMS, mask bits, area gate, mask duplicates → output lanes → copies
+    // inside a capture the event needs cudaEventRecordExternal to become a record node (timing); outside, a plain record
+    auto rec = [&](int k, cudaStream_t q) {
+      if (h->use_graph) cudaEventRecordWithFlags(h->ev[k], q, cudaEventRecordExternal);
+      else cudaEventRecord(h->ev[k], q);
+    };
+    auto body = [&](cudaStream_t q) {
+      k_letterbox<<<dim3((L.nw + 255) / 256, L.nh), 256, 0, q>>>(dimg, H, W, rs, im->pix_stride, im->bgr, L, h->canvas.p);
+      rec(1, q);
+      if (!h->seg->ctx->enqueueV3(q)) throw std::runtime_error("enqueue failed");
+      rec(2, q);
+      k_class_max<<<(h->A + 255) / 256, 256, 0, q>>>(h->o0.p, h->A, h->nc, h->active.p, h->conf.p, h->cls.p);
+      cudaMemsetAsync(h->lanes.p, 0, sizeof(Lanes), q);
+      k_select<<<1, 1024, 0, q>>>(h->o0.p, h->A, h->conf.p, h->cls.p, c.conf_th, c.nms_iou, c.class_agnostic, c.max_det,
+                                  h->gkeys.p, h->supT.p, h->lanes.p);
+      k_bits<<<(h->Ph * h->Pw + 255) / 256, 256, 0, q>>>(h->o0.p, h->A, 4 + h->nc, h->o1.p, h->Ph, h->Pw, g, h->lanes.p, rt,
+                                                         rb, rl, rr, h->bits.p);
+      k_area<<<kMaxLanes, 256, 0, q>>>(h->bits.p, h->words, h->lanes.p, c.area_min, c.small_area, c.small_conf);
+      if (c.mask_iou > 0) {
+        cudaMemsetAsync(h->inter.p, 0, sizeof(int) * kMaxLanes * kMaxLanes, q);
+        k_pair<<<kMaxLanes, 256, 0, q>>>(h->bits.p, h->words, h->lanes.p, h->inter.p);
+        k_dedup<<<1, kMaxLanes, 0, q>>>(h->lanes.p, h->inter.p, c.mask_iou);
+      }
+      k_compact<<<1, kMaxLanes, 0, q>>>(h->lanes.p, h->active.p, h->dlanes.p);
+      k_gather<<<dim3((h->words + 255) / 256, ncopy), 256, 0, q>>>(h->bits.p, h->words, h->dlanes.p, h->lanes.p, h->obits.p);
+      rec(3, q);
+      check(cudaMemcpyAsync(h->h_lanes.p, h->lanes.p, sizeof(Lanes), cudaMemcpyDeviceToHost, q), "lanes");
+      check(cudaMemcpyAsync(h->h_bits.p, h->obits.p, (size_t)ncopy * h->words * 4, cudaMemcpyDeviceToHost, q), "bits");
+    };
+    if (h->use_graph) {
+      if (h->gexec && (H != h->g_h || W != h->g_w || im->pix_stride != h->g_ps || im->bgr != h->g_bgr || dimg != h->g_img ||
+                       rs != h->g_rs))
+        h->dropGraph();
+      if (!h->gexec) {
+        cudaGraph_t gr = nullptr;
+        check(cudaStreamBeginCapture(s, cudaStreamCaptureModeThreadLocal), "capture begin");
+        try {
+          body(s);
+        } catch (...) {
+          cudaStreamEndCapture(s, &gr);
+          if (gr) cudaGraphDestroy(gr);
+          throw;
+        }
+        check(cudaStreamEndCapture(s, &gr), "capture end");
+        const cudaError_t e = cudaGraphInstantiate(&h->gexec, gr, 0);
+        cudaGraphDestroy(gr);
+        check(e, "graph instantiate");
+        h->g_h = H;
+        h->g_w = W;
+        h->g_ps = im->pix_stride;
+        h->g_bgr = im->bgr;
+        h->g_img = dimg;
+        h->g_rs = rs;
+      }
+      check(cudaGraphLaunch(h->gexec, s), "graph launch");
+    } else {
+      body(s);
     }
-    check(cudaMemcpyAsync(h->h_lanes.p, h->lanes.p, sizeof(Lanes), cudaMemcpyDeviceToHost, s), "lanes");
-    check(cudaStreamSynchronize(s), "post");
+    cudaEventRecord(h->ev[4], s);
+    check(cudaEventSynchronize(h->ev[4]), "done");
     const Lanes& hl = *h->h_lanes.p;
     std::vector<int> keep;
     for (int l = 0; l < kMaxLanes; ++l)
       if (hl.valid[l] && hl.cls[l] >= 0 && h->vocab_prompt[hl.cls[l]] >= 0) keep.push_back(l);
     const int n = (int)keep.size();
-    if (n > 0) {
-      check(cudaMemcpyAsync(h->dlanes.p, keep.data(), n * sizeof(int), cudaMemcpyHostToDevice, s), "keep");
-      k_gather<<<dim3((h->words + 255) / 256, n), 256, 0, s>>>(h->bits.p, h->words, h->dlanes.p, n, h->obits.p);
-    }
-    cudaEventRecord(h->ev[3], s);
+    if (n != hl.stats[2]) throw std::runtime_error("output lane count mismatch (prompt changed during detect?)");
     // boxes in input pixels; grid cell -> input pixel: x = cell * sx + ox
     const float sx = 1.f / (g * L.r), ox = -L.left / L.r, oy = -L.top / L.r;
     std::vector<float> box((size_t)n * 4);
@@ -646,10 +724,6 @@ const sm_detections* ovd_detect(OvdHandle* h, const OvdImage* im, OvdTiming* tim
       h->o_area[i] = hl.area[l];
       h->o_cls[i] = h->vocab_prompt[hl.cls[l]];
     }
-    if (n > 0)
-      check(cudaMemcpyAsync(h->h_bits.p, h->obits.p, (size_t)n * h->words * 4, cudaMemcpyDeviceToHost, s), "bits");
-    cudaEventRecord(h->ev[4], s);
-    check(cudaEventSynchronize(h->ev[4]), "done");
     h->o_box.swap(box);
     sm_detections& d = h->det;
     d.stamp = im->stamp;
