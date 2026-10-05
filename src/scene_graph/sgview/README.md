@@ -2,14 +2,13 @@
 
 **Spark-DSG 장면 그래프 보기 = sgview.** 물체 기억(scene graph, Spark-DSG 형식 `scene.json`·`view.json`)을 보는 뷰어는 이것 하나다
 (spark dsg viewer / scene graph viewer / 물체 기억 뷰어). Rust 서버 + three.js, 파이썬 없음.
-옛 Python 뷰어 sgviz(`../viewer/`, Spark-DSG + viser)는 파일 폴링이라 실시간이 아니고 쓰지 않는다(기록용).
 
 | 하고 싶은 것 | 명령 (robot-agent 저장소 루트) |
 |---|---|
 | 탐사 한 판 + 실시간 뷰어 한 번에 | `tools/run_explore_live.sh [policy] [task] [tag]` — LIMO 는 `SGRT_ROBOT=limo_omx tools/run_explore_live.sh …` |
 | 실시간 스트림 받기(60 Hz 이상) | `tools/run_sgview.sh <memory_dir> --live` + 시뮬/로봇 쪽 `SGRT_STREAM=127.0.0.1:9001` |
 | 녹화된 메모리 폴더 보기 | `tools/run_sgview.sh <memory_dir>` |
-| behavior-2026 만 있을 때(파일 모드) | `src/sim/explore/viewer_8080.sh <run dir>` 또는 아래 직접 실행 |
+| 기록 폴더 보기(파일 모드) | `src/sim/explore/viewer_8080.sh <run dir>` 또는 아래 직접 실행 |
 
 실시간 경로: C++ libsgrt → 소켓(`SGRT_STREAM=127.0.0.1:9001`) → Rust 서버(`--ingest`) → SSE → 브라우저. 브라우저에서 http://localhost:8080 .
 
@@ -22,7 +21,7 @@ target/release/sgview <memory_dir> [--port 8080] [--bind 0.0.0.0]
 ```
 브라우저에서 http://localhost:8080 . 0.25 s 마다 `view.json` 이 바뀌었는지 보고 바뀌면 다시 그린다.
 
-## 보이는 것 (옛 파이썬 sgviz 의 기능을 옮김)
+## 보이는 것
 - 점유 지도, 로봇(원판 + 화살표), 물체 세그먼트 점구름(true/state colour), 이름표, 천장 숨김(기본), 구조물/gone 켜고 끄기.
 - 공중에 뜬 그래프 2층: 물체(z 4 m, 상태 색 + 썸네일), 방(그 위 층 간격 2 m) + 에이전트 궤적(바닥), 간선(층 안·방→물체). 장소·전치사 관계·building·frontier 는 그리지 않는다.
 - 2D 벽(하늘색 선) + 벽 상태 벡터(길이 56) + "Save wall state" 로 JSON 저장.
@@ -35,7 +34,7 @@ target/release/sgview <memory_dir> [--port 8080] [--bind 0.0.0.0]
 - 벽은 `map.pgm` 이 바뀔 때만 다시 계산(mtime+크기 캐시).
 - `assets/index.html` 이 화면 전부.
 
-## 아직 없는 것 (옛 파이썬 sgviz 에는 있던 것)
+## 아직 없는 것
 - 마스크 윤곽선을 RGB 위에 겹치기, 깊이 조각 회색조 정규화/통계(지금은 저장된 PNG 를 그대로 보여 준다).
 - 텍스트 검색 패널, explore 오버레이(`memory/explore.json`).
 - 점 PLY 고르기는 점이 아니라 경계 상자로 맞춘다.

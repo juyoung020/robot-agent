@@ -4,7 +4,7 @@
 // 물체 중심을 겨눈 카메라로 "조각"(물체 경계 구가 화면의 1/1.1 — embed 의 box 자르기 10 % 여유와 같은 꼴)을 256² 로 그린다.
 // 시점: 방위 무작위, 시선 각 −6°–52°(몸통 카메라 수평 ~ 손목 내려다봄), 물체 자리·yaw 무작위, 작은 상자는 크기도 env.h 범위에서 무작위.
 // 줄 6(유령 = 가짜 검출, map.h Ghost)은 물체 없는 바닥·벽 조각이다: 가짜 검출 자리에는 실제로 아무것도 없으므로 그 조각의 생김새.
-// 렌더(팀 RenderBatch, 읽기만) → vit::Encoder(끝 LN 패치 토큰) → apph::encode(MAP 풀링 + embed 머리 h, double) → 시점마다 128 →
+// 렌더(RenderBatch) → vit::Encoder(끝 LN 패치 토큰) → apph::encode(MAP 풀링 + embed 머리 h, double) → 시점마다 128 →
 // 종류마다 평균 → L2 정규화 = app128.f16 [7][128]. 시점별 벡터는 app_views.f16 [7][2V][128](확신도 분포·문턱 근거용).
 // --dump DIR: 시점별 토큰(FP32 로 바꾼 bf16)·RGB·C++ 출력(풀링 768·128)을 써서 tools/app_ref.py(PyTorch 기준값)와 맞춘다.
 // --negative B: apph 음성 대조(1 어텐션 배율 빠뜨림, 2 머리 LN 빠뜨림, 3 MAP MLP 잔차 빠뜨림) — dump 와 같이 써서 기준값과 어긋나야 정상.

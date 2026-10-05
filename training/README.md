@@ -17,16 +17,16 @@
 ## 공통 규칙
 
 - **git 에 넣지 않는 것**: 데이터셋, crop, 임베딩, 가중치, ONNX, TensorRT 엔진, 로그.
-  - 이것들은 `~/<모델>_work/` 에 둔다(예: `~/embed_work/{data,emb,runs,logs,models}`).
+  - 이것들은 `data/<모델>_work/` 에 둔다(예: `data/embed_work/{data,emb,runs,logs,models}`).
   - 경로는 환경 변수로 바꿀 수 있다(`EMBED_WORK`).
-- **venv**: 모델마다 `~/<모델>_venv`(예: `~/embed_venv`).
+- **venv**: 모델마다 하나(예: embed_venv). 스크립트는 `config/paths.env` 의 `*_PY` 변수(`EMBED_PY`·`FS_PY`·`CLIP_PY`·`TRT_PY`·`REALBAG_PY`)로 찾는다.
   - torch 는 cu128 판(2.11.0+cu128)을 쓴다. 저장소 기준이 CUDA 12.8 이다.
   - `uv venv -p 3.11 ~/embed_venv` → `uv pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128` → 나머지(`open_clip_torch timm transformers datasets onnx onnxruntime pycocotools nltk`).
 - **GPU 를 같이 쓴다**. 긴 작업 전에 `nvidia-smi` 를 본다. 우리 작업은 VRAM 8 GB 아래로 잡는다.
 - **결과 기록**
   - 실행마다 `~/<모델>_work/runs/<이름>/` 에 설정(`args.json`), 로그, 평가 json 을 남긴다(embed).
   - 학습 뷰어 규약(RL·BC): 실행 폴더에 `run.json`(설정·상수 — args 대신) + `progress.jsonl` + `evals/` — `ppo_run`·`bc_run` 이 쓴다. 보기는 `training/viewer/`([README](viewer/README.md)).
-  - RL·BC 는 `--out` 으로 준 폴더(`~/ra_*` 아래, 예: `~/ra_bc/runs/<이름>/`)에 설정 `config.json`, 로그 `log.csv` 를 남긴다. RL 은 `events.txt`·체크포인트, BC 는 평가 `results.json` 도.
+  - RL·BC 는 `--out` 으로 준 폴더(`data/checkpoints` 아래, 예: `data/checkpoints/bc/runs/<이름>/`)에 설정 `config.json`, 로그 `log.csv` 를 남긴다. RL 은 `events.txt`·체크포인트, BC 는 평가 `results.json` 도.
   - 모델 폴더 README 의 결과 표에는 실행 이름과 숫자를 옮겨 적는다.
-  - 평가셋은 남의 것을 읽기만 한다(예: `~/clip_bench/evalset.json`).
+  - 평가셋은 남의 것을 읽기만 한다(예: `$CLIP_BENCH/evalset.json`).
 - 커밋은 `training/<모델>/` 경로만 지정해서 한다(`git add -A` 금지).

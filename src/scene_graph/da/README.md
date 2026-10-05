@@ -43,8 +43,8 @@ objmap 쪽 연결(`src/objmap.cpp`): 합친 뒤 이번 프레임의 검출 연�
 scenemap 빌드에 같이 들어간다.
 
 ```bash
-cmake -S src/scene_graph/scenemap -B ~/scenemap_build && cmake --build ~/scenemap_build -j
-ctest --test-dir ~/scenemap_build -R da_merge
+cmake -S src/scene_graph/scenemap -B build/scenemap && cmake --build build/scenemap -j
+ctest --test-dir build/scenemap -R da_merge
 ```
 
 | 경우 | 확인 |

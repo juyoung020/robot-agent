@@ -1,6 +1,6 @@
 // BC 영상 학생의 렌더(계획서 4.5·4.6 (a), 6절 K11 앞): 기록된 RenderState(144 B) → 카메라 2 대 RGB u8 [E][256][256][3].
-// 팀 RenderBatch(training/render_engine/cuda/render, 서브모듈 — include 로 **읽기만**, 고친 것 없음)를 src/bc_render.cu 한 곳에서만 쓴다
-// (팀 렌더 빌드 규칙 -ftz=true 등을 그 파일에만 주려고 이 머리에는 팀 헤더가 없다).
+// RenderBatch(training/render_engine/cuda/render)를 src/bc_render.cu 한 곳에서만 쓴다
+// (렌더 빌드 규칙 -ftz=true 등을 그 파일에만 주려고 이 머리에는 렌더 헤더가 없다).
 //
 // 장면(가정 — 색·조명은 render_bench 와 같음): 바닥 1 + 벽 4 + 가구 칸 8 × 종류 5(종류마다 색이 달라 칸마다 맞는 종류 하나만 보임 비트로 켬) + 컵 1 = 인스턴스 46.
 // 인스턴스 하나 = 단위 상자 하나 = 기준 prim(anchor) 하나 → 판마다 축척·자리를 anchor 행렬로. 카메라:

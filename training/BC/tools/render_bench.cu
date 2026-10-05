@@ -1,4 +1,4 @@
-// 224² 렌더 속도(계획서 4.5·10.3 의 6, 12절 열린 문제): 팀 RenderBatch(training/render_engine/cuda/render, **읽기만** — include 로 씀)로
+// 224² 렌더 속도(계획서 4.5·10.3 의 6, 12절 열린 문제): RenderBatch(training/render_engine/cuda/render, **읽기만** — include 로 씀)로
 // G1 A2 장면(방 벽 4 + 바닥 + 가구 상자 8 + 컵)을 판 E 개 × 카메라 2 대(머리 RGB-D 67.9°, 손목) 224² 로 그린다.
 //   render_bench [E=256] [reps=10] [--dump DIR]
 // 장면 상태는 GPU 환경(DeviceEnv, A2)을 몇 스텝 돌린 판들에서 가져온다(BC 기록의 RenderState 와 같은 값: 자세·컵·방·가구).

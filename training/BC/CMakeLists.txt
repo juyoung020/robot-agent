@@ -49,7 +49,7 @@ target_compile_definitions(bc PUBLIC VLA_DATA_DIR="${CMAKE_CURRENT_LIST_DIR}/../
                           PNP_DATA_DIR="${CMAKE_CURRENT_LIST_DIR}/../data/pnp_v1")   # 집기·놓기 지시문 표
 target_include_directories(bc PRIVATE ${ENGINE_DIR})
 target_link_libraries(bc PUBLIC CUDA::cudart Threads::Threads)
-# 팀 RenderBatch(서브모듈, 읽기만)를 쓰는 파일 하나에만 팀 렌더 빌드 규칙(-ftz=true 등) — render_bench 와 같음
+# RenderBatch(training/render_engine)를 쓰는 파일 하나에만 렌더 빌드 규칙(-ftz=true 등) — render_bench 와 같음
 set_source_files_properties(src/bc_render.cu PROPERTIES COMPILE_OPTIONS
   "-O2;-fmad=false;-prec-div=true;-prec-sqrt=true;-ftz=true;--expt-relaxed-constexpr;-Xcompiler=-ffp-contract=off")
 
@@ -61,7 +61,7 @@ target_link_libraries(bcnetref PUBLIC OpenMP::OpenMP_CXX CUDA::cudart)
 add_executable(bc_verify tools/bc_verify.cu)
 target_link_libraries(bc_verify bc bcnetref)
 
-# 224² 렌더 속도(계획서 4.5·10.3 의 6): 팀 RenderBatch(training/render_engine, 읽기만)를 include 로 쓴다. 팀 렌더 빌드 규칙(-ftz=true 등)을 이 대상에만.
+# 224² 렌더 속도(계획서 4.5·10.3 의 6): RenderBatch(training/render_engine)를 include 로 쓴다. 렌더 빌드 규칙(-ftz=true 등)을 이 대상에만.
 if(EXISTS ${ENGINE_DIR}/cuda/render/render_batch.cuh AND EXISTS ${CMAKE_CURRENT_LIST_DIR}/tools/render_bench.cu)
   add_executable(render_bench tools/render_bench.cu)
   target_include_directories(render_bench PRIVATE ${ENGINE_DIR} ${INC})
@@ -99,7 +99,7 @@ add_test(NAME v7_lite COMMAND bc_verify v7 --lite)
 # 렌더 그래프(작업 공간 없이 잡기는 실패, 한 번 그린 뒤 잡기 == 즉시 실행), 인코더(기준값 디렉터리가 있으면 — vit_verify dump + tools/siglip_ref.py)
 add_test(NAME render_graph COMMAND vit_verify render-graph 256)
 
-# 생김새 벡터 표(VLA_INPUT 3절, training/data/vla_v1/app128.f16): 팀 RenderBatch(읽기만) 조각 렌더 → 얼린 SigLIP 2 영상 탑 → MAP 풀링 + embed 머리 h(C++ double)
+# 생김새 벡터 표(VLA_INPUT 3절, training/data/vla_v1/app128.f16): RenderBatch 조각 렌더 → 얼린 SigLIP 2 영상 탑 → MAP 풀링 + embed 머리 h(C++ double)
 if(EXISTS ${ENGINE_DIR}/cuda/render/render_batch.cuh)
   add_executable(app_table tools/app_table.cu tools/app_head.cpp)
   target_include_directories(app_table PRIVATE ${ENGINE_DIR} ${INC} tools)

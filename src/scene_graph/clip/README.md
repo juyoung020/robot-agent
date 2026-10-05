@@ -36,20 +36,20 @@
 
 ```bash
 # 1) ONNX(파이썬, ~/clip_venv) → 엔진(~/ovdet_venv 의 TensorRT 파이썬). 엔진·ONNX 는 git 밖
-~/clip_venv/bin/python tools/export_siglip2.py --out ~/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask.onnx
-~/ovdet_venv/bin/python tools/build_engine.py ~/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask.onnx \
-    ~/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan --half-input --pin norm,mlp/act
+$CLIP_PY tools/export_siglip2.py --out models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_mask.onnx
+$TRT_PY tools/build_engine.py models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_mask.onnx \
+    models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan --half-input --pin norm,mlp/act
 # 1b) 글 탑(물체 찾기 자유 글 질의): ONNX·토크나이저·토큰 임베딩 → 엔진. 층 이름이 영상 탑과 달라 고정 목록을 따로
-~/clip_venv/bin/python tools/export_siglip2_text.py          # ~/ovdet_models/x86_sm120/siglip2_b32/ 에 씀
-~/ovdet_venv/bin/python tools/build_engine.py ~/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_text.onnx \
-    ~/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_text_fp16.plan --pin 'ln_,mlp/gelu,reducel2,^/div$'
+$CLIP_PY tools/export_siglip2_text.py          # models/ovdet/x86_sm120/siglip2_b32/ 에 씀
+$TRT_PY tools/build_engine.py models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_text.onnx \
+    models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_text_fp16.plan --pin 'ln_,mlp/gelu,reducel2,^/div$'
 # 2) C++ (CUDA 12.8, libpng) — 시험 6개
-cmake -S src/scene_graph/clip -B ~/sgclip_build && cmake --build ~/sgclip_build -j && ctest --test-dir ~/sgclip_build
+cmake -S src/scene_graph/clip -B build/sgclip && cmake --build build/sgclip -j && ctest --test-dir build/sgclip
 # 3) sgrt 에 같이 들어감(runtime/CMakeLists.txt add_subdirectory). 켜기: SGRT_CLIP=1(기본 엔진 경로) 또는 plan 경로
 ```
 
-- 라벨 표: `SGRT_LABELS`(기본 `~/embed_work/labels/objects-v1`, training/embed `export_labels.py` 가 만든다).
-- 투영 표본: `SGC_IMG_SAMPLE`(기본 `~/ovdet_models/x86_sm120/siglip2_b32/img_sample_lvis10k.f16` — LVIS crop 9,753개를 같은 엔진으로 뽑은 FP16 임베딩). 없으면 라벨 글 PCA(1단계 순위가 나쁨).
+- 라벨 표: `SGRT_LABELS`(기본 `data/embed_work/labels/objects-v1`, training/embed `export_labels.py` 가 만든다).
+- 투영 표본: `SGC_IMG_SAMPLE`(기본 `models/ovdet/x86_sm120/siglip2_b32/img_sample_lvis10k.f16` — LVIS crop 9,753개를 같은 엔진으로 뽑은 FP16 임베딩). 없으면 라벨 글 PCA(1단계 순위가 나쁨).
 - 시험 기준 파일: `tools/make_parity.py` → `parity.bin`, `queries_f32.bin`(없으면 그 시험은 건너뜀).
 
 ## 시험 (ctest)
@@ -114,7 +114,7 @@ RecallVLA 실행기는 같은 색인에 자기 질의 벡터(SigLIP 2 글 공간
 **결과 JSON**(`sgs_search_json`, 도구가 기억 자리 정보를 붙여 LLM 글로): `{query, resolved{kind, label, ko, senses}, step2, best_name, n_name_hits,
 hits:[{id, name, name_ko, name_p, registered, alt:[[이름, p]…], attrs, vec, nv, match, match_type, p_name, p_query, q_rank, p_registered, p_img?, like?}], n_objects, us}`
 
-**측정**(`tools/eval_objsearch.py`, BEHAVIOR `house_double_floor_lower` LIMO 탐사 기억 = `~/datasets/sim_detcmp/A_fastsam`(FastSAM-s + SigLIP 2,
+**측정**(`tools/eval_objsearch.py`, BEHAVIOR `house_double_floor_lower` LIMO 탐사 기억 = `data/datasets/sim_detcmp/A_fastsam`(FastSAM-s + SigLIP 2,
 등록 이름 어휘 62 개 — 정답과 맞는 이름이 적음), 확률 모드 전이라 대체 벡터(best view 사진 1 장). 질의 = 지도에 있는 정답 종류 18 개를 사람이 부를 말로
 ("chair" → straight_chair, "refrigerator" → fridge …), 관련 물체 = 정답 짝 + 정답 상자 안에 중심이 든 물체(같은 물건의 조각·중복).
 "이름 못 찾는 물체" = 이름만 찾기가 돌려주지 않는 관련 물체(18 질의 모두 있음). 없는 물체 질의 40 개(컵·노트북·자전거 …).

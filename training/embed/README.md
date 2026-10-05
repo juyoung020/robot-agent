@@ -33,10 +33,10 @@
 
 ## 평가셋
 
-- **A**: `~/clip_bench/evalset.json`(CLIP 조사 것, 읽기만). 567개.
+- **A**: `$CLIP_BENCH/evalset.json`(CLIP 조사 것, 읽기만). 567개.
   - 내용: turning_on_radio 시연 ep 0·57·133 FastSAM crop 542개 + 시뮬 기억 best view 25개. 집은 house_double_floor_lower.
   - 지표는 `clip_bench/score.py` 를 import 해서 그대로 쓴다. 우리 재현값(OpenAI B/32 box 0.280, SigLIP 2 B/32 pool 0.340)은 그쪽 값과 같다.
-- **B**(다른 집): `make_evalset_other.py` → `~/embed_work/eval_other/`. 406개.
+- **B**(다른 집): `make_evalset_other.py` → `data/embed_work/eval_other/`. 406개.
   - putting_up_Christmas_decorations_inside ep 1800–1802, house_single_floor.
   - 같은 규칙: 마스크 60 % 이상이 한 정답 물체, IoU ≥ 0.2, 범주당 ≤ 60.
   - 구조물이 아닌 것은 약 190개(소파·아침 식탁·스탠드·트리·의자 …).
@@ -136,9 +136,9 @@
 ## 실행 순서
 
 ```
-export PY=~/embed_venv/bin/python        # training/README.md 의 venv
-$PY build_crops.py --n 300000            # ~/embed_work/data/lvis_crops/shard_*.tar + .jsonl (이미지는 받아서 자르고 버림, 약 40분)
-$PY build_sim_crops.py --every 150       # ~/embed_work/data/sim_radio (FastSAM, 같은 집)
+export PY=$EMBED_PY        # training/README.md 의 venv
+$PY build_crops.py --n 300000            # data/embed_work/data/lvis_crops/shard_*.tar + .jsonl (이미지는 받아서 자르고 버림, 약 40분)
+$PY build_sim_crops.py --every 150       # data/embed_work/data/sim_radio (FastSAM, 같은 집)
 $PY make_evalset_other.py --every 75     # 평가 B
 $PY evalset.py score siglip2_b32 pe_l14  # 평가셋 임베딩 + zero-shot (EVALSET=other 로 B)
 $PY build_labels.py && $PY encode_labels.py --nllb siglip2_b32 pe_l14
@@ -147,7 +147,7 @@ $PY train_head.py --base siglip2_b32 --teacher pe_l14 --views pool,poolaug,box,a
 $PY eval_head.py sb32_pe_300k            # KO_RUN=ko_small_ho 로 한국어 학생 열 추가
 $PY train_ko.py --name ko_small_ho --holdout && $PY eval_ko.py ko_small_ho
 $PY export_head.py sb32_pe_300k && $PY export_labels.py --head sb32_pe_300k
-g++ -O3 -march=native -std=c++17 lookup_bench.cpp -o ~/embed_work/lookup_bench
+g++ -O3 -march=native -std=c++17 lookup_bench.cpp -o data/embed_work/lookup_bench
 ```
 
 - `extract.py` 주의
@@ -167,7 +167,7 @@ g++ -O3 -march=native -std=c++17 lookup_bench.cpp -o ~/embed_work/lookup_bench
 
 ## 라벨 표 형식 (런타임과 맞추는 약속)
 
-라벨 표 하나 = 폴더 하나: `labels/<name>-<version>/`. 지금 것은 `~/embed_work/labels/objects-v1/`(65 MB)이다.
+라벨 표 하나 = 폴더 하나: `labels/<name>-<version>/`. 지금 것은 `data/embed_work/labels/objects-v1/`(65 MB)이다.
 
 ```
 labels/objects-v1/
@@ -220,11 +220,11 @@ VLA_INPUT 의 "얼린 SigLIP 2 글 인코더 → 128-d 투영" 은 이 공간의
 영상 = SigLIP 2 B/32-256 풀링 벡터 + 머리 h. 셋 다 같은 얼린 `P` 공간이라 지시 ↔ 이름 ↔ 생김새를 바로 비교한다. 학습 중에는 아무 모델도 돌리지 않고 표만 읽는다.
 
 ```
-HF_HUB_OFFLINE=1 ~/embed_venv/bin/python training/embed/vla_tables.py           # 이름·지시 (CPU 약 12 s, 내려받기 없음)
-~/embed_venv/bin/python training/embed/export_head_f32.py                       # 머리 h → ~/embed_work/runs/sb32_pe_300k/head_h.f32 (git 밖)
-~/ra_bc/build/app_table --views 32                                               # 생김새 (C++/CUDA, 1 s)
+HF_HUB_OFFLINE=1 $EMBED_PY training/embed/vla_tables.py           # 이름·지시 (CPU 약 12 s, 내려받기 없음)
+$EMBED_PY training/embed/export_head_f32.py                       # 머리 h → data/embed_work/runs/sb32_pe_300k/head_h.f32 (git 밖)
+data/checkpoints/bc/build/app_table --views 32                                               # 생김새 (C++/CUDA, 1 s)
 python3 training/embed/vla_vocab_gen.py                                          # 확신도 표 → training/RL/map/include/vla_vocab.h, manifest
-~/ra_bc/build/app_table --views 12 --dump D [--negative 1|2|3] && ~/embed_venv/bin/python training/BC/tools/app_ref.py D   # 검증
+data/checkpoints/bc/build/app_table --views 12 --dump D [--negative 1|2|3] && $EMBED_PY training/BC/tools/app_ref.py D   # 검증
 ```
 
 | 파일(`training/data/vla_v1/`, 합 440 KB) | 내용 |
@@ -235,7 +235,7 @@ python3 training/embed/vla_vocab_gen.py                                         
 | `app128.f16` [7][128], `app_views.f16` [7][64][128] | 생김새: 줄 0–5 = 시뮬 종류, 줄 6 = 유령(가짜 검출 = 물체 없는 바닥·벽 조각). 줄마다 시점 64 개 평균 |
 
 - 시뮬 종류의 이름: 컵 = cup(+ teacup / 평가용 mug·tumbler), 작은 물건 = **box**(env.h 의 작은 물건은 0.08–0.25 m 상자로 그려짐 → 생김새 그대로; + carton·package / crate), 의자 = chair(+ straight chair / side chair), 탁자 = table(+ dining·kitchen table / worktable), 장 = cabinet(+ cupboard·bottom cabinet / sideboard), 쓰레기통 = trash can(+ garbage can·wastebin·dustbin, BEHAVIOR 의 ashcan / wastebasket). 상위어: tableware, container, furniture, furniture, furniture, container.
-- BEHAVIOR 2026 범주: 과제 100 개(`datasets/2026-challenge-task-instances/metadata/task.jsonl`)의 `problem0.bddl` `:objects` synset 259 개(agent 뺌) + `task_custom_lists.json` 의 허용 모델 범주 108 개를 그 synset 묶음에 넣음. 서브모듈은 읽기만. 시뮬 종류와 같은 synset(cup·box·chair·table·cabinet·ashcan) 6 개는 시뮬 묶음에 합침. 상위어 = WordNet 첫 상위어 중 너무 추상적이지 않고 표에 있는 것, 없으면 "X of Y" → X. 상위어 없는 대표 19 개(container, dust, sand, lawn …).
+- BEHAVIOR 2026 범주: 과제 100 개(`datasets/2026-challenge-task-instances/metadata/task.jsonl`)의 `problem0.bddl` `:objects` synset 259 개(agent 뺌) + `task_custom_lists.json` 의 허용 모델 범주 108 개를 그 synset 묶음에 넣음. 시뮬 종류와 같은 synset(cup·box·chair·table·cabinet·ashcan) 6 개는 시뮬 묶음에 합침. 상위어 = WordNet 첫 상위어 중 너무 추상적이지 않고 표에 있는 것, 없으면 "X of Y" → X. 상위어 없는 대표 19 개(container, dust, sand, lawn …).
 - 지시 표(잰 값): 같은 과제 영어끼리 코사인 평균 0.87, 한국어끼리 0.65, 영어–한국어 0.59, 다른 과제 0.40(최대 0.957 = "open the cabinet" 대 "close the cabinet" — 글 탑이 열기·닫기를 거의 못 가름). 가장 가까운 다른 문장의 과제가 맞는 비율 0.75(40 개). `go_to_cup` 문장과 cup 이름 행 코사인 평균 0.747(chair 0.241).
 
 ### 생김새 경로(C++/CUDA) — `training/BC/tools/app_table.cu`, `app_head.{h,cpp}`
@@ -281,7 +281,7 @@ python3 training/embed/vla_vocab_gen.py                                         
   - 뽑기 약 10시간(추정).
   - 디스크: crop 약 40 GB(20 KB/개) + 임베딩 약 20 GB(FP16, 6보기).
   - 머리 학습은 10분 안쪽이다.
-- 지금 디스크(`~/embed_work`)는 18 GB 다(crop 9.2, 임베딩 5.0, 한국어 목표 2.6, 기타).
+- 지금 디스크(`data/embed_work`)는 18 GB 다(crop 9.2, 임베딩 5.0, 한국어 목표 2.6, 기타).
   - 따로 venv 7.5 GB, HF 캐시 약 8 GB(So400m 4.3, PE-L 2.6, EVA-L 0.8 …)를 쓴다.
 
 ## 남은 일

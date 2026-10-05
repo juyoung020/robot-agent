@@ -2,15 +2,13 @@
 
 `ovdet` is the detector of the scenemap perception stack (`docs/scenemap_설계.md`).
 
-> **Decided (2026-10-05): ObjectSAM (YOLO26n student, engine `~/ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan`) + SigLIP 2 + objprob.**
+> **Decided (2026-10-05): ObjectSAM (YOLO26n student, engine `models/ovdet/x86_sm120/yolo26n-seg-obj-416.plan`) + SigLIP 2 + objprob.**
 > The default engine everywhere (libsgrt glue `SGRT_ENGINE`, `realbag_run`, `dom_bench_det`, the sim/LIMO launchers) is the class-agnostic
 > ObjectSAM segmenter: a YOLO26n student distilled from FastSAM-s, things-only (https://github.com/juyoung020/ObjectSAM, release v1.0). Its vocabulary is one name, `object`. Why: about 1/10 of FastSAM-s's compute, so it suits LIMO's Jetson (Nano especially); on-device timing is still to be measured. Names and embeddings come from
 > SigLIP 2 B/32 per mask (`src/scene_graph/clip/`), and the scenemap probabilistic object model (`objprob`) fuses them with the per-engine
-> parameters `src/scene_graph/tools/realbag/objprob_params/yolo26n-seg-obj-416.json`. Other engines stay selectable by flag/env:
-> the original FastSAM-s (`FastSAM-s-416.plan`), the discarded FastSAM-s fine-tune (archived: `~/ovdet_models/archive/x86_sm120/FastSAM-s-416-obj.plan`), and the archived
-> YOLOE / YOLO26s-seg (`~/ovdet_models/archive/x86_sm120/`, open/closed vocabulary with the old name rules, described below).
+> parameters `src/scene_graph/tools/realbag/objprob_params/yolo26n-seg-obj-416.json`. The teacher FastSAM-s (`FastSAM-s-416.plan`) stays selectable with `SGRT_ENGINE`.
 
-- **In:** one camera image and a prompt, the task's BDDL object names.
+- **In:** one camera image (ObjectSAM needs no prompt).
 - **Out:** a list of objects. Each object has a prompt index, a score, a box and a mask.
 
 The network is a YOLO-seg head (default ObjectSAM, YOLO26n student). It runs in TensorRT (FP16). Everything around the network is hand-written CUDA/C++:
@@ -29,7 +27,7 @@ There is no Python and no ROS at run time, so the evaluator process calls it dir
 
 ```c
 OvdConfig cfg; ovd_default_config(&cfg);
-cfg.seg_engine = "yolo26n-seg-obj-416.plan"; cfg.names = "yolo26n-seg-obj-416.plan.names.txt";   // ObjectSAM (or an archived YOLOE plan)
+cfg.seg_engine = "yolo26n-seg-obj-416.plan"; cfg.names = "yolo26n-seg-obj-416.plan.names.txt";   // ObjectSAM
 OvdHandle* h = ovd_create(&cfg, err, sizeof err);
 ovd_set_prompt(h, names, n, err, sizeof err);            // once per episode: the prompt table (NULL, 0 = whole vocabulary, e.g. ObjectSAM's "object")
 const sm_detections* d = ovd_detect(h, &img, &timing);   // per image; valid until the next call
@@ -52,20 +50,11 @@ const sm_detections* d = ovd_detect(h, &img, &timing);   // per image; valid unt
 
 ## Engines
 
-ObjectSAM (default) has one name, `object`, and needs no prompt (`ovd_set_prompt(h, NULL, 0, …)`); it is built by robot-agent `training/fastsam/build_engine.py`. The rest of this section is the archived YOLOE engine.
-
-The engine is built once with a whole vocabulary: every task's BDDL objects plus 18 scene structures, 272 names in `config/vocab_all.txt`.
-
-A prompt switches classes on and off. YOLOE's class scores are independent sigmoids per class, so the result equals an engine exported with only the prompt's names. `config/task_prompts.txt` lists each task's names, plus the `_scene` line.
-
-```
-~/ovdet_export_venv/bin/python archive/src/scene_graph/ovdet/tools/export_yoloe.py --model yoloe-11l-seg --vocab all --out ~/ovdet_models/onnx/yoloe-11l-all.onnx   # CPU, Ultralytics
-~/ovdet_venv/bin/python tools/build_engines.py ~/ovdet_models/onnx/yoloe-11l-all.onnx                                              # GPU lock
-```
+ObjectSAM (default, `yolo26n-seg-obj-416.plan`) has one name, `object`, and needs no prompt (`ovd_set_prompt(h, NULL, 0, …)`). It is built by `training/fastsam/build_engine.py`. SigLIP 2 (`../clip`) names each mask afterwards.
 
 ### Closed-vocabulary YOLO-seg engines (YOLO11 / YOLO26, COCO-80)
 
-The same code runs Ultralytics YOLO11-seg and YOLO26-seg engines. Their head has the same layout as YOLOE: `output0` 1 x (4 + 80 + 32) x A and `output1` 1 x 32 x h x w.
+The same code runs Ultralytics YOLO11-seg and YOLO26-seg engines. Their head layout: `output0` 1 x (4 + 80 + 32) x A and `output1` 1 x 32 x h x w.
 
 - **Export:** use `end2end=False`. That is the default ONNX export for these models (metadata `end2end: False`), so ovdet runs its own CUDA NMS. The NMS-free YOLO26 end2end output is not used.
 - **Input size:** taken from the engine, for example 640 or 416. The mask grid can be any size, such as 104 x 104 for a 416 input.
@@ -73,17 +62,17 @@ The same code runs Ultralytics YOLO11-seg and YOLO26-seg engines. Their head has
 - **Prompt:** prompt names are matched to the 80 classes; names that are not found are reported in `err`. A NULL prompt means all classes. sgrt uses all classes for closed-vocabulary engines (`SGRT_PROMPT`, see `runtime/include/sgrt.h`).
 
 ```
-cd ~/ovdet_models/onnx416 && ~/ovdet_export_venv/bin/python -c "from ultralytics import YOLO; YOLO('../pt/yolo26s-seg.pt').export(format='onnx', imgsz=416, opset=13, end2end=False)"
-~/ovdet_venv/bin/python tools/build_engines.py ~/ovdet_models/onnx416/yolo26s-seg-416.onnx --names config/coco80.txt --workspace-gb 1
+cd models/ovdet/onnx416 && python -c "from ultralytics import YOLO; YOLO('../pt/yolo26s-seg.pt').export(format='onnx', imgsz=416, opset=13, end2end=False)"
+$TRT_PY tools/build_engines.py models/ovdet/onnx416/yolo26s-seg-416.onnx --names config/coco80.txt --workspace-gb 1
 ```
 
 ## Build (Linux; CUDA 12.8, TensorRT 10)
 
 ```
-bash scripts/build_linux.sh        # -> ~/ovdet_build/libovdet.so, ovdet_smoke
+bash scripts/build_linux.sh        # -> build/sgrt/ovdet/libovdet.so, ovdet_smoke
 ```
 
-The library is built and run on Linux, which is also the submission Docker's OS.
+The library is built and run on Linux (x86 RTX 50 series; Jetson later).
 
 ## Per-call latency (CUDA graph)
 
@@ -110,48 +99,10 @@ Median `ovd_detect` latency on an idle RTX 5070 Ti, 300 radio r3 frames 640×480
 
 The network share of the student, from `trtexec` per-layer profiling, is backbone 36 %, neck 31 %, box/cls head 17 %, mask prototypes 7 % and mask coefficients 6 %. TensorRT builder optimisation level 5 gave no gain.
 
-## Detector comparison
+## Evaluation
 
-(History, YOLOE era. The scripts were archived on 10-05 with the YOLOE engines: `archive/src/scene_graph/ovdet/scripts/eval_linux.sh`·`eval_conf.sh`, `archive/src/scene_graph/ovdet/tools/ovdet_eval.py`. ObjectSAM is evaluated by robot-agent `training/fastsam/eval_det.py` and end to end by `tools/realbag/objprob_eval.py`.)
-
-`scripts/eval_linux.sh` ran `tools/ovdet_eval.py` on the same frames for every head:
-
-- ep0, 0–40 s, every 5th frame
-- ep200, whole episode, every 15th frame
-
-Ground truth works as follows:
-
-1. Depth pixels on a 2-px grid are placed in the map with the ground-truth camera pose.
-2. Each point is labelled by `gt_scene` (`src/scene_graph/scenemap/eval/`) with the GT object whose box contains it.
-
-The earlier FastSAM + CLIP comparison row has been retired; its numbers remain in `docs/ovdet_검출기.md`.
-
-The results and the reasoning behind the choice are in `docs/ovdet_검출기.md`.
+ObjectSAM is evaluated per frame by `training/fastsam/eval_det.py` and end to end (map nodes, found objects, duplicates) by `src/scene_graph/tools/realbag/objprob_eval.py`. Results and the choice are in `docs/model_selection.md`.
 
 ## Licence (AGPL-3.0)
 
-YOLOE's code and weights are AGPL-3.0:
-
-- Ultralytics (`ultralytics` 8.4, `yoloe-11*-seg.pt`)
-- THU-MIG (`THU-MIG/yoloe`)
-
-The TensorRT engines are derived from those weights. ovdet itself contains no Ultralytics code.
-
-The competition submission (Docker image given to the organizers) therefore ships AGPL-covered weights. On 2026-09-30 the user decided that **the submission's source is published under AGPL-3.0**. `docs/제출지침.md` lists this as a submission checklist item: a source link and the LICENSE go into the README.
-
-## Status (2026-09-30) and what is left
-
-Done:
-
-- The library and its C API, output in the `sm_detections` format.
-- The Linux build.
-- The FastSAM + CLIP path, compared and retired.
-- The detector comparison, including a confidence sweep. The recommendation is YOLOE-11m, the 272-name engine, `conf_th` 0.10. Details are in `docs/ovdet_검출기.md`.
-- The AGPL notes.
-
-Left:
-
-1. **The ep0 radio is never found** with the task prompt "radio receiver". This holds even at conf 0.05. With the whole 272-name vocabulary it is found but named "satchel". Next step: add synonyms such as "radio" to the vocabulary, re-export, and re-run the comparison.
-2. `tools/ref_check.py` (archived: `archive/src/scene_graph/ovdet/tools/ref_check.py`) compares ovdet with Ultralytics' own FP32 prediction. It is written but has not been run.
-3. Coffee tables are often named "floor" or "rug". Check whether the cause is the GT labels (floor points inside the table's GT box).
-4. Whether to make the recommended setting the default of `ovd_default_config` is not decided yet. It depends on scenemap's object-map scores.
+ObjectSAM is trained with Ultralytics YOLO26 and its weights are AGPL-3.0 (https://github.com/juyoung020/ObjectSAM). The TensorRT engines are derived from those weights. ovdet itself contains no Ultralytics code.

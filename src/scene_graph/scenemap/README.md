@@ -54,7 +54,7 @@
 CUDA 없음. C++20, zlib 필요. sgrt 를 빌드하면 `../runtime/CMakeLists.txt` 가 이 폴더를 `add_subdirectory` 로 같이 빌드한다(그쪽은 CUDA 12.8).
 
 ```bash
-cmake -S src/scene_graph/scenemap -B ~/scenemap_build && cmake --build ~/scenemap_build -j && ctest --test-dir ~/scenemap_build
+cmake -S src/scene_graph/scenemap -B build/scenemap && cmake --build build/scenemap -j && ctest --test-dir build/scenemap
 ```
 
 - Spark-DSG: 우리 사본 `../spark_dsg` 가 있으면 그것을, 없으면 `~/.local` 설치본을 찾는다. 있으면 `SM_HAVE_SPARK_DSG` 를 켠다.
@@ -277,7 +277,7 @@ swapped 는 여전히 0: 같은 이름 쌍(의자 ↔ 의자, 스탠드 둘 ↔ 
   - FastSAM-s-416-obj 0.5/0.7(128 / 124 노드, 찾음 28 / 27, OL 120 · 135)보다 노드는 적고, 찾음은 1 낮거나 같다.
   - **10-05: decided ObjectSAM — 기본 엔진 = ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 + objprob(매개변수 = 이 파일).** 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞음 — 기기 위 시간은 아직 안 잼. `realbag_run`(`--engine` 없이, objprob 기본 켬)·
     libsgrt(`SGRT_ENGINE` 기본, 분할 엔진이면 objprob 자동 — runtime README "objprob 앞단")·LIMO/explore 시작 스크립트 모두. 원래 FastSAM-s(`FastSAM-s-416.plan`)와
-    버린 FastSAM-s 재학습(보관 `~/ovdet_models/archive/x86_sm120/FastSAM-s-416-obj.plan`)은 `--engine`·`SGRT_ENGINE` 으로 고를 수 있고 각자 매개변수 파일이 자동으로 실린다.
+    버린 FastSAM-s 재학습(보관 `models/ovdet/archive/x86_sm120/FastSAM-s-416-obj.plan`)은 `--engine`·`SGRT_ENGINE` 으로 고를 수 있고 각자 매개변수 파일이 자동으로 실린다.
     위 "기본 엔진은 그대로"(FastSAM-s-416-obj 표)는 그때 판단이다.
 - scenemap 확률 모드 CPU: gt 판 731 keyframe 18.2 s vs 옛 규칙 11.9 s(keyframe 당 약 +8.6 ms, 통째 다시 담기 GPU 포함).
 
@@ -357,7 +357,7 @@ sm_ctx* c = sm_create("{\"robot\": \"limo_omx\"}");   // 또는 sm_create(NULL) 
 
 ```bash
 $ROBOT_AGENT/src/robot/tools/build_urdf.sh /tmp/map_vla.urdf   # 저장소 xacro → URDF(ra_ws 없음)
-~/scenemap_build/gen_limo_fk_table /tmp/map_vla.urdf src/scene_graph/scenemap/include/scenemap/limo_omx_fk_table.hpp
+build/scenemap/gen_limo_fk_table /tmp/map_vla.urdf src/scene_graph/scenemap/include/scenemap/limo_omx_fk_table.hpp
 python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py /tmp/map_vla.urdf   # 시험 기준값(numpy 필요, URDF 가 바뀌면 같이)
 ```
 

@@ -1,5 +1,5 @@
 // 영상 경로 검증·측정(G5 영상 학생): 렌더 그래프 잡기(작업 1), 얼린 SigLIP 2 인코더(작업 2), 속도·품질.
-//   vit_verify render-graph [E]       : 팀 RenderBatch 를 그래프로 — (a) 작업 공간 없이 바로 잡기(실패해야 함, 자식 과정에서)
+//   vit_verify render-graph [E]       : RenderBatch 를 그래프로 — (a) 작업 공간 없이 바로 잡기(실패해야 함, 자식 과정에서)
 //                                       (b) 한 번 그린 뒤 잡기: 그래프 == 즉시 실행 비트, 두 설정 시간(즉시 / 그래프)
 //   vit_verify dump DIR [n]           : A2 판 n 개(싼 설정)를 그려 DIR/imgs.u8 (n×2 장 [256][256][3]) + 몇 장 PPM — Python 기준값 입력
 //   vit_verify enc DIR [--negative]   : GPU 토큰 대 (1) PyTorch FP32 기준값(DIR/ref_tok.f32, tools/siglip_ref.py) 코사인, (2) CPU FP64·EMUL 참조판

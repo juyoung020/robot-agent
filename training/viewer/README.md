@@ -10,7 +10,7 @@
 
 ```bash
 cd training/viewer && cargo build --release -j 4
-target/release/trainview --root ~/trainview_work/smoke_v2 --root ~/trainview_work/behavior_og --root ~/trainview_work/behavior --root ~/trainview_work/imported --root ~/trainview_work/fake --port 8095
+target/release/trainview --root data/trainview_work/smoke_v2 --root data/trainview_work/behavior_og --root data/trainview_work/behavior --root data/trainview_work/imported --root data/trainview_work/fake --port 8095
 ```
 - `--root` 여러 개. 뿌리 밑 깊이 4 까지에서 `run.json` 또는 `progress.jsonl` 이 있는 폴더가 실행(이름 = `<뿌리 이름>/<상대 경로>`). 기본 bind 127.0.0.1(원격은 SSH 터널 또는 `--bind 0.0.0.0`).
 - `--archive-before <커밋>`: 이 커밋의 자손이 아닌 git 커밋으로 돈 실행은 보관함(기본 = "관측·신경망 v2" 커밋을 git log 로 찾음).
@@ -58,10 +58,10 @@ target/release/trainview --root ~/trainview_work/smoke_v2 --root ~/trainview_wor
 | 판 | 만드는 것 | 내용 |
 |---|---|---|
 | GPU 환경 판(RL 교사·BC 학생) | `tools/record_replay` 의 `record_ppo` / `record_bc` (C++/CUDA). **학습 중 체크포인트마다 자동**(아래) 또는 손으로 | 체크포인트를 돌려 판 K 개. 판이 끝나면 그 입력으로 **진짜 scenemap**(limo_omx C ABI)을 처음부터 돌림: 스텝마다 proprio 12, 정책 지도 keyframe 마다 깊이 640×400 + id 버퍼(정책 지도와 같은 장면 상자를 같은 카메라에서 CPU 광선 추적 — `training/RL/map_cmp` 와 같은 방법) + 면 음영 RGB, 완벽한 검출 → scenemap 의 sgview 스트림·메모리(점구름 PLY)를 `<판>.sg/` 에, 정책이 본 지도는 `<판>.sg/episode.trp`. (팀 RenderBatch 는 RGB·깊이만 내고 id 버퍼가 없어 마스크를 못 만든다) |
-| OmniGibson LIMO 탐사 | `tools/og2sg` (C++) | sgrt 기록 `rec.bin` → scenemap 재실행 → 스트림·메모리·몸통 카메라 JPEG·GT 궤적. `tools/run_explore_live.sh` 를 `TRAINVIEW_OG=1` 로 돌리면 판 끝에 자동(→ `~/trainview_work/behavior_og/<판>`) |
+| OmniGibson LIMO 탐사 | `tools/og2sg` (C++) | sgrt 기록 `rec.bin` → scenemap 재실행 → 스트림·메모리·몸통 카메라 JPEG·GT 궤적. `tools/run_explore_live.sh` 를 `TRAINVIEW_OG=1` 로 돌리면 판 끝에 자동(→ `data/trainview_work/behavior_og/<판>`) |
 | BEHAVIOR 집 배치 | `og2sg --layout --rasc <장면>.rasc` | 다닐 곳 격자(집만)·방 노드·과제 첫 인스턴스 시작 자세·바탕 층(RASC v3) |
 
-- 재생 서버(`src/sg.rs`): 세션(쿠키 `sgsess`)마다 `sgview <memory> --ingest` 한 개 + `sgs_play --ctl`(보내는 쪽, behavior-2026 `tools/realbag`) 한 개를 띄우고, 시간 조종(seek·재생·속도)은 sgs_play 표준입력으로(seek = 새 ingest 연결 → sgview 가 reset + 기록 앞부분을 다시 받음). 동시 2 세션, 90 s 안 쓰면 끔, 서버 시작 때 남은 프로세스는 `~/trainview_work/run/sgview_pids` 로 정리. `.trp` 만 있는 GPU 환경 판은 같은 스트림 형식(SGS1)으로 바꿔 같은 길로 재생(점구름 없는 물체는 상자).
+- 재생 서버(`src/sg.rs`): 세션(쿠키 `sgsess`)마다 `sgview <memory> --ingest` 한 개 + `sgs_play --ctl`(보내는 쪽, `src/scene_graph/tools/realbag`) 한 개를 띄우고, 시간 조종(seek·재생·속도)은 sgs_play 표준입력으로(seek = 새 ingest 연결 → sgview 가 reset + 기록 앞부분을 다시 받음). 동시 2 세션, 90 s 안 쓰면 끔, 서버 시작 때 남은 프로세스는 `data/trainview_work/run/sgview_pids` 로 정리. `.trp` 만 있는 GPU 환경 판은 같은 스트림 형식(SGS1)으로 바꿔 같은 길로 재생(점구름 없는 물체는 상자).
 - 짝(과제 → 장면): turning_on_radio = house_double_floor_lower, bringing_water = house_single_floor.
 
 ## BEHAVIOR 집기·놓기 판 (2026-10-05)
@@ -70,9 +70,9 @@ target/release/trainview --root ~/trainview_work/smoke_v2 --root ~/trainview_wor
 |---|---|---|
 | `.trp` 판(record_bc, stage 3) | GPU 환경. 장면 머리 = 벽·문·창·가구(RASC 종류 이름)·집을 물체·놓을 곳 + `world`(장면·창 가운데·과제·인스턴스) + `pnp`(잡기 모형 0.06 m·질량 대 가반 하중·면 높이 대 팔 닿는 띠·잡기 가능 표·서는 자리 후보) + `picks`. 스텝마다 `inputs` 섹션(지도 토큰·관측 80·X0 일부·학생 μ·대본 교사 라벨·낸 행동·특권 상태, `beh_rec.h`) | 목록 "GT / policy map" — **우리 인지 아님** |
 | `<판>_og.sg` | `tools/og_replay`: 같은 궤적·시작 자세·집을 물체를 OmniGibson 에서 다시 돌림 → LIMO eyes 640×480 RGB-D → libsgrt(ObjectSAM yolo26n-seg-obj-416 + SigLIP 2 + scenemap objprob). `episode.trp` = 정책 기록(창 → 세계로 옮긴 지도) | 목록 "REAL pipeline", 정책 지도(주황) 겹침 기본 켬 |
-| 집 메시 | `tools/scene_mesh/export_mesh.py`(fastsam `scene_mesh.npz` → 줄인 `~/trainview_work/scene_mesh/<장면>.smsh`, `/api/scene_mesh`) | "house mesh" (GT) |
+| 집 메시 | `tools/scene_mesh/export_mesh.py`(fastsam `scene_mesh.npz` → 줄인 `data/trainview_work/scene_mesh/<장면>.smsh`, `/api/scene_mesh`) | "house mesh" (GT) |
 
-- 자동: record_bc 가 체크포인트마다 학생·교사 앞 판 `--og-per`(기본 2)개를 `~/trainview_work/og_queue` 에 넣고 일꾼 `og_queue.sh` 를 띄움(하나만, nice 19, og.lock, 램·디스크·GPU 여유 검사, GPU 빈 메모리 < 600 MB 면 OG 쪽을 끄고 줄 뒤로).
+- 자동: record_bc 가 체크포인트마다 학생·교사 앞 판 `--og-per`(기본 2)개를 `data/trainview_work/og_queue` 에 넣고 일꾼 `og_queue.sh` 를 띄움(하나만, nice 19, og.lock, 램·디스크·GPU 여유 검사, GPU 빈 메모리 < 600 MB 면 OG 쪽을 끄고 줄 뒤로).
 - 손으로: `tools/og_replay/og_replay.sh <판.trp>`.
 - 재생 탭: 오른쪽 Inputs 패널(재생 시각에 맞춤, 과제 조건은 특권으로 따로), 덧그림 토글 house mesh · env boxes · stances & reach · graspable tint. 반복 재생·같은 실행의 다른 판에서 사람이 맞춘 시점 유지.
 
@@ -80,15 +80,15 @@ target/release/trainview --root ~/trainview_work/smoke_v2 --root ~/trainview_wor
 
 `trainfmt::replay_hook` — `ppo_run`·`bc_run` 의 실행 폴더 쓰개(`runfolder.rs`)가 체크포인트를 쓴 뒤(PPO `ckpt_*.bin`, BC 평가 직전의 `student_*.bin`) 부른다. 학습기 C++/CUDA 는 그대로.
 - `setpriv --pdeathsig KILL -- nice -n 19 record_{ppo,bc} --tag it<이터> --episodes K --keep-fail F --n-env N --split eval` 뒷 프로세스. 하나씩만 — 앞 것이 돌면 이번 것은 건너뜀(run.json `replays.skipped_busy`). 학습기가 죽으면 같이 죽음. 끝 체크포인트는 학습이 끝난 뒤 기록(최대 120 s 기다림).
-- 설정 `"replays": false` 면 끔, `{"episodes": 4, "failures": 2, "n_env": 64, "every": 1, "recorder": 경로}`. 도구 경로: 설정 → `TRAINVIEW_RECORD_PPO`/`TRAINVIEW_RECORD_BC` → `~/ra_recbuild/record_{ppo,bc}`(없으면 끔). 도구는 학습기와 **같은 소스 나무**로 빌드(신경망·관측 배치가 같아야 체크포인트가 읽힘).
+- 설정 `"replays": false` 면 끔, `{"episodes": 4, "failures": 2, "n_env": 64, "every": 1, "recorder": 경로}`. 도구 경로: 설정 → `TRAINVIEW_RECORD_PPO`/`TRAINVIEW_RECORD_BC` → `build/record_replay/record_{ppo,bc}`(없으면 끔). 도구는 학습기와 **같은 소스 나무**로 빌드(신경망·관측 배치가 같아야 체크포인트가 읽힘).
 - 결과: `s_eval/replays/ep_<n>_<체크포인트>_<스킬>_<결과>.sg`, 판 줄 `s_eval/episodes_eval.jsonl`(`ckpt`, `ckpt_iter`), 도구 출력 `s_eval/record.log`.
 
 ```bash
-cmake -S training/viewer/tools/record_replay -B ~/ra_recbuild [-DTRAIN_SRC=<학습기 소스 training/>] && cmake --build ~/ra_recbuild -j 4
-~/ra_recbuild/record_ppo --ckpt <ckpt> --out <실행 폴더> [--episodes 8] [--keep-fail 2] [--map 0.2 0.6] [--stage 2] [--tag it000200] [--no-sg]
-~/ra_recbuild/record_bc  --student <student.bin> --out <실행 폴더> [--no-images]
-cmake -S training/viewer/tools/og2sg -B ~/ra_og2sg && cmake --build ~/ra_og2sg -j 4
-~/ra_og2sg/og2sg --rec <rec.bin> --run <OG 실행 폴더> --run-out ~/trainview_work/behavior_og/<이름> --rasc ~/ra_b1k/<장면>.rasc
+tools/build_all.sh record_replay   # → build/record_replay
+build/record_replay/record_ppo --ckpt <ckpt> --out <실행 폴더> [--episodes 8] [--keep-fail 2] [--map 0.2 0.6] [--stage 2] [--tag it000200] [--no-sg]
+build/record_replay/record_bc  --student <student.bin> --out <실행 폴더> [--no-images]
+tools/build_all.sh og2sg   # → build/og2sg
+build/og2sg/og2sg --rec <rec.bin> --run <OG 실행 폴더> --run-out data/trainview_work/behavior_og/<이름> --rasc $RA_B1K_SCENES/<장면>.rasc
 ```
 - 옛 체크포인트(v2 이전)는 그때 소스로: `git archive <커밋> training/RL training/BC | tar -x -C DIR` → `-DTRAIN_SRC=DIR/training`(A2 교사·G5 학생은 343492d).
 
@@ -173,7 +173,7 @@ cmake -S training/viewer/tools/og2sg -B ~/ra_og2sg && cmake --build ~/ra_og2sg -
 - `scene_b1k`(BEHAVIOR 장면 → 한 프레임 `.trp`): `og2sg --layout` 으로 대체.
 - 실행 무리 `labs`(옛 kind "lab"): `test data (synthetic)` 로 합침(읽기는 그대로).
 - 화면: 예전 3D 그리기를 기본에서 뺌(`?debug=1` 에서만), sgview 화면에서 3D 전용 조작(시점·손끝·SLAM 궤적 켜고 끔) 숨김, 섞인 한국어 화면 글자 정리(설명은 풍선으로).
-- 일회용 시험 실행: `~/trainview_work/smoke`(ppo_smoke_s1·bc_smoke_s1, v2 이전), `smoke_v2/live_a·live_b·live_c`(상태 불 시험), `smoke_v2/ppo_rep_off_s1`(처리량 비교 기준 — 값은 위 표).
+- 일회용 시험 실행: `data/trainview_work/smoke`(ppo_smoke_s1·bc_smoke_s1, v2 이전), `smoke_v2/live_a·live_b·live_c`(상태 불 시험), `smoke_v2/ppo_rep_off_s1`(처리량 비교 기준 — 값은 위 표).
 
 ## 남은 일
 
@@ -187,7 +187,7 @@ cmake -S training/viewer/tools/og2sg -B ~/ra_og2sg && cmake --build ~/ra_og2sg -
 
 인지(scenemap·objprob·ObjectSAM·SigLIP 2·libsgrt)와 sgview 는 **robot-agent `src/scene_graph` 가 원본**이고, 학습 뷰어·OG 다시 돌리기는 그걸 그대로 쓴다 — 복사·갈래·옛 빌드 없음.
 
-- 진입점: **`training/viewer/build_deps.sh`** — libsgrt·sgview·sgs_play·og2sg·trainview 를 robot-agent 소스에서 `-j4` 로 빌드해 `$TRAINVIEW_DEPS`(기본 `~/trainview_work/deps`)에 링크한다. `og_replay.py`/`og_replay.sh`/trainview 는 거기서만 찾는다(개인 빌드 경로 박지 않음). 엔진·objprob 기본값은 `runtime`(`objprob_front.hpp` kDefaultEngine · `sgrt_glue.py` ENGINE)에서 읽고 여기서 정하지 않는다.
+- 진입점: **`training/viewer/build_deps.sh`** — libsgrt·sgview·sgs_play·og2sg·trainview 를 robot-agent 소스에서 `-j4` 로 빌드해 `$TRAINVIEW_DEPS`(기본 `data/trainview_work/deps`)에 링크한다. `og_replay.py`/`og_replay.sh`/trainview 는 거기서만 찾는다(개인 빌드 경로 박지 않음). 엔진·objprob 기본값은 `runtime`(`objprob_front.hpp` kDefaultEngine · `sgrt_glue.py` ENGINE)에서 읽고 여기서 정하지 않는다.
 - 소스를 고친 뒤: `src/scene_graph` 를 고침 → `build_deps.sh` → trainview 다시 띄움. 그 뒤 재생 화면은 새 sgview 로, 새로 도는 OG 판은 새 인지로 나온다.
 - 각 `_og.sg/meta.json` 의 `pipeline` 에 만든 소스(git 해시, scenemap·runtime·ovdet·clip·da 트리 해시), 엔진, objprob 매개변수 파일·해시, libsgrt 시각을 적는다. 재생 화면 HUD 에 표시하고, 지금 소스와 트리 해시가 다르거나 기록이 없으면 **"stale pipeline — re-run"** 단추: 눌러 og_queue 맨 앞에 다시 넣는다(옛 판은 `*.sg.prev` 로 비켜 둠).
 - 손목 카메라: `og_replay.py` 가 LIMO RGB(`cam/NNNNNN.jpg`, `meta.cams`)와 OMX-F 손목 RGB(`cam/wNNNNNN.jpg`, `meta.wcams`, 로봇 모델의 `wrist_eye` 센서 = URDF `wrist_cam_link`, 화각은 모델 기본값)를 2 Hz 로 함께 기록한다. Replay 에서 `LIMO RGB`·`wrist RGB` 그림 위 그림(켜고 끔, 모서리 끌어 크기 조절).

@@ -2,7 +2,7 @@
 
 평가기(또는 로봇) 프로세스 안에서 물체 기억을 실시간으로 굴린다. 공유 라이브러리 하나에 세 가지를 묶는다.
 
-- 검출: ovdet(TensorRT). 기본은 이름 없는 분할 엔진 ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만, `yolo26n-seg-obj-416.plan`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 이름·임베딩 + scenemap 확률 모드(아래 "objprob 앞단"). 보관한 YOLOE·닫힌 어휘 YOLO-seg 도 고를 수 있다(옛 이름 규칙). 머리 RGB 를 장치 메모리에서 바로 읽는다.
+- 검출: ovdet(TensorRT). 기본은 이름 없는 분할 엔진 ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만, `yolo26n-seg-obj-416.plan`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 이름·임베딩 + scenemap 확률 모드(아래 "objprob 앞단"). 머리 RGB 를 장치 메모리에서 바로 읽는다.
 - 위치: Cartographer 2D(`../slam_carto`, 기본 — 2D 라이다 스캔 `sgrt_push_scan` + proprio 바퀴 오도메트리).
 - 지도·물체 기억: scenemap(그 자세로 격자 mapper2d·objmap·방·장면 그래프·저장). 깊이는 호스트 f32 미터.
 - (선택) 물체 영상 임베딩: sgclip(SigLIP 2, `../clip`). `SGRT_CLIP` 이면 켜짐.
@@ -37,13 +37,13 @@ keyframe 인지는 `sgrt_want_image()` 가 알려 준다(`kf_every` 스텝마다
 CUDA 12.8(`/usr/local/cuda-12.8`, `OVDET_CUDA_ROOT`), sm_120(`CMAKE_CUDA_ARCHITECTURES`). `../scenemap`·`../ovdet`·`../clip` 을 `add_subdirectory` 로 같이 빌드한다.
 
 ```bash
-cmake -S src/scene_graph/runtime -B ~/sgrt_build && cmake --build ~/sgrt_build -j
-ctest --test-dir ~/sgrt_build -R crop             # 장치 자르기 시험
-~/sgrt_build/sgrt_frames <engine.plan> <out_dir> <w> <h> <frames.rgb ...>   # <engine.plan>.names.txt 가 옆에 있어야 함
-SGRT_SAVE_SYNC=1 ~/sgrt_build/sgrt_replay ~/sgrt_build/libsgrt.so <engine.plan> rec.bin <out_dir> [--traj t.csv] [--frames N]
+cmake -S src/scene_graph/runtime -B build/sgrt && cmake --build build/sgrt -j
+ctest --test-dir build/sgrt -R crop             # 장치 자르기 시험
+build/sgrt/sgrt_frames <engine.plan> <out_dir> <w> <h> <frames.rgb ...>   # <engine.plan>.names.txt 가 옆에 있어야 함
+SGRT_SAVE_SYNC=1 build/sgrt/sgrt_replay build/sgrt/libsgrt.so <engine.plan> rec.bin <out_dir> [--traj t.csv] [--frames N]
 ```
 
-글루는 `~/sgrt_build/libsgrt.so` 를 기본으로 읽는다(`SGRT_LIB`).
+글루는 `build/sgrt/libsgrt.so` 를 기본으로 읽는다(`SGRT_LIB`).
 
 ```python
 from sgrt_glue import SceneMemory
@@ -124,15 +124,15 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 | `SGRT_STREAM_HZ` | `60` | 요약(view) 만드는 주기 Hz, 0.5–240 으로 자름 |
 | `SGRT_RECORD` | 없음(끔) | 파일 경로. 받은 입력(proprio·외부 자세·라이다 스캔 'L'·keyframe 깊이·RGB·검출)을 이진(`SGRC` 판 1)으로 기록. `tools/sgrt_replay`(Cartographer 포함)·`scenemap/tools/sm_bench` 가 재생 |
 | `SGRT_PROMPT` | `auto` | 프롬프트 표. `task`(과제 이름만) · `all`(엔진 어휘 전부) · `auto`(어휘 200 이하 닫힌 어휘 엔진이면 `all`, 아니면 `task`). 프롬프트가 비면 늘 `all` |
-| `SGRT_CLIP` | 없음(끔) | SigLIP 2 엔진 plan 경로. `1` = `~/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan`, `0`·빈 값 = 끔 |
+| `SGRT_CLIP` | 없음(끔) | SigLIP 2 엔진 plan 경로. `1` = `models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan`, `0`·빈 값 = 끔 |
 | `SGRT_CLIP_GRAPH` | sgclip 기본(1) | 배치 크기별 CUDA graph 쓰기(`sgc_config.use_graph`) |
-| `SGRT_LABELS` | `~/embed_work/labels/objects-v1` | 라벨 표 폴더(이름 찾기). 색인 캐시는 `<out_dir>/cache/index` |
-| `SGC_IMG_SAMPLE` | `~/ovdet_models/x86_sm120/siglip2_b32/img_sample_lvis10k.f16`(있으면) | 라벨 표 투영을 맞출 영상 임베딩 표본(sgclip 변수, sgrt_clip 이 읽어 넘김) |
-| `SGRT_LIB` | `~/sgrt_build/libsgrt.so` | 글루: 읽을 라이브러리 |
-| `SGRT_ENGINE` | `~/ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan` (ObjectSAM — YOLO26n 학생, 이름 없는 분할) | 글루: 검출 엔진. 이름 표는 `<엔진>.names.txt`. 원래 FastSAM-s = `FastSAM-s-416.plan`, 버린 FastSAM-s 재학습 = `~/ovdet_models/archive/x86_sm120/FastSAM-s-416-obj.plan`(보관), YOLOE·YOLO26s = `~/ovdet_models/archive/x86_sm120/`(옛 이름 규칙) |
+| `SGRT_LABELS` | `data/embed_work/labels/objects-v1` | 라벨 표 폴더(이름 찾기). 색인 캐시는 `<out_dir>/cache/index` |
+| `SGC_IMG_SAMPLE` | `models/ovdet/x86_sm120/siglip2_b32/img_sample_lvis10k.f16`(있으면) | 라벨 표 투영을 맞출 영상 임베딩 표본(sgclip 변수, sgrt_clip 이 읽어 넘김) |
+| `SGRT_LIB` | `build/sgrt/libsgrt.so` | 글루: 읽을 라이브러리 |
+| `SGRT_ENGINE` | `models/ovdet/x86_sm120/yolo26n-seg-obj-416.plan` (ObjectSAM — YOLO26n 학생, 이름 없는 분할) | 글루: 검출 엔진. 이름 표는 `<엔진>.names.txt`. 선생 FastSAM-s = `FastSAM-s-416.plan` |
 | `SGRT_OBJPROB` | 없음(자동) | objprob 앞단(아래 "objprob 앞단"). `1` 켬 · `0` 끔 · 없음 = 엔진 어휘가 `object` 하나(분할 엔진)면 켬 |
 | `SGRT_OBJPROB_PARAMS` | `tools/realbag/objprob_params/<엔진 줄기>.json` | objprob 엔진별 매개변수 파일, `none` = 내장 기본값 |
-| `SGRT_OBJPROB_CLIP` | `~/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan` | objprob 마스크 임베딩 SigLIP 2 엔진 |
+| `SGRT_OBJPROB_CLIP` | `models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan` | objprob 마스크 임베딩 SigLIP 2 엔진 |
 | `SGRT_INSPECT` | `0` | `1` = 살펴본 정도(scenemap README "살펴본 정도", view.json·scene.json 물체 `inspect`) |
 | `SGRT_GT_POSE` | `1` | 글루: 시뮬 로봇 베이스 정답 자세를 `sgrt_push_pose` 로 넣기(`0` = 끔). gt 모드면 map 자세, 아니면 떠밀림 진단에만 쓰임 |
 | `SGRT_GT_EVERY` | `0` | 글루: `1` 이면 정답 자세를 매 스텝 읽음. 아니면 영상 시각·keyframe·지도 스텝에 필요한 스텝만 |
@@ -151,7 +151,7 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 
 판 시작(`sgrt_begin`)의 과제 이름은 엔진 프롬프트가 아니라 낱말 표에 더한다(이미 있는 낱말·라벨은 빼고, SigLIP 2 라벨 표에 있는 것만). 켜면 `SGRT_CLIP`(ClipMem)은 안 켠다 — 물체 벡터 `objects/O<id>_emb.f16`(μ)·`_views.f16` 은 scenemap 이 저장하고 `sgsearch`·`search_objects` 가 읽는다. 끝날 때 stderr 에 keyframe 당 SigLIP 2·다시 담기 시간.
 
-확인: radio r3 기록(`~/datasets/limo_rec/r3.bin`)을 `sgrt_replay` 로 — 730 keyframe, 마스크 17.8 개/kf, SigLIP 2 3.7 ms/kf, 다시 담기 0.33 ms/kf, 살아 있는 노드 104(같은 기록을 realbag 스트림으로 바꾼 `realbag_run` 판 96 — 깊이 4 m 자름·영상 늦춤이 다름).
+확인: radio r3 기록(`data/datasets/limo_rec/r3.bin`)을 `sgrt_replay` 로 — 730 keyframe, 마스크 17.8 개/kf, SigLIP 2 3.7 ms/kf, 다시 담기 0.33 ms/kf, 살아 있는 노드 104(같은 기록을 realbag 스트림으로 바꾼 `realbag_run` 판 96 — 깊이 4 m 자름·영상 늦춤이 다름).
 
 ## 시험 (ctest)
 
