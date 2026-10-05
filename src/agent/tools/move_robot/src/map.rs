@@ -1,6 +1,6 @@
 //! 2D 지도 위 탐색 관측·경로 계획 — `move_robot` 이 LLM 에게 돌려주는 지도 요약과, 베이스 안전 정지·`go_to` 경로가 쓰는 것.
 //!
-//! 입력은 scenemap(slam2d) 2D 점유 격자(−1 모름, 0..100 점유 %)와 map 기준 자세, 방 격자(있으면), 마지막 keyframe 의
+//! 입력은 scenemap(mapper2d, 자세는 Cartographer) 2D 점유 격자(−1 모름, 0..100 점유 %)와 map 기준 자세, 방 격자(있으면), 마지막 keyframe 의
 //! 가상 스캔(머리 깊이 → 베이스 기준 장애물 점·빈 광선 끝). 평가기 안에서는 `libsgrt.so` 의 `sgrt_map` 이 주고
 //! (ctypes 가 포인터만 넘김, [`crate::ffi::mr_set_map`]), 가짜 로봇에서는 [`crate::link::MockWorld`] 가 만든다.
 //!

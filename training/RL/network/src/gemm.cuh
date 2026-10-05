@@ -1,4 +1,4 @@
-// 손 GEMM: bf16 입력, FP32 누산 (`mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32`, 팀 pi05_native/gemm.cuh 와 같은 명령).
+// 손 GEMM: bf16 입력, FP32 누산 (`mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32`).
 //
 //   C[M,N] = Σ_k A(m,k) · B(n,k)
 //     AT = false: A(m,k) = A[m*lda + k]   (K 연속: 앞 계산의 X, dX 의 dZ)
