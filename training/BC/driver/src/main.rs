@@ -90,7 +90,6 @@ struct BcConfig {
     b_eval_instr: i32,
     b_p_point: f32,
     b_p_goto: f32,
-    topview: i32,
     goal_drop: f32,
     // 잡기 물리(E6): B4·B5·B6 비율, 실패 판, 대본 교사 라벨
     b_p4: f32,
@@ -334,7 +333,6 @@ fn main() {
         b_eval_instr: gi(v.get("beh").unwrap_or(&Value::Null), "eval_instr", 0) as i32,
         b_p_point: gf(v.get("beh").unwrap_or(&Value::Null), "p_point", 0.0) as f32,   // 목표 점 섞음(VLA_INPUT 2.1)
         b_p_goto: gf(v.get("beh").unwrap_or(&Value::Null), "p_goto", 0.0) as f32,
-        topview: gi(&v, "topview", 1) as i32,   // 셋째 그림 = 위에서 본 지도(시험용 깃발, 영상 학생만)
         goal_drop: gf(&v, "goal_drop", 0.5) as f32,   // (가정) 학생 목표 표시 감추기 확률 — README "지시문·목표 표시 감추기"
         b_p4: v.get("beh").and_then(|b| b.get("pnp")).and_then(|m| m.get(0)).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
         b_p5: v.get("beh").and_then(|b| b.get("pnp")).and_then(|m| m.get(1)).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,

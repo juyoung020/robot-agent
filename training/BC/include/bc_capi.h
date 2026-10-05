@@ -65,8 +65,6 @@ typedef struct BcConfig {
   float b_yaw_jit;
   int32_t b_strict, b_nofilter, b_eval_instr;   /* 엄격 거르개, (음성 대조), 지시문 heldout */
   float b_p_point, b_p_goto;   /* 목표 점 섞음(PpoBCurr p_point·p_goto 와 같은 뜻, 0 = 끔) */
-  int32_t topview;      /* 1 = 영상 학생의 셋째 그림 = 위에서 본 지도(map topview.h, 표본마다 그림 상태 TopState 4,448 B 를 더 기록). 0 = 빈 그림(상수).
-                           시험용 깃발: 얼린 SigLIP 2 가 합성 지도 그림을 잘 못 볼 수 있음(VLA_INPUT 1.1) */
   float goal_drop;      /* 학생만: 판·스텝마다 이 확률로 목표 표시(칸 T_TARGET)·목표 특권 값·경유 지점을 감춤 — 지시문으로 목표 물체를 찾게(obs.h ObsAug::p_goal_drop).
                            장치 값(bc_set_goal_drop). 실행기 기본 0.5 (가정), 0 = 끔. 교사 라벨 입력은 늘 표시 있음 */
   /* ---- 잡기 물리(E6, 2026-10-05): B4 집기·B5 놓기·B6 가져오기 판 비율(B3 몫에서), 실패 판, 대본 교사 라벨 ---- */

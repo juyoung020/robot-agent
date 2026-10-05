@@ -55,7 +55,6 @@ static BcConfig small_cfg(uint64_t seed, int graphs) {
   c.map_p0 = 0.2f; c.map_p1 = 0.6f; c.map_kmin = 1; c.map_kmax = 8; c.map_reveal_r = 1.5f;
   if (!g_lite) {
     c.vision = 1; c.head = 1; c.chunk = 16; c.flow_steps = 4; c.text = 1; c.render_profile = 1; c.render_batch = 256; c.img_dim = IMG_D;
-    c.topview = std::getenv("BC_NO_TOPVIEW") ? 0 : 1;   // 셋째 그림 = 위에서 본 지도(기본 켬, BC_NO_TOPVIEW=1 이면 빈 그림)
     c.n_env = 256; c.mb = 256; c.cap = 256 * 16 * 3; c.upd_steps = 2;
   }
   if (g_act8) c.act_mask = 0xffu;
@@ -350,7 +349,7 @@ static int run_v5(int bug) {
       if (s0 + N > b.cap) { std::printf("  (render-state slots wrap; skipped)\n"); }
       else {
         const auto tok_roll = dl(b.sb.tok, (size_t)N * IMG_TOK * vit::TOK_LD);
-        b.vis_encode(b.d_rs + s0, N, b.d_top ? b.d_top + s0 : b.top_roll, b.hide_roll);   // 셋째 그림: 기록한 그림 상태 + 롤아웃과 같은 감추기
+        b.vis_encode(b.d_rs + s0, N);
         VCK(cudaDeviceSynchronize());
         const auto tok_re = dl(b.sb.tok, (size_t)N * IMG_TOK * vit::TOK_LD);
         long long d = 0;
@@ -358,14 +357,6 @@ static int run_v5(int bug) {
         ++total; fails += d != 0;
         std::printf("  record == seen (images): re-render + re-encode of %d stored render states == rollout tokens: %lld of %zu words differ  %s\n", N, d, tok_re.size(),
                     d == 0 ? "ok" : "FAIL");
-        {   // 셋째 그림(위에서 본 지도) 내용: 마지막 렌더 묶음의 화소 종류 비율 — 깃발 끔이면 모두 회색 + 로봇 표시
-          const int nm = std::min(N, 256);
-          const auto px = dl(b.tvrgb, (size_t)nm * gmap::TV_PX * gmap::TV_PX * 3);
-          long cnt[gmap::TV_NCLASS] = {}, tot = 0;
-          for (size_t q = 0; q < px.size(); q += 3) { ++tot; for (int k = 0; k < gmap::TV_NCLASS; ++k) { uint8_t c[3]; gmap::tv_color(k, c); if (!std::memcmp(c, &px[q], 3)) { ++cnt[k]; break; } } }
-          std::printf("  third image (top-view, topview %d): unexplored %.3f free %.3f obstacle %.3f pick %.4f place %.4f robot %.4f\n", b.cfg.topview, (double)cnt[0] / tot,
-                      (double)cnt[1] / tot, (double)cnt[2] / tot, (double)cnt[3] / tot, (double)cnt[4] / tot, (double)(cnt[5] + cnt[6]) / tot);
-        }
       }
     }
   }
@@ -373,7 +364,7 @@ static int run_v5(int bug) {
   // (2) 학습 한 스텝
   const long long iter0 = dl(b.ts, 1)[0].iter;
   b.gather();
-  b.student_trunk(M, b.rs_mb, b.top_mb, b.hide_mb);
+  b.student_trunk(M, b.rs_mb);
   b.head_forward(M);
   b.loss(M);
   b.backward(M);
@@ -537,7 +528,7 @@ static int run_v5(int bug) {
     VCK(cudaMemcpy(b.ts, &s, sizeof s, cudaMemcpyHostToDevice));
     to_bf16(b.P, b.Pb, NP, 0);
     for (int k = 0; k < 10; ++k) {
-      b.student_trunk(M, b.rs_mb, b.top_mb, b.hide_mb);
+      b.student_trunk(M, b.rs_mb);
       b.head_forward(M);
       b.loss(M);
       b.backward(M);
@@ -737,11 +728,11 @@ static int run_bench(int N, int T, int mb, int K) {
       return ms / reps;
     };
     b.gather();
-    const float t_vis = ev([&] { b.vis_encode(b.rs_mb, mb, b.top_mb, b.hide_mb); }, 3);
+    const float t_vis = ev([&] { b.vis_encode(b.rs_mb, mb); }, 3);
     const float t_rnd = ev([&] { for (int e = 0; e < mb; e += bcr::batch(b.rnd)) bcr::render(b.rnd, b.rs_mb + e, std::min(bcr::batch(b.rnd), mb - e), 0); }, 3);
     std::printf("  per update step (mb %d): render %.2f ms, patchify+encoder %.2f ms, student fwd/bwd/Adam + gather %.2f ms (by subtraction)\n", mb, t_rnd, t_vis - t_rnd,
                 u / K - t_vis);
-    const float t_vr = ev([&] { b.vis_encode(b.rs_roll, N, b.top_roll, b.hide_roll); }, 2);
+    const float t_vr = ev([&] { b.vis_encode(b.rs_roll, N); }, 2);
     std::printf("  per rollout step (N %d): render+encode %.2f ms of %.2f ms\n", N, t_vr, r_st / T);
     if (getenv("BC_OVERLAP_PROBE")) {   // 렌더(CUDA 코어)와 인코더(텐서 코어)를 두 스트림에 같이 띄우면 얼마나 겹치나(값은 버림 — 시간만)
       cudaStream_t sa, sb2;

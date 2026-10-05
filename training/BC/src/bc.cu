@@ -184,7 +184,6 @@ struct ActP {
   const float *meanT, *meanS; const Mode* md; const Data* dd; const uint32_t* amask; int t, N; long long cap;
   const float* obs_col; const gmap::MapTok* tok; env::Soa s; const float* met_init; const int* cur_len; const uint32_t* ep_uid;
   float* act_env; float* dis; uint16_t* d_obs; gmap::MapTok* d_tok; float* d_lab; uint32_t* d_meta; uint32_t* d_epi; RenderState* d_rs;
-  const gmap::TopState* top; gmap::TopState* d_top;   // 위에서 본 지도 그림 상태(이번 스텝, 기록 자리) — 없으면 nullptr
 };
 __global__ void __launch_bounds__(256) act_rec_k(ActP p) {
   const int i = blockIdx.x * 8 + threadIdx.x / 32, l = threadIdx.x % 32;
@@ -210,11 +209,6 @@ __global__ void __launch_bounds__(256) act_rec_k(ActP p) {
   if (!rec) return;
   const long long slot = ring_slot(p.dd->cursor + (long long)p.t * p.N + i, p.cap, p.dd->keep);
   for (int c = l; c < env::N_OBS; c += 32) p.d_obs[slot * env::N_OBS + c] = obs_rec(p.obs_col[(size_t)c * p.N + i]);
-  if (p.d_top) {
-    const uint4* src = reinterpret_cast<const uint4*>(p.top + i);
-    uint4* dst = reinterpret_cast<uint4*>(p.d_top + slot);
-    for (int q = l; q < (int)(sizeof(gmap::TopState) / 16); q += 32) dst[q] = src[q];
-  }
   {
     const uint4* src = reinterpret_cast<const uint4*>(p.tok + i);
     uint4* dst = reinterpret_cast<uint4*>(p.d_tok + slot);
@@ -353,7 +347,6 @@ struct GatherP {
   int MB, use_map, student_goal, N, H; long long cap; uint64_t seed;
   uint16_t* x0; uint16_t* sin; uint32_t* mask; float* lab; float* chunk; float* fm; RenderState* rs; int* tid;
   obsv::VecTab vt; const obsv::ObsAug* aug; const TxtSel* tsel;
-  const gmap::TopState* d_top; gmap::TopState* top; uint8_t* hide;   // 위에서 본 지도(없으면 nullptr)
 };
 NDEV long long gather_index(uint64_t seed, long long iter, int r, long long cnt) {
   return cnt > 0 ? (long long)(hash4(seed, (uint64_t)iter, (uint64_t)r, 0x42434d42ull) % (uint64_t)cnt) : 0;
@@ -394,17 +387,6 @@ __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
     for (int q = lane; q < (int)(sizeof(RenderState) / 4); q += AS_L) dst[q] = src[q];
   }
   if (g.tid && lane == 0) g.tid[r] = text_row_tok(g.d_tok[idx], e0, *g.tsel, g.aug->eval_unseen);
-  if (g.top) {   // 그림 상태 + 감추기(assemble_student 와 같은 열쇠 — 그 행이 목표 칸을 감추면 그림의 물체 목표 색도)
-    const uint4* src = reinterpret_cast<const uint4*>(g.d_top + idx);
-    uint4* dst = reinterpret_cast<uint4*>(g.top + r);
-    for (int q = lane; q < (int)(sizeof(gmap::TopState) / 16); q += AS_L) dst[q] = src[q];
-    if (lane == 0) g.hide[r] = obsv::goal_drop(g.aug, (uint64_t)g.ts->iter | 0x8000000000000000ull, (uint64_t)r) ? 1 : 0;
-  }
-}
-// 롤아웃 학생 그림의 감추기(assemble_k 학생 열쇠와 같음)
-__global__ void hide_roll_k(const obsv::ObsAug* aug, const Data* dd, int t, int N, uint8_t* hide) {
-  const int e = blockIdx.x * blockDim.x + threadIdx.x;
-  if (e < N) hide[e] = obsv::goal_drop(aug, (uint64_t)dd->rollouts, ((uint64_t)t << 32) | (uint64_t)e) ? 1 : 0;
 }
 
 // ---- BC 손실(K5): L = (1/M) Σ_r Σ_{k<2} (μ − 라벨)², dZ_A4 = 2(μ − 라벨)/M (bf16), 나머지 행동 0 ----
@@ -720,12 +702,6 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
     }
     rs_roll = alloc<RenderState>(N);
     rs_mb = alloc<RenderState>(MB);
-    top_roll = alloc<gmap::TopState>(N);   // 깃발 끔이면 0 그대로 = 빈 그림
-    top_mb = alloc<gmap::TopState>(MB);
-    hide_roll = alloc<uint8_t>(N);
-    hide_mb = alloc<uint8_t>(MB);
-    tvrgb = alloc<uint8_t>((size_t)(rb < SM ? rb : SM) * gmap::TV_PX * gmap::TV_PX * 3);
-    if (cfg.topview) d_top = alloc<gmap::TopState>((size_t)cap);
     dev_bytes += enc.bytes + enc.W.bytes + bcr::bytes(rnd);
   }
 
@@ -853,9 +829,8 @@ void Bc::forward_teacher(NetBufs& b, int M) {
 }
 
 // 렌더(render_batch 판씩) → K11 패치 → 얼린 인코더 → sb.tok [M × 128][784]
-void Bc::vis_encode(const RenderState* rs, int M, const gmap::TopState* top, const uint8_t* hide) {
+void Bc::vis_encode(const RenderState* rs, int M) {
   if (vis_skip) return;
-  if (!top) top = M <= MB ? top_mb : top_roll;   // 부르는 쪽이 안 주면(예전 호출) 모은 쪽 / 롤아웃 쪽 상태
   const int E = bcr::batch(rnd);
   for (int e0 = 0; e0 < M; e0 += E) {
     const int m = M - e0 < E ? M - e0 : E;
@@ -869,9 +844,6 @@ void Bc::vis_encode(const RenderState* rs, int M, const gmap::TopState* top, con
       bcr::render(rnd, rs + e0 + mt, m - mt, ST);
       enc.patchify(bcr::rgb(rnd, 0), bcr::rgb(rnd, 1), m - mt, e0 + mt, ST, IMG_NCAM, 0);
     }
-    // 셋째 그림: 위에서 본 지도(map topview.h 같은 정의 — 그 표본 스텝의 믿는 지도). top 없으면(깃발 끔) 0 상태 = 빈 그림
-    gmap::tv_render(top + e0, nullptr, m, hide ? hide + e0 : nullptr, tvrgb, ST);
-    enc.patchify(tvrgb, nullptr, m, e0, ST, IMG_NCAM, 2);
   }
   enc.run(IMG_NCAM * M, sb.tok, ST);
 }
@@ -886,10 +858,10 @@ static tfm::TfIn tf_in(Bc& b) {
   in.grp_off = nullptr;   // 지도 끄기는 obs.h 흔들기가 값으로(칸 비트 0·벽·방 0)
   return in;
 }
-void Bc::student_trunk(int M, const RenderState* rs, const gmap::TopState* top, const uint8_t* hide) {
+void Bc::student_trunk(int M, const RenderState* rs) {
   auto W = [&](int l) { return Pb + sn.off[l]; };
   if (sn.arch == 1) {
-    if (sn.vision) vis_encode(rs, M, top, hide);
+    if (sn.vision) vis_encode(rs, M);
     PackP pk{sb.x0, txt, sb.tid, M, {}};
     for (int g = 0; g < tfm::N_GRP; ++g) pk.g[g] = tg[g];
     tf_pack_k<<<M, 160>>>(pk);
@@ -900,7 +872,7 @@ void Bc::student_trunk(int M, const RenderState* rs, const gmap::TopState* top, 
   const uint16_t* X = sb.x0;
   if (sn.ext()) {
     if (sn.vision) {
-      vis_encode(rs, M, top, hide);
+      vis_encode(rs, M);
       gemm_fwd(sn.L[SL_P1], sb.tok, M * IMG_TOK, W(SL_P1), sb.imgf, 0);
     }
     const long long nq = (long long)M * (sn.k1 / 8);
@@ -947,7 +919,7 @@ void Bc::student_act(int M) {
 void Bc::gather() {
   GatherP g{d_obs, d_tok, d_lab, d_meta, d_epi, sn.vision ? d_rs : nullptr, data_d, ts, MB, cfg.use_map, cfg.student_goal, N, sn.H, cap, cfg.seed,
             sb.x0, sb.sin, sb.mask, lab_mb, sn.head ? chunk_mb : nullptr, sb.fm, sn.vision ? rs_mb : nullptr, (sn.text || sn.arch == 1) ? sb.tid : nullptr,
-            vt.dev(), aug_d, tsel_d, d_top, d_top ? top_mb : nullptr, hide_mb};
+            vt.dev(), aug_d, tsel_d};
   gather_k<<<(MB + AS_E - 1) / AS_E, AS_L * AS_E>>>(g);
   BCK(cudaGetLastError());
 }
@@ -1031,7 +1003,7 @@ void Bc::optimizer() {
 
 void Bc::update_step() {
   gather();
-  student_trunk(MB, rs_mb, top_mb, hide_mb);
+  student_trunk(MB, rs_mb);
   head_forward(MB);
   loss(MB);
   backward(MB);
@@ -1132,7 +1104,6 @@ void Bc::rollout_step(int t, bool student) {
   cur_t = t;
   step_begin_k<<<(N + 127) / 128, 128>>>(env->soa(), cur_len, ep_uid, data_d, t, T, tsel_d, aug_d, student && sn.vision ? rs_roll : nullptr,
                                          student && (sn.text || sn.arch == 1) ? sb.tid : nullptr, tok->at(t));
-  if (d_top) map->topstate(top_roll, ST);   // 위에서 본 지도 그림 상태(이 스텝 토큰과 같은 지도 — 기록·학생 그림)
   assemble_k<<<ab, AS_L * AS_E>>>(obs_t, tok->at(t), N, cfg.teacher_use_map, 0, 0, nt.x0, nt.sin, nt.mask, vt.dev(), nullptr, data_d, t);
   forward_teacher(nt, N);
   if (cfg.teacher_script && scenes) {   // E6: B4–B6 판은 대본 특권 교사 행동을 라벨로(같은 행 배치 [N][8])
@@ -1142,15 +1113,13 @@ void Bc::rollout_step(int t, bool student) {
   const float* meanS = nt.mean;
   if (student) {
     assemble_k<<<ab, AS_L * AS_E>>>(obs_t, tok->at(t), N, cfg.use_map, 1, cfg.student_goal, sb.x0, sb.sin, sb.mask, vt.dev(), aug_d, data_d, t);
-    if (sn.vision) hide_roll_k<<<(N + 127) / 128, 128>>>(aug_d, data_d, t, N, hide_roll);
-    student_trunk(N, rs_roll, top_roll, hide_roll);
+    student_trunk(N, rs_roll);
     if (sn.head && sn.arch == 0) flow_noise_k<<<(N + 127) / 128, 128>>>(data_d, cfg.seed, t, N, sb.xf);
     student_act(N);
     meanS = sb.act;
   }
   const float* met_init = map->metrics() + (size_t)gmap::M_INIT * N;
-  ActP p{nt.mean, meanS, mode_d, data_d, amask_d, t, N, cap, obs_t, tok->at(t), env->soa(), met_init, cur_len, ep_uid, act_env, dis, d_obs, d_tok, d_lab, d_meta, d_epi, d_rs,
-         top_roll, d_top};
+  ActP p{nt.mean, meanS, mode_d, data_d, amask_d, t, N, cap, obs_t, tok->at(t), env->soa(), met_init, cur_len, ep_uid, act_env, dis, d_obs, d_tok, d_lab, d_meta, d_epi, d_rs};
   act_rec_k<<<(N + 7) / 8, 256>>>(p);
   ground_k<<<(N + 127) / 128, 128>>>(env->soa(), scenes ? scenes->dev : nullptr, gnd);
   env->step(act_env, obs_n, rew, done);

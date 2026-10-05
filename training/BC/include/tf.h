@@ -1,9 +1,8 @@
 // 토큰마다 학생 신경망(VLA_INPUT 1·3·5절, POLICY 5.1–5.3, GPU_TRAINING 3절 "SigLIP 2 B/32 패치 토큰 + 트랜스포머 6–8 층 + flow matching 행동 전문가").
 // 손 CUDA(BF16 피연산자·FP32 누산 — 7.1), training/RL/network 의 손 GEMM 템플릿(gemm2_k)과 Adam(net::adam_step) 을 그대로 쓴다.
 //
-// 토큰(표본 하나, L = 214, 순서 고정 — 물체 칸에는 자리 번호가 없다: 칸 사이를 가르는 것은 입력 값뿐이고 종류 임베딩은 칸 16 개가 같음):
-//   IMG  192 × 784  얼린 인코더 출력(vit::TOK_LD, 768 칸 = 1). 64 씩 머리 카메라 · 손목 카메라 · 위에서 본 지도(map topview.h, 2026-10-05 — 시험용 깃발,
-//                   얼린 탑이 합성 지도 그림을 잘 못 볼 수 있음; 끄면 빈 그림 = 상수)(종류 임베딩 셋)
+// 토큰(표본 하나, L = 150, 순서 고정 — 물체 칸에는 자리 번호가 없다: 칸 사이를 가르는 것은 입력 값뿐이고 종류 임베딩은 칸 16 개가 같음):
+//   IMG  128 × 784  얼린 인코더 출력(vit::TOK_LD, 768 칸 = 1). 64 씩 머리 카메라 · 손목 카메라(종류 임베딩 둘) — 위에서 본 지도 그림은 10-06 결정으로 뺌
 //   TXT    1 × 144  지시 문장 128(instr128) + 1 칸(128)
 //   ARM    1 × 48   관절각 6, 관절 속도 6, 관절 xyz 18, 손끝 6D 6, 손끝 속도 6 = 42 + 1 칸(42)
 //   BASE   1 × 16   몸통 속도 3 + 1 칸(3)
@@ -33,7 +32,7 @@ namespace tfm {
 enum Grp { G_IMG, G_TXT, G_ARM, G_BASE, G_GOAL, G_OBJ, G_WALL, G_ROOM, N_GRP };
 struct GrpDesc { int n_tok, K, k_real, n_type; };   // k_real = 1 칸 자리(그 앞이 값)
 constexpr GrpDesc kGrp[N_GRP] = {
-    {192, 784, 768, 3}, {1, 144, 128, 1}, {1, 48, 42, 1}, {1, 16, 3, 1}, {1, 48, 43, 1}, {16, 304, 289, 1}, {1, 80, 64, 1}, {1, 16, 10, 1},
+    {128, 784, 768, 2}, {1, 144, 128, 1}, {1, 48, 42, 1}, {1, 16, 3, 1}, {1, 48, 43, 1}, {16, 304, 289, 1}, {1, 80, 64, 1}, {1, 16, 10, 1},
 };
 // GOAL 묶음 입력 칸 c(< 43)의 X0 출처 칸(BC tf_pack_k·bc_verify·RecallVLA 같은 배치): 직전 명령 8 + 손끝 → 목표 3 | 경유 지점 4 | 목표 칸 0 의 14 | 목표 칸 1 의 14
 constexpr int GOAL_K = 48, GOAL_REAL = 43, GOAL_ENT_V = 14;
@@ -43,15 +42,15 @@ NDEV constexpr int goal_src_col(int c) {
 }
 static_assert(15 + 2 * GOAL_ENT_V == GOAL_REAL && GOAL_REAL < GOAL_K && GOAL_K % 16 == 0, "goal token layout");
 // 장치 코드에서도(상수 표를 장치 메모리에 두지 않게 switch 로)
-NDEV constexpr int grp_ntok(int g) { return g == G_IMG ? 192 : g == G_OBJ ? 16 : 1; }
-NDEV constexpr int grp_ntype(int g) { return g == G_IMG ? 3 : 1; }
-NDEV constexpr int grp_tok0(int g) { return g == 0 ? 0 : g <= G_OBJ ? 191 + g : g == G_WALL ? 212 : g == G_ROOM ? 213 : 214; }
-constexpr int L_TOK = grp_tok0(N_GRP);   // 214 (위에서 본 지도 그림 앞 150)
-static_assert(L_TOK == 214, "token count");
-static_assert(grp_tok0(G_WALL) == grp_tok0(G_OBJ) + 16 && grp_tok0(G_OBJ) == 196, "token offsets");
+NDEV constexpr int grp_ntok(int g) { return g == G_IMG ? 128 : g == G_OBJ ? 16 : 1; }
+NDEV constexpr int grp_ntype(int g) { return g == G_IMG ? 2 : 1; }
+NDEV constexpr int grp_tok0(int g) { return g == 0 ? 0 : g <= G_OBJ ? 127 + g : g == G_WALL ? 148 : g == G_ROOM ? 149 : 150; }
+constexpr int L_TOK = grp_tok0(N_GRP);   // 150
+static_assert(L_TOK == 150, "token count");
+static_assert(grp_tok0(G_WALL) == grp_tok0(G_OBJ) + 16 && grp_tok0(G_OBJ) == 132, "token offsets");
 // 종류 임베딩 번호: 묶음 안 토큰 t 가 몇째 종류인지(영상 = 카메라·그림 64 씩)
 NDEV constexpr int grp_type_of(int g, int t) { return grp_ntype(g) > 1 ? t / (grp_ntok(g) / grp_ntype(g)) : 0; }
-// 영상 토큰 수 ni(192 = 영상 학생, 0 = 영상 없음 — BEHAVIOR 판, 2026-10-06): 묶음 시작·수·L 은 영상 묶음만 줄어듦(나머지 차례 그대로)
+// 영상 토큰 수 ni(128 = 영상 학생, 0 = 영상 없음 — BEHAVIOR 판, 2026-10-06): 묶음 시작·수·L 은 영상 묶음만 줄어듦(나머지 차례 그대로)
 NDEV constexpr int tok0(int g, int ni) { return g == G_IMG ? 0 : grp_tok0(g) - grp_ntok(G_IMG) + ni; }
 NDEV constexpr int ntok(int g, int ni) { return g == G_IMG ? ni : grp_ntok(g); }
 NDEV constexpr int tok_L(int ni) { return L_TOK - grp_ntok(G_IMG) + ni; }
@@ -117,7 +116,7 @@ NDEV float gauss(uint64_t h) {
 struct Tf {
   TfCfg c;
   TfLayout lay;
-  int L = L_TOK, ni = 192, KA = 0, d1 = 0;   // ni = 영상 토큰 수(TfCfg::img)   // KA = 행동 입력 줄 폭, d1 = d + 16(LN 출력 줄: d 칸 = 1)
+  int L = L_TOK, ni = 128, KA = 0, d1 = 0;   // ni = 영상 토큰 수(TfCfg::img)   // KA = 행동 입력 줄 폭, d1 = d + 16(LN 출력 줄: d 칸 = 1)
   float *P = nullptr, *G = nullptr, *Am = nullptr, *Av = nullptr;
   uint16_t* Pb = nullptr;
   float* gn_part = nullptr;
