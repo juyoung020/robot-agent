@@ -197,7 +197,6 @@ uint64_t apSeed(uint64_t a, uint64_t b);   // 조각·물체 시드(시각 비�
 
 // 벡터
 void apToF16(const float* in, uint16_t* out, int n);
-void apNormalize(std::vector<float>& v);
 double apDot(const float* a, const float* b, int d);
 // μ(통째가 있으면 통째, 없으면 조각). 없으면 false
 bool apMu(const ApState& s, std::vector<float>* mu, double* conf = nullptr);

@@ -211,13 +211,6 @@ void apToF16(const float* in, uint16_t* out, int n) {
   for (int i = 0; i < n; ++i) out[i] = f2h(in[i]);
 }
 
-void apNormalize(std::vector<float>& v) {
-  double s = 0;
-  for (float x : v) s += double(x) * x;
-  s = std::sqrt(std::max(s, 1e-30));
-  for (float& x : v) x = float(x / s);
-}
-
 double apDot(const float* a, const float* b, int d) {
   double s = 0;
   for (int i = 0; i < d; ++i) s += double(a[i]) * b[i];
