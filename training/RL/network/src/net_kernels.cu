@@ -13,11 +13,6 @@ namespace net {
 
 static inline dim3 ggrid(int M, int N, int z = 1) { return dim3((N + GBN - 1) / GBN, (M + GBM - 1) / GBM, z); }
 
-// GEMM 고르기: gemm2_k(같은 결과, 빠름)가 기본. NET_GEMM_OLD=1 이면 예전 gemm_k(비교·측정용)
-static bool gemm_old() {
-  static const bool v = [] { const char* e = std::getenv("NET_GEMM_OLD"); return e && std::atoi(e) != 0; }();
-  return v;
-}
 template <bool AT, bool BT, int EPI, int BM, int BN, int WM, int WN>
 static void g2(const GemmG& g, int np, cudaStream_t st) {
   const GemmP& p = g.p[0];
@@ -36,15 +31,11 @@ template <bool AT, bool BT, int EPI>
 static void gemm_launch(const GemmP* ps, int np, int gz, cudaStream_t st, int role = -1) {
   const GemmP& p = ps[0];
   if (role >= 0 && fp8_gemm(role, ps, np, gz, EPI, st)) return;   // G6: FP8 켬 층(아래 fp8_role)
-  if (gemm_old()) {
-    for (int k = 0; k < np; ++k) gemm_k<AT, BT, EPI><<<ggrid(p.M, p.N, gz), GNT, 0, st>>>(ps[k]);
-  } else {
-    const GemmG g{{ps[0], ps[np - 1]}, gz};
-    if (p.N <= 16) g2<AT, BT, EPI, 128, 16, 32, 16>(g, np, st);        // 머리 출력 8
-    else if (p.M <= 64) g2<AT, BT, EPI, 64, 64, 32, 32>(g, np, st);   // 칸 층 dW(출력 64 행)
-    else if (p.N >= 128) g2<AT, BT, EPI, 128, 128, 64, 32>(g, np, st);   // 몸통 256·128 (128×256·256×128·64×128 타일은 더 느렸음 — README)
-    else g2<AT, BT, EPI, 128, 64, 32, 32>(g, np, st);
-  }
+  const GemmG g{{ps[0], ps[np - 1]}, gz};
+  if (p.N <= 16) g2<AT, BT, EPI, 128, 16, 32, 16>(g, np, st);        // 머리 출력 8
+  else if (p.M <= 64) g2<AT, BT, EPI, 64, 64, 32, 32>(g, np, st);   // 칸 층 dW(출력 64 행)
+  else if (p.N >= 128) g2<AT, BT, EPI, 128, 128, 64, 32>(g, np, st);   // 몸통 256·128 (128×256·256×128·64×128 타일은 더 느렸음 — README)
+  else g2<AT, BT, EPI, 128, 64, 32, 32>(g, np, st);
   NCK(cudaGetLastError());
 }
 

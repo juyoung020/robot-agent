@@ -35,10 +35,6 @@ T_* Trainer::alloc(size_t n) {
   return reinterpret_cast<T_*>(p);
 }
 
-static bool slot_old() {   // NET_SLOT_OLD=1: 칸 MLP 를 예전 따로 커널(gemm·pool)로 — 비교·측정용
-  static const bool v = [] { const char* e = std::getenv("NET_SLOT_OLD"); return e && std::atoi(e) != 0; }();
-  return v;
-}
 
 // ---- 관측 모으기(롤아웃: 판 i 그대로 / 갱신: 섞은 표본) ----
 constexpr int AS_L = 16, AS_E = 8;
@@ -491,7 +487,6 @@ Trainer::Trainer(const PpoConfig& c) : cfg(c) {
   const size_t M = Mmax, MS = (size_t)Mmax * KSLOT;
   x0 = alloc<uint16_t>(M * X0_W);
   sc = alloc<uint16_t>(MS * SLOT_C);   // 줄인 칸 줄(표 행은 번호) — 묶음 커널이 펼침
-  if (slot_old()) sin = alloc<uint16_t>(MS * SLOT_IN);   // 예전 따로 커널 길만 304 칸 줄을 씀(검증은 sin_full 이 그때 만듦)
   mask = alloc<uint32_t>(M);
   s1o = alloc<uint16_t>(MS * kLayers[L_S1].ldo);
   s2o = alloc<uint16_t>(MS * kLayers[L_S2].ldo);
@@ -691,14 +686,8 @@ void Trainer::capture() {
 void Trainer::forward(int M) {
   const uint16_t* W = Pb;
   auto Wl = [&](int l) { return W + lay.off[l]; };
-  if (!slot_old()) {   // 칸 MLP 앞 묶음(한 커널, 같은 결과). 칸 입력은 줄인 칸 줄 + 얼린 표에서 커널 안에서 펼침
-    slot_fwd_c(slot_c(), mask, Wl(L_S1), Wl(L_S2), M, s1o, s2o, x0, amax, 0);
-  } else {
-    slot_expand(slot_c(), (long long)M * KSLOT, sin, 0);
-    gemm_fwd(kLayers[L_S1], sin, M * KSLOT, Wl(L_S1), s1o, 0);
-    gemm_fwd(kLayers[L_S2], s1o, M * KSLOT, Wl(L_S2), s2o, 0);
-    pool_fwd(s2o, mask, M, x0, amax, 0);
-  }
+  // 칸 MLP 앞 묶음(한 커널). 칸 입력은 줄인 칸 줄 + 얼린 표에서 커널 안에서 펼침
+  slot_fwd_c(slot_c(), mask, Wl(L_S1), Wl(L_S2), M, s1o, s2o, x0, amax, 0);
   // 정책·가치 사슬의 같은 층을 한 번에(gemm_fwd2: 실행 수만 반, 결과 같음)
   gemm_fwd2(kLayers[L_A1], x0, x0, M, Wl(L_A1), Wl(L_C1), ho[L_A1], ho[L_C1], 0);
   gemm_fwd2(kLayers[L_A2], ho[L_A1], ho[L_C1], M, Wl(L_A2), Wl(L_C2), ho[L_A2], ho[L_C2], 0);
@@ -720,14 +709,8 @@ void Trainer::backward(int M) {
   gemm_dw2(kLayers[a1], dz[a1], dz[c1], x0, x0, M, ws[a1], ws[c1], ch, 0);
   gemm_dx_pool(kLayers[a1], dz[a1], M, Wl(a1), dpool, false, 0);
   gemm_dx_pool(kLayers[c1], dz[c1], M, Wl(c1), dpool, true, 0);
-  if (!slot_old()) {   // 칸 MLP 뒤 묶음(한 커널, 같은 결과)
-    slot_bwd_c(dpool, s2o, s1o, slot_c(), mask, amax, Wl(L_S2), M, ch, ws[L_S2], ws[L_S1], keep_slot_bufs ? dz[L_S2] : nullptr, keep_slot_bufs ? dz[L_S1] : nullptr, 0);
-  } else {
-    pool_bwd(dpool, s2o, mask, amax, M, dz[L_S2], 0);
-    gemm_dw(kLayers[L_S2], dz[L_S2], s1o, M * KSLOT, ws[L_S2], ch, 0);
-    gemm_dx_dact(kLayers[L_S2], dz[L_S2], M * KSLOT, Wl(L_S2), s1o, kLayers[L_S1].N, dz[L_S1], 0, 0);
-    gemm_dw(kLayers[L_S1], dz[L_S1], sin, M * KSLOT, ws[L_S1], ch, 0);
-  }
+  // 칸 MLP 뒤 묶음(한 커널)
+  slot_bwd_c(dpool, s2o, s1o, slot_c(), mask, amax, Wl(L_S2), M, ch, ws[L_S2], ws[L_S1], keep_slot_bufs ? dz[L_S2] : nullptr, keep_slot_bufs ? dz[L_S1] : nullptr, 0);
   DwJob jobs[N_LAYER];
   for (int l = 0; l < N_LAYER; ++l) {
     const int rows = l <= L_S2 ? M * KSLOT : M;

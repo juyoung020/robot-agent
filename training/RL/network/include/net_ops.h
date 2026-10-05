@@ -85,7 +85,7 @@ void slot_fwd_c(const SlotC& in, const uint32_t* mask, const uint16_t* W1, const
                 uint8_t* amax, cudaStream_t st);
 void slot_bwd_c(const float* dpool, const uint16_t* s2o, const uint16_t* s1o, const SlotC& in, const uint32_t* mask, const uint8_t* amax,
                 const uint16_t* W2, int M, int kchunk, float* ws2, float* ws1, uint16_t* dz2_out, uint16_t* dz1_out, cudaStream_t st);
-// 줄인 칸 줄 rows 개 → 304 칸 줄(예전 따로 커널 길 NET_SLOT_OLD·검증용)
+// 줄인 칸 줄 rows 개 → 304 칸 줄(검증용)
 void slot_expand(const SlotC& in, long long rows, uint16_t* sin, cudaStream_t st);
 
 // ---- PPO 손실(K5): 평균·가치 머리 출력 → dZ(bf16) + log σ 기울기·통계 부분합 ----

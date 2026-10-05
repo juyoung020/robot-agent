@@ -58,7 +58,7 @@ struct Trainer {
   // 신경망 작업 버퍼(행 Mmax)
   uint16_t *x0 = nullptr, *s1o = nullptr, *s2o = nullptr;
   uint16_t* sc = nullptr;    // 줄인 칸 줄 [Mmax·16][SLOT_C](net.h) — 모으기가 쓰고 칸 MLP 묶음 커널이 얼린 표와 함께 304 칸으로 펼침
-  uint16_t* sin = nullptr;   // 304 칸 줄 — NET_SLOT_OLD(예전 따로 커널) 또는 검증(sin_full)일 때만 할당
+  uint16_t* sin = nullptr;   // 304 칸 줄 — 검증(sin_full)일 때만 할당
   uint32_t* mask = nullptr;
   uint8_t* amax = nullptr;
   uint16_t* ho[net::N_LAYER] = {};   // 숨은 층 출력 bf16 (S1, S2 는 s1o, s2o 를 가리킴)
