@@ -4,7 +4,7 @@ import pathlib
 import subprocess
 
 _ENV = pathlib.Path(__file__).resolve().parent / "paths.env"
-_KEYS = ["RA_ROOT", "RA_BUILD", "RA_CUDA_ROOT", "RA_CUDA_ARCH", "RA_DATASETS", "OVDET_MODELS", "RA_EMBED_WORK",
+_KEYS = ["RA_ROOT", "RA_BUILD", "RA_CUDA_ROOT", "RA_CUDA_ARCH", "RA_DATASETS", "RA_MODELS", "OVDET_MODELS", "RA_EMBED_WORK",
          "RA_LABELS", "RA_TRAINVIEW_WORK", "B1K_ROOT", "OG_CONDA_ENV", "OG_PYTHON"]
 _cache = None
 

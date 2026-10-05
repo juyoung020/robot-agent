@@ -235,3 +235,10 @@ docs/ai-agent/
 
 # 내 PC 만 다른 외부 경로
 config/paths.local.env
+
+# 큰 것은 전부 저장소 안, git 밖 (config/paths.env)
+/build/
+/models/
+/data/
+/third_party/*
+!/third_party/README.md
