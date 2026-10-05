@@ -1,17 +1,16 @@
-"""Simulator side of the `move_robot` LLM tool: a policy that turns tool calls into LIMO + OMX-F actions inside the evaluator.
+"""Simulator side of the `move_robot` LLM tool: a policy that turns tool calls into R1Pro actions inside the evaluator.
 
 The closed-loop executor (schema check, joint limits, safe speeds, min-jerk interpolation, base odometry control,
 reached/blocked/timeout) is the agent's Rust crate `robot-agent/src/agent/tools/move_robot`, built as
 `libmove_robot.so` and called here through ctypes (stdlib only). This file only moves bytes:
 
-    every step : obs[*::proprio] (24 f32) -> mr_tick -> action (8 f32) -> evaluator
+    every step : obs[*::proprio] (61 f32) -> mr_tick -> action (23 f32) -> evaluator
     tool call  : one JSON line from a client (TCP --listen) or from a script -> mr_command
     result     : JSON line back to the client (and to the log)
 
-Layout = robot-agent src/agent/tools/move_robot/src/limo.rs: proprio = limo_omx_eval.yaml proprio_obs (base_qvel 3, arm_0_qpos 5,
-arm_0_qvel 5, eef_0_pos 3, eef_0_quat 4, gripper_0_qpos 2, gripper_0_qvel 2), action = [vx m/s, wz rad/s, omx_joint1..5 rad,
-gripper 0..1]. Idle = hold the last targets (base 0 velocity). The sim robot's own action vector (9, with a lateral slot that stays 0)
-is filled by move_robot_limo.LimoMoveRobotPolicy.
+Action layout = omnigibson/eval/utils/eval_utils.py ACTION_QPOS_INDICES["R1Pro"]
+(base vx,vy,wz [-1,1] | torso 4 | left arm 7 | left gripper | right arm 7 | right gripper), controllers from
+omnigibson/eval/r1pro.yaml. Idle = hold the last targets (base 0 velocity).
 
 No numpy/torch needed (torch is used for the return value only when importable).
 """
@@ -23,8 +22,8 @@ import socket
 import time
 
 HERE = pathlib.Path(__file__).resolve().parent
-ACTION_DIM = 8
-PROPRIO_DIM = 24
+ACTION_DIM = 23
+PROPRIO_DIM = 61
 
 
 def default_lib_path() -> pathlib.Path:
@@ -243,7 +242,7 @@ class TcpSource:
 
 
 class MoveRobotPolicy:
-    """Evaluator policy (act(obs) -> (8,) action) driven by move_robot tool calls."""
+    """Evaluator policy (act(obs) -> (23,) action) driven by move_robot tool calls."""
 
     def __init__(self, source, lib_path=None, log_path=None, hz=30.0):
         self.lib = MoveRobotLib(lib_path, hz)

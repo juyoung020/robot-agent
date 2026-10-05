@@ -4,10 +4,9 @@
 # 결과: outputs/explore_<ts>_<task>_<policy>[_tag]/ (memory/ 지도, decisions.jsonl, timeline.jsonl, summary.json, sim.log)
 # 사전 조건: VRAM 여유 ≥ 9 GB, RAM 여유 ≥ 16 GB (아니면 기다린다). 키는 환경변수로만(kau.env).
 # 로봇: 우리 LIMO + OMX-F 하나뿐(R1 Pro 는 10-06 에 뺌; BEHAVIOR 과제 틀의 R1 은 장면·시작 자세만 읽고 로봇은 --robot-config 로 바꿔 끼움, robot_poses 키는 eval_with_limo.py 가 맞춤). 평가기를 $ROBOT_AGENT/src/robot/og/eval_with_limo.py 로
-#   띄우고(--robot-config limo_omx_eval.yaml), move_robot 은 베이스만(팔 홈 자세·그리퍼 닫힘 유지, move_robot_limo.py),
+#   띄우고(--robot-config limo_omx_eval.yaml), move_robot 은 libmove_robot 이 LIMO + OMX-F 를 직접 말한다(base·arm·gripper, 탐사는 base 만 씀; move_robot_limo.py 는 행동 8 을 시뮬 행동 9 칸에 놓기만),
 #   정답 자세·물체 기록(SGRT_GT_LOG=<out>/gt_poses.csv, .objects.json)·poses.csv·pose_diag.json 기본 켬. 가까운 자르기는
 #   robot-agent 391c04b 부터 eval_with_limo.py 가 0.05 m 로 둔다(옛 자산이면 LIMO_NEAR_CLIP, 기본 0.05 까지만 올림).
-#   libmove_robot 몸 크기는 MOVE_ROBOT_FOOTPRINT=limo_omx(기본, 바꾸려면 rect:LxW·circle:R).
 set -u
 POL=$1; TASK=$2; TAG=${3:-}; shift 3 2>/dev/null || shift $#
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -27,7 +26,6 @@ if [ "$ROBOT" = limo_omx ]; then
   ROBOT_ARGS=(--robot limo_omx --limo-shim "${LIMO_SHIM:-$OGDIR/eval_with_limo.py}")
   EVAL_ROBOT=(--robot-config "$OGDIR/limo_omx_eval.yaml")
   export SGRT_ROBOT=limo_omx SGRT_GT_LOG=${SGRT_GT_LOG:-$OUT/gt_poses.csv}
-  export MOVE_ROBOT_FOOTPRINT=${MOVE_ROBOT_FOOTPRINT:-limo_omx}   # libmove_robot 몸통: LIMO 0.36 × 0.22 m 사각형
 fi
 PORT=${PORT:-8771}
 MAXSTEPS=${MAXSTEPS:-27000}

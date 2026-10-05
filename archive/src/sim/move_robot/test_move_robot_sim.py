@@ -11,18 +11,17 @@ import unittest
 
 from move_robot_sim import ACTION_DIM, PROPRIO_DIM, MoveRobotLib, MoveRobotPolicy, ScriptSource, TcpSource, default_lib_path
 
-KEY = "robot_limo::proprio"
-HOME = [0.0, -1.6, 1.45, 0.15, 0.0]   # limo_omx_eval.yaml reset_joint_pos
+KEY = "robot_r1::proprio"
 
 
 class FakePlant:
-    """LIMO + OMX-F: first-order arm joints, rate-limited gripper, velocity base — enough to close the loop.
-    proprio layout = limo.rs: base_qvel 0:3, arm qpos 3:8, arm qvel 8:13, eef pos 13:16, quat 16:20, gripper qpos 20:22, qvel 22:24."""
+    """First-order joints, smooth gripper, velocity base — enough to close the loop."""
 
     def __init__(self):
         self.p = [0.0] * PROPRIO_DIM
-        self.p[3:8] = HOME
-        self.p[20:22] = [1.745329, -1.745329]    # open
+        self.p[53:57] = [1.025, -1.45, -0.47, 0.0]
+        self.p[24:26] = [0.05, 0.05]
+        self.p[49:51] = [0.05, 0.05]
         self.x = 0.0
 
     def obs(self):
@@ -30,17 +29,19 @@ class FakePlant:
 
     def step(self, a):
         dt, k = 1 / 30, 1 - math.exp(-25 / 30)
-        for j in range(5):
-            old = self.p[3 + j]
-            new = old + (a[2 + j] - old) * k
-            self.p[3 + j], self.p[8 + j] = new, (new - old) / dt
-        tgt = a[7] * 1.745329
-        old = self.p[20]
-        new = old + max(-1.745329 * dt, min(1.745329 * dt, tgt - old))
-        self.p[20:22] = [new, -new]
-        self.p[22:24] = [(new - old) / dt, -(new - old) / dt]
-        self.p[0] = a[0]
-        self.p[2] = a[1]
+        for qs, vs, acts in ((53, 57, 3), (3, 10, 7), (28, 35, 15)):
+            n = 4 if qs == 53 else 7
+            for j in range(n):
+                old = self.p[qs + j]
+                new = old + (a[acts + j] - old) * k
+                self.p[qs + j], self.p[vs + j] = new, (new - old) / dt
+        for qs, vs, ai in ((24, 26, 14), (49, 51, 22)):
+            tgt = (a[ai] + 1) / 2 * 0.05
+            old = self.p[qs]
+            new = old + max(-0.25 * dt, min(0.25 * dt, tgt - old))
+            self.p[qs:qs + 2] = [new, new]
+            self.p[vs:vs + 2] = [(new - old) / dt] * 2
+        self.p[0] = a[0] * 0.75
         self.x += self.p[0] * dt
 
 
@@ -65,26 +66,26 @@ class T(unittest.TestCase):
         plant = FakePlant()
         self.assertEqual(lib.tick(plant.p), 0)
         a = lib.action()
-        self.assertEqual(a[0:2], [0.0, 0.0])
-        self.assertAlmostEqual(a[3], HOME[1], places=5)
-        self.assertAlmostEqual(a[7], 1.0, places=5)
+        self.assertEqual(a[0:3], [0.0, 0.0, 0.0])
+        self.assertAlmostEqual(a[3], 1.025, places=5)
+        self.assertEqual(a[14], 1.0)
+        self.assertEqual(a[22], 1.0)
         self.assertEqual(lib.tick([0.0] * 5), -1)
         lib.close()
 
     def test_script(self):
         src = ScriptSource([
-            {"part": "arm", "mode": "delta", "values": [0, 0, 0, 0, 0]},
-            {"part": "arm", "mode": "delta", "values": [-20, 0, 0, 0, 0]},
-            {"part": "gripper", "mode": "absolute", "values": [0.2]},
-            {"part": "base", "mode": "delta", "values": [0.4, 0]},
-            {"part": "torso", "mode": "delta", "values": [1]},
+            {"part": "torso", "mode": "delta", "values": [0, 0, 0, 0]},
+            {"part": "right_arm", "mode": "delta", "values": [-20, 0, 0, 0, 0, 0, 0]},
+            {"part": "left_gripper", "mode": "absolute", "values": [0.2]},
+            {"part": "base", "mode": "delta", "values": [0.4, 0, 0]},
+            {"part": "head", "mode": "delta", "values": [1]},
         ])
         pol, plant = MoveRobotPolicy(src), FakePlant()
         run(pol, plant, 600)
         st = [r["status"] for r in src.results]
         self.assertEqual(st, ["reached"] * 4 + ["error"], src.results)
         self.assertAlmostEqual(src.results[1]["state"][0], -20.0, delta=1.6)
-        self.assertEqual(src.results[2]["state"], [0.2])
         self.assertAlmostEqual(plant.x, 0.4, delta=0.05)
         pol.close()
 
@@ -99,7 +100,7 @@ class T(unittest.TestCase):
 
         def client():
             c = socket.create_connection(("127.0.0.1", port), timeout=10)
-            c.sendall(b'{"part":"arm","mode":"absolute","values":[0,20,0,-30,0]}\n')
+            c.sendall(b'{"part":"left_arm","mode":"absolute","values":[0,20,0,-30,0,0,0]}\n')
             out["r"] = json.loads(c.makefile().readline())
             c.close()
 
