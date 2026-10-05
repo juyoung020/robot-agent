@@ -369,6 +369,7 @@ export class Replay {
     let txt = "", real = false, short = "";
     if (m.pipeline === "og_real") { txt = "REAL pipeline: point clouds, names, camera = OmniGibson render (LIMO eyes RGB-D) → ObjectSAM + SigLIP 2 + scenemap objprob · house mesh / stance overlays = GT"; short = "REAL pipeline"; real = true; }
     else if (m.pipeline === "raycast_approx") { txt = "APPROXIMATE: ray-cast scene meshes + perfect detection (OmniGibson replay pending)"; short = "approx"; }
+    else if (this.file && this.file.endsWith(".sg")) { txt = "policy map: the GPU map this policy saw while training (training/RL/map) — GT house overlays only from Layers"; short = "policy map"; }
     else if (head && head.scene && head.scene.world) { txt = "NOT our perception — house mesh / boxes / names = GT scene, object#N boxes = GPU env policy map (GT-derived); real-pipeline OmniGibson replay: see REAL episodes"; short = "GT · policy map"; }
     b.hidden = true; b.textContent = txt;
     const sb = this.$("rp_sbadge"); sb.hidden = !short; sb.textContent = short; sb.title = txt; sb.classList.toggle("real", real);
