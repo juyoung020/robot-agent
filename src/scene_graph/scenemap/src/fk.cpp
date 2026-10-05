@@ -120,7 +120,6 @@ void computeLimoFk(const float* q, LimoFk* o) {
 void limoBodyFk(const LimoFk& f, BodyFk* o, float eef[2][3]) {
   std::memset(o, 0, sizeof(*o));
   o->n_arms = 1;
-  o->n_torso = 0;
   for (int k = 0; k < 12; ++k) o->T_head[k] = float(f.T_depth[k]);
   // prim(−z 앞, y 위) = 광학 × diag(1, −1, −1)
   const double* Ts[2] = {f.T_depth, f.T_wrist};

@@ -31,9 +31,8 @@ struct BodyState {
 };
 
 struct BodyFk;
-// 순기구학 뼈대 → 캡슐(팔 링크 arm_r, 그리퍼–손끝 hand_r, 몸통 torso_r)
-BodyState bodyFromFk(const BodyFk& fk, const float eef[2][3], float arm_r = 0.09f, float hand_r = 0.10f,
-                     float torso_r = 0.18f);
+// 순기구학 뼈대 → 캡슐(팔 링크 arm_r, 그리퍼–손끝 hand_r). 몸은 스캔의 self_r 원으로 뺀다
+BodyState bodyFromFk(const BodyFk& fk, const float eef[2][3], float arm_r = 0.09f, float hand_r = 0.10f);
 
 struct ScanParams {
   float zmin = 0.3f, zmax = 8.0f;       // 광학 z 범위(8 m: 12비트 로그 양자화 간격 약 4 mm, 긴 판 넓은 방에서 필요)

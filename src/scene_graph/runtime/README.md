@@ -54,7 +54,7 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 
 - 머리 RGB 는 GPU 텐서 그대로 넘긴다. 깊이는 keyframe(과 지도 스텝)에만 고정 메모리 버퍼로 내려받는다.
 - 관측에 머리 RGB-D 가 없으면 한 번 경고한다(`RGBDFullResWrapper` 를 쓸 것).
-- 쓰는 곳: `src/sim/move_robot/run_eval_move.py`, `src/sim/explore/run_explore.py`.
+- 쓰는 곳: `src/sim/explore/run_explore.py`.
 
 ## 로봇(LIMO + OMX-F 하나)
 
@@ -92,17 +92,17 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 | 항목 | LIMO + OMX-F |
 |---|---|
 | 평가기 | `$ROBOT_AGENT/src/robot/og/eval_with_limo.py`(미리 뽑은 시작 자세 별칭, agent_metric 고침) + `--robot-config limo_omx_eval.yaml` (`run_explore.py --robot limo_omx --limo-shim`, 기본은 `SGRT_ROBOT`) |
-| move_robot 연결 | `src/sim/move_robot/move_robot_limo.py`: libmove_robot 은 그대로 R1 으로 돌리고 바이트만 바꿈. proprio 24 의 `base_qvel` → R1 61 의 0–2(나머지 0), 행동 23 의 베이스(BASE_OUT 0.75, 0.75, 1.0 으로 m/s·rad/s) → LIMO 9: 베이스 0–2 = 홀로노믹 vx, vy, wz / (0.5, 0.5, 0.8727) 자르기, 팔 3–7 = `reset_joint_pos`(홈 [0, -1.6, 1.45, 0.15, 0]) 고정, 그리퍼 8 = -1(닫힘, 0 은 반 열림이라 안 씀). 칸은 시뮬 로봇의 `controller_action_idx`·`_proprio_obs` 에서 읽음 |
-| 몸통·팔 집어넣기(tuck) | 없음(카메라 몸통 고정). 베이스 아닌 `part` 호출은 move_robot 에 안 가고 오류로 답함 |
+| move_robot 연결 | `src/sim/move_robot/move_robot_limo.py`: libmove_robot 이 LIMO + OMX-F 를 직접 말한다(proprio 24 · 행동 8 = [vx m/s, wz rad/s, omx_joint1..5 rad, 그리퍼 0..1]). 접착부는 행동 8 을 시뮬 로봇의 행동 9 칸에 놓을 뿐: 베이스 vx·wz 를 (0.5 m/s, 0.8727 rad/s)로 정규화(옆 속도 칸은 늘 0 — 차동), 팔 = 관절 목표 그대로, 그리퍼 0..1 → [-1, 1]. 칸은 시뮬 로봇의 `controller_action_idx`·`_proprio_obs` 에서 읽음 |
+| 몸통·팔 집어넣기(tuck) | 없음(카메라 몸통 고정). 탐사는 베이스만 쓰고 팔·그리퍼는 홈 자세를 유지한다 |
 | 카메라 | 글루가 `eyes` 카메라·센서 내부 파라미터(위 표) |
 | 정답 기록 | `SGRT_GT_LOG=<out>/gt_poses.csv` 기본(+ `.objects.json` 정답 물체), `<out>/poses.csv`(keyframe 마다 정답 world·map 틀 자세 ↔ slam 자세), `<out>/pose_diag.json`(sgrt_get_pose_diag, 약 1 초마다 — 평가기가 close 전에 끝나므로) |
-| 몸통(libmove_robot `nav.rs` Footprint) | **LIMO 사각형 0.36 × 0.22 m**(시뮬 충돌 모양: 몸통 0.322, 바퀴 폭 0.217, 홈 자세 팔이 뒤로 0.18 m 까지 → 대칭), 부풀림 = 외접원 0.211 + 0.03 = 0.241 m. `MOVE_ROBOT_FOOTPRINT=limo_omx`(run_explore.sh 가 LIMO 일 때 기본으로 넣음, `rect:LxW`·`circle:R` 도 됨). |
+| 몸통(libmove_robot `nav.rs` Footprint) | **LIMO 사각형 0.36 × 0.22 m**(시뮬 충돌 모양: 몸통 0.322, 바퀴 폭 0.217, 홈 자세 팔이 뒤로 0.18 m 까지 → 대칭), 부풀림 = 외접원 0.211 + 0.03 = 0.241 m. 크기는 하나뿐이라 고르는 설정이 없다. |
 
-그 밖: `MOVE_ROBOT_LIB` 기본 = `$ROBOT_AGENT/src/agent/tools/move_robot/target/release/libmove_robot.so`, 정답 바닥 지도는 `src/sim/explore/gt` 가 없으면 `~/behavior-2026/src/sim/explore/gt`(서브모듈 안에서는 둘 다 같은 경로). libsgrt 는 `sgrt_set_robot` 이 있는 빌드여야 함(없으면 멈춤). `SGRT_ROBOT` 없음 = limo_omx(10-06 부터; 옛 R1 기본값은 없어짐, `r1pro` 는 옛 기록 재생에만).
+그 밖: `MOVE_ROBOT_LIB` 기본 = `build/bin/libmove_robot.so`(`tools/build_all.sh agent`), 정답 바닥 지도는 `src/sim/explore/gt`(`gt_trav.py` 가 만듦). libsgrt 는 `sgrt_set_robot` 이 있는 빌드여야 함(없으면 멈춤). `SGRT_ROBOT` 은 `limo_omx` 하나(없어도 같다).
 
-**LIMO 탐색 결과**(10-04, turning_on_radio 인스턴스 0 = house_double_floor_lower, headless, frontier, `SGRT_POSE=slam`, robot-agent 391c04b 자산 — `LIMO_NEAR_CLIP` 우회 안 씀(이미 0.05), 엔진 기본 yoloe-11l): `no_frontier` 로 끝, go_to 5 번, 시뮬 58.4 s(벽 62 s). 경로 정답 13.1 m(move_robot `path_m` 11.0 — base_qvel 적분, 약 16 % 짧음), 빈칸 53.3 m², 닿을 수 있는 정답 바닥의 88.7 %. slam ↔ 정답 keyframe 291 개 rms 3.1 cm / 0.26°, 최대 5.3 cm / 0.66°, 끝 4.1 cm / 0.49°. 막힘·멈춤·접촉 0, 최소 여유 0.10 m. 지도: 빈칸의 90 % 가 정답 바닥, 점유 칸의 96 % 가 정답 비바닥 ±10 cm 안. 물체 16 개 모두 정답 물체 AABB 10 cm 안, 범주로 보면 13 개 맞음(radio·sofa·shelf·coffee/breakfast table·조명), 3 개 틀림(lamp→stairs, picture frame→hall_tree, radio receiver→downlight). 같은 조건 R1 확인 판: 16.6 m·56.5 m²·90.3 %·67 s.
+**LIMO 탐색 결과**(10-04, turning_on_radio 인스턴스 0 = house_double_floor_lower, headless, frontier, `SGRT_POSE=slam`, robot-agent 391c04b 자산 — `LIMO_NEAR_CLIP` 우회 안 씀(이미 0.05), 엔진 기본 yoloe-11l): `no_frontier` 로 끝, go_to 5 번, 시뮬 58.4 s(벽 62 s). 경로 정답 13.1 m(move_robot `path_m` 11.0 — base_qvel 적분, 약 16 % 짧음), 빈칸 53.3 m², 닿을 수 있는 정답 바닥의 88.7 %. slam ↔ 정답 keyframe 291 개 rms 3.1 cm / 0.26°, 최대 5.3 cm / 0.66°, 끝 4.1 cm / 0.49°. 막힘·멈춤·접촉 0, 최소 여유 0.10 m. 지도: 빈칸의 90 % 가 정답 바닥, 점유 칸의 96 % 가 정답 비바닥 ±10 cm 안. 물체 16 개 모두 정답 물체 AABB 10 cm 안, 범주로 보면 13 개 맞음(radio·sofa·shelf·coffee/breakfast table·조명), 3 개 틀림(lamp→stairs, picture frame→hall_tree, radio receiver→downlight).
 
-**LIMO 탐색 결과 2**(10-04, 같은 조건 + 렌즈 프레임 cam 0(scenemap FK = OmniGibson eyes, 차 2.6e-7 m), eyes 수평 화각 67.9°(Dabai 깊이, fx 534.7 @ 720), move_robot 몸 0.36 × 0.22 m(`MOVE_ROBOT_FOOTPRINT=limo_omx`), path_m 고침): `no_frontier`, go_to 15 번, 시뮬 157.4 s(벽 183 s). move_robot `path_m` 38.35 m 대 정답 38.15 m(+0.5 %, 전 −16 %). 빈칸 59.2 m², 정답 바닥의 95.0 %. slam ↔ 정답 keyframe 786 개 rms 9.9 cm / 0.30°, 최대 12.6 cm / 1.75°, 끝 11.2 cm / 0.43°(경로가 3 배 길고 화각이 좁아짐). 막힘·멈춤·접촉 0, 최소 여유 0.05 m. 판: `data/outputs/explore_20261004_100358_turning_on_radio_frontier_limo`.
+**LIMO 탐색 결과 2**(10-04, 같은 조건 + 렌즈 프레임 cam 0(scenemap FK = OmniGibson eyes, 차 2.6e-7 m), eyes 수평 화각 67.9°(Dabai 깊이, fx 534.7 @ 720), move_robot 몸 0.36 × 0.22 m, path_m 고침): `no_frontier`, go_to 15 번, 시뮬 157.4 s(벽 183 s). move_robot `path_m` 38.35 m 대 정답 38.15 m(+0.5 %, 전 −16 %). 빈칸 59.2 m², 정답 바닥의 95.0 %. slam ↔ 정답 keyframe 786 개 rms 9.9 cm / 0.30°, 최대 12.6 cm / 1.75°, 끝 11.2 cm / 0.43°(경로가 3 배 길고 화각이 좁아짐). 막힘·멈춤·접촉 0, 최소 여유 0.05 m. 판: `data/outputs/explore_20261004_100358_turning_on_radio_frontier_limo`.
 
 ## 환경 변수
 

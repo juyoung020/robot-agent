@@ -19,9 +19,7 @@ struct BodyFk {
   // 팔 뼈대: omx_link0, 관절 1..5 원점, omx_end_effector_link(T_tip, 나머지는 마지막 점 되풀이)
   static constexpr int kArmPts = 11;
   float arm[2][kArmPts][3];
-  float torso[6][3];           // 안 씀(몸통 관절 없음)
   int n_arms;                  // 쓰는 팔 수(1) — limoBodyFk 가 채움
-  int n_torso;                 // 쓰는 torso 점 수(0 — 몸은 스캔의 self_r 원으로 뺌)
 };
 
 // LIMO + OMX-F(배정밀도). 모든 자세 = base_footprint ← 그 프레임, 행 우선 3×4

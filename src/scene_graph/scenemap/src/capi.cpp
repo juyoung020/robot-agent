@@ -260,7 +260,7 @@ BodyState robotBody(int robot, const float* q, BodyFk* fk) {
   computeLimoFk(q, &f);
   float eef[2][3];
   limoBodyFk(f, fk, eef);
-  return bodyFromFk(*fk, eef, 0.05f, 0.06f, 0.f);   // OMX 링크 폭 ≈ 3–4 cm
+  return bodyFromFk(*fk, eef, 0.05f, 0.06f);   // OMX 링크 폭 ≈ 3–4 cm
 }
 
 // 로봇별 몸 크기 매개변수LIMO 0.32 × 0.22 × 0.25 m, 깊이 카메라 높이 0.18 m, OMX 팔 닿는 거리 ≈ 0.4 m

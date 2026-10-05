@@ -105,9 +105,9 @@ int main() {
     BodyFk b;
     float eef[2][3];
     limoBodyFk(f, &b, eef);
-    bool ok = b.n_arms == 1 && b.n_torso == 0;
+    bool ok = b.n_arms == 1;
     for (int i = 0; i < 3; ++i) ok = ok && std::fabs(b.arm[0][BodyFk::kArmPts - 1][i] - f.T_tip[i * 4 + 3]) < 1e-6 && eef[0][i] == eef[1][i];
-    std::printf("body skeleton (1 arm, no torso, last point = omx_end_effector_link): %s\n", ok ? "ok" : "FAIL");
+    std::printf("body skeleton (1 arm, last point = omx_end_effector_link): %s\n", ok ? "ok" : "FAIL");
     fail += !ok;
   }
   // 적은 proprio 는 거절
