@@ -138,6 +138,8 @@
 
 ## 6. 알게 된 점·남은 문제
 
+- `src/agent/planner`(behavior-agent, 약 1.1만 줄) = **공부용 코드**(BEHAVIOR 챌린지 R1 Pro 계획 에이전트, 사용자 10-06). 실행 쪽은 `llm` 모듈만 쓴다 — R1 흔적은 남겨 둠, 잔재 검사 대상 아님.
+
 - (10-06) 학습 CUDA 의 옛 커널 갈래 스위치 5 개 — `NET_GEMM_OLD`(network gemm_k)·`NET_SLOT_OLD`(ppo 칸 MLP)·`BC_RESEED_OLD`(bc 씨앗 바꾸기)·`RVLA_DN_OLD`·`RVLA_ATT_OLD`(vla). 새 길과 비트가 같다고 검증이 끝난 측정용 — training 정리 때 지우고 ppo_verify·vla_verify 로 확인.
 
 - 실제 bag 회귀 확인은 `realbag_run … --load <dets.gz> --pose odom` 로 결정적(Cartographer 는 스레드 때문에 매번 조금 다름).

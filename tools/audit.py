@@ -33,7 +33,7 @@ ALLOW = [  # (경로 정규식, 줄 정규식) — 확인한 예외
     (r"move_robot/src/tests\.rs$|move_robot/.*\.py$", r"torso|R1"),           # 옛 부분 이름이 거부되는지 보는 시험
     (r"training/vla/README\.md$", r"π0\.5 꼴"),
     (r"^src/agent/planner/", r"."),                                             # 공부용(사용자 결정)
-    (r"^docs/(map_vla/|model_selection|plan|known_bugs|terms|clip_candidates|perception_model)", r"."),  # 설계·결정 기록
+    (r"^docs/(map_vla/|model_selection|plan|known_bugs|terms|clip_candidates|perception_model|CODE_MAP|file_review)", r"."),  # 설계·결정 기록, 정리 기록
 ]
 CODE_EXT = (".py", ".sh", ".cpp", ".hpp", ".h", ".cu", ".cuh", ".rs", ".js", ".html", ".toml", ".txt", ".json", ".yaml", ".lua", ".cmake")
 SKIP = re.compile(r"^(archive|refs|third_party)/|^docs/cleanup_checklist\.md$|^src/scene_graph/spark_dsg/|\.(png|jpg|gif|pdf|glb|stl|dae|obj|npz|bin|f16|onnx|pt)$")

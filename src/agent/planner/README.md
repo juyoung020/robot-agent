@@ -1,5 +1,7 @@
 # agent — high-level planner agent + evaluator↔VLA relay (Rust)
 
+> **공부용 코드.** BEHAVIOR Challenge 2026(R1 Pro, 평가기 웹소켓·msgpack·BDDL)을 위해 짠 계획 에이전트로, 지금 프로젝트(LIMO pick & place)의 실행 경로가 아니다. 실행 쪽(`src/agent/runtime`, `tools/move_robot`, `tools/search_objects`)은 이 크레이트에서 `llm` 모듈(OpenAI 호환 LLM 호출)만 쓴다. R1 Pro 순기구학·61 차원 proprio 같은 R1 흔적은 그대로 둔다.
+
 The "judgement" layer of `plan.md` §1–2. It keeps the long plan, memory and step tracking, and gives VLA only the
 instruction for the current step. Design, decisions, measurements and how to run: **[docs/에이전트_설계.md](../README.md)** (Korean).
 
