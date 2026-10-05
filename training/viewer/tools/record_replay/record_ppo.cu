@@ -36,11 +36,28 @@ static double jget(const std::string& t, const char* key, double d) {
   return std::strtod(t.c_str() + p + 1, nullptr);
 }
 
+// 설정 JSON 에서 첫 "key": [ … ] 의 i 번째 숫자. 없으면 d
+static double jarr(const std::string& t, const char* key, int i, double d) {
+  const std::string k = std::string("\"") + key + "\"";
+  size_t p = t.find(k);
+  if (p == std::string::npos || (p = t.find('[', p)) == std::string::npos) return d;
+  const char* c = t.c_str() + p + 1;
+  for (int j = 0; j <= i; ++j) {
+    char* e;
+    const double v = std::strtod(c, &e);
+    if (e == c) return d;
+    if (j == i) return v;
+    c = e;
+    while (*c == ' ' || *c == ',' || *c == '\n') ++c;
+  }
+  return d;
+}
+
 int main(int argc, char** argv) {
   std::string ckpt, out, cfgp, split = "eval";
   int episodes = 8, N = 64, track = 8, stage = 2, use_map = -1, goal = -1, max_steps = 3000;
   float p0 = 0.f, p1 = 0.f;   // 처음 지도 C0·C1 비율 — 기본 빈 지도 C2(학습과 같음, 10-06 결정)
-  float pnp[3] = {0.f, 0.f, 0.f};
+  float pnp[3] = {-1.f, -1.f, -1.f};   // 잡기 물리 판 B4·B5·B6 비율(stage 3). 기본 = 설정 beh.pnp
   std::string scenes;   // BEHAVIOR 장면 이름(쉼표) — 기본 = 설정 beh.scenes(학습과 같은 장면)   // 잡기 물리 판 B4·B5·B6 비율(stage 3)
   uint64_t seed = 7;
   bool stochastic = false;
@@ -74,6 +91,11 @@ int main(int argc, char** argv) {
   c.act_dims = (int)jget(cfg, "act_dims", 2); c.goal_from_map = goal;
   c.map_p0 = p0; c.map_p1 = p1; c.map_kmin = 1; c.map_kmax = 8; c.map_reveal_r = 1.5f;
   c.fp8 = (int)jget(cfg, "fp8", 0);
+  // BEHAVIOR 판 값(stage 3): 설정 "beh"(학습과 같은 판) — --pnp 가 있으면 그것
+  for (int k = 0; k < 3; ++k) if (pnp[k] < 0.f) pnp[k] = (float)jarr(cfg, "pnp", k, 0.0);
+  c.bcurr.p1 = (float)jarr(cfg, "mix", 0, 0.0); c.bcurr.p2 = (float)jarr(cfg, "mix", 1, 0.0);
+  c.bcurr.p_goto = (float)jget(cfg, "p_goto", 0.0); c.bcurr.p_point = (float)jget(cfg, "p_point", 0.0);
+  c.bcurr.yaw_jit = (float)jget(cfg, "yaw_jit", 0.0);
   c.bcurr.p4 = pnp[0]; c.bcurr.p5 = pnp[1]; c.bcurr.p6 = pnp[2];
   if (pnp[0] + pnp[1] + pnp[2] > 0.f) c.bcurr.phys = 8;   // PF_FEAS: 잡기 가능 짝에서만(ppo_pnp 의 feas 1 과 같음)
   ppo::Trainer tr(c);
@@ -123,7 +145,7 @@ int main(int argc, char** argv) {
   std::unique_ptr<rec::BehRec> beh;   // BEHAVIOR 판(stage 3): 장면 머리 = 벽·창·가구·문 + 집을 물체·놓을 곳(beh_rec.h, record_bc 와 같음)
   if (stage >= 3 && tr.scenes) {   // .trp 만 — 점구름 지도는 og_replay(_og.sg)가 만든다
     R.sg = false;
-    R.skill = pnp[0] + pnp[1] + pnp[2] > 0.f ? "pick" : "approach";
+    R.skill = pnp[0] + pnp[1] + pnp[2] > 0.f ? "pick" : c.bcurr.p_goto > 0.5f ? "goto" : c.bcurr.p2 > 0.5f ? "explore" : "approach";
     R.home_prefix = "B";
     beh = std::make_unique<rec::BehRec>(tr.scenes.get());
     R.scene_fn = [&](int i) {
