@@ -13,7 +13,7 @@ the official evaluator with our robot (robot-agent src/robot/og/eval_with_limo.p
     python run_limo_map.py --out <dir> --steps 900 [--gt-dir DIR] -- --task-name turning_on_radio --mode public_test \
         --instance-indices 0 --num-envs 1 --max-steps 960 --headless \
         --robot-config <robot-agent>/src/robot/og/limo_omx_eval.yaml --env-wrapper omnigibson.eval.wrappers.RGBDFullResWrapper
-(run_limo_map.sh sets all of this.) GT is used only for logging/scoring, never by the map (SGRT_POSE=slam by default).
+(run_limo_map.sh sets all of this.) GT is used only for logging/scoring, never by the map (SGRT_POSE=carto by default: Cartographer on the sim 2D lidar).
 """
 import argparse
 import ctypes
@@ -31,7 +31,7 @@ REPO = HERE.parents[2]
 sys.path.insert(0, str(REPO / "src/scene_graph/runtime/glue"))
 sys.path.insert(0, str(REPO / "src/sim/explore"))
 sys.path.insert(0, str(REPO / "src/sim/move_robot"))
-SHIM = pathlib.Path(os.environ.get("LIMO_SHIM", pathlib.Path.home() / "robot-agent/src/robot/og/eval_with_limo.py"))
+SHIM = pathlib.Path(os.environ.get("LIMO_SHIM", REPO / "src/robot/og/eval_with_limo.py"))
 
 VMAX, WMAX = 0.5, 0.8727          # limo_omx_eval.yaml base command_output_limits (input [-1, 1])
 

@@ -12,24 +12,25 @@
 set -euo pipefail
 N=$1; ENG=$2; R3D=${3:-}; O11=${4:-}; O15=${5:-}
 HERE=$(cd "$(dirname "$0")" && pwd)
-BIN=${REALBAG_BIN:-$HOME/realbag_build}/realbag_run
-PY=${PY:-$HOME/realbag_venv/bin/python}
-OUT=${OUT:-$HOME/datasets/objprob/refit/$N}
-S=$HOME/datasets/sim_detcmp/streams/radio_limo_r3
-OL=$HOME/datasets/realbags/streams
+. "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)/config/paths.env"
+BIN=${REALBAG_BIN:-$RA_BUILD/bin}/realbag_run
+PY=${PY:-python3}
+OUT=${OUT:-$RA_DATASETS/objprob/refit/$N}
+S=$RA_DATASETS/sim_detcmp/streams/radio_limo_r3
+OL=$RA_DATASETS/realbags/streams
 GTPGM=${GTPGM:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)/src/sim/explore/gt/house_double_floor_lower__turning_on_radio.pgm}
 PARAMS_BASE=${PARAMS_BASE:-$HERE/objprob_params/FastSAM-s-416.json}
 TH=${TH-"0.6/0.7 0.5/0.7 0.7/0.7 0.6/0.8 0.7/0.8 0.5/0.6"}
 CONF=${CONF:-0.25}   # 검출 conf(보정한 엔진은 0.25 = 보정 문턱 t. 더 높이면 실효 t 가 오름)
 COMMON=(--det-every 1 --max-depth 4 --conf $CONF)
-OLX=(--pose slam --max-depth 4 --conf $CONF)
+OLX=(--pose carto --max-depth 4 --conf $CONF)
 mkdir -p "$OUT/logs"
 ENGX=(); [ "$ENG" != - ] && ENGX=(--engine "$ENG")
 
 # 1) 검출 캐시
 if [ -z "$R3D" ]; then
   R3D=$OUT/det/r3.gz; mkdir -p "$OUT/det"
-  "$BIN" "$S" "$OUT/det/r3_slam" --pose slam "${COMMON[@]}" --det fastsam "${ENGX[@]}" --objprob --objprob-params none --dump "$R3D" > "$OUT/logs/det_r3.log" 2>&1
+  "$BIN" "$S" "$OUT/det/r3_slam" --pose carto "${COMMON[@]}" --det fastsam "${ENGX[@]}" --objprob --objprob-params none --dump "$R3D" > "$OUT/logs/det_r3.log" 2>&1
 fi
 if [ -z "$O11" ]; then
   for k in 1 5; do
@@ -39,7 +40,7 @@ if [ -z "$O11" ]; then
   O11=$OUT/det/ol11.gz; O15=$OUT/det/ol15.gz
 fi
 WALLRUN=$OUT/det/r3_slam
-[ -d "$WALLRUN" ] || { "$BIN" "$S" "$OUT/wallrun" --pose slam "${COMMON[@]}" --load "$R3D" --objprob --objprob-params "$PARAMS_BASE" > "$OUT/logs/wallrun.log" 2>&1; WALLRUN=$OUT/wallrun; }
+[ -d "$WALLRUN" ] || { "$BIN" "$S" "$OUT/wallrun" --pose carto "${COMMON[@]}" --load "$R3D" --objprob --objprob-params "$PARAMS_BASE" > "$OUT/logs/wallrun.log" 2>&1; WALLRUN=$OUT/wallrun; }
 
 # 2) 맞추기
 [ -f "$OUT/fit/objprob_params.json" ] || "$PY" "$HERE/objprob_fit.py" "$S" "$R3D" "$OUT/fit" --walls "$WALLRUN/walls.csv" --metrics "$WALLRUN/metrics.json" \

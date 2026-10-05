@@ -41,7 +41,7 @@ done
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate behavior
 export OMNI_KIT_ACCEPT_EULA=YES
-export SGRT_POSE=${SGRT_POSE:-slam}   # 실제 로봇과 같게 slam = Cartographer(시뮬 2D 라이다 + 바퀴 오도메트리). 옛 깊이 맞추기는 slam2d, 정답 자세 확인용은 gt
+export SGRT_POSE=${SGRT_POSE:-carto}   # 실제 로봇과 같게 Cartographer(시뮬 2D 라이다 + 바퀴 오도메트리). 정답 자세 확인용은 gt
 export SGRT_LIB=${SGRT_LIB:-$RA_BUILD/bin/libsgrt.so}
 # 검출 = ObjectSAM(YOLO26n 학생) + SigLIP 2 + objprob(libsgrt 가 분할 엔진이면 켬), 살펴본 정도 켬. 다른 엔진은 SGRT_ENGINE(sgrt_glue.py)
 export SGRT_ENGINE=${SGRT_ENGINE:-$OVDET_MODELS/x86_sm120/yolo26n-seg-obj-416.plan} SGRT_INSPECT=${SGRT_INSPECT:-1}

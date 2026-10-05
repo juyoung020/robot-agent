@@ -23,7 +23,7 @@ source ~/miniconda3/etc/profile.d/conda.sh
 conda activate behavior
 export OMNI_KIT_ACCEPT_EULA=YES
 export SGRT_ROBOT=${SGRT_ROBOT:-limo_omx}
-export SGRT_POSE=${SGRT_POSE:-slam}   # slam = Cartographer(시뮬 2D 라이다 src/sim/lidar + 바퀴 오도메트리), 옛 깊이 맞추기는 slam2d. SGRT_RECORD=<파일> 이면 입력(스캔 포함) 기록
+export SGRT_POSE=${SGRT_POSE:-carto}   # Cartographer(시뮬 2D 라이다 src/sim/lidar + 바퀴 오도메트리). SGRT_RECORD=<파일> 이면 입력(스캔 포함) 기록
 export SGRT_LIB=${SGRT_LIB:-$RA_BUILD/bin/libsgrt.so}
 # 분할 엔진 기본 = ObjectSAM(YOLO26n 학생) — libsgrt 가 SigLIP 2 이름 + objprob 를 켬(SGRT_OBJPROB=0 이면 옛 규칙). 원래 FastSAM-s 는
 # SGRT_ENGINE=$OVDET_MODELS/x86_sm120/FastSAM-s-416.plan (원래 FastSAM-s, 기준용)

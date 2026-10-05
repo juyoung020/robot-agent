@@ -1,5 +1,5 @@
 # libsgrt.so — ovdet(분할 엔진 TensorRT, 기본 ObjectSAM + SigLIP 2 objprob) + slam_carto(Cartographer 자세) + scenemap(격자·objmap·Spark-DSG 저장) 을 한 C ABI 로 (include/sgrt.h).
-#   cmake -S src/scene_graph/runtime -B ~/sgrt_build && cmake --build ~/sgrt_build -j
+#   cmake -S src/scene_graph/runtime -B build/sgrt && cmake --build build/sgrt -j
 cmake_minimum_required(VERSION 3.18)
 # CUDA: ovdet 과 같은 툴킷(12.8, sm_120). best view 자르기 커널(src/crop.cu)
 set(OVDET_CUDA_ROOT "/usr/local/cuda-12.8" CACHE PATH "CUDA toolkit root")

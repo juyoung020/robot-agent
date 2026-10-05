@@ -160,7 +160,7 @@ int    sgrt_get_stage_timing(const sgrt*, sgrt_stage_timing* out, int32_t cap);
 int    sgrt_reset_stage_timing(sgrt*);
 
 /* ---- 물체 영상 임베딩·이름(추가 ABI, src/scene_graph/clip · docs/clip_candidates.md 3.5) ----
- * 환경 변수 SGRT_CLIP = SigLIP 2 엔진 plan(또는 1 = ~/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan)이면 켜짐.
+ * 환경 변수 SGRT_CLIP = SigLIP 2 엔진 plan(또는 1 = models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan)이면 켜짐.
  * keyframe 마다 새 물체·best view 가 좋아진 물체(최대 8 개)를 원본 RGB 에서 잘라 비동기로 임베딩(768-d, L2). 저장 때
  * objects/O<id>_emb.f16(원본), cache/names.json(라벨 표 SGRT_LABELS 로 뽑은 이름 캐시), scene.json 노드 metadata.emb·names.
  * 질의 벡터는 같은 SigLIP 2 글 공간 768-d(글 인코더는 로봇 밖 tools/text_query.py, 나중에 작은 한국어 학생) — 여기서는 벡터만 받는다. */
