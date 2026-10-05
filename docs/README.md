@@ -5,6 +5,8 @@
 | 문서 | 내용 |
 |---|---|
 | [plan.md](plan.md) | 계획: 무엇을, 어디서, 어떤 순서로 |
+| [CODE_MAP.md](CODE_MAP.md) | 코드 지도: 무엇이 어디서 어떻게 도는가, 바꿀 때 같이 바뀌는 곳 |
+| [LAYOUT.md](LAYOUT.md) | 저장소 배치·빌드·경로 변수 |
 | [model_selection.md](model_selection.md) | 모델 선택: 부품마다 무엇을 골랐고 왜 골랐나 |
 | [clip_candidates.md](clip_candidates.md) | CLIP 류 임베딩 모델 후보·측정 (분할 마스크 → 이름·임베딩, 측정 때 분할은 FastSAM-s — 지금은 ObjectSAM) |
 | [terms.md](terms.md) | 용어 정리: stuff·things, 확률론적 물체 수준 매핑, DA·과분할 병합·라벨 융합, PCA 와 랜색(RANSAC) — 우리 코드 위치와 함께 |
