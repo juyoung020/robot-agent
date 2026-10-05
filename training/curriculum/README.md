@@ -38,7 +38,11 @@
 **결정(2026-10-06): 지도 그림은 주지 않는다 — 카메라 2 대만.** 위에서 본 지도 **그림**(학생 셋째 그림)만 뺀다 — 지도를 통째로 주면 MDP 에 어긋난다(사용자 판단). **토큰은 그대로 둔다**: 16 × 16 격자(장애물·안 본 칸 비율, 교사 X0 의 tv)·벽·방·탐사 경계·물체 칸(로봇 기준 상대 좌표·거리). 학생도 그림 대신 같은 격자 토큰을 받아 교사와 입력이 같다. 코드에서 바꿀 곳: `training/BC`(셋째 그림 → 격자 토큰), `training/vla`(카메라 3 → 2, 격자 토큰), `og_replay_lib.py`·`sm_tok.h`(그림 만들기). 교사 쪽(X0 의 격자)은 그대로.
 - 정의: [VLA_INPUT](../../docs/map_vla/VLA_INPUT.md), [POLICY](../../docs/map_vla/POLICY.md) 4.2, [MAPVLA_SPEC](../../docs/map_vla/MAPVLA_SPEC.md).
 
-## 상태 — 교사와 학생이 각각 받는 것 (코드: `training/RL/network/include/net.h`, `observation/include/obs.h`, 설계: VLA_INPUT)
+## 상태 — 교사와 학생이 각각 받는 것
+
+전체 목록(칸 번호·단위·정규화·질의 뜻까지): [docs/map_vla/STATE_SPEC.md](../../docs/map_vla/STATE_SPEC.md). 아래는 요약.
+
+### 요약 (코드: `training/RL/network/include/net.h`, `observation/include/obs.h`, 설계: VLA_INPUT)
 
 **교사 RL — 관측 X0 976 칸**
 

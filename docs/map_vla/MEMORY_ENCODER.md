@@ -1,6 +1,6 @@
 # 기억 인코더 — 물체가 몇 개든 로봇 두뇌에는 늘 같은 개수로
 
-처음 보는 사람을 위한 설명이다. 자세한 사양은 [MAPVLA_SPEC](MAPVLA_SPEC.md) 2.8절, 물체 정보는 [VLA_INPUT](VLA_INPUT.md) 3절.
+처음 보는 사람을 위한 설명이다. 입력·상태 전체 목록은 [STATE_SPEC](STATE_SPEC.md). 자세한 사양은 [MAPVLA_SPEC](MAPVLA_SPEC.md) 2.8절, 물체 정보는 [VLA_INPUT](VLA_INPUT.md) 3절.
 
 ## 1. 왜 필요한가
 
