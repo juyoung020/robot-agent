@@ -11,13 +11,13 @@ build/      (git 밖) 모든 빌드 결과 — cmake 폴더 build/<이름>, carg
 models/     (git 밖) 로봇·파이프라인이 실행할 때 쓰는 엔진·가중치 (OVDET_MODELS = models/ovdet)
 training/model/ (git 밖) 학습할 때 불러오는 베이스 가중치 — Qwen3.5-0.8B·SigLIP 2(쓰는 것), Qwen3.5-2B·smolvla_base(나중을 위해 보관)
 data/       (git 밖) 데이터셋·기록·실행 폴더 (datasets/ embed_work/ trainview_work/)
-third_party/(git 밖) BEHAVIOR-1K 등 큰 외부 코드·자산 (B1K_ROOT)
+third_party/(git 밖) BEHAVIOR-1K(B1K_ROOT)·cartographer(Cartographer 코어, build_all.sh cartographer 가 받음) 등 큰 외부 코드·자산
 ```
 conda·venv(`~/miniconda3` 의 `behavior`, `~/fastsam_venv` 등)와 시스템 캐시는 홈에 둔다 — `config/paths.env` 의 `OG_CONDA_ENV`/`OG_PYTHON` 으로 가리킨다.
 
 ## 빌드
 `tools/build_all.sh [대상...]` 하나로 전부(증분, `-j4`, `JOBS=` 로 조절). 대상: `tools/build_all.sh --list`.
-`scenemap sgrt sgclip realbag sgview og2sg env map map_cmp ppo bc vla record_replay trainview agent ppo_driver bc_driver`.
+`cartographer slam_carto scenemap sgrt sgclip realbag sgview og2sg env map map_cmp ppo bc vla record_replay trainview agent ppo_driver bc_driver`.
 시험: `ctest --test-dir build/scenemap` 등. 학습 뷰어용 링크: `training/viewer/build_deps.sh`.
 
 ## 외부 경로

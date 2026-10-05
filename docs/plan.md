@@ -52,7 +52,7 @@ flowchart LR
 - **코드는 C++ · CUDA · Rust.** 예외: 앱(Swift·Kotlin), 학습·데이터 변환 도구(Python), 외부 도구는 원래 언어.
 - **저장소는 robot-agent 하나.** 코드는 git, 빌드 `build/`·모델 `models/`·데이터 `data/`·외부 `third_party/` 는 폴더 안(git 밖). 경로는 `config/paths.env` 하나, 빌드는 `tools/build_all.sh` 하나. 커밋 훅이 저장소 밖 경로를 막는다.
 - **원본은 하나.** 인지·뷰어(`src/scene_graph`)가 바뀌면 실시간 로봇·학습 리플레이·학습 뷰어가 따라 바뀐다. 흉내 내거나 베낀 코드를 두지 않는다.
-- **시뮬은 실제 로봇과 같은 방식으로 돈다.** 위치는 오도메트리 + SLAM(Cartographer, 지금은 임시 `slam2d`), 이동 판정도 오도메트리. 정답 자세(`gt`)는 확인용.
+- **시뮬은 실제 로봇과 같은 방식으로 돈다.** 위치는 Cartographer(시뮬 2D 라이다 + 바퀴 오도메트리 — 실제 리모의 X2L 과 같은 입력), 이동 판정은 오도메트리. 정답 자세(`gt`)는 확인용.
 - **학습도 실제와 같은 입력.** 정답 지도로 학습하지 않는다 — 빈 지도에서 로봇이 본 만큼 자라는 지도. 교사도 학생과 같은 입력(특권은 critic 만).
 - **물체 사이 관계(위·안·옆)는 쓰지 않는다.** 위치·크기 숫자로 충분하다.
 
@@ -76,7 +76,7 @@ flowchart LR
 | 분할 | ObjectSAM(물체만, 벽·천장·바닥 안 자름) | ✅ |
 | 이름·임베딩 | SigLIP 2 B/32 (C++/TensorRT, 마스크 풀링) | ✅ — 이름표를 순수 SigLIP 2 공간으로 바꾸는 중 🔄 |
 | 확률 물체 지도 | 이름 없는 확률 DA, vMF 벡터, 베이지안 이름, 칼만 위치, 벽·천장 기하 거르기, 덜 본 정도 | ✅ 기본 켬 |
-| SLAM | **Cartographer(2D 라이다)** 로 지도·위치. 지금 시뮬·bag 은 임시로 scenemap `slam2d` 가 돌고 있음 → Cartographer 로 바꾸기 | ⬜ |
+| SLAM | **Cartographer(2D 라이다)** 로 지도·위치 — libsgrt·realbag 기본(`SGRT_POSE=carto`), 시뮬 리모에 X2L 흉내 라이다, 임시 `slam2d` 는 archive. OpenLORIS 7 판 ATE 6.2 → 2.2 cm. 떠밀림 보정 json → GPU 지도(`slam_carto/calib/carto_drift.json`) | ✅ (실제 리모 기록 ⬜) |
 | 방 나누기·이름 | 점유 격자로 방, 물체 이름 규칙 → 다음 임베딩 제로샷 | ✅ 규칙 / ⬜ 제로샷 |
 | 지도 갱신 | 옮겨짐·사라짐·생김, 바뀐 부분만 | ✅ |
 | 보기 | sgview — 실시간·기록 재생·학습 리플레이 공용, 본 곳만 그림 | ✅ |
@@ -148,3 +148,4 @@ flowchart LR
 | 2026-10-04 | π0.5 버림 → 우리 VLA, 팔 OMX-F. 공개용 RecallVLA(Qwen3.5-0.8B + SigLIP 2) | 지도 기억을 넣고 리모에 맞추려고 |
 | 2026-10-05 | 실제 bag(OpenLORIS·TUM)으로 확인. 분할 비교 뒤 ObjectSAM 으로 결정, 확률 물체 지도(objprob) 기본. 물체 찾기를 에이전트·RecallVLA 공용 색인으로 | FastSAM 조각·벽 문제, Jetson 계산량 |
 | 2026-10-06 | 문서를 설계자 관점으로 다시 씀(지금 계획만 본문, 과정은 기록). 저장소 하나로 정리(옛 대회 저장소 분리, 인지·뷰어 원본을 robot-agent 로). 정답 지도 학습 금지와 새 커리큘럼, 교사 = 학생 입력, 학습 중 인지 = 검출 흉내 + GPU 확률 모드, SigLIP 2 공간 하나, 찾을 수 있는 물체만 명령. 평가는 리모 성공률(대회 점수 안 씀) | 학습과 실제가 같은 입력, 정리된 저장소 |
+| 2026-10-06 | SLAM 을 Cartographer 로 바꿈(ROS 없는 코어 + C ABI, libsgrt·realbag 기본, 시뮬 2D 라이다), scenemap `slam2d` archive | 09-30 결정대로, OpenLORIS 에서 ATE·지도 모두 나음 |

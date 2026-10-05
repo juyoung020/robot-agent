@@ -85,7 +85,7 @@ def main():
         dd = np.r_[0, np.hypot(np.diff(G[:, 0]), np.diff(G[:, 1]))]
         dr = np.r_[0, np.abs(wrap(np.diff(G[:, 2])))]
         cd, cr = np.cumsum(dd), np.cumsum(dr)
-        runs.append(dict(traj=p, keyframes=len(t), duration_s=float(t[-1] - t[0]), path_m=float(cd[-1]), turn_deg=float(np.degrees(cr[-1])),
+        runs.append(dict(traj='/'.join(p.split('/')[-2:]), keyframes=len(t), duration_s=float(t[-1] - t[0]), path_m=float(cd[-1]), turn_deg=float(np.degrees(cr[-1])),
                          rms_xy=float(np.sqrt(np.mean(exy ** 2))), max_xy=float(exy.max()), final_xy=float(exy[-1]),
                          rms_yaw_deg=float(np.degrees(np.sqrt(np.mean(eyaw ** 2)))), max_yaw_deg=float(np.degrees(eyaw.max())),
                          final_yaw_deg=float(np.degrees(eyaw[-1]))))

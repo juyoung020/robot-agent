@@ -3,7 +3,8 @@
 평가기(또는 로봇) 프로세스 안에서 물체 기억을 실시간으로 굴린다. 공유 라이브러리 하나에 세 가지를 묶는다.
 
 - 검출: ovdet(TensorRT). 기본은 이름 없는 분할 엔진 ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만, `yolo26n-seg-obj-416.plan`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 이름·임베딩 + scenemap 확률 모드(아래 "objprob 앞단"). 보관한 YOLOE·닫힌 어휘 YOLO-seg 도 고를 수 있다(옛 이름 규칙). 머리 RGB 를 장치 메모리에서 바로 읽는다.
-- 지도·물체 기억: scenemap(slam2d·objmap·방·장면 그래프·저장). 깊이는 호스트 f32 미터.
+- 위치: Cartographer 2D(`../slam_carto`, 기본 — 2D 라이다 스캔 `sgrt_push_scan` + proprio 바퀴 오도메트리).
+- 지도·물체 기억: scenemap(그 자세로 격자 mapper2d·objmap·방·장면 그래프·저장). 깊이는 호스트 f32 미터.
 - (선택) 물체 영상 임베딩: sgclip(SigLIP 2, `../clip`). `SGRT_CLIP` 이면 켜짐.
 
 파이썬은 포인터만 넘긴다(`glue/sgrt_glue.py`). 한 스레드에서 부른다. 설계는 [docs/scenemap_설계.md](../../../docs/scenemap_설계.md) 3.2.2·3.5·3.6·3.7절.
@@ -11,7 +12,8 @@
 ```
 매 스텝     sgrt_step(proprio)                    → scenemap 자세 적분, 든 물체 따라가기
 keyframe    sgrt_step(proprio + 머리 RGB + 깊이)  → ovdet 검출 → scenemap 물체 지도 갱신(+ best view 자르기·점 구름 색)
-지도 스텝   sgrt_step(proprio + 깊이만)           → slam2d 격자만 갱신(SGRT_MAP_EVERY, 글루가 정함)
+지도 스텝   sgrt_step(proprio + 깊이만)           → 격자만 갱신(SGRT_MAP_EVERY, 글루가 정함)
+라이다      sgrt_push_scan(스캔, 스텝 앞)          → Cartographer. 스텝마다 그 시각 자세 → scenemap(SM_POSE_EXT)
 주기 저장   시뮬 save_s 마다                       → 저장 스레드가 out_dir 에 scene.json · view.json · map.pgm …
 ```
 
@@ -21,7 +23,7 @@ keyframe 인지는 `sgrt_want_image()` 가 알려 준다(`kf_every` 스텝마다
 
 | 파일 | 하는 일 |
 |---|---|
-| `include/sgrt.h` | C ABI: `sgrt_create`·`sgrt_begin`·`sgrt_step`·`sgrt_save`·`sgrt_destroy`, 통계·시간(`sgrt_stats`·`sgrt_get_timing`·`sgrt_get_stage_timing`), 지도 보기(`sgrt_map`·`sgrt_map_snapshot`, scenemap 문맥 `sgrt_scenemap` — 다른 스레드의 읽기 도구가 자기 스냅숏·`sm_observe_object_name` 을 쓰려고, 10-05), 자세 원천(`sgrt_set_pose_mode`·`sgrt_push_pose`·`sgrt_get_pose_diag`), 이름 종류(`sgrt_set_kind_names`), 임베딩·이름 찾기(`sgrt_object_embedding`·`sgrt_query_embedding`·`sgrt_query_label`·`sgrt_object_names`·`sgrt_get_clip_stats`) |
+| `include/sgrt.h` | C ABI: `sgrt_create`·`sgrt_begin`·`sgrt_step`·`sgrt_save`·`sgrt_destroy`, 통계·시간(`sgrt_stats`·`sgrt_get_timing`·`sgrt_get_stage_timing`), 지도 보기(`sgrt_map`·`sgrt_map_snapshot`, scenemap 문맥 `sgrt_scenemap` — 다른 스레드의 읽기 도구가 자기 스냅숏·`sm_observe_object_name` 을 쓰려고, 10-05), 자세 원천(`sgrt_set_pose_mode`·`sgrt_push_pose`·`sgrt_get_pose_diag`), 2D 라이다(`sgrt_push_scan`, 10-06), 이름 종류(`sgrt_set_kind_names`), 임베딩·이름 찾기(`sgrt_object_embedding`·`sgrt_query_embedding`·`sgrt_query_label`·`sgrt_object_names`·`sgrt_get_clip_stats`) |
 | `src/sgrt.cpp` | 구현: ovdet + scenemap 연결, 프롬프트 표(`SGRT_PROMPT`), 영상 시각 늦춤(`SGRT_IMAGE_LAG`), 저장 스레드, 스트림 요약 스레드(`SGRT_STREAM`), 입력 기록(`SGRT_RECORD`), 단계 시간(det·step·map·record) |
 | `src/crop.cu` · `crop.hpp` | CUDA 커널 둘: best view 상자 자르기(넓이 평균, 요청 32개씩 한 번에, 자른 것만 고정 메모리로 내려받기)와 점 구름 화소 색 모으기. 식은 `scenemap/src/bestview.cpp` 호스트 판과 같다 |
 | `src/sgrt_clip.cpp` · `.hpp` | sgclip 연결: keyframe 마다 새 물체·best view 품질이 임베딩 때의 1.2배 이상인 물체를 최대 8개 비동기로 임베딩. 저장 때 `objects/O<id>_emb.f16`, `cache/names.json`, scene.json 노드 metadata(`sm_set_object_meta`). 라벨 표는 따로 스레드에서 읽음 |
@@ -78,6 +80,8 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 
 시뮬 확인: `src/sim/limo/run_limo_map.sh [task] [steps]` — 평가기를 LIMO 로 띄우고(robot-agent `eval_with_limo.py`) 제자리 한 바퀴 + 앞이 비면 직진·막히면 왼쪽으로 꺾기, 끝에 지도 ↔ 정답 바닥 지도(`src/sim/explore/gt/`)·자세 오차·몸통 카메라 외부 파라미터 ↔ scenemap 순기구학을 `summary.json`·`overlay.png` 로. 탐색은 아래 "LIMO 탐색".
 
+**LIMO 시뮬 확인 — Cartographer**(10-06, turning_on_radio 인스턴스 0, `run_limo_map.sh … 2400`, `SGRT_POSE=carto`, 시뮬 X2L 라이다): 정답 경로 12.4 m·회전 1008°, 자세 ↔ 정답 keyframe 400 개 rms 2.9 cm / 0.31°, 최대 5.6 cm / 0.89°. 지도 53 m², 점유의 97.5 % 가 정답 비바닥 ±10 cm 안, 빈칸의 90 % 가 정답 바닥, 정답 벽 경계의 94.7 % 점유. 같은 기록 slam2d 대 Cartographer 비교는 `../slam_carto/README.md`. 아래 10-04 판들은 옛 slam2d 로 잰 것.
+
 **LIMO 시뮬 확인**(10-04, turning_on_radio 인스턴스 0, headless, `SGRT_POSE=slam`, 엔진 yolo26s-seg, 1200 스텝 = 40 s): 정답 경로 5.0 m·회전 662°, slam ↔ 정답 자세 keyframe 200 개 rms 1.3 cm / 0.21°, 최대 2.7 cm / 0.37°. 지도 50 m² 알려짐, 점유 칸의 95 %(±5 cm)가 정답 바닥 밖(벽·가구), 빈칸의 90 % 가 정답 바닥, 아는 영역 안 정답 바닥 경계(벽)의 95 % 가 ±10 cm 안에서 점유. 물체 19 개. 몸통 카메라 외부 파라미터: 시뮬 센서 ↔ scenemap 순기구학 cam 0 위치 차 2e-7 m, 회전 0.02°. 내부 파라미터 720×720 fx = fy = 306, cx = cy = 360. 기록(`SGRT_RECORD`)을 `sm_bench --robot limo_omx` 로 재생하면 실시간과 같은 자세·물체 수.
 
 **로봇 자산(카메라)**: 예전 `limo_omx` 는 `eyes` 카메라가 `depth_camera_link` 자리, 차체 껍데기 앞면보다 약 1 cm 안쪽이라 자기 몸만 봤다(깊이 ≈ 0.0096 m, RGB 검정). robot-agent 391c04b 부터 카메라를 렌즈 자리(`depth_camera_link` +x 0.010 m, base_link (0.094, 0, 0.03))로 옮기고 `eval_with_limo.py` 가 가까운 자르기 0.05 m 를 준다. `run_limo_map.py`·`run_explore.py` 는 옛 자산 대비로 가까운 자르기 면을 `LIMO_NEAR_CLIP`(기본 0.05 m, 0 = 안 건드림)까지 **올리기만** 한다(`src/sim/move_robot/move_robot_limo.apply_near_clip`). scenemap 순기구학의 cam 0 은 아직 `depth_camera_link`(렌즈 +0.010 m 안 넣음) — 1 cm 차이, 표 맞추기는 따로.
@@ -111,13 +115,17 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 |---|---|---|
 | `SGRT_ROBOT` | 없음(limo_omx) | 로봇: `limo_omx` · `r1pro`(옛 기록 전용)(위 "로봇 고르기"). 글루도 읽는다 |
 | `SGRT_SM_CONFIG` | 없음 | scenemap `sm_create` config_json 그대로(예: `{"robot": "limo_omx", "odom": "twist"}`). 있으면 `SGRT_ROBOT` 무시 |
-| `SGRT_POSE` | `slam` | 자세 원천. `slam`(적분 + 스캔 맞추기) · `odom`(적분만) · `gt`(외부 정답 베이스 자세, map = 시뮬 world — 진단·시각화용, 대회 제출 금지). 그 밖의 값은 `slam`. 시뮬은 실제 로봇과 같게 `slam` 으로 재고, `gt` 는 확인용으로만 |
+| `SGRT_POSE` | `carto` | 자세 원천. `carto`(Cartographer: 2D 라이다 + 바퀴 오도메트리, `../slam_carto` — `slam` 도 같은 뜻) · `odom`(적분만) · `gt`(외부 정답 베이스 자세, map = 시뮬 world — 진단·시각화용, 대회 제출 금지). 옛 scenemap `slam2d` 는 10-06 archive. 스캔이 안 오면 오도메트리만(경고 한 번). 시뮬은 실제 로봇과 같게 `carto` 로 재고, `gt` 는 확인용으로만 |
+| `SGRT_CARTO_CONFIG` | `limo_x2l.lua` | Cartographer lua(`../slam_carto/config`, `SLAM_CARTO_CONFIG_DIR` 로 다른 폴더) |
+| `SGRT_LASER` | `0.103,0,-0.034,0` | base ← 라이다 `x,y,z,yaw`(URDF `laser_link`) |
+| `SLAM_CARTO_LOG` | `0` | `1` = Cartographer glog INFO(맞추기 통계)를 stderr 에 |
+| `SGRT_LIDAR` | `1` | 글루: LIMO 면 시뮬 2D 라이다(`src/sim/lidar/limo_lidar.py`, X2L 흉내 6 Hz·500 광선)를 쏴 `sgrt_push_scan`. `0` = 끔(그러면 자세 = 오도메트리만) |
 | `SGRT_MAP_POLICY` | `1` | 격자 넣기 정책. 1 = 사건 기반(서 있어도 바뀐 장애물을 넣고 지움), 0 = 옛 움직임 거르기 |
 | `SGRT_IMAGE_LAG` | `1` | 영상 stamp 를 몇 스텝 앞 시각으로 둘지(0..7). 1 = 직전 스텝(평가기 영상 k = 장면 k-1). 글루도 GT 자세를 읽을 스텝을 고를 때 같은 값을 쓴다 |
 | `SGRT_SAVE_SYNC` | `0` | 0 이 아니면 주기 저장을 스텝 안에서 한다. 0 이면 저장 스레드(앞 저장이 안 끝났으면 그 주기는 건너뜀) |
 | `SGRT_STREAM` | 없음(끔) | `host:port`. sgview(`--ingest`)로 실시간 스트림. 자세·지도 변화분은 스텝 안에서 링 버퍼로, 요약은 따로 스레드가 만든다. 5 s 마다 stderr 에 스트림 통계 |
 | `SGRT_STREAM_HZ` | `60` | 요약(view) 만드는 주기 Hz, 0.5–240 으로 자름 |
-| `SGRT_RECORD` | 없음(끔) | 파일 경로. 받은 입력(proprio·외부 자세·keyframe 깊이·RGB·검출)을 이진(`SGRC` 판 1)으로 기록. `scenemap/tools/sm_bench`·`stage_bench` 가 재생 |
+| `SGRT_RECORD` | 없음(끔) | 파일 경로. 받은 입력(proprio·외부 자세·라이다 스캔 'L'·keyframe 깊이·RGB·검출)을 이진(`SGRC` 판 1)으로 기록. `tools/sgrt_replay`(Cartographer 포함)·`scenemap/tools/sm_bench` 가 재생 |
 | `SGRT_PROMPT` | `auto` | 프롬프트 표. `task`(과제 이름만) · `all`(엔진 어휘 전부) · `auto`(어휘 200 이하 닫힌 어휘 엔진이면 `all`, 아니면 `task`). 프롬프트가 비면 늘 `all` |
 | `SGRT_CLIP` | 없음(끔) | SigLIP 2 엔진 plan 경로. `1` = `~/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan`, `0`·빈 값 = 끔 |
 | `SGRT_CLIP_GRAPH` | sgclip 기본(1) | 배치 크기별 CUDA graph 쓰기(`sgc_config.use_graph`) |
