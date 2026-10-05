@@ -53,12 +53,6 @@ void absorb(MapObject& a, MapObject& b, const ObjParams& op, double stamp, const
   a.last_seen = std::max(a.last_seen, b.last_seen);
   a.last_kf = std::max(a.last_kf, b.last_kf);
   a.score = std::max(a.score, b.score);
-  for (const auto& [c, w] : b.votes) {   // 이름 표 합치기(이름 = 최댓값)
-    bool f = false;
-    for (auto& [ac, aw] : a.votes)
-      if (ac == c) { aw += w; f = true; break; }
-    if (!f) a.votes.emplace_back(c, w);
-  }
   a.max_det_z = std::max(a.max_det_z, b.max_det_z);
   a.moved = a.moved || b.moved;
   a.misses = std::min(a.misses, b.misses);

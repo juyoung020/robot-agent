@@ -113,7 +113,7 @@ struct sm_ctx {
   // best view
   std::unordered_map<uint32_t, ViewSlot> views;
   std::vector<uint32_t> last_assoc;   // 마지막 영상의 검출 → 물체 id
-  std::vector<uint8_t> last_view_upd; // 마지막 영상의 검출 k 가 그 물체의 best view 가 됨(sm_last_views — CLIP 갱신 신호)
+  std::vector<uint8_t> last_view_upd; // 마지막 영상의 검출 k 가 그 물체의 best view 가 됨(sm_last_views — 임베딩 갱신 신호)
   std::vector<float> last_view_q;     // 검출 k 의 모습 품질(유효 마스크 넓이 × 점수, 안 붙으면 0)
   size_t ev_seen = 0;                 // 처리한 objmap 사건 수(옮겨짐·놓기 → 품질 0)
   uint32_t view_ver = 0;
@@ -244,26 +244,22 @@ struct sm_snapshot_t {
 
 namespace {
 
-// 로봇별 팔 끝(베이스 기준)·그리퍼 값. 순기구학 grasp_point(E0 잡는 점) + omx_gripper_joint_1(두 칸 같은 값)
-void robotHands(int robot, const float* q, float eef[2][3], float grip[2]) {
-  (void)robot;
+// 팔 끝(베이스 기준)·그리퍼 값. 순기구학 grasp_point(E0 잡는 점) + omx_gripper_joint_1(두 칸 같은 값)
+void robotHands(int /*robot*/, const float* q, float eef[2][3], float grip[2]) {
   LimoFk f;
   computeLimoFk(q, &f);
   for (int k = 0; k < 3; ++k) eef[0][k] = eef[1][k] = float(f.T_eef[k * 4 + 3]);
   grip[0] = grip[1] = q[11];
 }
 
-// 로봇별 순기구학 몸(스캔 가리기 캡슐) + T_head + 팔 끝
-BodyState robotBody(int robot, const float* q, BodyFk* fk) {
-  (void)robot;
+// 순기구학 몸(스캔 가리기 캡슐) + T_head + 팔 끝
+BodyState robotBody(int /*robot*/, const float* q, BodyFk* fk) {
   LimoFk f;
   computeLimoFk(q, &f);
   float eef[2][3];
   limoBodyFk(f, fk, eef);
   return bodyFromFk(*fk, eef, 0.05f, 0.06f);   // OMX 링크 폭 ≈ 3–4 cm
 }
-
-// 로봇별 몸 크기 매개변수LIMO 0.32 × 0.22 × 0.25 m, 깊이 카메라 높이 0.18 m, OMX 팔 닿는 거리 ≈ 0.4 m
 
 // 베이스 기준 점 → map (slam 자세)
 void toMap(const Pose2& P, const float b[2][3], double m[2][3]) {
@@ -275,7 +271,6 @@ void toMap(const Pose2& P, const float b[2][3], double m[2][3]) {
   }
 }
 
-// 적분 한 표본(데이터: proprio i 의 base_qvel 이 i-1 → i 구간 속도). 제자리 잡음은 Mapper2D 와 같은 규칙.
 // 외부 자세 중 stamp 이하 가장 최근 것(max_age 안). 없으면 false
 bool poseAt(const std::deque<sm_pose2>& q, double stamp, Pose2* out, double max_age) {
   for (auto it = q.rbegin(); it != q.rend(); ++it) {
@@ -431,7 +426,7 @@ sm_ctx* sm_create(const char* config_json) {
   const std::string j(config_json);
   std::string r;
   if (cfgString(j, "robot", &r)) {
-    const int k = r == "limo_omx" || r == "limo" ? SM_ROBOT_LIMO_OMX : -1;
+    const int k = r == "limo_omx" ? SM_ROBOT_LIMO_OMX : -1;
     if (k < 0 || sm_set_robot(c, k) != 0) { delete c; return nullptr; }
   }
   std::string od;
@@ -813,7 +808,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   std::lock_guard<std::mutex> g(c->mu);
   c->st.last_image_stamp = im->stamp;
   c->st.n_images++;
-  if (im->cam != 0 || !im->depth_m) return 0;   // 격자는 cam 0 깊이만(R1 머리, LIMO 몸통 앞 깊이 카메라)
+  if (im->cam != 0 || !im->depth_m) return 0;   // 지도는 cam 0(몸통 앞 깊이 카메라) 깊이만
   tot.on = true;
   // 영상 stamp 까지 적분(같은 stamp 의 proprio 가 이 영상의 짝)
   const auto tp = TClock::now();
@@ -875,19 +870,17 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   F.base_yaw = P.th;
   F.base_xy[0] = P.x;
   F.base_xy[1] = P.y;
-  // LIMO: 팔 캡슐(순기구학, 스캔 몸 가리기와 같은 것)을 map 으로 — 팔이 몸통 카메라 앞을 가릴 때 그 화소가 물체 점이 안 되게. R1 은 안 씀
+  // 팔 캡슐(순기구학, 스캔 몸 가리기와 같은 것)을 map 으로 — 팔이 몸통 카메라 앞을 가릴 때 그 화소가 물체 점이 안 되게
   std::vector<Capsule> self_caps;
-  if (c->robot == kRobotLimoOmx) {
-    self_caps.reserve(body.caps.size());
-    for (const Capsule& k : body.caps) {
-      Capsule m = k;
-      m.a[0] = float(P.x + cs * k.a[0] - sn * k.a[1]); m.a[1] = float(P.y + sn * k.a[0] + cs * k.a[1]);
-      m.b[0] = float(P.x + cs * k.b[0] - sn * k.b[1]); m.b[1] = float(P.y + sn * k.b[0] + cs * k.b[1]);
-      self_caps.push_back(m);
-    }
-    F.self_caps = self_caps.data();
-    F.n_self_caps = int(self_caps.size());
+  self_caps.reserve(body.caps.size());
+  for (const Capsule& k : body.caps) {
+    Capsule m = k;
+    m.a[0] = float(P.x + cs * k.a[0] - sn * k.a[1]); m.a[1] = float(P.y + sn * k.a[0] + cs * k.a[1]);
+    m.b[0] = float(P.x + cs * k.b[0] - sn * k.b[1]); m.b[1] = float(P.y + sn * k.b[0] + cs * k.b[1]);
+    self_caps.push_back(m);
   }
+  F.self_caps = self_caps.data();
+  F.n_self_caps = int(self_caps.size());
   {   // objprob: 검출 임베딩·벽 선분(기하 구조물 거르기)
     if (c->det_emb_n == dets->n && c->det_emb_dim > 0) { F.emb = c->det_emb.data(); F.emb_dim = c->det_emb_dim; }
     refreshGrid8(c);
@@ -1406,7 +1399,7 @@ double sm_snap_reachable(const sm_snapshot_t* s, const double from[2], const dou
 }
 
 namespace {
-// objprob 저장: objects/O<id>_emb.f16 = μ(768 × FP16, L2 — 예전 형식 그대로), objects/O<id>_views.f16 = 상위 K 모습(K × 768 FP16, κ 큰 순,
+// objprob 저장: objects/O<id>_emb.f16 = μ(768 × FP16, L2), objects/O<id>_views.f16 = 상위 K 모습(K × 768 FP16, κ 큰 순,
 // 통째 먼저). 노드 metadata(scene.json·view.json objects[]) 에 "emb"·"name_post"·"pos_sd" — README "확률 모드" 저장 형식
 struct ApFile { uint32_t id; std::vector<uint16_t> mu, views; };
 

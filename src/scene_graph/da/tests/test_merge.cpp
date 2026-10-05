@@ -21,12 +21,10 @@ int main() {
   ObjParams op;
   {  // 작은 물체: n_obs 가중 평균, n_obs 합, 먼저 본 쪽 first_*, 이름 표 합침(이름 = 최댓값)
     MapObject a = obj(1, 3, 1.0, 0.0, 0.4, 0.08, 0.08, 0.1, 9), b = obj(7, 4, 1.1, 0.0, 0.4, 0.08, 0.08, 0.1, 1);
-    a.votes = {{3, 2.f}};
-    b.votes = {{4, 5.f}};
     da::absorbObject(a, b, op, 20.0);
     CHECK(a.n_obs == 10 && a.first_seen == 1, "n_obs %u first %.0f", a.n_obs, a.first_seen);
     CHECK(std::fabs(a.pos[0] - 1.01) < 1e-9, "weighted pos %.3f", a.pos[0]);
-    CHECK(a.cls == 3 && a.votes.size() == 2, "name table merged, cls kept %d votes %zu", a.cls, a.votes.size());   // 이름은 objprob 이 다시 붙임
+    CHECK(a.cls == 3, "cls kept %d", a.cls);   // 이름은 objprob 이 다시 붙임
     CHECK(a.last_seen == 17, "last_seen %.1f", a.last_seen);
   }
   {  // 큰 가구(한 변 > big): 상자 합집합, 위치 = 상자 중심

@@ -212,14 +212,6 @@ int ObjectMap::applyParams(ObjParams* p, const char* e, bool log) {
   return n_bad;
 }
 
-void ObjectMap::vote(MapObject& m, int cls, float w) const {
-  w = std::max(w, 1e-3f);
-  bool found = false;
-  for (auto& [c, v] : m.votes)
-    if (c == cls) { v += w; found = true; break; }
-  if (!found) m.votes.emplace_back(cls, w);
-}
-
 bool ObjectMap::isBig(const MapObject& m) const {
   return kindOf(m.cls) == kKindStatic || kindOf(m.cls) == kKindStructObj || std::max({m.hi[0] - m.lo[0], m.hi[1] - m.lo[1], m.hi[2] - m.lo[2]}) > p_.big;
 }
@@ -383,7 +375,6 @@ void ObjectMap::relink(double t) {
     m.last_seen = n.last_seen;
     m.last_kf = n.last_kf;
     m.score = std::max(m.score, n.score);
-    for (const auto& [c, w] : n.votes) vote(m, c, w);
     m.max_det_z = std::max(m.max_det_z, n.max_det_z);
     for (int k = 0; k < 3; ++k) m.trk_pos[k] = n.trk_pos[k];
     m.trk_t = n.trk_t;
@@ -975,7 +966,6 @@ void ObjectMap::update(const ObjFrame& f) {
         }
       }
       m.score = std::max(m.score, o.score);
-      vote(m, o.cls, o.score);
       m.max_det_z = std::max(m.max_det_z, o.zmed);
       m.last_seen = f.stamp;
       m.misses = 0;
@@ -999,7 +989,6 @@ void ObjectMap::update(const ObjFrame& f) {
     for (int k = 0; k < 3; ++k) m.trk_pos[k] = o.pos[k];
     m.trk_t = f.stamp;
     m.score = o.score;
-    vote(m, o.cls, o.score);
     m.max_det_z = o.zmed;
     {   // 처음 검출한 거리(수평) 이하에서 그 자리를 link_view_gap_s 넘게 전에 본 적 있으면 '나타남'
       const double hx = o.pos[0] - T[3], hy = o.pos[1] - T[7];

@@ -8,7 +8,7 @@
 //   거르기 : 로봇 팔 캡슐(ObjFrame.self_caps — 순기구학, LIMO) 안(반경 + self_pad) 깊이 점은 검출 마스크 안이어도 버림(팔이 카메라 앞을
 //            가릴 때 팔 화소가 물체 상자를 키우거나 옮기지 않게). 점 min_points 미만 버림. 점의 hand_frac 이상이 팔 끝 hand_r 안이면(손에 든 것) 버림. 점의 90 백분위 높이 < floor_h 면
 //            바닥 조각(바닥에 깔리는 이름 — 러그·카펫·매트 — 은 둠)
-//   이름   : objprob 이름 사후(apRename). 검출 이름 표(votes)는 기록만
+//   이름   : objprob 이름 사후(apRename)
 //   같은 것: objprob 하나(objprob.hpp) — 이름 없이 관측마다 P(같은 물체)(SigLIP 2 임베딩 vMF + 위치·접촉 로지스틱)가 가장 큰 물체에 붙이고,
 //            물체끼리는 다음 keyframe 앞 apMergePass 가 합침. 작은 물체는 칼만 위치, 큰 가구(한 변 > big 또는 고정 종류)는 상자를
 //            합집합으로 키우고 위치 = 상자 중심 — 단 keyframe 마다 면마다 grow_max 까지만, 한 변 max_ext 넘게는 안 키움
@@ -180,7 +180,6 @@ struct MapObject {
   float score = 0;
   double last_kf = -1;
   ObjCloud cloud;                 // 모양(점 구름): 옮겨짐 잇기(사라짐 → 다른 자리)면 새 자리 물체의 것으로, 들기·받침은 org 를 옮김
-  std::vector<std::pair<int32_t, float>> votes;   // 검출 이름 표: (이름 번호, 점수 합) — 기록만(이름은 objprob 사후)
   double max_det_z = 0;           // 이 물체를 검출한 가장 먼 카메라 깊이(사라짐 판정은 이 거리 안에서만)
   double gone_t = 0;              // 사라짐 판정 시각
   bool appeared = false;          // 전에 본 자리에 새로 나타남(옮겨짐 잇기 후보)
@@ -284,7 +283,6 @@ class ObjectMap {
 
  private:
   void event(double t, const MapObject& o, int kind);
-  void vote(MapObject& m, int cls, float w) const;
   bool isBig(const MapObject& m) const;
   // 사라짐 근거: 2 = 안 보이고 자리 너머가 보임, 1 = 보여야 하는데 안 보임(놓침), 0 = 판단 못 함(시야 밖·가림·멀다·작다)
   int absentEvidence(const MapObject& m, const ObjFrame& f) const;
