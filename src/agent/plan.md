@@ -8,7 +8,7 @@
 물체 기억 C ABI `scenemap.h`·`sgrt.h`, 2025 2위 `refs/openpi-comet`, 팀 벤치마크 `refs/code/dynamic-object-mapping-benchmark`.
 추정은 "(추정)", 사용자가 정할 것은 "(결정 필요)"로 적었다.
 
-> **10-06**: π0.5 는 지웠다(behavior-2026 의 네이티브 엔진·가중치까지). VLA = RecallVLA (`training/vla`). 아래 π0.5 이야기는 그때 기록이다.
+> **VLA = RecallVLA** (`training/vla`).
 
 ---
 
@@ -57,7 +57,7 @@ step 4: "place cup in the trash can"      → 확인: 그리퍼 열림 + 컵이 
 | 로더는 `orchestrators/task-XXXX/episode_*/subtask_{i}_annotated.json` 을 읽어 프레임 구간마다 문장을 바꾼다 | 같은 파일 `load_orchestrators`, `_get_fine_grained_task` |
 | 스킬 어휘는 과제 50개 기준 34종(`move to` 50, `pick up from` 50, `place on` 34, `place in` 31, `push to` 29, `open door` 24 …) | `scripts/task_mapping.json` 집계 |
 | 우리 계획기는 2026 시연 주석 `skill_annotation[].skill_description` 35종(34 + `lift`)과 물체 칸 순서 틀을 이미 갖고 있다 | `planner/src/vocab.rs` |
-| 지금 가중치(공식 radio, Comet pt50)는 문장을 바꿔도 행동 변화가 잡음 수준 | behavior-2026 `plan.md` 3절·4.1 |
+| 지금 가중치(공식 radio, Comet pt50)는 문장을 바꿔도 행동 변화가 잡음 수준 | (옛 VLA 측정, 10-04) |
 
 → **결론**: Comet 이 "학습한" 단계 문장 형식은 공개 가중치에 없다. 우리가 정한 형식으로 **같은 로더에 주석을 넣어 재학습**해야 하고, 레벨 번호 혼동을 피하려고 `skill_description` 과 `cot_subtask_description` **두 칸에 같은 문장**을 쓴다(레벨 1·2 어느 쪽으로 학습해도 같은 문장).
 
@@ -78,7 +78,7 @@ step 4: "place cup in the trash can"      → 확인: 그리퍼 열림 + 컵이 
 
 - `{obj}` 등은 **정규화된 범주 이름**(`canon_name`: synset `.n.NN` 제거, `_`→공백, 소문자). 시뮬은 BDDL/주석 `object_id` → `canon_name`, 리모는 YOLO 라벨 → 같은 `canon_name`. 인스턴스 id(`cup_12`)는 문장에 절대 안 넣는다(기억·확인에만).
 - `{m}` = `the other `, `{b}` = `back ` (주석 `memory_prefix`), `{s}` = 주석 `spatial_prefix`. 그 밖의 수식어 금지.
-- **숫자 거리·각도 금지**(사용자 결정 09-29), 문장 90 토큰 이내(π0.5 `max_token_len=200`, 상태 몫 제외). 기존 `strip_numbers`·`tokens_with_margin` 그대로.
+- **숫자 거리·각도 금지**(사용자 결정 09-29), 문장 90 토큰 이내(VLA 지시 길이 한도). 기존 `strip_numbers`·`tokens_with_margin` 그대로.
 - 문장은 LLM 이 쓰지 않는다. LLM 은 `{skill, objects:[id…], spatial?, memory?}` 구조만 고르고, 문장은 `skillspec::render()` 가 만든다 → 학습 문장과 글자 하나까지 같다.
 
 ### 2.3 한 곳에서 만들기 — `skillspec`
@@ -103,7 +103,7 @@ skillspec (Rust, 순수 함수, 의존성 0)
 | 상황 | VLA 에 주는 것 | 이동 | 조작 |
 |---|---|---|---|
 | A. 시뮬, 1위 모델(과제 0~49) | 과제 문장 + **단계 번호**(`pi05_set_stage`, `--stage external`) | 1위 모델 | 1위 모델 |
-| B. 시뮬, 이동 제어기(plan.md 4.1 (나)) | 조작 단계만 과제 문장 | `sm_snap_reachable` 경로 + 오도메트리 추종(베이스 행동 칸만 덮어씀) | π0.5 |
+| B. 시뮬, 이동 제어기(plan.md 4.1 (나)) | 조작 단계만 과제 문장 | `sm_snap_reachable` 경로 + 오도메트리 추종(베이스 행동 칸만 덮어씀) | RecallVLA |
 | C. 재학습 뒤 | 스킬 문장(`fine_grained_level=1`) | VLA `move to …` (또는 B 와 비교) | VLA |
 | D. 리모 | 스킬 문장(리모 시연으로 학습) | **Nav2 제어기**(`move to` 는 VLA 로 안 함) | VLA (`pick up`·`place`) |
 
@@ -120,7 +120,7 @@ skillspec (Rust, 순수 함수, 의존성 0)
  📱 앱(WS) ──▶ ragent ─────────────────────────────────────────────────────────────┐
               │ Dialog ─▶ Router ─┬─ T0 빠른 답(LLM 없음) ──────────────▶ Answer   │
               │                   ├─ T1 한 번 호출(후보 미리 넣음) ───────▶ Answer   │
-              │                   └─ T2 계획(도구 루프) ─▶ TaskMachine ─▶ Backend ──┼─▶ SimLink(behavior-2026) | Limo(ROS 2) | Mock
+              │                   └─ T2 계획(도구 루프) ─▶ TaskMachine ─▶ Backend ──┼─▶ SimLink(OmniGibson) | Limo(ROS 2) | Mock
               │ MemView(C ABI sm_snapshot) ◀──────────── scenemap/sgrt ◀───────────┘
               │ Rooms · Lexicon · Ctx(16k) · Trace(JSONL) · Gate(승인) · Checkpoint
               └─▶ KAU vLLM (Qwen3.5-9B, OpenAI 호환, 스트리밍)
@@ -136,7 +136,7 @@ skillspec (Rust, 순수 함수, 의존성 0)
 | `main.rs` | 명령: `chat`, `serve`(앱 WS), `ask "<질문>" --scene scene.json`, `eval <set>`, `replay` | |
 | `agent.rs` | 대화 한 턴: Router → (T0/T1/T2) → 답 스트리밍. 반복 한도 6, 도구 없는 글은 최종 답으로 | 수업 week02 루프 |
 | `router.rs` | 의도 분류 `Where / Command / Status / Cancel / Chat` — 규칙(한국어 어미·동사 사전) 먼저, 애매하면 T1 에 맡김 | |
-| `memview.rs` | `sm_snapshot` FFI 래퍼 `MemSnapshot`(수명 안전): `find`, `objects`, `movable`, `view`, `reachable`, `pose`. 오프라인용 `scene.json`(Spark-DSG) 읽기 구현도 같은 trait `Memory` | behavior-2026 `graph.rs` `SceneQuery` |
+| `memview.rs` | `sm_snapshot` FFI 래퍼 `MemSnapshot`(수명 안전): `find`, `objects`, `movable`, `view`, `reachable`, `pose`. 오프라인용 `scene.json`(Spark-DSG) 읽기 구현도 같은 trait `Memory` | `src/agent/planner` `graph.rs` `SceneQuery` |
 | `rooms.rs` | 방 추론(3.5절) `RoomMap::room_at(x,y) -> Option<RoomLabel>` | |
 | `landmark.rs` | 가까운 기준물(고정 가구) 고르기 — 이름·거리·상대 높이만, 관계 계산 없음(3.6절) | |
 | `lexicon.rs` | 한국어 ↔ 라벨: `컵/머그잔/텀블러 → cup`, `쓰레기통/휴지통 → trash can`, 방 `부엌/주방 → kitchen` … 표(TOML) + 표에 없으면 LLM 질의 1회 | |
@@ -336,7 +336,7 @@ Pending ─▶ Approach(move to) ─▶ Acquire(보이나?) ─▶ Execute(VLA s
 | `qa_absent` | 30 | 기억에 없는 물건·옮겨져 `gone` 인 물건 | 환각 0 이어야 |
 | `qa_ambig` | 30 | 같은 라벨 여러 개, 동의어("머그잔"), 지시어("아까 그거") | 후보 다 말하거나 되묻기 |
 | `cmd_mock` | 30 명령 | `mockworld` 가짜 세계(실패 주입: 안 보임·집기 실패·옮겨짐·떨어뜨림) | 과제 성공, 단계 성공, 복구 성공, LLM 호출 수 |
-| `cmd_sim` | 10 명령 × 3 씨앗 | BEHAVIOR(R1Pro) 실제 시뮬, A/B/C 경로 | 성공률, q_score(해당 과제), 시간 |
+| `cmd_sim` | 10 명령 × 3 씨앗 | BEHAVIOR 장면 + 리모(OmniGibson) 시뮬, A/B/C 경로 | 성공률, q_score(해당 과제), 시간 |
 | `cmd_limo` | 10 명령 × 3 | 실제 리모 | 성공률, 사람 개입 수 |
 | `redteam` | 40 | 프롬프트 주입·위험 요청·한국어 우회 | 거절/확인 정확도 |
 | `answer_style` | 50 | 답 문장 자연스러움 | LLM 채점기(다른 프롬프트, 5점) + 사람 표본 20 |
@@ -381,7 +381,7 @@ Pending ─▶ Approach(move to) ─▶ Acquire(보이나?) ─▶ Execute(VLA s
 
 - 비상 정지: 앱 버튼·"멈춰" → LLM 거치지 않고 `Backend::stop()` (< 100 ms).
 - 프롬프트 주입: 사용자 입력만 지시로 취급, 기억·검출 이름·도구 결과는 **데이터**로 감싸 넣는다(`<memory>…</memory>`), 라벨은 고정 어휘라 주입 통로가 좁다. 셸·파일 도구 없음.
-- 앱 연결은 토큰 인증(로봇1 소유자만), API 키는 `~/.config/behavior-2026/kau.env` 환경변수로만(기록·인자에 없음 — 기존 규칙).
+- 앱 연결은 토큰 인증(로봇1 소유자만), API 키는 `~/.config/robot-agent/kau.env` 환경변수로만(기록·인자에 없음 — 기존 규칙).
 
 ---
 
@@ -403,7 +403,7 @@ Pending ─▶ Approach(move to) ─▶ Acquire(보이나?) ─▶ Execute(VLA s
 | 10 | Security & Safety | `gate.rs`, 금지 영역, 레드팀 40 | 레드팀 결과표 |
 | 11 | Multi-Agent | agent-as-tool 실험: "기억 답변기" 를 하위 에이전트로 뺐을 때 비용·정확도 → 단일 에이전트 유지 여부 결정, LLM 채점기 | 조율 비용 측정표 |
 | 12 | Production / Durable | `checkpoint.rs`, 재시작 이어 하기, 프롬프트·스펙 버전(`SPEC_VERSION`, 프롬프트 sha1 trace) | kill 시험 통과 |
-| 13 | Build & Red-Team | 시뮬 R1Pro 한 판 + ablation(기억 없음/복구 없음) | ablation 표 |
+| 13 | Build & Red-Team | 시뮬 리모 한 판 + ablation(기억 없음/복구 없음) | ablation 표 |
 | 14 | Evaluation & Freeze | 게이트 최종 수치, 데모 고정(태그) | 재현 스크립트 |
 | 15 | Final Defense | 데모(질문 + 명령 + 실패 복구 1개) | **Project 2** 발표·구두 방어 |
 
@@ -414,8 +414,8 @@ Pending ─▶ Approach(move to) ─▶ Acquire(보이나?) ─▶ Execute(VLA s
 | 단계 | 기간 | 할 일 | 끝난 기준 |
 |---|---|---|---|
 | **P0 기억 QA** | 10-03 ~ 10-12 | `ragent` 크레이트, `Memory` trait(`scene.json` 읽기), `rooms.rs`(시뮬 GT·규칙), `landmark.rs`, `lexicon.rs`, `answer.rs`, T0/T1 | `qa_where` ≥ 85 %, `qa_absent` 환각 0, T0 p95 < 0.5 s |
-| **P1 명령(가짜 세계)** | 10-13 ~ 10-26 | `skillspec` 분리·골든, `set_plan`·검증기·상태 기계·복구 표, `Backend::Mock`(behavior-2026 `mockworld` 재사용), 평가 게이트 | `cmd_mock` ≥ 80 %, 복구 ≥ 60 %, Project 1 제출 |
-| **P2 시뮬 연결** | 10-27 ~ 11-16 | `MemView` C ABI(같은 프로세스, simlink), `Backend::Sim` 경로 A(1위 모델 + 단계 번호)·B(이동 제어기), 실패 진단·보안 | R1Pro 에서 "컵(물체)을 X 에 넣어" 류 3과제 중 1개 이상 성공, trace 로 실패 분류 |
+| **P1 명령(가짜 세계)** | 10-13 ~ 10-26 | `skillspec` 분리·골든, `set_plan`·검증기·상태 기계·복구 표, `Backend::Mock`(가짜 세26 `mockworld` 재사용), 평가 게이트 | `cmd_mock` ≥ 80 %, 복구 ≥ 60 %, Project 1 제출 |
+| **P2 시뮬 연결** | 10-27 ~ 11-16 | `MemView` C ABI(같은 프로세스, simlink), `Backend::Sim` 경로 A(1위 모델 + 단계 번호)·B(이동 제어기), 실패 진단·보안 | 시뮬 리모에서 "컵(물체)을 X 에 넣어" 류 3과제 중 1개 이상 성공, trace 로 실패 분류 |
 | **P3 VLA 스킬 재학습** | P2 와 나란히(GPU 확보되면) | `skillspec annotate` → Comet 로더(`fine_grained_level=1`), 70/30 혼합, LoRA. probe 로 문장 따름 측정 | 문장 바꿈 행동 변화 ≥ 잡음 × 3, 스킬 구간 성공 ≥ 지금 + 10 %p |
 | **P4 리모** | 11-17 ~ 12-07 | ROS 2 `Backend::Limo`(r2r: Nav2 목표·팔 VLA·그리퍼), 앱 WS 스트리밍, 방 그리기, 리모 시연 수집(같은 틀로 주석) | `cmd_limo` 10 × 3 중 ≥ 50 %, 질문 정답률 시뮬과 같은 수준 |
 | **P5 고정·방어** | 12-08 ~ 12-14 | 게이트 최종, 데모 고정, 보고서 | 5.2 최종 열 |
@@ -431,14 +431,14 @@ Pending ─▶ Approach(move to) ─▶ Acquire(보이나?) ─▶ Execute(VLA s
 | Qwen3.5-9B 도구 호출 신뢰도(16k) | JSON 깨짐·엉뚱한 도구 | 도구 8개 이하·enum·짧은 설명, `<tool_call>` 글 복구(이미 있음), 오류 관찰값 1번 재시도 후 규칙 대체, 정상 경로에서 LLM 호출 자체를 줄임 |
 | 9B 판단이 증거를 무시 | 같은 단계 반복 | 판정은 `verify.rs` 가 하고 LLM 은 판정을 바꾸지 못함(기존 "자동 증거 + 되묻기" 보다 한 단계 강하게) |
 | KAU API 지연(7~12 s/호출)·공유 서버 | 명령 체감 느림, 대량 평가 불가 | T0 경로, 스트리밍, 접수 메시지, 로컬 llama.cpp 대체. (결정 필요) KAU 를 대량 평가에 써도 되나 |
-| 4090 한 장(24 GB) | 시뮬 + π0.5 + 학습 동시 불가, LoRA 도 22.5 GB 초과 | 시간 나눔, 재학습은 외부 GPU(결정 필요: 클라우드/연구실) |
+| 4090 한 장(24 GB) | 시뮬 + VLA + 학습 동시 불가, LoRA 도 22.5 GB 초과 | 시간 나눔, 재학습은 외부 GPU(결정 필요: 클라우드/연구실) |
 | VLA 가 문장을 안 따름 | 에이전트 계획이 행동에 안 닿음 | 2.4절 대체 경로 A/B/D, P3 재학습, 효과 게이트 |
 | Comet 레벨 번호 혼동 | 잘못된 레벨로 학습 | 두 칸에 같은 문장(2.1절) |
 | 방 이름 | "부엌" 답이 틀림 | 시뮬 GT 는 개발용만, 평가는 BDDL+규칙, 리모는 사람이 그림. (결정 필요) 대회에서 방 분할 지도 허용 여부 |
 | 같은 라벨 여러 개 | "빨간 컵" 구분 못 함 | 되묻기 + `describe_object(with_image)` best view 로 VLM 판단, 색 속성은 scenemap 에 요청 |
-| 시뮬 ↔ 리모 몸 차이 | R1Pro 두 팔·3카메라 vs 리모 한 팔·2카메라 | 계약은 몸과 무관(문장·확인 신호 trait), VLA 는 따로 학습 |
+| 시뮬 ↔ 실제 리모 차이 | 시뮬 리모(가상 베이스 관절, 미끄러짐 없음) vs 실제 4륜 차동 | 계약은 몸과 무관(문장·확인 신호 trait), 오도메트리 오차는 실제 기록으로 맞춤 |
 | 기억 갱신 실패(moved/removed 0) | "N분 전" 답이 틀림 | 벤치마크 게이트(5.3), M2 를 답에서 확신도로 드러냄 |
-| 수업 규칙(프레임워크 금지, 개인 작성) | 재사용 범위 | 재사용하는 behavior-2026 계획기도 본인 코드. MCP 는 비교용으로만 |
+| 수업 규칙(프레임워크 금지, 개인 작성) | 재사용 범위 | 재사용하는 계획기(`src/agent/planner`)도 본인 코드. MCP 는 비교용으로만 |
 
 열린 질문(사용자에게):
 

@@ -6,7 +6,7 @@ TASK=${1:-turning_on_radio}; IDX=${2:-0}
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(cd "$(dirname "$0")/../../.." && pwd)/config/paths.env"
 OG=$B1K_ROOT/OmniGibson
-source ~/miniconda3/etc/profile.d/conda.sh; conda activate behavior
+source "$CONDA_SH"; conda activate behavior
 export OMNI_KIT_ACCEPT_EULA=YES OMNIGIBSON_KEEP_VIEWER_CAMERA=1
 cd /tmp && python "$HERE/eval_with_limo.py" --policy local --task-name "$TASK" --mode public_test --instance-indices "$IDX" --num-envs 1 \
   --max-steps 100000 --no-headless --robot-config "$HERE/limo_omx_eval.yaml" --output-dir /tmp/limo_view

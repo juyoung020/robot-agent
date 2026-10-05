@@ -10,22 +10,21 @@
 | `agent/skills/` | 스킬: LLM 에이전트가 한 가지 일을 끝까지 해내는 단위(시스템 프롬프트·도구·과제 문장). 지금은 `explore/` (Rust). [agent/skills/README.md](agent/skills/README.md) |
 | `agent/tools/` | LLM 에게 보이는 도구. 지금은 `move_robot/` (Rust, 닫힌 고리 실행기). [agent/tools/README.md](agent/tools/README.md) |
 | `agent/prompts/` | 스킬이 같이 쓰는 공통 프롬프트. [agent/prompts/README.md](agent/prompts/README.md) |
-| `vla/` | 우리 VLA(π0.5 아님, 10-04 버림): 지시 + 카메라 영상 + 지도 토큰 → 작은 계획·행동, 눈앞의 실패 복구. 지금은 README 만, 학습은 `training/BC` |
+| `vla/` | 우리 VLA(RecallVLA): 지시 + 카메라 영상 + 지도 토큰 → 작은 계획·행동, 눈앞의 실패 복구. 지금은 README 만, 학습은 `training/BC` |
 | `app/` | 휴대폰 앱 (iOS·Android 네이티브). 카카오톡식 채팅으로 로봇에게 명령, 지금은 로봇1 만 |
-| `behavior-2026/` | 서브모듈 [juyoung020/behavior-2026](https://github.com/juyoung020/behavior-2026): BEHAVIOR Challenge 2026 작업(시뮬레이터 평가·물체 기억. 그 저장소의 π0.5 엔진은 10-06 지움). 받기: `git submodule update --init src/behavior-2026` |
 
 ## 물체 기억 (`scene_graph/`)
 
-실제 로봇 쪽 코드가 이 저장소 `scene_graph/` 에 있다. 여기가 유일한 원본이다(옛 behavior-2026 서브모듈 사본 방식은 10-06 에 끝냄).
+실제 로봇 쪽 인지 코드가 `scene_graph/` 에 있다. 시뮬·학습 뷰어·GPU 학습 지도가 모두 이것을 따른다.
 
 | 폴더 | 역할 |
 |---|---|
-| `scenemap/` | 2D SLAM + 물체 지도 + 계획기 질의, Spark-DSG 저장 (C++/CUDA). 설계: [scenemap_설계.md](https://github.com/juyoung020/behavior-2026/blob/main/docs/scenemap_설계.md) |
-| `da/` | 데이터 연관: 프레임마다 나온 같은 물체 세그를 하나로 병합 |
-| `ovdet/` | 열린 어휘 검출기 (YOLOE, TensorRT, C API) |
+| `scenemap/` | 2D 지도(자세는 Cartographer) + 물체 지도(objprob) + 계획기 질의, Spark-DSG 저장 (C++/CUDA). [README](scene_graph/scenemap/README.md) |
+| `da/` | 데이터 연관 계산(상자 겹침 등, objprob 이 씀) |
+| `ovdet/` | 물체 분할 ObjectSAM (TensorRT, C API) |
 | `clip/` | sgclip: 물체 조각 → SigLIP 2 B/32 영상 임베딩(TensorRT) + 라벨 표 찾기 (C++/CUDA, 작업 중). 후보 조사: [docs/clip_candidates.md](../docs/clip_candidates.md), 라벨 표·학습: [training/README.md](../training/README.md) |
+| `slam_carto/` | Cartographer 2D SLAM 어댑터(라이다 + 바퀴 오도메트리 → 자세, C ABI) |
 | `runtime/` | sgrt: 평가기(또는 로봇) 프로세스 안에서 물체 기억을 굴리는 C ABI 하나. 자세는 `SGRT_POSE` |
 | `sgview/` | **장면 그래프 뷰어 = sgview** (Spark-DSG 장면 그래프 보기, Rust 서버 + three.js, 실시간). 실행: `tools/run_sgview.sh <memory_dir> [--live]`, 탐사 + 뷰어 `tools/run_explore_live.sh`. [sgview/README.md](scene_graph/sgview/README.md) |
 | `spark_dsg/` | Spark-DSG 우리 사본(BSD-3, 바꾼 것은 `OUR_CHANGES.md`) |
 
-옛 파이썬 뷰어 sgviz(Spark-DSG + viser, 서브모듈 `src/scene_graph/viewer/`)는 파일 폴링이라 실시간이 아니고 **쓰지 않는다**(기록용). 뷰어는 sgview 하나다.

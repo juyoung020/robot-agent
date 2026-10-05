@@ -84,7 +84,7 @@ open(p, "w").write(t)
 print("[import] 실제 관절 범위 적용:", {k: real[k] for k in sorted(done)})
 PY
 sed "s#__URDF__#$W/limo_omx_source.urdf#" "$HERE/limo_omx_source_config.yaml" > "$W/limo_omx_source_config.yaml"
-source ~/miniconda3/etc/profile.d/conda.sh; conda activate behavior
+source "$CONDA_SH"; conda activate behavior
 export OMNI_KIT_ACCEPT_EULA=YES
 python "$BH1K/OmniGibson/omnigibson/examples/robots/import_custom_robot.py" --config "$W/limo_omx_source_config.yaml"
 

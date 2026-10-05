@@ -30,7 +30,7 @@
 ## 1. 요구와 파이프라인 가정
 
 - **FastSAM-s**(YOLOv8s-seg 구조, 이름 없음)가 keyframe 에서만 마스크를 낸다.
-  - 엔진: `~/ovdet_models/x86_sm120/FastSAM-s-{640,416}.plan`. 출력 배치는 YOLO-seg 와 같다(4 상자 + 1 클래스 + 32 계수, proto 32 × H/4 × W/4). 이름 파일 = `object`.
+  - 엔진: `models/ovdet/x86_sm120/FastSAM-s-{640,416}.plan`. 출력 배치는 YOLO-seg 와 같다(4 상자 + 1 클래스 + 32 계수, proto 32 × H/4 × W/4). 이름 파일 = `object`.
   - ovdet 의 CUDA NMS 를 그대로 쓴다. PC 에서 416 엔진 전체 p50 0.82 ms, GPU 58 MB(이번 측정).
 - scenemap 이 물체마다 best view 를 들고 있다. `png_dirty` 가 "best view 가 바뀜"을 알린다(`dsg_save.hpp`).
 - CLIP 은 **새 물체 / best view 가 바뀐 물체만**, keyframe 마다 **묶어서, 비동기로** 돈다. 매 프레임 돌지 않는다.
@@ -374,7 +374,7 @@ memory/
 | 부분 | 어디 | 내용 |
 |---|---|---|
 | 내보내기 | `src/scene_graph/clip/tools/export_siglip2.py` | 영상 탑 → opset 13 ONNX. 입력 `images` N×3×256×256 + `wpatch` N×64, 출력 `emb` N×768(L2). 마스크 = MAP 주의집중 logit 에 `log(max(w, 0.01))`. w = 1 이면 원래 임베딩과 코사인 1.000000 |
-| 엔진 | `clip/tools/build_engine.py` | FP16 + 이름에 `norm`·`mlp/act` 든 층 FP32 고정, 배치 칸 1·2·4·8 프로필, INT8 PTQ 선택. 엔진·ONNX 는 `~/ovdet_models/x86_sm120/siglip2_b32/`(git 밖) |
+| 엔진 | `clip/tools/build_engine.py` | FP16 + 이름에 `norm`·`mlp/act` 든 층 FP32 고정, 배치 칸 1·2·4·8 프로필, INT8 PTQ 선택. 엔진·ONNX 는 `models/ovdet/x86_sm120/siglip2_b32/`(git 밖) |
 | 실행 | `clip/src/{crop.cu,encoder.cpp}` | CUDA 커널 하나(정사각 상자 + 10 % 둘레, 원본 RGB 양선형 256², 정규화 FP16, 8 × 8 마스크 비율), TensorRT 자기 스트림, 칸 2개 비동기 고리, 배치 칸별 CUDA graph, 결과 자리 풀. TRT 8.2 / 10 분기 |
 | 라벨 찾기 | `clip/src/labels.cpp` | 표 = training/embed `labels/objects-v1`(30,533 줄, 영·한, WordNet 상위어, 구조물, main/tail). IVF 256 + 128-d FP16 1단계(+ 선택 128-bit 해밍) + 768-d 다시 매김, AVX2 / NEON / 일반 |
 | 기억 폴더 | `clip/src/memstore.*`, `runtime/src/sgrt_clip.*` | `objects/O<id>_emb.f16`, `cache/names.json`, `cache/index/`, scene.json 노드 `emb`·`names`(sm_set_object_meta). 다시 만드는 조건 = 3.5 |
@@ -429,7 +429,7 @@ Nano 는 연산량 비례 추정(4절 가정, FP16, 텐서 코어 없음).
 - 입력 FP16(`--half-input`): 커널이 FP16 NCHW 로 바로 써서 입력 버퍼가 반(8 × 3 × 256² × 2 = 3 MB).
 - 고정 메모리: 출력·작업 목록·마스크 비트는 `cudaHostAlloc`. 프레임마다 메모리를 잡지 않는다(마스크 격자가 처음보다 커질 때만).
 
-- **실험 파일 정리(2026-10-05)**: 위 변형들의 ONNX·엔진(`~/ovdet_models/x86_sm120/siglip2_b32/study/`, 4.5 GB)과 원시 결과(`~/clip_bench/study.jsonl`)는 지웠다. 수치는 이 표가 기록이다. 지운 파일 이름과 표의 줄: `base`(FP16 + LayerNorm FP32) · `base_ln`(+ GELU FP32 = 채택) · `base_fp32`(전부 FP32) · `base_buckets`(배치 칸 1·2·4·8) · `int8`(INT8 PTQ, `calib256.npz` = LVIS crop 보정) · `int8mlp`(INT8 MLP 만) · `l11`(11 층) · `keep48`(토큰 버림 48 @ 9 층) · `tome4`(ToMe 4 @ 6 층) · `pegemm`(패치 임베딩 GEMM) · `pegemm_buckets`(패치 GEMM + 배치 칸 = 지금 엔진의 바탕). 다시 만들려면 `clip/tools/study.sh NAME "EXPORT_ARGS" "BUILD_ARGS"`(예 `study.sh tome4 "--tome 4@6" "--half-input --pin norm,mlp/act"`; 내보내기 변형 `--res` `--layers` `--keep` `--tome`, 빌드 변형 `--pin` `--profiles` INT8 PTQ).
+- **실험 파일 정리(2026-10-05)**: 위 변형들의 ONNX·엔진(`models/ovdet/x86_sm120/siglip2_b32/study/`, 4.5 GB)과 원시 결과(`~/clip_bench/study.jsonl`)는 지웠다. 수치는 이 표가 기록이다. 지운 파일 이름과 표의 줄: `base`(FP16 + LayerNorm FP32) · `base_ln`(+ GELU FP32 = 채택) · `base_fp32`(전부 FP32) · `base_buckets`(배치 칸 1·2·4·8) · `int8`(INT8 PTQ, `calib256.npz` = LVIS crop 보정) · `int8mlp`(INT8 MLP 만) · `l11`(11 층) · `keep48`(토큰 버림 48 @ 9 층) · `tome4`(ToMe 4 @ 6 층) · `pegemm`(패치 임베딩 GEMM) · `pegemm_buckets`(패치 GEMM + 배치 칸 = 지금 엔진의 바탕). 다시 만들려면 `clip/tools/study.sh NAME "EXPORT_ARGS" "BUILD_ARGS"`(예 `study.sh tome4 "--tome 4@6" "--half-input --pin norm,mlp/act"`; 내보내기 변형 `--res` `--layers` `--keep` `--tome`, 빌드 변형 `--pin` `--profiles` INT8 PTQ).
 
 **채택 기본값**: `export_siglip2.py`(패치 GEMM 기본) → `build_engine.py --half-input --pin norm,mlp/act --profiles 1,2,4,8`.
 Nano 는 같은 ONNX 로 `--profiles 1,8`(메모리) + FP16.

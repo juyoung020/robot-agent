@@ -16,7 +16,7 @@
 
 ```
 런타임 run-skill --skill explore                평가기 프로세스 (src/sim/explore/run_explore.py, 파이썬은 바이트만)
- ├ 원형 도구 호출 루프 / 기준선(src/agent/runtime) ├ SceneMemory(libsgrt): ObjectSAM + SigLIP 2 + objprob(10-05 기본, 전엔 YOLOE) + scenemap 격자·물체, memory/ 에 1 s 마다 저장
+ ├ 원형 도구 호출 루프 / 기준선(src/agent/runtime) ├ SceneMemory(libsgrt): ObjectSAM + SigLIP 2 + objprob + scenemap 격자·물체, memory/ 에 1 s 마다 저장
  ├ 결과 줄이기(move_robot llm_view), 쌍 접기       ├ keyframe(6 스텝)마다 sgrt_map(view) → mr_set_map(robot, &view)  (포인터만 넘김)
  ├ decisions.jsonl · timeline.jsonl · trace.jsonl  ├ libmove_robot(Rust): 매 스텝 닫힌 고리(go_to / probe / delta / 관절)
  └ TCP 줄 JSON ───────────────────────────────▶  ├ 정답 바닥 기준(gt_trav.py) → mr_set_reference, 접촉(RigidContactAPI) → mr_set_contacts

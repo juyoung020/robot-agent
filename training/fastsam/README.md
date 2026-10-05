@@ -6,7 +6,7 @@
 
 ## 목표
 
-FastSAM-s 416(TensorRT, behavior-2026 `src/scene_graph/ovdet`)을 다시 학습한다.
+FastSAM-s 416(TensorRT, `src/scene_graph/ovdet`)을 다시 학습한다.
 - 벽·천장·바닥 마스크를 내지 않는다.
 - 문·창·계단은 물체로 남긴다. 지도의 방·문 토큰과 계단 위험 판단에 쓴다.
 - 조각 대신 물체 통째 마스크를 낸다.
@@ -23,7 +23,7 @@ FastSAM-s 416(TensorRT, behavior-2026 `src/scene_graph/ovdet`)을 다시 학습�
 ## 결과 요약
 
 **설치한 엔진**
-- `models/ovdet/archive/x86_sm120/FastSAM-s-416-obj.plan`: FastSAM-s 재학습 v2 — 보관(버림, 기본 아님), 문턱 0.05 보정. `.pt`·`.onnx` 는 `models/ovdet/archive/pt/`(`models/ovdet/archive/README.md`). 옛 학습 판은 `data/datasets/fastsam_obj/archive/`.
+- `FastSAM-s-416-obj`: FastSAM-s 재학습 v2 — 버림(엔진 지움), 문턱 0.05 보정. `.pt`·`.onnx` 는 `models/ovdet/archive/pt/`(`models/ovdet/archive/README.md`). 옛 학습 판은 `data/datasets/fastsam_obj/archive/`.
 - `models/ovdet/x86_sm120/yolo26n-seg-obj-416.plan`: **ObjectSAM** — YOLO26n 학생(`n26_uw`, 덜 나눔 벌점), 문턱 0.03 보정. **기본 엔진(10-05)**. 공개판 ObjectSAM v1.0(`ObjectSAM-416.*`).
   - 앞 학생(v0, t 0.04)은 `models/ovdet/archive/x86_sm120/yolo26n-seg-obj-416-v0.plan` 으로 보관했다.
 - 옛 엔진 `FastSAM-s-416.plan` 은 `models/ovdet/x86_sm120/` 에 그대로 있다(라벨 선생·평가 기준, `--engine`/`SGRT_ENGINE` 으로 고름). 기본값은 ObjectSAM 이다.
@@ -46,7 +46,7 @@ FastSAM-s 416(TensorRT, behavior-2026 `src/scene_graph/ovdet`)을 다시 학습�
 **권고**(10-05 전 판단 — 기록. 결정은 아래 "어느 것을 쓰나")
 - 시뮬(BEHAVIOR) 실험과 옛 규칙 지도에는 FastSAM-s-416-obj 가 확실히 낫다.
 - 실제 로봇 기본값으로 바꾸기 전에 두 가지가 필요하다.
-  - ① objprob 매개변수를 새 엔진에 다시 맞춘다 — 했다(behavior-2026 `objprob_params/FastSAM-s-416-obj.json`, 학생은 `yolo26n-seg-obj-416.json`).
+  - ① objprob 매개변수를 새 엔진에 다시 맞춘다 — 했다(`objprob_params/FastSAM-s-416-obj.json`(지움)`, 학생은 `yolo26n-seg-obj-416.json`).
   - ② 실제 집 영상에서 노드·중복을 확인한다.
 - Nano 학생 v0.2(`n26_uw`, t 0.03)는 게이트를 지나고, 덜 나눔이 옛 엔진 수준이다(시뮬 1.69 대 1.66, v0 3.43). 아래 "Nano 안"을 본다.
   - 값: 통째 IoU ≥ 0.5 가 낮아졌다(시뮬 0.633, v0 0.698). 실제 사진의 벽·천장·바닥 헛것은 옛 엔진보다 조금 많다.
@@ -180,11 +180,10 @@ FastSAM-s 416(TensorRT, behavior-2026 `src/scene_graph/ovdet`)을 다시 학습�
 - sim_detcmp radio r3(LIMO + OMX frontier 탐사, house_double_floor_lower, 146 s, 정답 34).
 - realbag_run 은 slam·gt 자세 두 판으로 돌린다.
 - 옛 규칙(plain)과 scenemap 확률 모드(objprob, `--objprob --label-prior data/datasets/objprob/fit1/label_prior.json`) 둘 다 본다.
-- 채점은 behavior-2026 `tools/realbag/objprob_eval.py` 로 한다(detcmp_eval 표 + 잘못 합침·문창계단).
+- 채점은 `src/scene_graph/tools/realbag/objprob_eval.py` 로 한다(detcmp_eval 표 + 잘못 합침·문창계단).
 
 **빌드**
 - realbag 빌드 → `build/realbag`(`tools/build_all.sh realbag`).
-- `realbag_run --engine` 은 원래 있는 옵션이라 behavior-2026 은 고치지 않았다.
 
 ### 실제 bag(`realcheck.sh`)
 
@@ -270,7 +269,7 @@ FastSAM-s 416(TensorRT, behavior-2026 `src/scene_graph/ovdet`)을 다시 학습�
 - 게이트(v0.2, t 0.03): 가장 약한 버킷은 시뮬 문·창·계단 −0.2 %p [−3.0, +2.3]과 시뮬 medium −0.5 %p [−4.4, +3.3]이다. COCO·ADE 는 모든 버킷이 같거나 좋다.
 - 끝에서 끝:
   - 옛 규칙 radio r3: 찾음 29, 노드 272, 벽·천장·바닥 헛노드 6.
-  - objprob(엔진별 매개변수 0.5/0.7, behavior-2026 `objprob_params/yolo26n-seg-obj-416.json`): 찾음 27/27, 노드 96/108, 중복 45/51. FastSAM-s-obj 는 28/27, 128/124, 53/49.
+  - objprob(엔진별 매개변수 0.5/0.7, `src/scene_graph/tools/realbag/objprob_params/yolo26n-seg-obj-416.json`): 찾음 27/27, 노드 96/108, 중복 45/51. FastSAM-s-obj 는 28/27, 128/124, 53/49.
   - OpenLORIS 노드(objprob): 110 · 126. FastSAM-s-obj 는 120 · 135.
   - 옛 규칙에서는 OpenLORIS 노드가 많다(414 · 481). 실제 영상에서 t 0.03 은 낮다. 도메인 문턱 문제는 FastSAM-s-obj 와 같다.
 
@@ -305,9 +304,9 @@ FastSAM-s 416(TensorRT, behavior-2026 `src/scene_graph/ovdet`)을 다시 학습�
 /usr/src/tensorrt/bin/trtexec --onnx=ObjectSAM-416.onnx --fp16 --workspace=1024 --saveEngine=objsam_n_fp16.plan
 # 또는 python3 quant_engine.py build <onnx> <plan> --mode fp16|int8 (TRT 8.2 플래그 차이 처리)
 ```
-- 둘 다 `--useCudaGraph` 로 지연을 잰다. 실행 쪽 ovdet 은 CUDA 그래프로 부른다(behavior-2026 ovdet README "Per-call latency").
+- 둘 다 `--useCudaGraph` 로 지연을 잰다. 실행 쪽 ovdet 은 CUDA 그래프로 부른다(ovdet README "Per-call latency").
 
-**실행 지연(ovdet, behavior-2026 ca7381f)**
+**실행 지연(ovdet)**
 - `nsys`: 416 학생은 프레임마다 TensorRT 커널을 약 235 번 띄웠다(번당 2.7 µs). 가운데에 호스트 동기도 있었다. 우리 CUDA 후처리는 약 70 µs 다(select/NMS 31, 중복 제거 14, 마스크 비트 13).
 - `trtexec` 층별 비중(학생): backbone 36 %, neck 31 %, 상자·분류 머리 17 %, 마스크 원형 7 %, 마스크 계수 6 %.
 - 고친 것: 한 번 부르기 전체를 CUDA 그래프로 잡고, 출력 칸 고르기를 장치에서 하고(동기 한 번), 호스트 영상은 고정 메모리로 올린다. 출력은 비트 같다.
@@ -317,9 +316,9 @@ FastSAM-s 416(TensorRT, behavior-2026 `src/scene_graph/ovdet`)을 다시 학습�
   - FastSAM-s-obj: 0.892 → 0.617.
 
 **어느 것을 쓰나** — **10-05: decided ObjectSAM (YOLO26n 학생) + SigLIP 2 + objprob**
-- 모든 기기(PC·Orin·Nano)의 기본은 ObjectSAM(`yolo26n-seg-obj-416`, 공개 `ObjectSAM-416.*`)이다. 까닭: FastSAM-s 계산의 약 1/10(3.8 대 약 40 GFLOPs)이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. objprob 매개변수는 behavior-2026 `objprob_params/yolo26n-seg-obj-416.json`.
+- 모든 기기(PC·Orin·Nano)의 기본은 ObjectSAM(`yolo26n-seg-obj-416`, 공개 `ObjectSAM-416.*`)이다. 까닭: FastSAM-s 계산의 약 1/10(3.8 대 약 40 GFLOPs)이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. objprob 매개변수는 `src/scene_graph/tools/realbag/objprob_params/yolo26n-seg-obj-416.json`.
 - Jetson Nano(4 GB)는 FP16(`ObjectSAM-416.onnx`), Orin 은 FP16 또는 INT8 Q/DQ(`ObjectSAM-416-int8-qdq.onnx` — 이 PC 에서는 이득이 없었다, Orin 에서 재 보고 고른다).
-- FastSAM-s 재학습(`FastSAM-s-416-obj`, `models/ovdet/archive/x86_sm120/` 에 보관)은 쓰지 않는다. PC 에서 벽·천장·바닥 헛것·통째 IoU 는 조금 나았지만 덜 나눔이 많고 계산이 약 10 배다(로컬 비교 기록으로만 남김).
+- FastSAM-s 재학습(`FastSAM-s-416-obj`, 엔진 지움)은 쓰지 않는다. PC 에서 벽·천장·바닥 헛것·통째 IoU 는 조금 나았지만 덜 나눔이 많고 계산이 약 10 배다(로컬 비교 기록으로만 남김).
 
 ## 다시 만들기
 
@@ -343,13 +342,13 @@ bash cand_eval.sh <run> last        # 임시 엔진 + 옛 엔진과 짝 평가
 $FS_PY sweep_t.py data/datasets/fastsam_obj/cand/cand_<run>_last.plan --ts 0.25 0.18 0.14 0.11 0.09 0.07 0.05 \
     --out data/datasets/fastsam_obj/eval/sweep_<run>.json
 $FS_PY calibrate.py data/datasets/fastsam_obj/runs/<run>/weights/last.pt <out.pt> --t <best_t>
-bash export.sh <out.pt> FastSAM-s-416-obj      # → models/ovdet/{pt,x86_sm120}/FastSAM-s-416-obj.*
+bash export.sh <out.pt> <이름>      # → models/ovdet/{pt,x86_sm120}/<이름>.*
 # 5) 지연 시간(빈 GPU 에서)
-$FS_PY bench_latency.py old=models/ovdet/x86_sm120/FastSAM-s-416.plan new=models/ovdet/x86_sm120/FastSAM-s-416-obj.plan \
+$FS_PY bench_latency.py old=models/ovdet/x86_sm120/FastSAM-s-416.plan new=models/ovdet/x86_sm120/yolo26n-seg-obj-416.plan \
     --images data/datasets/sim_detcmp/streams/radio_limo_r3/rgb --n 300
 # 6) 끝에서 끝·실제 bag
-bash e2e.sh <이름> models/ovdet/x86_sm120/FastSAM-s-416-obj.plan plain   # 그리고 objprob
-bash realcheck.sh <이름> models/ovdet/x86_sm120/FastSAM-s-416-obj.plan
+bash e2e.sh <이름> models/ovdet/x86_sm120/<이름>.plan objprob   # 그리고 objprob
+bash realcheck.sh <이름> models/ovdet/x86_sm120/<이름>.plan
 # 7) ObjectSAM(YOLO26n 학생 n26_uw): 같은 목록·라벨, 덜 나눔 벌점
 $FS_PY train.py --name n26_v1 --init data/datasets/fastsam_obj/runs/n26_v0/weights/last.pt \
     --list data/datasets/fastsam_obj/yolo/train_fs_v2.txt --epochs 30 --lr0 0.003 --workers 4
@@ -388,8 +387,7 @@ $TRT_PY quant_engine.py build <model_qdq.onnx> <out.plan> --mode int8
 - 이 학습 폴더는 AGPL-3.0 으로 표시한다(`LICENSE`).
 - 참고:
   - 이 가중치를 쓰는 제품이나 서비스를 남에게 제공하면 AGPL 의무가 생긴다. 해당 소스 공개, 네트워크 서비스면 13 조다.
-  - behavior-2026 제출물은 이미 AGPL-3.0 공개로 정해져 있다(09-30, `docs/제출지침.md`).
-  - 실행 쪽 ovdet(C++/CUDA)에는 Ultralytics 코드가 없다.
+    - 실행 쪽 ovdet(C++/CUDA)에는 Ultralytics 코드가 없다.
 
 ## 남은 일
 

@@ -131,7 +131,7 @@ training/data/vla_v1/manifest.json:35  "en_model": "PE-Core-L-14-336 text, no te
 - 실제 런타임 기본 `~/embed_work/labels/objects-v1`(`sgrt.cpp:233`, `sgrt_clip.cpp:53`, `clip/CMakeLists.txt:65`, `dom_bench_det.cpp:127`, `realbag_run.cpp:493`). 이 폴더(2026-10-03 생성, 65 MB)는 레포에 없고 만든 스크립트(`training/embed/*`)가 `~/embed_work` 에 의존. `app_table.cu:152`, `app_ref.py:19`, `export_head_f32.py` 도 `~/embed_work/runs/sb32_pe_300k/head*.pt` 필요 → 헤드 `h` 가중치가 레포·버전 밖.
 - `tools/run_explore_live.sh:25` 기본 빌드 `~/sgrt_build_explore`(비공개 빌드 경로). 지금은 `CMAKE_HOME_DIRECTORY` 가 서브모듈 소스를 가리키고 `libsgrt.so`(10-05 20:39)가 최신 런타임 커밋(20:13) 이후라 최신으로 확인. 단 소스 일치를 스크립트가 검사하지 않는다(`build_deps.sh` 는 같은 폴더를 소스 일치 검사 후 링크함 — 이쪽은 안전).
 - `training/RL/map/CMakeLists.txt:64` 는 `src/scene_graph/scenemap/include`(복사본), `:80` 는 `src/behavior-2026/.../scenemap`(원본). 현재 `tools/sync_scene_graph.sh --check` = 차이 없음이라 문제 없음, 동기가 깨지면 섞임.
-- `src/robot/og/import_to_omnigibson.sh`(`URDF_IN` 기본 `$HOME/ra_ws/map_vla.urdf`), `og/e0/kin.py:16,191`, `finger_gap.py:3` 가 `~/ra_ws/` 의 절대 경로 사용. 이 URDF 가 레포 xacro 와 같은지는 `limo_description` 패키지가 없어 `xacro` 로 재생성하지 못함 — 확인 필요(렌즈·`grasp_point` 는 들어 있음).
+- `src/robot/og/import_to_omnigibson.sh`(`URDF_IN` 기본 `$HOME/ra_ws/map_vla.urdf`), `og/e0/kin.py:16,191`, `finger_gap.py:3` 가 `data/ws/` 의 절대 경로 사용. 이 URDF 가 레포 xacro 와 같은지는 `limo_description` 패키지가 없어 `xacro` 로 재생성하지 못함 — 확인 필요(렌즈·`grasp_point` 는 들어 있음).
 - `training/viewer/tools/scene_mesh/export_mesh.py:19` `~/datasets/fastsam_obj/sim`, `training/embed/build_sim_crops.py:8` `~/embed_work/ovdet_build`(자체 빌드, FastSAM-s-416 엔진).
 
 ## 11. 이름 표 어휘 불일치 — 중간 (결정 8)
@@ -142,7 +142,7 @@ objprob 앞단 `objprob_front.hpp`(kVocab 라벨 + kApLabels 이름)와 학습 �
 
 ## 12. GPU 로봇 모델 헤더가 현재 URDF 보다 낡음 — 낮음 (결정 6)
 
-- `training/RL/env/include/limo_omx_model.h`(10-04 09:24, 관절 21 개). 현재 `~/ra_ws/map_vla.urdf` 로 `urdf2hdr` 를 다시 돌리면 관절 24 개: `depth_camera_lens_joint`(+x 0.010), `depth_camera_lens_optical_joint`, `grasp_point_joint`(0.08003, −0.0016) 가 더해지고 이후 관절 번호(`J_OMX_MOUNT_JOINT` 17→19 등)가 바뀜.
+- `training/RL/env/include/limo_omx_model.h`(10-04 09:24, 관절 21 개). 현재 `data/ws/map_vla.urdf` 로 `urdf2hdr` 를 다시 돌리면 관절 24 개: `depth_camera_lens_joint`(+x 0.010), `depth_camera_lens_optical_joint`, `grasp_point_joint`(0.08003, −0.0016) 가 더해지고 이후 관절 번호(`J_OMX_MOUNT_JOINT` 17→19 등)가 바뀜.
 - 영향은 낮음: 카메라 x 는 `env.h:35 cam_x = 0.094` 로 따로 하드코딩되어 이미 렌즈 위치이고, 잡는 점은 `map.h grasp_off -0.0119`. 다만 이 두 값이 헤더에서 파생되지 않아 URDF 가 바뀌면 조용히 어긋남.
 - 고침: `urdf2hdr` 재실행 후 `cam_x`·`grasp_off` 를 헤더에서 읽게.
 

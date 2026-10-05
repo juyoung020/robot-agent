@@ -179,7 +179,7 @@ GEMM 만(`fp8_verify bench`, M 32,768): FP16·FP32 누산 67.5 → FP16 누산 k
 
 student-lite(아래 절) 위에 VLA_INPUT 1·5절의 나머지 입력·출력을 붙였다: **카메라 2 장 → 렌더(학습 때 다시) → 얼린 SigLIP 2 B/32-256 패치 토큰 → 학생**, 지시 문장 글 벡터, flow matching 행동 청크.
 모두 C++/CUDA(+ Rust 실행기). Python 은 오프라인 한 번 쓰는 기준값 덤프(`tools/siglip_ref.py`)와 지시 문장 표 만들기(`tools/text_table.py`)뿐이고 학습·추론 경로에 없다.
-**내려받은 것 없음**: SigLIP 2 가중치는 이미 HF 캐시에 있던 open_clip `ViT-B-32-SigLIP2-256`(webli) safetensors(1.5 GB, 영상 탑만 읽음)를 C++ 가 직접 읽는다. π0.5 가중치는 쓰지 않았다.
+**내려받은 것 없음**: SigLIP 2 가중치는 이미 HF 캐시에 있던 open_clip `ViT-B-32-SigLIP2-256`(webli) safetensors(1.5 GB, 영상 탑만 읽음)를 C++ 가 직접 읽는다.
 
 ### 구성(더한 것)
 | 경로 | 언어 | 내용 |

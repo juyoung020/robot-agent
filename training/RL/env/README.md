@@ -9,14 +9,14 @@ GPU_TRAINING.md 4.3 설계: 환경 하나 = 스레드 하나, 상태는 레지�
 
 ## 빌드/실행
 ```
-cmake -S . -B ~/ra_envbuild && cmake --build ~/ra_envbuild -j
-~/ra_envbuild/env_verify 2048 600          # GPU == CPU 비트 동일이어야 통과
-~/ra_envbuild/env_verify 2048 600 --negative   # 실패해야 정상
-~/ra_envbuild/env_verify 2048 600 --stage 2   # A2(가구). --stage 0 = A0, 기본 1 = A1
-~/ra_envbuild/env_verify 2048 600 --arm        # 팔을 풀고 행동 8 모두 무작위(VLA_INPUT 5절)
-~/ra_envbuild/env_verify 2048 600 --arm-zero   # GPU 팔 풂 + 팔 행동 0 대 CPU 팔 묶음 — 비트가 같아야(학습기가 늘 팔을 풀어 두는 근거)
-~/ra_envbuild/env_bench
-~/ra_envbuild/env_view 127.0.0.1:9001 20   # 뷰어(--ingest)에 실시간 전송
+tools/build_all.sh env
+build/env/env_verify 2048 600          # GPU == CPU 비트 동일이어야 통과
+build/env/env_verify 2048 600 --negative   # 실패해야 정상
+build/env/env_verify 2048 600 --stage 2   # A2(가구). --stage 0 = A0, 기본 1 = A1
+build/env/env_verify 2048 600 --arm        # 팔을 풀고 행동 8 모두 무작위(VLA_INPUT 5절)
+build/env/env_verify 2048 600 --arm-zero   # GPU 팔 풂 + 팔 행동 0 대 CPU 팔 묶음 — 비트가 같아야(학습기가 늘 팔을 풀어 두는 근거)
+build/env/env_bench
+build/env/env_view 127.0.0.1:9001 20   # 뷰어(--ingest)에 실시간 전송
 ```
 
 ## 결과 (RTX, sm_120)
@@ -78,13 +78,13 @@ cmake -S . -B ~/ra_envbuild && cmake --build ~/ra_envbuild -j
 계획서 [CURRICULUM_BEHAVIOR2026](../../../docs/map_vla/CURRICULUM_BEHAVIOR2026.md) 3.1절(집기·놓기 거르개 표)·5.4절(상태·잰 값 전부). 상자 방 A0–A2(= B0)는 바이트 그대로다.
 
 ```
-cmake --build ~/ra_envbuild -j4
-~/ra_envbuild/bscene_check                      # 장면 묶음 만들기 + 표 확인(시작 자세·경로·방·창), 장면별 거르개 지남 수
-~/ra_envbuild/bscene_check --dump-combos F      # 지시문 조합 → training/embed/pnp_instr.py → training/data/pnp_v1
-~/ra_envbuild/pnp_check [10000] [--strict] [--negative free_area|in_closed|artic|spawn_reach|spawn_free|dst_reach|stance]
-~/ra_envbuild/env_verify 2048 600 --stage 3 --follow [--strict] [--split 1] [--mix p1,p2] [--negative | --negative-scene]
-~/ra_envbuild/env_bench 300 3 32768
-~/ra_envbuild/env_bench_prof 300 3 32768        # 측정 빌드(-DENV_PROF): BEHAVIOR 리셋이 워프를 붙잡는 몫·spawn_ok 시도 수
+cmake --build build/env -j4
+build/env/bscene_check                      # 장면 묶음 만들기 + 표 확인(시작 자세·경로·방·창), 장면별 거르개 지남 수
+build/env/bscene_check --dump-combos F      # 지시문 조합 → training/embed/pnp_instr.py → training/data/pnp_v1
+build/env/pnp_check [10000] [--strict] [--negative free_area|in_closed|artic|spawn_reach|spawn_free|dst_reach|stance]
+build/env/env_verify 2048 600 --stage 3 --follow [--strict] [--split 1] [--mix p1,p2] [--negative | --negative-scene]
+build/env/env_bench 300 3 32768
+build/env/env_bench_prof 300 3 32768        # 측정 빌드(-DENV_PROF): BEHAVIOR 리셋이 워프를 붙잡는 몫·spawn_ok 시도 수
 ```
 
 | 파일 | 내용 |
@@ -140,13 +140,13 @@ API(뷰어·학습기용, 뒤로 맞음 — 예전 호출은 그대로):
 | `tools/grasp_e7.cpp` | E7: 같은 모형을 E0 OmniGibson 잡기 시험 경우(`src/robot/og/e7/e0_cases.py` CSV)에 대 봄 |
 
 ```
-cmake --build ~/ra_envbuild -j4
-~/ra_envbuild/env_verify 2048 600 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher --fail 0.005,0.3   # GPU == CPU(교사 행동 포함)
-~/ra_envbuild/env_verify 2048 600 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --arm --negative-grasp     # 실패해야 정상
-~/ra_envbuild/env_verify 1024 200 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher --negative-armcoll
-~/ra_envbuild/env_bench 200 3 4096 --pnp 1,0,0 --mix 0,0 [--teacher]
-~/ra_envbuild/pnp_check 10000 [--strict] [--emit-e7 cases.json]   # 끝에 "E6 grasp model" 줄 = 잡을 수 있음(정보)
-python3 src/robot/og/e7/e0_cases.py > cases.csv && ~/ra_envbuild/grasp_e7 cases.csv [max_w grip_top]
+cmake --build build/env -j4
+build/env/env_verify 2048 600 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher --fail 0.005,0.3   # GPU == CPU(교사 행동 포함)
+build/env/env_verify 2048 600 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --arm --negative-grasp     # 실패해야 정상
+build/env/env_verify 1024 200 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher --negative-armcoll
+build/env/env_bench 200 3 4096 --pnp 1,0,0 --mix 0,0 [--teacher]
+build/env/pnp_check 10000 [--strict] [--emit-e7 cases.json]   # 끝에 "E6 grasp model" 줄 = 잡을 수 있음(정보)
+python3 src/robot/og/e7/e0_cases.py > cases.csv && build/env/grasp_e7 cases.csv [max_w grip_top]
 ```
 
 API(뒤로 맞음): `bsc::BCurr` 끝에 `p4, p5, p6, p_slip, p_occ, phys`(0 이면 예전 난수 흐름 = 같은 판), `EntKind` `EK_B4..EK_B6`(`N_EK` 7), `Entry` 끝에 `mass, st[2], src_top, dst_st[2], oyaw, odim[3]`, SoA 끝에 `F_O_*`·`F_OC_*`·`F_T_*`·`I_O_*`·`I_B_SKIP`·`I_T_*`, `DeviceEnv::teacher(act)`·`CpuEnv::teacher`. BEHAVIOR 스텝은 커널 둘(`step_kernel_beh` = 예전 판, `step_kernel_pnp` = 잡기 판 — `I_B_SKIP` 로 판마다 한 번).
@@ -166,10 +166,10 @@ API(뒤로 맞음): `bsc::BCurr` 끝에 `p4, p5, p6, p_slip, p_occ, phys`(0 이�
 | `src/env_kernel.cu` | `pnp_feasibility(SceneBuild&)`(장치 짝마다 워프, 호스트·장치 표에 씀), 교사 커널 셋(`DeviceEnv::teacher_pre/plan/act`, `tbuf()`), `ENV_PROF` 면 계획 요청 비트마다 시간 |
 
 ```
-~/ra_envbuild/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher --feas --fail 0.005,0.3 --point 0.3,0   # 교사 행동·버퍼 GPU == CPU
-~/ra_envbuild/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --feas --negative-teacher                     # 실패해야 정상
-~/ra_envbuild/pnp_check 10000 [--negative feas]     # 잡기 가능 표: 집마다 짝 수, 까닭, CPU == 장치, PF_FEAS 고르기
-~/ra_envbuild/env_bench 200 3 4096 --pnp 0.34,0.33,0.33 --mix 0,0 --teacher --feas   # 교사 커널 셋 따로(env_bench_prof 면 계획 종류별)
+build/env/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher --feas --fail 0.005,0.3 --point 0.3,0   # 교사 행동·버퍼 GPU == CPU
+build/env/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --feas --negative-teacher                     # 실패해야 정상
+build/env/pnp_check 10000 [--negative feas]     # 잡기 가능 표: 집마다 짝 수, 까닭, CPU == 장치, PF_FEAS 고르기
+build/env/env_bench 200 3 4096 --pnp 0.34,0.33,0.33 --mix 0,0 --teacher --feas   # 교사 커널 셋 따로(env_bench_prof 면 계획 종류별)
 ```
 잰 값: 비트 동일(교사 버퍼까지, 2,279 계획), 음성 대조 33,418 다름, `pnp_check` 표 CPU == 장치 0 다름·PF_FEAS 판 비트 없는 짝 0. N 4,096: 잡기 판 환경 스텝 1.10–1.24 ms, 교사 앞 + 행동 0.61(B4)·4.76(B5)·0.84(B6) ms, 계획 커널 12–19 ms(계획하는 판이 있는 스텝).
 
@@ -187,12 +187,12 @@ API(뒤로 맞음): `bsc::BCurr` 끝에 `p4, p5, p6, p_slip, p_occ, phys`(0 이�
 | `tools/env_bench.cu` | `--teacher-sl`, 측정 빌드는 계획 구간·찾기 까닭·조각 수·등급·행동 단계·거절 까닭 |
 
 ```
-~/ra_envbuild/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher --feas --fail 0.005,0.3 --point 0.3,0   # 상태 있는 교사
-TEACH_NO_TOCC=1 ~/ra_envbuild/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher --feas --fail 0.005,0.3 --point 0.3,0   # 표 == 칠하기
-~/ra_envbuild/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher-sl --feas --fail 0.005,0.3 --point 0.3,0
-~/ra_envbuild/env_verify 256 500 --stage 3 --mix 0,0 --pnp 0.34,0.33,0.33 --sl-fresh --feas --point 0.3,0 --fail 0.005,0.3        # 라벨 = 상태의 함수
-~/ra_envbuild/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --feas --negative-teacher-sl                        # 실패해야 정상
+build/env/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher --feas --fail 0.005,0.3 --point 0.3,0   # 상태 있는 교사
+TEACH_NO_TOCC=1 build/env/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher --feas --fail 0.005,0.3 --point 0.3,0   # 표 == 칠하기
+build/env/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher-sl --feas --fail 0.005,0.3 --point 0.3,0
+build/env/env_verify 256 500 --stage 3 --mix 0,0 --pnp 0.34,0.33,0.33 --sl-fresh --feas --point 0.3,0 --fail 0.005,0.3        # 라벨 = 상태의 함수
+build/env/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --feas --negative-teacher-sl                        # 실패해야 정상
 TDBG_NAVFREE=1 / TDBG_DWA=1 env_verify ... --teacher   # CPU: 캐시한 팔 검사·지역 계획이 예전 식과 같은 답인지 셈
-~/ra_envbuild/env_bench 300 3 4096 --pnp 0.34,0.33,0.33 --mix 0,0 --teacher[-sl] --feas
+build/env/env_bench 300 3 4096 --pnp 0.34,0.33,0.33 --mix 0,0 --teacher[-sl] --feas
 ```
 잰 값: 모두 비트 동일(교사 버퍼·캐시까지), `--sl-fresh` 256 × 500 0 다름, 음성 대조 `--negative-teacher` 33,091·`--negative-teacher-sl` 36,186 다름, 캐시한 팔 검사 49만 번·지역 계획 2.4만 번 예전 식과 0 다름. N 4,096 교사 ms/스텝: 상태 있는 B4 2.55·B5 5.92·B6 2.26·섞음 4.34(전 15.3·27.5·14.4·22.9), 상태 없는 2.16·4.51·5.17·4.56. 장치 메모리 +73 MB(정적 점유 표), `teacher_sl` 켜면 판마다 +36 KB.

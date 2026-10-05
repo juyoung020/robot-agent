@@ -95,7 +95,6 @@ Median `ovd_detect` latency on an idle RTX 5070 Ti, 300 radio r3 frames 640×480
 | engine | before: total / upload+letterbox / net / post+out ms | after |
 |---|---|---|
 | yolo26n-seg-obj-416 | 0.934 / 0.222 / 0.612 / 0.103 | 0.624 / 0.158 / 0.392 / 0.081 |
-| FastSAM-s-416-obj | 0.892 / 0.217 / 0.545 / 0.112 | 0.617 / 0.115 / 0.420 / 0.071 |
 
 The network share of the student, from `trtexec` per-layer profiling, is backbone 36 %, neck 31 %, box/cls head 17 %, mask prototypes 7 % and mask coefficients 6 %. TensorRT builder optimisation level 5 gave no gain.
 

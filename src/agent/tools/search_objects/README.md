@@ -1,7 +1,7 @@
 # search_objects · confirm_object · list_place — 물체 기억 찾기, 이름 고치기, 자리 목록
 
 LLM(Qwen3.5-9B, KAU API)은 글만 주고받으므로 **벡터는 도구 안에서만** 쓴다. 찾기·이름 확률·속성 낱말은 공용 물체 색인
-(behavior-2026 [`src/scene_graph/clip`](../../../scene_graph/clip/README.md) `sgsearch.h`, C++)이 하고,
+([`src/scene_graph/clip`](../../../scene_graph/clip/README.md) `sgsearch.h`, C++)이 하고,
 이 크레이트는 그 결과에 기억의 자리 정보(방·기준물·상태·마지막으로 본 때·map 좌표·크기·위치 불확실도·로봇 기준 좌표)를 붙여 짧은 JSON 글로 돌려준다.
 기억은 오프라인 `view.json`(`ViewJson`) 또는 **실시간 scenemap 스냅숏**(`LiveMem`, 10-05) — 같은 `Memory` trait.
 설계 기록: [plan.md 3.3](../../plan.md), [MAPVLA_SPEC 공용 물체 찾기](../../../../docs/map_vla/MAPVLA_SPEC.md#공용-물체-찾기-10-05).
@@ -83,7 +83,7 @@ list_place {"place":"O1"} → {"place":{"id":"O1","name":"table","pos":[0.8,0.0,
 ## 실시간 기억 (`src/live.rs`, 10-05)
 
 ```
-so_open_live(sm_ctx, sm_lib, mem_dir)            sm_ctx: sgrt 면 sgrt_scenemap(s)(behavior-2026 objsearch-live), 로봇이면 scenemap 문맥
+so_open_live(sm_ctx, sm_lib, mem_dir)            sm_ctx: sgrt 면 sgrt_scenemap(s), 로봇이면 scenemap 문맥
   호출마다  sm_snapshot → 물체(sm_snap_objects·movable·object_room)·자세(sm_snap_pose)·방(sm_snap_rooms)·시각 복사 → 놓음
   색인      mem_dir/view.json 이 바뀌면(sgrt save_s 주기 저장, 로봇은 sm_save_dsg) sgs_reload — 이름 사후·벡터·속성
   pos_sd    mem_dir/view.json(objprob)
@@ -95,7 +95,7 @@ so_open_live(sm_ctx, sm_lib, mem_dir)            sm_ctx: sgrt 면 sgrt_scenemap(
   같으면 `unindexed: true` 로 나오고, `list_place` 에는 바로 나온다.
 - scenemap 함수는 링크하지 않고 `dlsym`: 프로세스에 scenemap 이 올라와 있어야 한다. 파이썬 ctypes(RTLD_LOCAL)로 올린 `libsgrt.so` 면 그 경로를 `sm_lib` 로.
 - 두 번 세지 않기: 지도(확률 모드)가 받은 확인(`"map":"applied"`)은 다음 저장의 `name_post.external = true` 에 들어가므로, 색인이 다시 읽을 때
-  그 확인의 우도비를 빼고 지도 사후를 그대로 쓴다(behavior-2026 objsearch-live `objindex.cpp`). 저장 전에는 색인이 직접 셈.
+  그 확인의 우도비를 빼고 지도 사후를 그대로 쓴다(`src/scene_graph/clip` `objindex.cpp`). 저장 전에는 색인이 직접 셈.
 - 확률 모드(objprob)가 꺼진 지도(지금 sgrt 기본)는 `sm_observe_object_name` 이 -3 → `"map":"not_objprob"`, 확인은 색인·기록에만.
 - 새 색인 함수(`sgs_confirm_ex`·`sgs_label_of`)는 `dlsym` 으로 찾아, 옛 `libsgclip_c.so` 에서도 돈다(그때는 덧붙임 없는 `sgs_confirm`).
 
@@ -118,26 +118,26 @@ LLM ── tool_call ──▶ ObjectSearch::run_tool (src/lib.rs) ── 인자
 
 | 무엇 | 환경 변수 | 기본 |
 |---|---|---|
-| `libsgclip_c.so`(빌드 때) | `SGCLIP_LIB_DIR` | `~/sgclip_build` |
-| 라벨 표 | `SGRT_LABELS` | `~/embed_work/labels/objects-v1` |
-| 글 인코더(토크나이저·토큰 임베딩·엔진) | `SGC_TEXT_DIR` | `~/ovdet_models/x86_sm120/siglip2_b32` |
-| 영상 엔진(대체 벡터) | `SGC_ENGINE` | `~/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan`(없으면 대체 벡터 없이) |
+| `libsgclip_c.so`(빌드 때) | `SGCLIP_LIB_DIR` | `build/sgclip` |
+| 라벨 표 | `SGRT_LABELS` | `data/embed_work/labels/objects-v1` |
+| 글 인코더(토크나이저·토큰 임베딩·엔진) | `SGC_TEXT_DIR` | `models/ovdet/x86_sm120/siglip2_b32` |
+| 영상 엔진(대체 벡터) | `SGC_ENGINE` | `models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan`(없으면 대체 벡터 없이) |
 
 ## 쓰는 법
 
 ```bash
-# 공용 색인(C++) — behavior-2026 서브모듈에서(엔진 만들기는 그쪽 README "만들기"·"글 인코더")
-cmake -S ../../../scene_graph/clip -B ~/sgclip_build && cmake --build ~/sgclip_build -j4 && ctest --test-dir ~/sgclip_build
+# 공용 색인(C++) — src/scene_graph/clip (tools/build_all.sh sgclip; 엔진 만들기는 clip README "만들기"·"글 인코더")
+(cd ../../../.. && tools/build_all.sh sgclip) && ctest --test-dir ../../../../build/sgclip
 cd src/agent/tools/search_objects
 cargo test --release                     # 시험 9개(GPU 없이; 끝까지 시험은 라벨 표가 있어야)
 # 실시간: 진짜 scenemap(libsgrt.so 안)에 합성 LIMO 스트림 → 도구 끝까지(GPU 안 씀). SO_LIVE_OBJPROB=1 이면 확률 모드(objprob) 켜고 확인이 지도에 들어가는지까지
-./target/release/search-objects live-check ~/sgrt_build_objlive/libsgrt.so /tmp/livemem
+./target/release/search-objects live-check ../../../../build/bin/libsgrt.so /tmp/livemem
 cargo build --release --features llm
 ./target/release/search-objects schema
-cp -r ~/datasets/sim_detcmp/A_fastsam/gt/memory /tmp/mem        # 기억 폴더에 캐시·확인 기록이 생기므로 복사본에서
+cp -r data/datasets/sim_detcmp/A_fastsam/gt/memory /tmp/mem        # 기억 폴더에 캐시·확인 기록이 생기므로 복사본에서
 ./target/release/search-objects call /tmp/mem search_objects '{"query":"라디오"}' confirm_object '{"id":"O234","name":"radio","source":"user"}'
 ./target/release/search-objects demo /tmp/mem 라디오            # 각본(LLM 없이)
-set -a; . ~/.config/behavior-2026/kau.env; set +a
+set -a; . ~/.config/robot-agent/kau.env; set +a
 ./target/release/search-objects llm /tmp/mem "라디오 가져와"      # KAU Qwen 원형 루프(도구 두 개)
 ```
 
@@ -154,11 +154,11 @@ set -a; . ~/.config/behavior-2026/kau.env; set +a
 | `time_filters` | `max_age_s`·`seen_after_s`(경계 포함) |
 | `list_place_room_and_furniture` | 방: 옮길 수 있는 것 먼저·구조물 뺌·`fixed`, 가구: 1.5 m 안 `dist_m`·`dz_m`, 관계말 칸 없음, 없는 방·id 오류, 15 개 자르기 + hint |
 | `live_memory_is_fresh_every_call_and_reads_side_pos_sd` | 가짜 scenemap: 호출마다 새 스냅숏(자리·시각), 저장 폴더 pos_sd, 방 이름·R 번호, 이름 관측 전달 |
-| `search-objects live-check`(손으로) | **진짜 scenemap**(`libsgrt.so`, behavior-2026 objsearch-live 빌드)에 합성 LIMO 깊이·검출 스트림: 저장 뒤 찾기 자리 = 스냅숏, list_place(탁자), 저장 없이 컵을 옮기면 새 물체가 `unindexed` 로 바로·로봇 90° 돌면 `rel` 바뀜, 다음 저장 뒤 색인에 들어감, 시간 거르개, 확인 → `sm_observe_object_name`(objprob 끔: not_objprob / `SO_LIVE_OBJPROB=1`: applied + 저장된 `name_post.external` true) — 13·16 항목 통과(10-05) |
+| `search-objects live-check`(손으로) | **진짜 scenemap**(`build/bin/libsgrt.so`)에 합성 LIMO 깊이·검출 스트림: 저장 뒤 찾기 자리 = 스냅숏, list_place(탁자), 저장 없이 컵을 옮기면 새 물체가 `unindexed` 로 바로·로봇 90° 돌면 `rel` 바뀜, 다음 저장 뒤 색인에 들어감, 시간 거르개, 확인 → `sm_observe_object_name`(objprob 끔: not_objprob / `SO_LIVE_OBJPROB=1`: applied + 저장된 `name_post.external` true) — 13·16 항목 통과(10-05) |
 
 ## 측정 (10-05)
 
-공용 색인 평가(behavior-2026 `clip/tools/eval_objsearch.py`, 자세한 표는 [clip README "물체 찾기"](../../../scene_graph/clip/README.md)):
+공용 색인 평가(`src/scene_graph/clip/tools/eval_objsearch.py`, 자세한 표는 [clip README "물체 찾기"](../../../scene_graph/clip/README.md)):
 BEHAVIOR 집 LIMO 탐사 기억(FastSAM + SigLIP 2, 283 물체, 확률 모드 전이라 best view 사진 한 장), 정답 종류 질의 18 개, 없는 물체 질의 40 개.
 
 | | R@1 | R@5 | 이름으로 못 찾는 물체 R@5 | 없는 물체: 뭐라도 나옴 / 묻지 않고 행동 | 지연(물체 ≈ 300) |
@@ -206,5 +206,5 @@ result │ {"hint":"O234 was seen there but is gone now","matches":[{"id":"O234"
 - 우도비(등록 3, user 50, close_look 10)와 문턱은 손으로 정했다. `confirmations.jsonl` 이 쌓이면 맞춘다.
 - 한국어 질의는 라벨 표의 한국어 이름에 기계 번역이 섞여 영어보다 낮다 — 도구 설명에 "영어 낱말이 가장 낫다" 고 적었다.
 - 실시간 기억은 합성 스트림 + 진짜 scenemap 으로만 시험했다(OmniGibson sgrt 판·실제 로봇에서 `so_open_live` 를 부르는 접착부는 아직). 지금 sgrt 는 확률 모드를 안 켜서 확인은 지도에 안 들어간다(`not_objprob`).
-- 색인 고침(10-05, behavior-2026 objsearch-live): 색인이 objprob `name_post` 를 **배열로만** 읽어 objprob 의 `{"top":…}` 형식을 통째로 무시하고 있었다 — 고쳤다(서브모듈 올리기 전까지 옛 색인은 objprob 이름 사후를 안 씀).
+- 색인 고침(10-05): 색인이 objprob `name_post` 를 **배열로만** 읽어 objprob 의 `{"top":…}` 형식을 통째로 무시하고 있었다 — 고쳤다(서브모듈 올리기 전까지 옛 색인은 objprob 이름 사후를 안 씀).
 - `close_look` 을 `check` 결과에서 자동으로 부르는 것, 도구 수(plan.md 3.3 메모 — 지금 10 개)는 아직.

@@ -19,7 +19,7 @@ while true; do
   [ "$fv" -ge 6000 ] && [ "$fr" -ge 12 ] && break
   echo "[limo] waiting: VRAM free $fv MiB, RAM avail $fr GB"; sleep 30
 done
-source ~/miniconda3/etc/profile.d/conda.sh
+source "$CONDA_SH"
 conda activate behavior
 export OMNI_KIT_ACCEPT_EULA=YES
 export SGRT_ROBOT=${SGRT_ROBOT:-limo_omx}

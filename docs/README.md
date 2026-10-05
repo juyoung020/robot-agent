@@ -9,7 +9,7 @@
 | [perception_model_candidates.md](perception_model_candidates.md) | 물체 인식 모델 후보 (① 물체 기억, 추천만) |
 | [clip_candidates.md](clip_candidates.md) | CLIP 류 임베딩 모델 후보·측정 (분할 마스크 → 이름·임베딩, 측정 때 분할은 FastSAM-s — 지금은 ObjectSAM) |
 | [terms.md](terms.md) | 용어 정리: stuff·things, 확률론적 물체 수준 매핑, DA·과분할 병합·라벨 융합, PCA 와 랜색(RANSAC) — 우리 코드 위치와 함께 |
-| [known_bugs.md](known_bugs.md) | 알려진 버그(코드): 옛 경로 import, `/mnt/c/behavior-2026` 박아 둔 스크립트 등 |
+| [known_bugs.md](known_bugs.md) | 알려진 버그(코드) |
 | [map_vla/](map_vla/README.md) | Map_Vla(리모 + 매니퓰레이터 VLA) 조사·설계 문서 — 지금 상태·남은 일은 [map_vla/TODO_TRACKER.md](map_vla/TODO_TRACKER.md) |
 | [assets/](assets/) | README 아이콘·뷰어·시뮬·로봇 그림 |
 
@@ -18,12 +18,10 @@
 | 문서 | 내용 |
 |---|---|
 | [training/README.md](../training/README.md) | 모델 학습 (embed/: 영상–글 임베딩 증류, RL/·BC/: 교사·작은 학생, vla/: RecallVLA, fastsam/: ObjectSAM 분할, viewer/: 학습 뷰어, model/: 베이스 모델) |
-| [src/scene_graph/README.md](../src/scene_graph/README.md) | 물체 기억 코드(실제 로봇 쪽)·동기화·빌드 |
+| [src/scene_graph/README.md](../src/scene_graph/README.md) | 물체 기억 코드(실제 로봇 쪽)·빌드 |
 | [src/robot/README.md](../src/robot/README.md) | 리모 + 매니퓰레이터 로봇 설명(URDF·RViz) |
-| [scenemap_설계.md](https://github.com/juyoung020/behavior-2026/blob/main/docs/scenemap_설계.md) | 서브모듈: 물체 기억 scenemap 설계 (2D SLAM·물체 지도·계획기 질의·자세 원천) |
-| [archive/README.md](https://github.com/juyoung020/behavior-2026/blob/main/archive/README.md) | 서브모듈: 지금 안 쓰는 모듈, 왜 옮겼고 어떻게 되살리나 |
-| [tools/README.md](https://github.com/juyoung020/behavior-2026/blob/main/tools/README.md) | 서브모듈: 실행·측정·검증 스크립트 |
-| [behavior-2026 docs/](https://github.com/juyoung020/behavior-2026/blob/main/docs/README.md) | 서브모듈: BEHAVIOR Challenge 2026 문서 전체 목록 |
+| [archive/README.md](../archive/README.md) | 지금 안 쓰는 코드: 왜 옮겼나 |
+| [tools/](../tools/) | 빌드(`build_all.sh`)·실행·점검(`check_paths.sh`, `audit.py`) 도구 |
 
 ## 정한 것
 

@@ -19,17 +19,17 @@ G1 `env/`·G2 `map/` 은 **소스를 읽기만** 해서 같이 빌드한다(API�
 
 ## 빌드·실행
 ```
-cmake -S training/RL/ppo -B ~/ra_ppobuild && cmake --build ~/ra_ppobuild -j
-~/ra_ppobuild/ppo_verify v4 | v5 | v6 | v7          # 검증(통과 = 종료 코드 0)
-~/ra_ppobuild/ppo_verify v4 --negative               # 버그 둘을 넣음: 반드시 실패해야 종료 코드 0 (v5 도 같음)
-~/ra_ppobuild/ppo_verify bench 4096 64 20            # 처리량
-~/ra_ppobuild/ppo_verify eval <ckpt> <stage> [iters] [N] [use_map] [goal_from_map] [p0 p1 kmin kmax]
+tools/build_all.sh ppo
+build/ppo/ppo_verify v4 | v5 | v6 | v7          # 검증(통과 = 종료 코드 0)
+build/ppo/ppo_verify v4 --negative               # 버그 둘을 넣음: 반드시 실패해야 종료 코드 0 (v5 도 같음)
+build/ppo/ppo_verify bench 4096 64 20            # 처리량
+build/ppo/ppo_verify eval <ckpt> <stage> [iters] [N] [use_map] [goal_from_map] [p0 p1 kmin kmax]
                                                      # 결정적 정책(σ → e^-12, 학습률 0) 성공률 + 처음 완성도별 표(5.6) + 충돌 다시 보기
-~/ra_ppobuild/ppo_verify v4 --g4data                 # V4/V5 를 G4 자료(지도 목표·처음 지도 섞음)로
-~/ra_ppobuild/ppo_verify v6 --a2                     # A2 환경 + 안 본 곳 광선(use_map 2)으로(v4/v5 는 --g4data --a2)
-~/ra_ppobuild/ppo_verify snap out.bin 4096 64 6 1 1    # 빌드 사이 비트 비교용 스냅숏(두 빌드의 파일을 cmp)
-~/ra_ppobuild/ppo_verify slotcols                    # 칸 줄 304 칸이 뜻한 출처(숫자·이름·생김새 표 행)와 같은지(CPU·GPU 다섯 길)
-cd training/RL/ppo/driver && PPO_BUILD_DIR=~/ra_ppobuild cargo build --release   # PPO_BUILD_DIR 없으면 build.rs 가 CMake 로 빌드
+build/ppo/ppo_verify v4 --g4data                 # V4/V5 를 G4 자료(지도 목표·처음 지도 섞음)로
+build/ppo/ppo_verify v6 --a2                     # A2 환경 + 안 본 곳 광선(use_map 2)으로(v4/v5 는 --g4data --a2)
+build/ppo/ppo_verify snap out.bin 4096 64 6 1 1    # 빌드 사이 비트 비교용 스냅숏(두 빌드의 파일을 cmp)
+build/ppo/ppo_verify slotcols                    # 칸 줄 304 칸이 뜻한 출처(숫자·이름·생김새 표 행)와 같은지(CPU·GPU 다섯 길)
+cd training/RL/ppo/driver && PPO_BUILD_DIR=build/ppo cargo build --release   # PPO_BUILD_DIR 없으면 build.rs 가 CMake 로 빌드
 ./target/release/ppo_run ../../config/ppo_a0a1.json --out ~/runs/a0a1 [--minutes M] [--resume ckpt]
 ./target/release/ppo_run ../../config/ppo_g4.json --out ~/runs/g4          # G4: 지도 목표 + 처음 지도 커리큘럼
 ```
@@ -451,7 +451,7 @@ update 그래프(노드 763):  GAE·이득 통계(K4) → 에포크 5 × 미니�
 | + 10 분, −40 | **0.9571** | **0.0228** | 0.0201 | 0.954 / 0.014 | 0.971 / 0.027 | 169 · 71 (251) |
 
 - 충돌 0.032 → 0.023 이지만 **대부분은 더 학습한 효과**다(−20 대조도 0.024). 벌 −40 이 더한 것은 충돌 −0.0014(표준오차 약 0.0007 의 2 배)와 "앞 모서리 앞으로" 99 → 71 건 정도다. 씨앗 하나 **(가정: 효과 크기)**.
-- G5 BC 의 교사는 사용자 지시대로 원본(켬 씨앗 1)을 그대로 썼다(`../../BC/README.md`). 이 체크포인트들은 `~/ra_bc/ft/c40`, `c20`.
+- G5 BC 의 교사는 사용자 지시대로 원본(켬 씨앗 1)을 그대로 썼다(`../../BC/README.md`). 이 체크포인트들은 `data/checkpoints/bc/ft/c40`, `c20`.
 
 ## 호스트 의존 줄이기(2026-10-04) — 잰 값, 결과 비트 그대로
 nsys 2025.6.3 `--cuda-graph-trace=node`, `ppo_run` A2 설정에서 단계 문턱을 0 으로 둔 15 초 판(A0C0 → A1C0 → A2C0 환경 바꾸기 둘 + A2C1 → A2C2 지도 비율 바꾸기 둘, 체크포인트 50 바퀴마다, 86 바퀴). 분석 = nsys sqlite 에서 커널·복사·memset 구간 합집합.

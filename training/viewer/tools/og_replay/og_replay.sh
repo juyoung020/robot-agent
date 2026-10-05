@@ -29,7 +29,7 @@ ok_res() {
 }
 for _ in $(seq 180); do ok_res && break; sleep 10; done
 ok_res || { echo "[og_replay] resources busy (RAM/disk/GPU) — later"; exit 75; }
-source "${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
+source "$CONDA_SH"
 conda activate "${OG_CONDA_ENV:-behavior}"
 export OMNI_KIT_ACCEPT_EULA=YES B1K_ROOT=$B1K
 ulimit -c 0

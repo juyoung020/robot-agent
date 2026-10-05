@@ -36,7 +36,7 @@ while true; do
   [ "$fv" -ge 9000 ] && [ "$fr" -ge 16 ] && break
   echo "[run] waiting: VRAM free $fv MiB, RAM avail $fr GB"; sleep 30
 done
-source ~/miniconda3/etc/profile.d/conda.sh
+source "$CONDA_SH"
 conda activate behavior
 export OMNI_KIT_ACCEPT_EULA=YES
 export SGRT_POSE=${SGRT_POSE:-carto}   # 실제 로봇과 같게 Cartographer(시뮬 2D 라이다 + 바퀴 오도메트리). 정답 자세 확인용은 gt
