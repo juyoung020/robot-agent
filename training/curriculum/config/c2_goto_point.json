@@ -1,5 +1,5 @@
 {
-  "comment": "커리큘럼 2단계 시연: 목표 점으로 가기(B1 p_goto 1), house_single_floor 하나, 빈 지도 C2(자라는 지도). training/curriculum/README.md",
+  "comment": "커리큘럼 2단계 시연: 지점으로 가기(B1 p_goto 1 — 지도 위 점, 'go here'), house_single_floor 하나, 빈 지도 C2. training/curriculum/README.md",
   "n_env": 4096,
   "horizon": 64,
   "epochs": 5,

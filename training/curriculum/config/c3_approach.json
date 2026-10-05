@@ -1,0 +1,105 @@
+{
+  "comment": "커리큘럼 3단계 시연: 물체로 가기(B3 다가가기 — 지시된 물체 앞, 집기 직전 자세로 서기), house_single_floor 하나, 빈 지도 C2. training/curriculum/README.md",
+  "n_env": 4096,
+  "horizon": 64,
+  "epochs": 5,
+  "minibatches": 4,
+  "stage": 3,
+  "use_map": 2,
+  "adaptive_lr": 1,
+  "use_graphs": 1,
+  "log_ring": 16,
+  "inflight": 3,
+  "dw_chunk": 1024,
+  "seed": 1,
+  "gamma": 0.99,
+  "lam": 0.95,
+  "clip": 0.2,
+  "vclip": 0.2,
+  "vf_coef": 0.5,
+  "ent_coef": 0.0,
+  "lr": 0.0003,
+  "lr_min": 1e-05,
+  "lr_max": 0.001,
+  "kl_target": 0.01,
+  "max_grad_norm": 1.0,
+  "adam_b1": 0.9,
+  "adam_b2": 0.999,
+  "adam_eps": 1e-08,
+  "init_logstd": -0.5,
+  "reward_scale": 1.0,
+  "act_dims": 2,
+  "shaping": {
+    "coef": 1.0,
+    "near": 8.0,
+    "aim": 1.0,
+    "zone": 1.0,
+    "v": 4.0,
+    "w": 2.0,
+    "coll": -20.0
+  },
+  "beh": {
+    "feas": 0,
+    "scenes": [
+      "house_single_floor"
+    ],
+    "mix": [
+      0.0,
+      0.0
+    ],
+    "split": 0,
+    "strict": 0,
+    "eval_instr": 0,
+    "yaw_jit": 0.5,
+    "nav_k": 10,
+    "p_point": 0.0,
+    "p_goto": 0.0,
+    "pnp": [
+      0,
+      0,
+      0
+    ],
+    "fail": [
+      0,
+      0
+    ]
+  },
+  "curriculum": {
+    "stages": [
+      {
+        "name": "B3approach",
+        "env": 3,
+        "map": [
+          0.0,
+          0.0
+        ],
+        "b": {
+          "mix": [
+            0.0,
+            0.0
+          ],
+          "pnp": [
+            0,
+            0,
+            0
+          ]
+        },
+        "act_mask": 3,
+        "promote": 2.0,
+        "metric": 5
+      }
+    ],
+    "window": 20,
+    "stop_success": 0.9
+  },
+  "ckpt_every": 200,
+  "print_every": 10,
+  "budget_minutes": 20,
+  "out": "runs/ppo_pnp",
+  "goal_from_map": 1,
+  "bound_coef": 0.5,
+  "map_kmin": 3,
+  "map_kmax": 6,
+  "map_reveal_r": 1.5,
+  "act_mask": 3
+}

@@ -42,15 +42,15 @@
 
 <br><br>
 
-<img src="docs/assets/replay_explore_1x.gif" width="760" alt="학습 뷰어 — 리플레이 탭, 탐색">
+<img src="docs/assets/curriculum_1_explore.gif" width="760" alt="커리큘럼 1 — 탐색">
 
-<sub>학습 뷰어의 리플레이 탭 — (커리큘럼 이전 기록: frontier 탐사기, 몸통 카메라 1 대 — 커리큘럼 1단계 판으로 바꿀 예정) OmniGibson 리모 탐사 한 판을 실제 인지 파이프라인(libsgrt: ObjectSAM + SigLIP 2 + scenemap + Cartographer)으로 다시 돌린 물체 기억이 자라는 모습(1배속, 82 초)</sub>
+<sub>학습 뷰어의 리플레이 탭 — 커리큘럼 1단계 <b>탐색</b>: 지시 "move the pen from the floor into the carryall" 의 <b>펜을 찾기</b>(빈 지도에서 돌아다니며 펜을 지도에 확정하고 카메라에 넣으면 성공, 19 초). RL 교사(house_single_floor, 빈 지도에서 자라는 지도)의 판을 OmniGibson 에서 다시 돌려 실제 인지(ObjectSAM + SigLIP 2 + scenemap, 점구름)로 본 모습. 왼쪽 위 = 몸통 카메라·손목 카메라, 1배속</sub>
 
 <br><br>
 
-<img src="docs/assets/curriculum_2_goto.gif" width="760" alt="커리큘럼 2 — 목표로 가기">
+<img src="docs/assets/curriculum_2_goto.gif" width="760" alt="커리큘럼 2 — 지점으로 가기">
 
-<sub>커리큘럼 2단계 <b>목표로 가기</b> — RL 교사(빈 지도에서 자라는 지도, house_single_floor, 20 분 학습·성공률 75 %)의 한 판을 OmniGibson 에서 다시 돌려 실제 인지(ObjectSAM + SigLIP 2 + scenemap, 점구름)로 본 모습. 왼쪽 위 = 몸통 카메라·손목 카메라, 1배속 (<a href="training/curriculum/README.md">커리큘럼</a>)</sub>
+<sub>커리큘럼 2단계 <b>지점으로 가기</b>: 지시 "go here" — 목표는 지도 위 한 점(앱에서 사용자가 누르는 바닥 지점), 그 점 0.3 m 안에 서면 성공(이 판 7.6 m, 18 초). 20 분 학습·성공률 75 %. 같은 방식(실제 인지, 카메라 둘, 1배속). 단계 정의는 <a href="training/curriculum/README.md">커리큘럼</a></sub>
 
 </div>
 
