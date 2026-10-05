@@ -44,7 +44,7 @@
 
 <img src="docs/assets/replay_explore_1x.gif" width="760" alt="학습 뷰어 — 리플레이 탭, 탐색">
 
-<sub>학습 뷰어의 리플레이 탭 — OmniGibson 리모 탐사 한 판을 실제 인지 파이프라인(libsgrt: ObjectSAM + SigLIP 2 + scenemap + Cartographer)으로 다시 돌린 물체 기억이 자라는 모습(1배속, 82 초)</sub>
+<sub>학습 뷰어의 리플레이 탭 — (커리큘럼 이전 기록: frontier 탐사기, 몸통 카메라 1 대 — 커리큘럼 1단계 판으로 바꿀 예정) OmniGibson 리모 탐사 한 판을 실제 인지 파이프라인(libsgrt: ObjectSAM + SigLIP 2 + scenemap + Cartographer)으로 다시 돌린 물체 기억이 자라는 모습(1배속, 82 초)</sub>
 
 <br><br>
 
