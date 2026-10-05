@@ -401,10 +401,10 @@ int main(int argc, char** argv) {
         }
       }
       // 근사판 확정 물체(A, B)와 이번 keyframe 관측(last_kf == t)
-      auto approx_objs = [&](const gmap::MapCore& M, std::vector<Obj>& out, bool* obs, long* gone, int* first) {
-        for (int b = 0; b < gmap::KSLOT; ++b) {
-          const gmap::Slot& S = M.slot[b];
-          if (!S.valid) continue;
+      auto approx_objs = [&](const gmap::MapCore& M, const gmap::Slot* ob, std::vector<Obj>& out, bool* obs, long* gone, int* first) {
+        for (int b = 0; b < gmap::NOBJ; ++b) {   // 물체 저장소(GPU_MAP_PORT P1b)
+          const gmap::Slot& S = ob[b];
+          if (!((M.objv[b >> 5] >> (b & 31)) & 1u)) continue;
           Obj o;
           o.cls = S.cls;
           for (int a = 0; a < 3; ++a) { o.pos[a] = S.pos[a]; o.ext[a] = S.ext[a]; }
@@ -418,8 +418,8 @@ int main(int argc, char** argv) {
         }
       };
       std::vector<Obj> OA, OB;
-      approx_objs(A, OA, obsA, &L.a.n_gone, L.firstA);
-      approx_objs(B, OB, nullptr, &L.b.n_gone, L.firstB);
+      approx_objs(A, ha.objs.data() + (size_t)i * gmap::NOBJ, OA, obsA, &L.a.n_gone, L.firstA);
+      approx_objs(B, hb.objs.data() + (size_t)i * gmap::NOBJ, OB, nullptr, &L.b.n_gone, L.firstB);
       if (shuffle > 0) {   // 바뀜 비교: 옮긴 컵(prim 0)이 지도에 지금 자리로 있나·옮겨짐 상태인가(마지막 keyframe 값)
         L.sh_after = A.t >= shuffle + 20;
         L.sh_a_found = L.sh_a_moved = L.sh_r_found = L.sh_r_moved = 0;

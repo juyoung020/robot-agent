@@ -12,12 +12,13 @@ namespace gmap {
 
 struct MapHost {   // 내려받은 한 벌(검증용)
   std::vector<MapCore> core;
+  std::vector<Slot> objs;       // 물체 저장소 [N][NOBJ]
   std::vector<int16_t> L;
   std::vector<uint32_t> seen;
   std::vector<float> met;
   std::vector<uint32_t> occ;    // 점유 비트(벽 상태용) [N][NWORD]
   std::vector<int16_t> segs;    // 벽 선분 [N][SEGW]
-  std::vector<TPrev> tprev;     // 토큰 물체 속도용 [N][KSLOT]
+  std::vector<TPrev> tprev;     // 토큰 물체 속도용 [N][NOBJ](저장소 칸마다)
   std::vector<MapTok> tok;      // 이번 스텝 지도 토큰 [N]
   std::vector<uint8_t> view;    // 본 곳 칸(나타남 판정) [N][VIEW_BYTES]
   std::vector<BMapEnv> bm;      // BEHAVIOR 판 덧붙임 [N](장면 묶음이 있을 때만)
@@ -46,6 +47,8 @@ class DeviceMap {
   MapCurr* curr_dev() { return curr_; }            // 안쪽 장치 값(검증 도구가 cudaMemcpy 로 씀)
   const float* metrics() const { return met_; }   // 장치 [k*N + i], k = Met
   const MapTok* tokens() const { return tok_; }   // 장치 [N], 마지막 step 이 안쪽 버퍼에 쓴 토큰
+  const Slot* objects() const { return objs_; }   // 장치 [N][NOBJ] 물체 저장소(입력 만들기 — P2·P3)
+  const MapCore* cores() const { return core_; }  // 장치 [N]
   void set_tokens(bool on) { tok_on_ = on; }      // 측정용: 토큰 커널 끄기
   void set_nav(bool on) { nav_on_ = on; }          // 측정용: 거리장 커널 끄기(BEHAVIOR)
   // 환경 되먹임(BEHAVIOR): env DeviceEnv::set_nav 에 넣는다. 장면 묶음이 없으면 모두 nullptr
@@ -63,6 +66,7 @@ class DeviceMap {
  private:
   int N_;
   MapCore* core_ = nullptr;
+  Slot* objs_ = nullptr;       // 물체 저장소 [N][NOBJ]
   int16_t* L_ = nullptr;
   uint32_t* seen_ = nullptr;
   float* met_ = nullptr;

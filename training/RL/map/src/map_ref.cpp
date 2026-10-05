@@ -16,12 +16,13 @@ CpuMap::CpuMap(int N_, uint64_t seed, const bsc::SceneSet* ss_host) : N(N_), ss(
     h.navconf.assign(N, 0);
   }
   h.core.resize(N);
+  h.objs.assign((size_t)NOBJ * N, Slot{});
   h.L.assign((size_t)NCELL * N, 0);
   h.seen.assign((size_t)NWORD * N, 0u);
   h.met.assign((size_t)N_MET * N, 0.f);
   h.occ.assign((size_t)NWORD * N, 0u);
   h.segs.assign((size_t)SEGW * N, 0);
-  h.tprev.assign((size_t)KSLOT * N, TPrev{{0.f, 0.f, 0.f}, 0});
+  h.tprev.assign((size_t)NOBJ * N, TPrev{{0.f, 0.f, 0.f}, 0});
   h.tok.assign((size_t)N, MapTok{});
   h.view.assign((size_t)VIEW_BYTES * N, 0);
   for (int i = 0; i < N; ++i) init_core(h.core[i], seed, i);
@@ -33,12 +34,12 @@ void CpuMap::step(const env::Soa& s, int force_kf, const MapCurr& cu) {
     KfShared u;
     const EnvView e = read_env(s, i, ss != nullptr);
     const MapGrid g{h.L.data() + (size_t)i * NCELL, h.seen.data() + (size_t)i * NWORD, h.occ.data() + (size_t)i * NWORD, h.segs.data() + (size_t)i * SEGW,
-                      h.view.data() + (size_t)i * VIEW_BYTES};
+                      h.view.data() + (size_t)i * VIEW_BYTES, h.objs.data() + (size_t)i * NOBJ};
     BMapEnv* bm = ss ? &h.bm[i] : nullptr;
     map_block(h.core[i], u, e, g, h.met.data(), N, i, 0, 1, 0, force_kf, cu, NoSync{}, ss, bm);
     TokScratch ts;
     const BCtx bx = bctx(ss, bm);
-    make_tokens_n<1>(h.core[i], g.occ, g.seen, g.segs, h.tprev.data() + (size_t)i * KSLOT, ts, 0, 1, true, NoSync{}, 0, &bx);
+    make_tokens_n<1>(h.core[i], g.obj, g.occ, g.seen, g.segs, h.tprev.data() + (size_t)i * NOBJ, ts, 0, 1, true, NoSync{}, 0, &bx);
     h.tok[i] = ts.out;
     if (bx.on) {   // 다가가기 거리장(GPU map_nav_kernel 과 같은 조건·같은 단계 집합)
       const MapCore& m = h.core[i];
@@ -55,7 +56,7 @@ void CpuMap::step(const env::Soa& s, int force_kf, const MapCurr& cu) {
 void tv_topstate_cpu(const MapHost& h, const bsc::SceneSet* ss, int i, TopState& out) {
   BMapEnv* bm = (ss && !h.bm.empty()) ? const_cast<BMapEnv*>(&h.bm[i]) : nullptr;
   const BCtx bx = bctx(ss, bm);
-  tv_topstate(h.core[i], &bx, h.occ.data() + (size_t)i * NWORD, h.seen.data() + (size_t)i * NWORD, out, 0, 1);
+  tv_topstate(h.core[i], h.objs.data() + (size_t)i * NOBJ, &bx, h.occ.data() + (size_t)i * NWORD, h.seen.data() + (size_t)i * NWORD, out, 0, 1);
 }
 void tv_render_cpu(const TopState& t, bool hide, uint8_t* rgb) {
   for (int v = 0; v < TV_PX; ++v)

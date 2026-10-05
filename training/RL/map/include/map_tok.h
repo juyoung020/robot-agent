@@ -220,6 +220,8 @@ struct WayScratch {   // 경유 지점 BFS(거친 격자 행마다 64 비트)
 struct TokScratch {   // 판 하나의 작업 공간(GPU 공유 메모리). 광선 거리·칸의 지난 자리는 그 일을 맡은 레인의 레지스터(make_tokens)
   float sd[2 * MAXSEG];   // 선분 거리
   float sk[KSLOT];        // 칸 순서 열쇠(수평 거리), 안 넣는 칸 −1
+  int16_t oid[KSLOT];     // 고른 저장소 칸(목표 후보 먼저, 가까운 순), −1 빈 칸
+  float rk[16]; int rg[16];   // 고르기 레인별 최소(레인 ≤ 16)
   float tk[KSLOT];        // 목표 후보 열쇠, 아님 −1
   float wy[N_WAY];        // 경유 지점 결과(레인 0 이 씀, 끝에 out 으로)
   float tk2[KSLOT];       // 둘째 목표(BEHAVIOR 놓을 곳) 후보 열쇠, 아님 −1
@@ -383,9 +385,49 @@ DEV void waypoint(const uint32_t* occ, float gx, float gy, float px, float py, f
   sync();
 }
 
+// 토큰·그림에 넣을 물체 고르기(저장소 NOBJ 중 KSLOT 개): 확정 물체 중 목표 후보(참 목표 물체가 주 출처이고 짝 문턱 안 — 사라진 것 포함)를 먼저,
+// 나머지는 믿는 자세에서 수평 거리 가까운 순, 같으면 칸 번호 순. 넣지 않는 칸 = 큰 값
+DEV float sel_key(const MapCore& m, const Slot& S, const BCtx* bxp) {
+  const bool beh = bxp != nullptr && bxp->on;
+  const Prim& P = m.prim[0];
+  float pext[3];
+  for (int a = 0; a < 3; ++a) pext[a] = P.hi[a] - P.lo[a];
+  const float thr = maxf(MP::da_min, MP::da_k * max3(pext));
+  const float tx = S.pos[0] - 0.5f * (P.lo[0] + P.hi[0]), ty = S.pos[1] - 0.5f * (P.lo[1] + P.hi[1]);
+  if ((!beh || (bxp->bm->goal & 1)) && S.src == 0 && tx * tx + ty * ty < thr * thr) return -1.f;
+  if (beh && (bxp->bm->goal & 2)) {
+    const Prim& P1 = m.prim[1];
+    float e1[3];
+    for (int a = 0; a < 3; ++a) e1[a] = P1.hi[a] - P1.lo[a];
+    const float th1 = maxf(MP::da_min, MP::da_k * max3(e1));
+    const float ux = S.pos[0] - 0.5f * (P1.lo[0] + P1.hi[0]), uy = S.pos[1] - 0.5f * (P1.lo[1] + P1.hi[1]);
+    if (S.src == 1 && ux * ux + uy * uy < th1 * th1) return -1.f;
+  }
+  const float dx = S.pos[0] - m.ex, dy = S.pos[1] - m.ey;
+  return sqrtf(dx * dx + dy * dy);
+}
+// 한 스레드판(그림 상태 tv_topstate — 학생 그림을 그릴 때만): 고른 칸 번호 oid[0..n), 나머지 −1
+DEV int obj_select_serial(const MapCore& m, const Slot* ob, const BCtx* bxp, int16_t* oid, float* okey, int cap) {
+  int n = 0;
+  for (int w = 0; w < NOBJW; ++w)
+    for (uint32_t bits = m.objv[w]; bits; bits &= bits - 1u) {
+      const int g = 32 * w + ctz32(bits);
+      const Slot& S = ob[g];
+      if (!S.confirmed) continue;
+      const float k = sel_key(m, S, bxp);
+      int p = n < cap ? n : cap;   // 넣을 자리(삽입 정렬, 같은 열쇠는 앞 칸 번호 먼저 — 칸 번호 차례로 오므로 뒤에 둠)
+      while (p > 0 && okey[p - 1] > k) --p;
+      if (p >= cap) continue;
+      for (int j = (n < cap ? n : cap - 1); j > p; --j) { okey[j] = okey[j - 1]; oid[j] = oid[j - 1]; }
+      okey[p] = k; oid[p] = (int16_t)g;
+      if (n < cap) ++n;
+    }
+  for (int j = n; j < cap; ++j) oid[j] = -1;
+  return n;
+}
 // 목표 물체 칸 고르기(make_tokens 1)·1b) 와 같은 규칙, 한 스레드판 — 위에서 본 지도 그림이 씀): g0 = prim 0 짝(사라지지 않은 것 중 가장 가까움, 없으면 사라진 것),
 // g1 = prim 1 짝(BEHAVIOR goal 비트 1). lost0/lost1 = 사라진 칸을 고름. 없으면 −1
-DEV void tv_goal_slots(const MapCore& m, const BCtx* bxp, int& g0, int& g1) {
+DEV void tv_goal_slots(const MapCore& m, const Slot* ob, const int16_t* oid, const BCtx* bxp, int& g0, int& g1) {   // oid: 고른 칸(KSLOT, −1 빈 칸) — g0·g1 은 그 자리
   const bool beh = bxp != nullptr && bxp->on;
   const Prim& P = m.prim[0];
   const float tcx = 0.5f * (P.lo[0] + P.hi[0]), tcy = 0.5f * (P.lo[1] + P.hi[1]);
@@ -395,8 +437,8 @@ DEV void tv_goal_slots(const MapCore& m, const BCtx* bxp, int& g0, int& g1) {
   int t0 = -1, l0 = -1, t1 = -1, l1 = -1;
   float k0 = 0.f, kl0 = 0.f, k1 = 0.f, kl1 = 0.f;
   for (int b = 0; b < KSLOT; ++b) {
-    if (!((m.conf_mask >> b) & 1)) continue;
-    const Slot& S = m.slot[b];
+    if (oid[b] < 0) continue;
+    const Slot& S = ob[oid[b]];
     const float tx = S.pos[0] - tcx, ty = S.pos[1] - tcy, d2 = tx * tx + ty * ty;
     if ((!beh || (bxp->bm->goal & 1)) && S.src == 0 && d2 < thr * thr) {
       if (S.state != S_GONE) { if (t0 < 0 || d2 < k0) { t0 = b; k0 = d2; } }
@@ -409,8 +451,8 @@ DEV void tv_goal_slots(const MapCore& m, const BCtx* bxp, int& g0, int& g1) {
     for (int a = 0; a < 3; ++a) e1[a] = P1.hi[a] - P1.lo[a];
     const float th1 = maxf(MP::da_min, MP::da_k * max3(e1));
     for (int b = 0; b < KSLOT; ++b) {
-      if (!((m.conf_mask >> b) & 1)) continue;
-      const Slot& S = m.slot[b];
+      if (oid[b] < 0) continue;
+      const Slot& S = ob[oid[b]];
       const float ux = S.pos[0] - 0.5f * (P1.lo[0] + P1.hi[0]), uy = S.pos[1] - 0.5f * (P1.lo[1] + P1.hi[1]), u2 = ux * ux + uy * uy;
       if (!(S.src == 1 && u2 < th1 * th1)) continue;
       if (S.state != S_GONE) { if (b != t0 && (t1 < 0 || u2 < k1)) { t1 = b; k1 = u2; } }
@@ -422,18 +464,18 @@ DEV void tv_goal_slots(const MapCore& m, const BCtx* bxp, int& g0, int& g1) {
 }
 // 위에서 본 지도 입력(topview.h TvIn): 믿는 자세, 확정 물체 상자(사라진 것 빼고 — 사라진 목표는 마지막 자리로 넣음), 목표 색, 놓을 점.
 // teacher = true: 교사 격자용(목표 색·점 없음 — 목표는 목표 칸 값으로). hide_obj = 학생 목표 감추기(물체 목표 색만 장애물로, 점은 그대로)
-DEV void tv_input(const MapCore& m, const BCtx* bxp, bool teacher, bool hide_obj, TvIn& in) {
+DEV void tv_input(const MapCore& m, const Slot* ob, const int16_t* oid, const BCtx* bxp, bool teacher, bool hide_obj, TvIn& in) {
   const bool beh = bxp != nullptr && bxp->on;
   float s, c;
   sincosf_d(m.eyaw, &s, &c);
   in.px = m.ex; in.py = m.ey; in.c = c; in.s = s;
   int g0 = -1, g1 = -1;
-  if (!teacher) tv_goal_slots(m, bxp, g0, g1);
+  if (!teacher) tv_goal_slots(m, ob, oid, bxp, g0, g1);
   const int k0 = (beh && bxp->bm->kind == bsc::EK_B1) ? (int)TV_PLACE : (int)TV_PICK;   // prim 0 = B1 이면 가는 곳(놓을 곳 칸)
   int n = 0;
   for (int b = 0; b < KSLOT && n < TV_MAXBOX; ++b) {
-    if (!((m.conf_mask >> b) & 1)) continue;
-    const Slot& S = m.slot[b];
+    if (oid[b] < 0) continue;
+    const Slot& S = ob[oid[b]];
     const bool goal = b == g0 || b == g1;
     if (S.state == S_GONE && !goal) continue;
     TvBox& B = in.box[n++];
@@ -447,9 +489,14 @@ DEV void tv_input(const MapCore& m, const BCtx* bxp, bool teacher, bool hide_obj
 }
 
 // 학생 그림 상태 한 판(레인 nl 개가 비트를 나눠 옮김, 레인 0 이 입력)
-DEV void tv_topstate(const MapCore& m, const BCtx* bxp, const uint32_t* occ, const uint32_t* seen, TopState& t, int lane, int nl) {
+DEV void tv_topstate(const MapCore& m, const Slot* ob, const BCtx* bxp, const uint32_t* occ, const uint32_t* seen, TopState& t, int lane, int nl) {
   for (int k = lane; k < NWORD; k += nl) { t.occ[k] = occ[k]; t.seen[k] = seen[k]; }
-  if (lane == 0) tv_input(m, bxp, false, false, t.in);
+  if (lane == 0) {
+    int16_t oid[KSLOT];
+    float okey[KSLOT];
+    obj_select_serial(m, ob, bxp, oid, okey, KSLOT);
+    tv_input(m, ob, oid, bxp, false, false, t.in);
+  }
 }
 
 // 목표 칸 하나(GoalVal 16 값 FP16): kind 0 = 없음, 1 = 물체, 2 = 점. 위치 P(지도 좌표)는 known 일 때만. (px, py, c, s) = 믿는 자세, eef_b = base_link 손끝
@@ -482,8 +529,8 @@ DEV void goal_fill(uint16_t* g, int kind, bool known, bool lost, const float P[3
 //   11 = 목표 칸을 회전 없이(지도 차), 12 = 위에서 본 지도(교사 격자)를 거꾸로 돌림
 template <int NLC, class Sync>
 // bxp: BEHAVIOR 판 맥락(map.h BCtx — 방·문은 장면 방 격자, 이름·확신도는 장면 묶음의 이름 표 표, 목표 칸 = prim 0 의 이름). nullptr = 상자 방
-DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* seen, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
-                       bool write, const Sync& sync, int tbug = 0, const BCtx* bxp = nullptr) {
+DEV void make_tokens_n(const MapCore& m, const Slot* ob, const uint32_t* occ, const uint32_t* seen, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
+                       bool write, const Sync& sync, int tbug = 0, const BCtx* bxp = nullptr) {   // ob: 물체 저장소 [NOBJ], tprev: [NOBJ]
   const bool beh = bxp != nullptr && bxp->on;
   constexpr int PER = (KSLOT + NLC - 1) / NLC;
   static_assert(KSLOT == 16, "rays and slots share the per-lane count");
@@ -496,6 +543,45 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
   const int nseg = m.nseg_h + m.nseg_v;
   const int rk = beh ? broom_local(*bxp, px + (tbug == 4 ? 1.5f : 0.f), py) : room_of(m, px, py);   // tbug 4: 음성 대조(BEHAVIOR 방 토큰 자리 틀림)
   const int rrk = (rk >= 0 && ((m.rrev >> rk) & 1)) ? rk : -1;   // 로봇이 있는 드러난 방
+  // 0) 저장소에서 KSLOT 개 고르기(sel_key: 목표 후보 먼저, 가까운 순, 같으면 칸 번호): 레인마다 칸 g = lane + q·nl 의 열쇠를 레지스터에 두고
+  //    KSLOT 번 (열쇠, 칸) 최소를 레인끼리 모음(차례가 레인 수와 무관 — CPU nl 1 과 같음)
+  {
+    constexpr int PERO = (NOBJ + NLC - 1) / NLC;
+    float okey[PERO];
+#pragma unroll
+    for (int q = 0; q < PERO; ++q) {
+      const int g = lane + q * nl;
+      okey[q] = 1e30f;
+      if (g < NOBJ && ((m.objv[g >> 5] >> (g & 31)) & 1u) && ob[g].confirmed) okey[q] = sel_key(m, ob[g], bxp);
+    }
+    float lk = -2.f;
+    int lg = -1;
+    int r = 0;
+    for (; r < KSLOT; ++r) {
+      float bk = 1e30f;
+      int bg = -1;
+#pragma unroll
+      for (int q = 0; q < PERO; ++q) {
+        const int g = lane + q * nl;
+        const float k = okey[q];
+        if (k >= 1e29f || k < lk || (k == lk && g <= lg)) continue;
+        if (bg < 0 || k < bk || (k == bk && g < bg)) { bk = k; bg = g; }
+      }
+      ts.rk[lane] = bk; ts.rg[lane] = bg;
+      sync();
+      bk = 1e30f; bg = -1;
+      for (int l = 0; l < nl; ++l) {
+        const int g = ts.rg[l];
+        if (g >= 0 && (bg < 0 || ts.rk[l] < bk || (ts.rk[l] == bk && g < bg))) { bk = ts.rk[l]; bg = g; }
+      }
+      sync();
+      if (bg < 0) break;
+      if (lane == 0) ts.oid[r] = (int16_t)bg;
+      lk = bk; lg = bg;
+    }
+    for (int j = r + lane; j < KSLOT; j += nl) ts.oid[j] = -1;
+    sync();
+  }
   // 1) 서로 무관한 전역 읽기를 먼저 다 낸다(지연을 겹침): 칸 열쇠·지난 자리, 선분 거리, 로봇 둘레 점유 행
   {
     const Prim& P = m.prim[0];   // 참 컵(과제 물체): 목표 칸 = 같은 이름의 확정 칸 중 짝 문턱 안 가장 가까운 것(가정: 교사 쪽 정답으로 고름)
@@ -503,20 +589,20 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
     float pext[3];
     for (int a = 0; a < 3; ++a) pext[a] = P.hi[a] - P.lo[a];
     const float thr = maxf(MP::da_min, MP::da_k * max3(pext));
-    const int cm = m.conf_mask;
 #pragma unroll
     for (int q = 0; q < PER; ++q) {
       const int b = lane + q * nl;
       if (b >= KSLOT) break;
-      if (!((cm >> b) & 1)) { ts.sk[b] = -1.f; ts.tk[b] = -1.f; ts.tk2[b] = -1.f; ts.tg[b] = -1.f; ts.tg2[b] = -1.f; continue; }
-      const Slot& S = m.slot[b];
+      const int g = ts.oid[b];
+      if (g < 0) { ts.sk[b] = -1.f; ts.tk[b] = -1.f; ts.tk2[b] = -1.f; ts.tg[b] = -1.f; ts.tg2[b] = -1.f; continue; }
+      const Slot& S = ob[g];
 #ifdef __CUDA_ARCH__
       {  // 칸 기록(100 B)을 L1 로 미리 — 3) 이 광선 뒤에 다시 읽음
         const char* sp = reinterpret_cast<const char*>(&S);
         for (int q = 0; q < (int)sizeof(Slot); q += 32) asm volatile("prefetch.global.L1 [%0];" ::"l"(sp + q));
       }
 #endif
-      tpl[q] = tprev[b];
+      tpl[q] = tprev[g];
       const float dx = S.pos[0] - px, dy = S.pos[1] - py;
       ts.sk[b] = sqrtf(dx * dx + dy * dy);
       const float tx = S.pos[0] - tcx, ty = S.pos[1] - tcy, d2 = tx * tx + ty * ty;
@@ -557,7 +643,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
     }
   const bool goto_pt = beh && (bxp->bm->gmode & bsc::GM_GOTO);   // 지금 가는 목표 = 놓을 점(물체 목표 없음)
   if (tgt >= 0) {
-    waypoint<NLC>(occ, m.slot[tgt].pos[0], m.slot[tgt].pos[1], px, py, c, s, ts.w, ts.wy, lane, nl, sync, tbug);
+    waypoint<NLC>(occ, ob[ts.oid[tgt]].pos[0], ob[ts.oid[tgt]].pos[1], px, py, c, s, ts.w, ts.wy, lane, nl, sync, tbug);
   } else if (goto_pt) {   // 점으로 가기: 경유 지점도 점으로(점은 늘 앎)
     waypoint<NLC>(occ, bxp->bm->gp[0], bxp->bm->gp[1], px, py, c, s, ts.w, ts.wy, lane, nl, sync, tbug);
   } else if (lane == 0) {
@@ -599,14 +685,14 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
   for (int j = lane; j < 8; j += nl)
     if (j >= nseg) for (int q = 0; q < 5; ++q) o.wall[16 + 5 * j + q] = 0;
   // 4) 물체 칸
-  const int t_kf = m.t - m.since;   // 마지막 keyframe 시각
+  const int t_kf = m.det_t;   // 마지막 검출 keyframe 시각(지금 보는 중 = 그때 봄)
   const int tag_now = m.t & 0xffff, tag_prev = (m.t - 1) & 0xffff;
 #pragma unroll
   for (int q = 0; q < PER; ++q) {
     const int b = lane + q * nl;
     if (b >= KSLOT) break;
     if (ts.sk[b] < 0.f) continue;
-    const Slot& S = m.slot[b];
+    const Slot& S = ob[ts.oid[b]];
     const TPrev tp = tpl[q];
     {
       const float kb = b == tgt ? -1.f : ts.sk[b];
@@ -670,7 +756,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
       o.name_id[rank] = (int16_t)S.cls;
       o.app_id[rank] = (int16_t)(S.src >= 0 ? (beh ? (int)C_ITEM : m.prim[S.src].cls) : NCLS);
     }
-    if (write) tprev[b] = TPrev{{S.pos[0], S.pos[1], S.pos[2]}, (S.id << 16) | tag_now};
+    if (write) tprev[ts.oid[b]] = TPrev{{S.pos[0], S.pos[1], S.pos[2]}, (S.id << 16) | tag_now};
   }
   for (int j = lane; j < KSLOT; j += nl)
     if (j >= nslot) {
@@ -732,7 +818,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
     auto obj_entry = [&](int k, int b0, int bg) {
       const int b = b0 >= 0 ? b0 : bg;
       if (b < 0) { goal_fill(o.goal[k], 1, false, false, nullptr, px, py, gc, gs, m.eef_b); return; }
-      const Slot& S = m.slot[b];
+      const Slot& S = ob[ts.oid[b]];
       const bool live = !S.held && S.last_seen == t_kf;
       goal_fill(o.goal[k], 1, true, b0 < 0, (live && tbug != 3 && b0 >= 0) ? S.meas : S.pos, px, py, gc, gs, m.eef_b);
     };
@@ -743,7 +829,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
       if (B.goal & 2) obj_entry(GE_PLACE, tgt2, gone2);
       if (B.gmode & bsc::GM_PLACE_PT) goal_fill(o.goal[GE_PLACE], 2, true, false, B.gp, px, py, gc, gs, m.eef_b);
     }
-    tv_input(m, bxp, true, false, ts.tv);   // 교사 격자 입력(점·목표 색 없음)
+    tv_input(m, ob, ts.oid, bxp, true, false, ts.tv);   // 교사 격자 입력(점·목표 색 없음)
     if (tbug == 12) ts.tv.s = -ts.tv.s;     // 음성 대조: 그림을 거꾸로 돌림
   }
   sync();
@@ -759,9 +845,9 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
 
 // 예전 꼴(레인 수를 실행 때만 앎): 아무 nl ≥ 1 에서 같은 결과
 template <class Sync>
-DEV void make_tokens(const MapCore& m, const uint32_t* occ, const uint32_t* seen, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
+DEV void make_tokens(const MapCore& m, const Slot* ob, const uint32_t* occ, const uint32_t* seen, const int16_t* segs, TPrev* tprev, TokScratch& ts, int lane, int nl,
                      bool write, const Sync& sync) {
-  make_tokens_n<1>(m, occ, seen, segs, tprev, ts, lane, nl, write, sync);
+  make_tokens_n<1>(m, ob, occ, seen, segs, tprev, ts, lane, nl, write, sync);
 }
 
 }  // namespace gmap

@@ -19,7 +19,7 @@ __global__ void __launch_bounds__(NT) map_init_kernel(MapCore* core, int N, uint
 constexpr int BEGIN_NT = 128;
 // BEH: BEHAVIOR 장면 묶음이 있는 판(장면 코드 포함). 상자 방 지도는 BEH = false 로 띄워 장면 갈래가 컴파일에서 빠진다(레지스터·스택이 예전과 같게)
 template <bool BEH>
-__global__ void __launch_bounds__(BEGIN_NT) map_begin_kernel(env::Soa s, MapCore* core, float* met, uint32_t* list, int* count, int force_kf,
+__global__ void __launch_bounds__(BEGIN_NT) map_begin_kernel(env::Soa s, MapCore* core, Slot* objs, float* met, uint32_t* list, int* count, int force_kf,
                                                              const bsc::SceneSet* ss_in, BMapEnv* bm) {
   const int i = blockIdx.x * BEGIN_NT + threadIdx.x, N = s.N;
   if (i >= N) return;
@@ -27,7 +27,7 @@ __global__ void __launch_bounds__(BEGIN_NT) map_begin_kernel(env::Soa s, MapCore
   MapCore& m = core[i];
   const bsc::SceneSet* ss = BEH ? ss_in : nullptr;
   BMapEnv* bmi = BEH ? bm + i : nullptr;
-  const int f = phase_begin(m, e, force_kf, ss, bmi);
+  const int f = phase_begin(m, e, force_kf, objs + (size_t)i * NOBJ, ss, bmi);
 #ifdef MAP_PROF
   atomicAdd(&g_prof[P_NSEC + ((f & B_KF) ? 1 : 0)], 1ull);
 #endif
@@ -48,7 +48,7 @@ __device__ __forceinline__ const void* env_pf_addr(const env::Soa& s, int i, int
   return s.iv + (size_t)env::I_EP * N + i;
 }
 template <bool BEH>
-__global__ void __launch_bounds__(NT, 10) map_kf_kernel(env::Soa s, MapCore* core, int16_t* L, uint32_t* seen, uint32_t* occ,
+__global__ void __launch_bounds__(NT, 10) map_kf_kernel(env::Soa s, MapCore* core, Slot* objs, int16_t* L, uint32_t* seen, uint32_t* occ,
                                                         int16_t* segs, float* met, const uint32_t* list, const int* count, int bug,
                                                         const MapCurr* curr, const bsc::SceneSet* ss, BMapEnv* bm, uint8_t* view) {
   __shared__ __align__(16) MapCore m;
@@ -76,7 +76,7 @@ __global__ void __launch_bounds__(NT, 10) map_kf_kernel(env::Soa s, MapCore* cor
   const EnvView e = read_env(s, i, BEH);   // 코어 읽기와 겹침
   __syncthreads();
   PROF_MARK(P_LOAD);
-  const MapGrid g{L + (size_t)i * NCELL, seen + (size_t)i * NWORD, occ + (size_t)i * NWORD, segs + (size_t)i * SEGW, view + (size_t)i * VIEW_BYTES};
+  const MapGrid g{L + (size_t)i * NCELL, seen + (size_t)i * NWORD, occ + (size_t)i * NWORD, segs + (size_t)i * SEGW, view + (size_t)i * VIEW_BYTES, objs + (size_t)i * NOBJ};
   const MapCurr cu = *curr;   // 장치 값(바퀴 사이에 바뀔 수 있음 — 다시 잡기 없이)
   map_rest(m, u, e, g, met, N, i, tid, NT, bug, flags, cu, BlockSync{}, BEH ? ss : nullptr, BEH ? bm + i : nullptr);
   __syncthreads();
@@ -93,7 +93,7 @@ struct HalfSync {
   __device__ bool any(bool v) const { return __any_sync(mask, v); }   // 같은 판 레인끼리 하나라도(경유 지점 BFS 끝 판정)
 };
 template <bool BEH>
-__global__ void __launch_bounds__(TOK_NL * TOK_EPB) map_tok_kernel(int N, const MapCore* core, const uint32_t* occ, const uint32_t* seen, const int16_t* segs,
+__global__ void __launch_bounds__(TOK_NL * TOK_EPB) map_tok_kernel(int N, const MapCore* core, const Slot* objs, const uint32_t* occ, const uint32_t* seen, const int16_t* segs,
                                                                    TPrev* tprev, MapTok* out, int tbug, const bsc::SceneSet* ss, BMapEnv* bm) {
   __shared__ TokScratch ts[TOK_EPB];
   const int sub = threadIdx.x / TOK_NL, lane = threadIdx.x % TOK_NL;
@@ -103,7 +103,7 @@ __global__ void __launch_bounds__(TOK_NL * TOK_EPB) map_tok_kernel(int N, const 
   const HalfSync hs{0xffffu << (16 * (sub & 1))};
   PROF_START();
   const BCtx bx = bctx(BEH ? ss : nullptr, BEH ? bm + i : nullptr);
-  make_tokens_n<TOK_NL>(core[i], occ + (size_t)i * NWORD, seen + (size_t)i * NWORD, segs + (size_t)i * SEGW, tprev + (size_t)i * KSLOT, ts[sub], lane, TOK_NL, live, hs, tbug,
+  make_tokens_n<TOK_NL>(core[i], objs + (size_t)i * NOBJ, occ + (size_t)i * NWORD, seen + (size_t)i * NWORD, segs + (size_t)i * SEGW, tprev + (size_t)i * NOBJ, ts[sub], lane, TOK_NL, live, hs, tbug,
                         &bx);
   hs();
   PROF_MARK(TK_ROOM);
@@ -191,7 +191,7 @@ __global__ void __launch_bounds__(32 * NAV_WPB) map_nav_kernel(env::Soa s, const
 }
 
 // 다시 시작(apply): 판 하나 = 블록 하나. 요청이 있으면 생성자와 같은 상태(배열 0, 거리장 0xff·판 번호 −1, init_core). 없으면 바로 끝남
-struct MapBufs { MapCore* core; int16_t* L; uint32_t* seen; float* met; uint32_t* occ; int16_t* segs; TPrev* tprev; MapTok* tok; BMapEnv* bm; uint8_t* lev; int* navorg; int* navtag; int* navconf; uint8_t* view; };
+struct MapBufs { MapCore* core; Slot* objs; int16_t* L; uint32_t* seen; float* met; uint32_t* occ; int16_t* segs; TPrev* tprev; MapTok* tok; BMapEnv* bm; uint8_t* lev; int* navorg; int* navtag; int* navconf; uint8_t* view; };
 __global__ void __launch_bounds__(256) map_apply_k(MapBufs b, int N, const MapCtl* ctl) {
   if (ctl->pend == 0) return;
   const int i = blockIdx.x, t = threadIdx.x;
@@ -204,7 +204,8 @@ __global__ void __launch_bounds__(256) map_apply_k(MapBufs b, int N, const MapCt
   z32(b.seen + (size_t)i * NWORD, sizeof(uint32_t) * NWORD);
   z32(b.occ + (size_t)i * NWORD, sizeof(uint32_t) * NWORD);
   z32(b.segs + (size_t)i * SEGW, sizeof(int16_t) * SEGW);
-  z32(b.tprev + (size_t)i * KSLOT, sizeof(TPrev) * KSLOT);
+  z32(b.tprev + (size_t)i * NOBJ, sizeof(TPrev) * NOBJ);
+  z32(b.objs + (size_t)i * NOBJ, sizeof(Slot) * NOBJ);
   z32(b.tok + i, sizeof(MapTok));
   z32(b.view + (size_t)i * VIEW_BYTES, VIEW_BYTES);   // 본 곳 칸(나타남 판정)
   for (int k = t; k < N_MET; k += 256) b.met[(size_t)k * N + i] = 0.f;
@@ -236,6 +237,8 @@ DeviceMap::DeviceMap(int N, uint64_t seed, const bsc::SceneSet* ss_dev) : N_(N),
     CK(cudaMemset(navconf_, 0, sizeof(int) * (size_t)N));
   }
   CK(cudaMalloc(&core_, sizeof(MapCore) * (size_t)N));
+  CK(cudaMalloc(&objs_, sizeof(Slot) * NOBJ * (size_t)N));
+  CK(cudaMemset(objs_, 0, sizeof(Slot) * NOBJ * (size_t)N));
   CK(cudaMalloc(&view_, (size_t)VIEW_BYTES * N));
   CK(cudaMemset(view_, 0, (size_t)VIEW_BYTES * N));
   CK(cudaMalloc(&L_, sizeof(int16_t) * NCELL * (size_t)N));
@@ -243,11 +246,11 @@ DeviceMap::DeviceMap(int N, uint64_t seed, const bsc::SceneSet* ss_dev) : N_(N),
   CK(cudaMalloc(&met_, sizeof(float) * N_MET * (size_t)N));
   CK(cudaMalloc(&occ_, sizeof(uint32_t) * NWORD * (size_t)N));
   CK(cudaMalloc(&segs_, sizeof(int16_t) * SEGW * (size_t)N));
-  CK(cudaMalloc(&tprev_, sizeof(TPrev) * KSLOT * (size_t)N));
+  CK(cudaMalloc(&tprev_, sizeof(TPrev) * NOBJ * (size_t)N));
   CK(cudaMalloc(&tok_, sizeof(MapTok) * (size_t)N));
   CK(cudaMemset(occ_, 0, sizeof(uint32_t) * NWORD * (size_t)N));
   CK(cudaMemset(segs_, 0, sizeof(int16_t) * SEGW * (size_t)N));
-  CK(cudaMemset(tprev_, 0, sizeof(TPrev) * KSLOT * (size_t)N));
+  CK(cudaMemset(tprev_, 0, sizeof(TPrev) * NOBJ * (size_t)N));
   CK(cudaMemset(tok_, 0, sizeof(MapTok) * (size_t)N));
   CK(cudaMalloc(&list_, sizeof(uint32_t) * (size_t)N));
   CK(cudaMalloc(&count_, sizeof(int)));
@@ -274,18 +277,18 @@ void DeviceMap::request_reset(uint64_t seed) {
   CK(cudaEventRecord(ev, 0));
 }
 void DeviceMap::apply() {
-  const MapBufs b{core_, L_, seen_, met_, occ_, segs_, tprev_, tok_, bm_, lev_, navorg_, navtag_, navconf_, view_};
+  const MapBufs b{core_, objs_, L_, seen_, met_, occ_, segs_, tprev_, tok_, bm_, lev_, navorg_, navtag_, navconf_, view_};
   map_apply_k<<<N_, 256>>>(b, N_, ctl_);
   map_commit_k<<<1, 1>>>(ctl_);
 }
 
 DeviceMap::~DeviceMap() { cudaFree(ctl_); if (ctl_h_) { for (void* e : ctl_ev_) if (e) cudaEventDestroy(static_cast<cudaEvent_t>(e)); cudaFreeHost(ctl_h_); }
-                         cudaFree(core_); cudaFree(L_); cudaFree(seen_); cudaFree(met_); cudaFree(list_); cudaFree(count_);
+                         cudaFree(core_); cudaFree(objs_); cudaFree(L_); cudaFree(seen_); cudaFree(met_); cudaFree(list_); cudaFree(count_);
                          cudaFree(occ_); cudaFree(segs_); cudaFree(tprev_); cudaFree(tok_); cudaFree(curr_); cudaFree(view_); if (bm_) { cudaFree(bm_); cudaFree(lev_); cudaFree(navorg_); cudaFree(navtag_); cudaFree(navconf_); } }
 
 size_t DeviceMap::bytes() const {
-  return (size_t)N_ * (sizeof(MapCore) + sizeof(int16_t) * NCELL + 2 * sizeof(uint32_t) * NWORD + sizeof(float) * N_MET + sizeof(int16_t) * SEGW +
-                       sizeof(TPrev) * KSLOT + sizeof(MapTok) + sizeof(uint32_t) + VIEW_BYTES + (ss_ ? sizeof(BMapEnv) + NAV_P * NAV_P + 3 * sizeof(int) : 0));
+  return (size_t)N_ * (sizeof(MapCore) + sizeof(Slot) * NOBJ + sizeof(int16_t) * NCELL + 2 * sizeof(uint32_t) * NWORD + sizeof(float) * N_MET + sizeof(int16_t) * SEGW +
+                       sizeof(TPrev) * NOBJ + sizeof(MapTok) + sizeof(uint32_t) + VIEW_BYTES + (ss_ ? sizeof(BMapEnv) + NAV_P * NAV_P + 3 * sizeof(int) : 0));
 }
 
 void DeviceMap::step(const env::Soa& s, int force_kf, int bug, cudaStream_t st, MapTok* tok, const MapCurr* curr) {
@@ -293,29 +296,29 @@ void DeviceMap::step(const env::Soa& s, int force_kf, int bug, cudaStream_t st, 
   CK(cudaMemsetAsync(count_, 0, sizeof(int), st));
   const int kbug = (bug == 1 || bug >= 6) ? bug : 0;   // 지도 갱신 음성 대조(1 확정 규칙, 6–10 바뀜 판정 규칙). 2–4 토큰, 5 거리장
   if (ss_) {
-    map_begin_kernel<true><<<(N_ + BEGIN_NT - 1) / BEGIN_NT, BEGIN_NT, 0, st>>>(s, core_, met_, list_, count_, force_kf, ss_, bm_);
-    map_kf_kernel<true><<<N_, NT, 0, st>>>(s, core_, L_, seen_, occ_, segs_, met_, list_, count_, kbug, curr ? curr : curr_, ss_, bm_, view_);
+    map_begin_kernel<true><<<(N_ + BEGIN_NT - 1) / BEGIN_NT, BEGIN_NT, 0, st>>>(s, core_, objs_, met_, list_, count_, force_kf, ss_, bm_);
+    map_kf_kernel<true><<<N_, NT, 0, st>>>(s, core_, objs_, L_, seen_, occ_, segs_, met_, list_, count_, kbug, curr ? curr : curr_, ss_, bm_, view_);
   } else {
-    map_begin_kernel<false><<<(N_ + BEGIN_NT - 1) / BEGIN_NT, BEGIN_NT, 0, st>>>(s, core_, met_, list_, count_, force_kf, nullptr, nullptr);
-    map_kf_kernel<false><<<N_, NT, 0, st>>>(s, core_, L_, seen_, occ_, segs_, met_, list_, count_, kbug, curr ? curr : curr_, nullptr, nullptr, view_);
+    map_begin_kernel<false><<<(N_ + BEGIN_NT - 1) / BEGIN_NT, BEGIN_NT, 0, st>>>(s, core_, objs_, met_, list_, count_, force_kf, nullptr, nullptr);
+    map_kf_kernel<false><<<N_, NT, 0, st>>>(s, core_, objs_, L_, seen_, occ_, segs_, met_, list_, count_, kbug, curr ? curr : curr_, nullptr, nullptr, view_);
   }
   if (ss_ && nav_on_)
     map_nav_kernel<<<(N_ + NAV_WPB - 1) / NAV_WPB, 32 * NAV_WPB, 0, st>>>(s, core_, occ_, bm_, lev_, navorg_, navtag_, navconf_, curr ? curr : curr_, bug == 5 ? 5 : 0);
   if (tok_on_) {
-    if (ss_) map_tok_kernel<true><<<(N_ + TOK_EPB - 1) / TOK_EPB, TOK_NL * TOK_EPB, 0, st>>>(N_, core_, occ_, seen_, segs_, tprev_, tok ? tok : tok_, bug >= 2 ? bug : 0, ss_, bm_);
-    else map_tok_kernel<false><<<(N_ + TOK_EPB - 1) / TOK_EPB, TOK_NL * TOK_EPB, 0, st>>>(N_, core_, occ_, seen_, segs_, tprev_, tok ? tok : tok_, bug >= 2 ? bug : 0, nullptr, nullptr);
+    if (ss_) map_tok_kernel<true><<<(N_ + TOK_EPB - 1) / TOK_EPB, TOK_NL * TOK_EPB, 0, st>>>(N_, core_, objs_, occ_, seen_, segs_, tprev_, tok ? tok : tok_, bug >= 2 ? bug : 0, ss_, bm_);
+    else map_tok_kernel<false><<<(N_ + TOK_EPB - 1) / TOK_EPB, TOK_NL * TOK_EPB, 0, st>>>(N_, core_, objs_, occ_, seen_, segs_, tprev_, tok ? tok : tok_, bug >= 2 ? bug : 0, nullptr, nullptr);
   }
 }
 
 // 위에서 본 지도: 판 하나 = 블록 하나(128 스레드가 비트를 옮김, 스레드 0 이 입력)
-__global__ void __launch_bounds__(128) tv_state_kernel(int N, const MapCore* core, const uint32_t* occ, const uint32_t* seen, const bsc::SceneSet* ss, BMapEnv* bm, TopState* out) {
+__global__ void __launch_bounds__(128) tv_state_kernel(int N, const MapCore* core, const Slot* objs, const uint32_t* occ, const uint32_t* seen, const bsc::SceneSet* ss, BMapEnv* bm, TopState* out) {
   const int i = blockIdx.x;
   if (i >= N) return;
   const BCtx bx = bctx(ss, bm ? bm + i : nullptr);
-  tv_topstate(core[i], &bx, occ + (size_t)i * NWORD, seen + (size_t)i * NWORD, out[i], threadIdx.x, blockDim.x);
+  tv_topstate(core[i], objs + (size_t)i * NOBJ, &bx, occ + (size_t)i * NWORD, seen + (size_t)i * NWORD, out[i], threadIdx.x, blockDim.x);
 }
 void DeviceMap::topstate(TopState* out, cudaStream_t st) const {
-  tv_state_kernel<<<N_, 128, 0, st>>>(N_, core_, occ_, seen_, ss_, bm_, out);
+  tv_state_kernel<<<N_, 128, 0, st>>>(N_, core_, objs_, occ_, seen_, ss_, bm_, out);
 }
 // RGB: 블록 = (그림, 행 16 줄), 스레드 256 = 열. 입력(TvIn 352 B)은 공유 메모리로, 비트는 전역(캐시)에서
 constexpr int TV_ROWS = 16;
@@ -354,13 +357,14 @@ void prof_read(unsigned long long out[P_NSEC + 3]) {
 }
 
 void DeviceMap::download(MapHost& h, const MapTok* tok) const {
-  h.core.resize(N_); h.L.resize((size_t)NCELL * N_); h.seen.resize((size_t)NWORD * N_); h.met.resize((size_t)N_MET * N_);
-  h.occ.resize((size_t)NWORD * N_); h.segs.resize((size_t)SEGW * N_); h.tprev.resize((size_t)KSLOT * N_); h.tok.resize(N_);
+  h.core.resize(N_); h.objs.resize((size_t)NOBJ * N_); h.L.resize((size_t)NCELL * N_); h.seen.resize((size_t)NWORD * N_); h.met.resize((size_t)N_MET * N_);
+  h.occ.resize((size_t)NWORD * N_); h.segs.resize((size_t)SEGW * N_); h.tprev.resize((size_t)NOBJ * N_); h.tok.resize(N_);
   CK(cudaMemcpy(h.occ.data(), occ_, sizeof(uint32_t) * h.occ.size(), cudaMemcpyDeviceToHost));
   CK(cudaMemcpy(h.segs.data(), segs_, sizeof(int16_t) * h.segs.size(), cudaMemcpyDeviceToHost));
   CK(cudaMemcpy(h.tprev.data(), tprev_, sizeof(TPrev) * h.tprev.size(), cudaMemcpyDeviceToHost));
   CK(cudaMemcpy(h.tok.data(), tok ? tok : tok_, sizeof(MapTok) * h.tok.size(), cudaMemcpyDeviceToHost));
   CK(cudaMemcpy(h.core.data(), core_, sizeof(MapCore) * h.core.size(), cudaMemcpyDeviceToHost));
+  CK(cudaMemcpy(h.objs.data(), objs_, sizeof(Slot) * h.objs.size(), cudaMemcpyDeviceToHost));
   CK(cudaMemcpy(h.L.data(), L_, sizeof(int16_t) * h.L.size(), cudaMemcpyDeviceToHost));
   CK(cudaMemcpy(h.seen.data(), seen_, sizeof(uint32_t) * h.seen.size(), cudaMemcpyDeviceToHost));
   CK(cudaMemcpy(h.met.data(), met_, sizeof(float) * h.met.size(), cudaMemcpyDeviceToHost));

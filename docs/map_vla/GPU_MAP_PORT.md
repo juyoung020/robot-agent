@@ -26,7 +26,7 @@
 | 단계 | 일 | 상태 |
 |---|---|---|
 | P0 | 이 문서 | 씀(10-06) |
-| P1 | 물체 층 GPU 포팅: 검출원(가구 전부 + 과제 물체), 잡음 모형, objprob 같은 것 판정·합치기·이름·칼만·병합·구조물·살펴본 정도, 물체 저장 SoA(N ≤ 256) | 진행 |
+| P1 | 물체 층 GPU 포팅: 검출원(가구 전부 + 과제 물체), 잡음 모형, objprob 같은 것 판정·합치기·이름·칼만·병합·구조물·살펴본 정도, 물체 저장 SoA(N ≤ 256) | P1·P1b 함(1.1–1.3). 남음: 구조물 유령(R2)·문 줄(R4)·Cartographer 떠밀림(0.3)·잡음 맞춤(2.1 BASELINE)·속도(+30 %) |
 | P2 | 기억 표(W1)·방 항목(W2)·방향 구역(W2)·물체 방 종류(W3) 만들기 — 장치 함수 하나(`map/include/mem_tok.h`) | 대기 |
 | P3 | 입력 만들기 하나(`observation/include/inputs.h`): 교사 X0·학생·RecallVLA `VBatch`·실제 `sm_tok.h` 가 같은 함수, 설정 해시 | 대기 |
 | P4 | PPO 길 바꾸기: 행위자 = 통일 입력(카메라 뺌), 비평자 = 특권, 참 벽 광선 16·참 목표 자세 뺌, 대본 교사 믿음 지도 | 대기 |
@@ -103,6 +103,29 @@ N = 4,096 이면 189 MB. keyframe 블록은 이번 시야 근처 물체(상자�
   κ 상대 차 2.1e-7, 이름 사후(라벨 ≤ 6, 상위어 포함) 고른 이름 0 다름·사후 차 2.7e-7, 칼만 20 번 자리 차 1.2e-7 m. 근사 오차(판정 아님): 이름 분포 겹침 상위 6 + 나머지 대 전체 10 라벨 평균 0.031·최대 0.23.
   이 시험은 **규칙 단위**다(합성 관측 열을 진짜 ObjectMap 에 넣는 열 단위 비교는 깊이·마스크가 필요해 하지 않음 — 입력 단위 비교는 og_cmp 가 맡음).
 - GPU 쪽 상위어 고르기를 한 단계 → 사슬 전체(scenemap 과 같은 규칙)로 바꿈. `map_verify` 다시 비트 동일(상자 방·BEHAVIOR).
+
+### 1.3 P1b 상태(2026-10-06, 잰 값) — 물체 저장소 256·가구 검출·top_seen·검출 5 Hz
+
+- **저장소**: 물체는 MapCore 밖 판마다 `Slot[NOBJ = 256]`(`MapHost::objs`, `DeviceMap::objects()`, 쓰는 칸 = `MapCore::objv` 비트). keyframe 블록은 믿는 카메라에서 3.6 m 안 물체를
+  (거리, 칸 번호) 차례로 32 개까지 근처 목록(`near_build`)으로 다룬다(짝짓기·부재 확인·병합·잇기·top_seen — 잇기는 근처 안에서만, R13 근사). 오래된 후보는 근처 + 순번 8 칸씩 지움.
+  토큰(MapTok 16 칸)·그림은 저장소에서 목표 후보 먼저·가까운 순으로 고름(`sel_key`).
+- **가구 검출**: 깊이 광선 64 × 9 가 맞은 정적 상자 번호를 셈(`phase_cast` — 광선 더 없음), 맞은 광선 ≥ 2·가구 종류·이름 있음 → 회전 상자의 축 정렬 바깥 상자로 prim 과 같은 식. 출처 = `SRC_FURN + j`.
+- **인지 흉내 병렬화**: 후보마다 열쇠 난수(`pe_hash(m.rng, 후보)`)로 스레드가 나눔(결정 → 자리 → 씀 → 거름 → 덜 나뉨 쌍). nvcc 12.8 -O3 에서 `a && rand01(rng) < p` 꼴의 뽑기가 GPU 만 다른 난수 열이
+  되어(CPU == GPU 깨짐) 난수는 맨 앞에서 늘 같은 차례로 뽑는다(percept.h 주석).
+- **검출 5 Hz**: 진짜 파이프라인 검출은 5 Hz(sgrt kf_every 6 @ 30 Hz). keyframe 중 지난 검출에서 `det_every` 2 스텝 넘게 지난 것만 인지 흉내·objprob 갱신·부재 확인·top_seen, 나머지 keyframe 은 격자·자세만.
+  토큰의 "지금 보는 중"(T_SRC) 은 마지막 검출 keyframe 기준.
+- **top_seen**(R14): `insp_top_*` — 윗면 있는 근처 물체(든 것·사라짐 빼고, 후보 포함 — objmap 과 같음) 4 × 4 칸, 2 m·연직 80°·가림(참 광선) 판정.
+- 검증: `map_verify 512 300` 상자 방·BEHAVIOR(`--curr 0.34,0.33`)·`--arm`·`--shuffle 30` 모두 CPU == GPU 비트 동일(저장소 전체 비교 포함). 음성 대조 실패(정상): `--negative` 44,777, `--negative-name` 32,470,
+  `--negative-merge` 24,849, 새 `--negative-insp`(top_seen 끔) 204. compute-sanitizer BEHAVIOR(+잡기 물리 교사) 0 오류. `map_realcheck`(진짜 scenemap 격자·벽·잡기) 전부 통과(sm_real 에 objprob·inspect 소스를 더해 다시 빌드됨).
+  BEHAVIOR 섞음 판 끝(512 판): 가구 확정 1.83/판, 중복 0.054, 이름 맞음 0.923, top_seen 0.042(LIMO 카메라 0.18 m — 탁자 윗면은 거의 못 봄), 근처 목록 넘침 keyframe 2.
+- **속도(nsys, N 4,096 BEHAVIOR, 같은 날 — 다른 GPU 일 있음)**: 커널 평균 µs/스텝 전 → 후: keyframe 431 → 658, 토큰 210 → 342, 환경 403 → 393, 거리장 104 → 107, 시작 34 → 34. 합 1,182 → 1,534(**+30 %**).
+  `map_bench` 지도 단계 0.75 → 1.18 ms(같은 때 번갈아). **예산(+10 %)을 넘는다.** 늘어난 곳: keyframe 블록 공유 메모리 11.3 → 13.5 KB(SM 당 블록 수), 근처 물체를 전역에서 읽음(Slot 316 B),
+  토큰 커널의 저장소 고르기. 토큰 커널(MapTok)은 P3 에서 입력 만들기로 바뀌므로 그때 다시 잼. 남은 줄이기(P8): Slot 뜨거운 값 따로(근처 목록 공유 메모리), 근처 상자 SoA, 짝 열쇠 근처 칸마다 스레드.
+
+### 0.3 SLAM = Cartographer(10-06 결정, 코디네이터 전달)
+- GPU 지도의 자세 오차 흉내는 slam2d(깊이 가상 스캔 맞추기)가 아니라 **Cartographer(2D 라이다 + 바퀴 오도메트리)** 의 오차를 흉내 낸다: keyframe 걸음 오차(앞·옆·yaw, 분산 = c0 + c_d·Δd + c_r·|Δθ| + 치우침),
+  되돌아옴(전역 최적화)의 갑작스런 고침, yaw 오차. 맞춤 값 = `src/scene_graph/slam_carto/calib/carto_drift.json`(openloris·sim·all, `slam_carto/tools/carto_drift.py` 로 다시 만듦) → 헤더로 생성해 씀.
+- 지우는 slam2d 가정: keyframe 맞추기 되돌림 `kf_corr_xy/yaw` 와 "깊이 열이 min_hits 이상 맞아야 맞춤", 옛 기록 넷(limo_rec)에 맞춘 `odo_t·odo_rr·odo_rt`·판 치우침.
 
 ## 2. 인지 잡음 모형(ObjectSAM + SigLIP 2) — 맞출 값
 

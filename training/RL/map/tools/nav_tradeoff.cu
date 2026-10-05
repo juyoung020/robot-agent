@@ -1,6 +1,6 @@
 // 다가가기 거리장 주기 K 의 대가(E2 목표 2 "측정한 trade-off"): 같은 씨앗·같은 행동이면 환경 궤적은 거리장과 무관하다(거리장은 보상·관측 74 만 바꿈).
 // 그래서 K = 1(매 스텝)을 기준으로 K = 5, 10, 20 판을 같은 행동으로 돌려 스텝 보상·거리 관측·판 보상 합의 차를 잰다(궤적이 같은지도 확인).
-//   nav_tradeoff [N=4096] [steps=400] [--curr p0,p1]   (BEHAVIOR 집, ~/ra_b1k, B1–B3 섞음)
+//   nav_tradeoff [N=4096] [steps=400] [--curr p0,p1]   (BEHAVIOR 집, data/b1k_scenes, B1–B3 섞음)
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>

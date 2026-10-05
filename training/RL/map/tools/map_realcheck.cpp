@@ -74,11 +74,11 @@ static std::vector<sm::WallSeg> approx_segs(const gmap::MapCore& m, const int16_
   return v;
 }
 
-static void compare_walls(const sm::WallGrid& g, const gmap::MapCore& m, const int16_t* segs, const gmap::MapTok& tok, WallCmp& c, bool seg_cmp) {
+static void compare_walls(const sm::WallGrid& g, const gmap::MapCore& m, const gmap::Slot* ob, const int16_t* segs, const gmap::MapTok& tok, WallCmp& c, bool seg_cmp) {
   std::vector<sm::WallRect> rects;
-  for (int b = 0; b < gmap::KSLOT; ++b) {   // capi.cpp refreshWalls 와 같은 규칙(근사 물체 칸에서)
-    const gmap::Slot& S = m.slot[b];
-    if (!S.valid || !S.confirmed || S.held || S.state == gmap::S_GONE) continue;
+  for (int b = 0; b < gmap::NOBJ; ++b) {   // capi.cpp refreshWalls 와 같은 규칙(근사 물체 저장소에서)
+    const gmap::Slot& S = ob[b];
+    if (!((m.objv[b >> 5] >> (b & 31)) & 1u) || !S.confirmed || S.held || S.state == gmap::S_GONE) continue;
     double lo[3], hi[3];
     for (int a = 0; a < 3; ++a) { lo[a] = S.pos[a] - 0.5 * S.ext[a]; hi[a] = S.pos[a] + 0.5 * S.ext[a]; }
     if (lo[2] > 0.4) continue;
@@ -200,10 +200,10 @@ static void check_grid_walls(int N, int T) {
         }
       // (가) 근사 격자 그대로
       const sm::WallGrid gw{mine.data(), gmap::GW, gmap::GW, double(gmap::RES), gmap::GX0 * double(gmap::RES), gmap::GX0 * double(gmap::RES)};
-      compare_walls(gw, m, cmap.h.segs.data() + (size_t)i * gmap::SEGW, cmap.h.tok[i], same, true);
+      compare_walls(gw, m, cmap.h.objs.data() + (size_t)i * gmap::NOBJ, cmap.h.segs.data() + (size_t)i * gmap::SEGW, cmap.h.tok[i], same, true);
       // (나) 진짜 격자
       const sm::WallGrid gr{c8.data(), g.width(), g.height(), double(g.res()), g.x0() * double(g.res()), g.y0() * double(g.res())};
-      compare_walls(gr, m, cmap.h.segs.data() + (size_t)i * gmap::SEGW, cmap.h.tok[i], full, false);
+      compare_walls(gr, m, cmap.h.objs.data() + (size_t)i * gmap::NOBJ, cmap.h.segs.data() + (size_t)i * gmap::SEGW, cmap.h.tok[i], full, false);
     }
   }
   for (auto* p : real) delete p;
@@ -301,6 +301,7 @@ static void check_grasp() {
   std::vector<std::vector<uint8_t>> mask;
   // 근사 쪽: 진짜 확정 물체 자리를 칸에 넣고 같은 관절·같은 slam 자세로 hands_step
   gmap::MapCore m{};
+  std::vector<gmap::Slot> ob(gmap::NOBJ);
   m.held_slot = -1;
   m.t = 1;
   std::vector<sm_object> last;
@@ -347,8 +348,9 @@ static void check_grasp() {
     // 근사: 처음 비교 스텝에 진짜 확정 물체로 칸을 채움
     if (steps == 0) {
       std::printf("grasp: real confirmed objects before the arm moves: %d\n", n);
-      for (int k = 0; k < n && k < gmap::KSLOT; ++k) {
-        gmap::Slot& S = m.slot[k];
+      for (int k = 0; k < n && k < gmap::NOBJ; ++k) {
+        gmap::Slot& S = ob[k];
+        m.objv[k >> 5] |= 1u << (k & 31);
         S.valid = 1; S.confirmed = 1; S.id = int(o[k].id); S.state = o[k].state;
         for (int a = 0; a < 3; ++a) { S.pos[a] = float(o[k].pos[a]); S.ext[a] = float(o[k].extent[a]); }
       }
@@ -358,8 +360,8 @@ static void check_grasp() {
     }
     m.t += 1;
     // 들지 않은 물체는 지난 스냅숏 자리·상태로 맞춤(진짜도 이 스텝 들기 규칙은 지난 영상까지의 자리로 판단: integrate → updateHands → 영상)
-    for (const auto& q : last) for (int b = 0; b < gmap::KSLOT; ++b) {
-      gmap::Slot& S = m.slot[b];
+    for (const auto& q : last) for (int b = 0; b < gmap::NOBJ; ++b) {
+      gmap::Slot& S = ob[b];
       if (!S.valid || S.held || S.id != int(q.id)) continue;
       for (int a = 0; a < 3; ++a) S.pos[a] = float(q.pos[a]);
       S.state = q.state;
@@ -370,14 +372,14 @@ static void check_grasp() {
     for (int k = 0; k < 5; ++k) e.q[k] = arm[k];
     e.q[5] = grip;
     const int held_before = m.held_slot;
-    gmap::hands_step(m, e);
+    gmap::hands_step(m, e, ob.data());
     grasps_me += m.held_slot >= 0 && held_before < 0;
     ++steps;
     int real_held = -1;
     for (int k = 0; k < n; ++k) {
       if (o[k].state == SM_HELD) real_held = int(o[k].id);
-      for (int b = 0; b < gmap::KSLOT; ++b) {
-        const gmap::Slot& S = m.slot[b];
+      for (int b = 0; b < gmap::NOBJ; ++b) {
+        const gmap::Slot& S = ob[b];
         if (!S.valid || S.id != int(o[k].id)) continue;
         bad_state += S.state != o[k].state;
         double dd = 0;
@@ -387,7 +389,7 @@ static void check_grasp() {
         pos_max = std::max(pos_max, dd);
       }
     }
-    const int me_held = m.held_slot >= 0 ? m.slot[m.held_slot].id : -1;
+    const int me_held = m.held_slot >= 0 ? ob[m.held_slot].id : -1;
     bad_held += me_held != real_held;
     static int last_real = -1;
     grasps_real += real_held >= 0 && last_real < 0;

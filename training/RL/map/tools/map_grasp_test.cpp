@@ -3,6 +3,7 @@
 //   큰 탁자(고정 종류)를 팔 끝에 두고 닫음 → 아님 / 닫히는 중(멈추지 않음) → 아직 아님 / 틈과 폭이 안 맞음(1 cm 물체를 4 cm 틈) → 아님.
 // 실패 수를 내고, 0 이 아니면 종료 코드 1.
 #include <cstdio>
+#include <vector>
 
 #include "map.h"
 
@@ -16,6 +17,7 @@ static void check(bool ok, const char* what) {
 
 struct Rig {
   MapCore m;
+  std::vector<Slot> ob = std::vector<Slot>(NOBJ);   // 물체 저장소
   EnvView e{};
   Rig() {
     init_core(m, 1, 0);
@@ -24,17 +26,18 @@ struct Rig {
     e.q[1] = 0.6f; e.q[2] = 0.3f;   // 팔을 앞으로 숙임(잡는 점이 몸통 앞)
     e.q[5] = 1.2f;                  // 열림
     reset_core(m, e);
-    hands_step(m, e);               // 잡는 점 계산
+    hands_step(m, e, ob.data());    // 잡는 점 계산
   }
   void put(int b, int cls, float wx, float wy, float wz) {
-    Slot& S = m.slot[b];
+    Slot& S = ob[b];
+    m.objv[b >> 5] |= 1u << (b & 31);
     S.valid = 1; S.confirmed = 1; S.cls = cls; S.state = S_SEEN; S.held = 0; S.id = b + 1;
     for (int a = 0; a < 3; ++a) S.pos[a] = m.gp_m[a];
     S.ext[0] = wx; S.ext[1] = wy; S.ext[2] = wz;
     ap_init(S);
   }
   void step(float grip, int n) {
-    for (int k = 0; k < n; ++k) { m.t += 1; e.q[5] = grip; hands_step(m, e); }
+    for (int k = 0; k < n; ++k) { m.t += 1; e.q[5] = grip; hands_step(m, e, ob.data()); }
   }
 };
 
@@ -48,12 +51,12 @@ int main() {
     check(r.m.held_slot < 0, "cup 4 cm: closing (not settled yet) -> not held");
     r.step(0.41f, 2);
     check(r.m.held_slot == 0, "cup 4 cm: closed at 0.41 rad and settled -> held");
-    const float p0 = r.m.slot[0].pos[0];
+    const float p0 = r.ob[0].pos[0];
     r.e.q[1] = 0.4f;   // 팔을 들면 물체가 잡는 점을 따라감
     r.step(0.41f, 1);
-    check(r.m.slot[0].pos[0] != p0 && r.m.held_slot == 0, "held object follows the grasp point");
+    check(r.ob[0].pos[0] != p0 && r.m.held_slot == 0, "held object follows the grasp point");
     r.step(1.2f, 1);
-    check(r.m.held_slot < 0 && r.m.slot[0].held == 0, "opened -> released");
+    check(r.m.held_slot < 0 && r.ob[0].held == 0, "opened -> released");
   }
   {
     Rig r;
@@ -97,7 +100,7 @@ int main() {
   {
     Rig r;
     r.put(0, C_CUP, 0.04f, 0.04f, 0.10f);
-    r.m.slot[0].pos[0] += 0.2f;   // 잡는 점에서 0.2 m(grasp_r 0.12 밖)
+    r.ob[0].pos[0] += 0.2f;   // 잡는 점에서 0.2 m(grasp_r 0.12 밖)
     r.step(0.41f, 3);
     check(r.m.held_slot < 0, "object 0.2 m from the grasp point (> grasp_r) -> not held");
   }

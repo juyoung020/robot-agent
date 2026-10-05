@@ -46,7 +46,7 @@ enable_testing()
 add_test(NAME map_bit_identical COMMAND map_verify 1024 300)
 add_test(NAME map_negative_control COMMAND map_verify 1024 120 --negative)
 add_test(NAME map_bit_identical_arm COMMAND map_verify 1024 300 --arm)
-# BEHAVIOR 집(E2, ~/ra_b1k 필요): 지도 + 환경 되먹임
+# BEHAVIOR 집(E2, data/b1k_scenes 필요): 지도 + 환경 되먹임
 add_test(NAME map_bit_identical_behavior COMMAND map_verify 512 300 --stage 3 --curr 0.34,0.33)
 add_test(NAME map_negative_behavior COMMAND map_verify 512 120 --stage 3 --negative)
 
@@ -80,7 +80,8 @@ if(MAP_REALCHECK)
   set(SM_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../src/scene_graph/scenemap)
   add_library(sm_real STATIC ${SM_DIR}/src/scan.cpp ${SM_DIR}/src/grid.cpp ${SM_DIR}/src/slam2d.cpp ${SM_DIR}/src/fk.cpp ${SM_DIR}/src/capi.cpp
               ${SM_DIR}/src/objmap.cpp ${SM_DIR}/src/bestview.cpp ${SM_DIR}/src/cloud.cpp ${SM_DIR}/src/png.cpp ${SM_DIR}/src/walls.cpp
-              ${SM_DIR}/src/stream.cpp ${SM_DIR}/../da/src/merge.cpp ${SM_DIR}/src/dsg_save.cpp ${SM_DIR}/src/rooms.cpp ${SM_DIR}/src/sgraph.cpp)
+              ${SM_DIR}/src/stream.cpp ${SM_DIR}/../da/src/merge.cpp ${SM_DIR}/src/dsg_save.cpp ${SM_DIR}/src/rooms.cpp ${SM_DIR}/src/sgraph.cpp
+              ${SM_DIR}/src/objprob.cpp ${SM_DIR}/src/inspect.cpp)   # objprob·살펴본 정도(10-05)
   target_include_directories(sm_real PUBLIC ${SM_DIR}/include ${SM_DIR}/../da/include)
   set_target_properties(sm_real PROPERTIES CXX_STANDARD 20)
   target_compile_options(sm_real PRIVATE -w)

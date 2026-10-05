@@ -1,3 +1,4 @@
+#include <algorithm>
 // V1 식 검증(지도): G1 환경(GPU·CPU 각각)을 같은 행동 열로 돌리고, 스텝마다 지도 단계를 GPU 커널과 CPU 참조판으로 돌려
 // **매 스텝 환경 상태 + 지도 전체(물체 기억·slam 자세·격자 로그 오즈·본 칸·완성도)**를 비트 단위로 비교한다.
 //   map_verify [N=2048] [steps=600] [--negative] [--force-kf] [--arm] [--stage 0|1|2] [--curr p0,p1[,kmin,kmax[,reveal_r]]] [--shuffle S]
@@ -8,7 +9,7 @@
 // --negative-way / --negative-live: GPU 토큰 커널만 경유 지점 내리막 차례를 뒤집음 / 지금 보는 중 칸 위치를 지도 자리로(v2 토큰 음성 대조)
 // --arm: 팔을 푼 G1 환경(arm_free)에 팔·그리퍼 행동을 넣어 들기·놓기 규칙을 지나게 한다.
 // --stage 2: A2(가구가 몸통과 부딪힘, 지도는 환경의 가구 상자를 그대로 씀). 기본 1(A1)
-// --stage 3: BEHAVIOR 집(E2, ~/ra_b1k 또는 --scenes DIR; --mix p1,p2, --strict, --only 장면,...). 장면 묶음 덧붙임(BMapEnv)도 비교하고,
+// --stage 3: BEHAVIOR 집(E2, data/b1k_scenes 또는 --scenes DIR; --mix p1,p2, --strict, --only 장면,...). 장면 묶음 덧붙임(BMapEnv)도 비교하고,
 //   방 토큰을 RASC 로더(rasc.h)로 다시 잰 방(독립 길)과 견준다. --negative-room: GPU 토큰의 방 자리를 1.5 m 밀어 반드시 실패
 // 비교: 환경 상태, MapCore, 격자 로그 오즈·본 칸·점유 비트, 벽 선분, 토큰 물체 속도 상태, 지도 토큰(1,280 B), 완성도. 시작 때 FP16 변환을
 // __float2half_rn 과 float 2^32 개 전수로 견준다.
@@ -62,6 +63,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--negative-absent")) { negative = true; neg_bug = 8; }   // 사라짐 근거의 검출 거리·새 시점 조건 끔
     else if (!std::strcmp(argv[a], "--negative-relink")) { negative = true; neg_bug = 9; }   // 옮겨짐 잇기 끔
     else if (!std::strcmp(argv[a], "--negative-merge")) { negative = true; neg_bug = 10; }   // objprob 물체끼리 병합에서 생김새 cos 끔
+    else if (!std::strcmp(argv[a], "--negative-insp")) { negative = true; neg_bug = 13; }    // 살펴본 정도 윗면 본 칸 끔
     else if (!std::strcmp(argv[a], "--nav-k") && a + 1 < argc) nav_k = std::atoi(argv[++a]);
     else if (!std::strcmp(argv[a], "--scenes") && a + 1 < argc) bo.dir = argv[++a];
     else if (!std::strcmp(argv[a], "--mix") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &bcu.p1, &bcu.p2);
@@ -237,7 +239,27 @@ int main(int argc, char** argv) {
       while (w < gmap::CORE_WORDS && a[w] == b[w]) ++w;
       char buf[64];
       std::snprintf(buf, sizeof buf, "map core word %d env %d", w, i);
+      if (std::getenv("MV_DEBUG")) {   // 진단: 두 쪽 물체 저장소의 쓰는 칸
+        for (int side = 0; side < 2; ++side) {
+          const auto& H = side ? ch : gh;
+          std::printf("  %s next_id %d objv %08x\n", side ? "CPU" : "GPU", H.core[i].next_id, H.core[i].objv[0]);
+          for (int b = 0; b < 32; ++b) {
+            if (!((H.core[i].objv[0] >> b) & 1u)) continue;
+            const auto& S = H.objs[(size_t)i * gmap::NOBJ + b];
+            std::printf("    obj %d id %d src %d pos %.3f %.3f %.3f ext %.3f %.3f %.3f K %.1f cls %d\n", b, S.id, S.src, S.pos[0], S.pos[1], S.pos[2], S.ext[0], S.ext[1], S.ext[2], S.K, S.cls);
+          }
+        }
+      }
       note(buf, i);
+    }
+    if (std::memcmp(gh.objs.data(), ch.objs.data(), sizeof(gmap::Slot) * gh.objs.size())) {
+      for (size_t k = 0; k < gh.objs.size(); ++k)
+        if (std::memcmp(&gh.objs[k], &ch.objs[k], sizeof(gmap::Slot))) {
+          char buf[64];
+          std::snprintf(buf, sizeof buf, "object store slot %d env %d", (int)(k % gmap::NOBJ), (int)(k / gmap::NOBJ));
+          note(buf, (long)(k / gmap::NOBJ));
+          break;
+        }
     }
     if (std::memcmp(gh.L.data(), ch.L.data(), sizeof(int16_t) * gh.L.size())) {
       for (size_t k = 0; k < gh.L.size(); ++k) if (gh.L[k] != ch.L[k]) { note("grid log-odds (env)", (long)(k / gmap::NCELL)); break; }
@@ -441,10 +463,12 @@ int main(int argc, char** argv) {
     last_met = ch.met;
   }
   for (int i = 0; i < N; ++i) { n_relink += cmap.h.core[i].n_relink_total; n_merge += cmap.h.core[i].n_merge_total; }
+  long near_ovf = 0, n_drop = 0;
+  for (int i = 0; i < N; ++i) { near_ovf += cmap.h.core[i].n_near_ovf; n_drop += cmap.h.core[i].n_dropped; }
   for (int i = 0; i < N; ++i)
-    for (int b = 0; b < gmap::KSLOT; ++b) {
-      const auto& S = cmap.h.core[i].slot[b];
-      if (!S.valid) continue;
+    for (int b = 0; b < gmap::NOBJ; ++b) {
+      const auto& S = cmap.h.objs[(size_t)i * gmap::NOBJ + b];
+      if (!((cmap.h.core[i].objv[b >> 5] >> (b & 31)) & 1u)) continue;
       if (S.confirmed) ++n_confirmed; else ++n_cand;
       n_gone += S.state == gmap::S_GONE;
       n_moved += S.state == gmap::S_MOVED;
@@ -453,24 +477,35 @@ int main(int argc, char** argv) {
     }
   // objprob 품질(정답 쪽, 인지 흉내 꼬리표로): 확정 칸 중 유령 출처, 같은 참 물체의 둘째 이후 확정 칸(중복), 둘째 출처 몫 > 0.2(섞임),
   // 이름 = 참 이름 / 상위어 / 모름 / 틀림, 살펴본 정도(가까이 본 거리·시점 수)
-  long q_conf = 0, q_ghost = 0, q_dup = 0, q_mix = 0, q_name_ok = 0, q_name_hyp = 0, q_name_unk = 0, q_name_bad = 0, q_views = 0;
-  double q_close = 0.0;
+  long q_furn = 0, q_conf = 0, q_ghost = 0, q_dup = 0, q_mix = 0, q_name_ok = 0, q_name_hyp = 0, q_name_unk = 0, q_name_bad = 0, q_views = 0;
+  double q_close = 0.0, q_topf = 0.0;
+  long q_top = 0;
   for (int i = 0; i < N; ++i) {
     const auto& C = cmap.h.core[i];
     unsigned seen_src = 0u;
-    for (int b = 0; b < gmap::KSLOT; ++b) {
-      const auto& S = C.slot[b];
-      if (!S.valid || !S.confirmed) continue;
+    std::vector<int> seen_furn;
+    for (int b = 0; b < gmap::NOBJ; ++b) {
+      const auto& S = cmap.h.objs[(size_t)i * gmap::NOBJ + b];
+      if (!((C.objv[b >> 5] >> (b & 31)) & 1u) || !S.confirmed) continue;
       ++q_conf;
       q_views += S.n_views;
       q_close += S.closest > 0.f ? S.closest : 0.f;
       q_mix += S.w2 > 0.2f;
+      if (gmap::insp_has_top(S)) { ++q_top; q_topf += __builtin_popcount(S.top_bits) / 16.0; }
       if (S.src < 0) { ++q_ghost; continue; }
-      if ((seen_src >> S.src) & 1u) ++q_dup;
-      seen_src |= 1u << S.src;
-      const int tn = C.prim[S.src].cls;
+      int tn;
+      if (S.src >= gmap::SRC_FURN) {   // 가구(장면 정적 상자 — 깊이 광선 검출): 이름 = 장면 상자 이름 표 행
+        ++q_furn;
+        tn = sb.host.sc[cmap.h.bm[i].scene].bname[S.src - gmap::SRC_FURN];
+        if (std::find(seen_furn.begin(), seen_furn.end(), (int)S.src) != seen_furn.end()) ++q_dup;
+        else seen_furn.push_back(S.src);
+      } else {
+        if ((seen_src >> S.src) & 1u) ++q_dup;
+        seen_src |= 1u << S.src;
+        tn = C.prim[S.src].cls;
+      }
       int hy = -1;
-      if (beh && C.init_pad) hy = sb.host.hyper[tn];
+      if (beh && C.init_pad && tn >= 0) hy = sb.host.hyper[tn];
       if (S.cls == tn) ++q_name_ok;
       else if (S.cls < 0) ++q_name_unk;
       else if (S.cls == hy) ++q_name_hyp;
@@ -494,11 +529,13 @@ int main(int argc, char** argv) {
               n_end, n_end ? sum_task_end / n_end : 0.0, n_end ? sum_obj_end / n_end : 0.0, n_end ? sum_seen_end / n_end : 0.0);
   std::printf("  slam pose error max %.3f m / %.3f rad;  slots now: confirmed %ld, candidates %ld, gone %ld, moved %ld, appeared %ld, moving %ld;  relinks %ld, merges %ld (all episodes)\n",
               max_err, max_err_yaw, n_confirmed, n_cand, n_gone, n_moved, n_appeared, n_moving, n_relink, n_merge);
+  std::printf("  object store: near-list overflow keyframes %ld, dropped new objects (store full) %ld; confirmed furniture objects %ld (%.2f per env)\n", near_ovf, n_drop, q_furn,
+              (double)q_furn / N);
   std::printf("  objprob (confirmed slots now %ld): ghost %.3f, duplicate of a true object %.3f, mixed (w2 > 0.2) %.3f;  name true %.3f, hypernym %.3f, unknown %.3f, wrong %.3f;"
-              "  closest view %.2f m, views %.2f\n",
+              "  closest view %.2f m, views %.2f, top_seen %.3f over %ld objects with a top\n",
               q_conf, (double)q_ghost / std::max(1L, q_conf), (double)q_dup / std::max(1L, q_conf), (double)q_mix / std::max(1L, q_conf),
               (double)q_name_ok / std::max(1L, q_conf), (double)q_name_hyp / std::max(1L, q_conf), (double)q_name_unk / std::max(1L, q_conf),
-              (double)q_name_bad / std::max(1L, q_conf), q_close / std::max(1L, q_conf), (double)q_views / std::max(1L, q_conf));
+              (double)q_name_bad / std::max(1L, q_conf), q_close / std::max(1L, q_conf), (double)q_views / std::max(1L, q_conf), q_topf / std::max(1L, q_top), q_top);
   const double ES = (double)N * T;
   std::printf("  grasps %ld, env-steps holding %ld;  rooms revealed at episode end %.3f;  wall segments per env-step %.2f (max h %ld v %ld, overflow %ld)\n",
               grasps, held_steps, n_end ? sum_room_end / n_end : 0.0, n_wallseg / ES, maxseg_h, maxseg_v, wovf);
@@ -526,6 +563,7 @@ int main(int argc, char** argv) {
     uint64_t hsh = 1469598103934665603ull;
     auto mix = [&](const void* p, size_t n) { const unsigned char* c = (const unsigned char*)p; for (size_t k = 0; k < n; ++k) { hsh ^= c[k]; hsh *= 1099511628211ull; } };
     mix(cmap.h.core.data(), sizeof(gmap::MapCore) * cmap.h.core.size());
+    mix(cmap.h.objs.data(), sizeof(gmap::Slot) * cmap.h.objs.size());
     mix(cmap.h.L.data(), sizeof(int16_t) * cmap.h.L.size());
     mix(cmap.h.seen.data(), sizeof(uint32_t) * cmap.h.seen.size());
     mix(cmap.h.met.data(), sizeof(float) * cmap.h.met.size());
@@ -554,7 +592,7 @@ int main(int argc, char** argv) {
     std::printf("negative control (%s on GPU): %ld mismatching items (must be > 0)\n",
                 neg_bug == 1 ? "confirm rule off" : neg_bug == 2 ? "waypoint descent tie order flipped" : neg_bug == 3 ? "live slots use map position" : neg_bug == 4 ? "BEHAVIOR room token shifted 1.5 m" : neg_bug == 5 ? "BEHAVIOR distance field always 4-neighbour" :
                 neg_bug == 6 ? "appearance cos off in association" : neg_bug == 7 ? "moving tracking off" : neg_bug == 8 ? "absence detect-range/new-view gates off" :
-                neg_bug == 9 ? "relink off" : neg_bug == 10 ? "appearance cos off in object merge" : neg_bug == 11 ? "goal entries without rotation" : neg_bug == 12 ? "top-view teacher grid rotated backwards" : "top-view RGB rows/columns swapped", mismatches);
+                neg_bug == 9 ? "relink off" : neg_bug == 10 ? "appearance cos off in object merge" : neg_bug == 11 ? "goal entries without rotation" : neg_bug == 12 ? "top-view teacher grid rotated backwards" : neg_bug == 13 ? "inspection top_seen off" : "top-view RGB rows/columns swapped", mismatches);
     if (first_step >= 0) std::printf("  first mismatch: step %ld, %s\n", first_step, first_what);
     return mismatches > 0 ? 0 : 1;
   }

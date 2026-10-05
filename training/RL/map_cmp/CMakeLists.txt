@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-# 계획서 GPU_TRAINING.md 5.2: GPU 지도 근사판(../map, 잡음 끔 빌드) 대 진짜 scenemap(behavior-2026 서브모듈, CPU, C ABI).
+# 계획서 GPU_TRAINING.md 5.2: GPU 지도 근사판(../map, 잡음 끔 빌드) 대 진짜 scenemap(src/scene_graph/scenemap, CPU, C ABI).
 # 근사판 소스는 고치지 않고 -DMAP_NOISE_V=0 으로 따로 빌드한다(기본 빌드와 비트 같음은 ../map 의 map_verify 가 확인).
 if(NOT CMAKE_CUDA_COMPILER AND EXISTS /usr/local/cuda-12.8/bin/nvcc)
   set(CMAKE_CUDA_COMPILER /usr/local/cuda-12.8/bin/nvcc)

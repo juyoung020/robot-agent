@@ -95,119 +95,247 @@ DEV void slam_kf_correct(MapCore& m, Scratch& sh, const EnvView& e, int nt) {
   m.cam_t_kf = m.t;
 }
 
-// 통계 흉내(스레드 0): 참 장면 → 검출 목록 sh.det[0..sh.nd)
-DEV void percept_stat(MapCore& m, Scratch& sh, const EnvView& e, const BCtx& bx) {
-  (void)e;
+// ---- 통계 흉내(모든 스레드): 참 장면 → 검출 목록 sh.det[0..sh.nd) -------------------------------------------------------------------
+// 후보 c(차례 = 출력 차례): 과제 물체 prim p(0..N_PRIM), 가구(깊이 광선이 맞은 정적 상자, 번호 오름차순 NFCAND 개까지), 유령 자리.
+// 난수는 후보마다 열쇠 난수(pe_hash(m.rng, 후보 열쇠)) — 후보끼리 독립이라 스레드가 나눠 해도 CPU 차례와 비트 같음.
+// A: 후보마다 놓침·조각 결정 → 검출 수, B: 스레드 0 이 자리(누적), C: 후보마다 검출을 그 자리에 씀(같은 난수 열을 다시 지나감),
+// D: 스레드 0 이 거른 것(손에 든 것·바닥 조각) 빼고 모음, E: 덜 나뉜 마스크(맞닿은 두 검출) — 쌍 판정은 나눠, 합치기는 스레드 0 이 차례로
+constexpr int PE_NC = N_PRIM + NFCAND + N_GHOST_V;          // 후보 수
+DEV uint64_t pe_key(int c, const Scratch& sh) {             // 후보 열쇠(prim p, 가구 1000 + 상자 j, 유령 100000 + g)
+  if (c < N_PRIM) return (uint64_t)c;
+  if (c < N_PRIM + NFCAND) return 1000ull + (uint64_t)sh.pe_fid[c - N_PRIM];
+  return 100000ull + (uint64_t)(c - N_PRIM - NFCAND);
+}
+// 후보 c 의 기하(prim: sh.geo, 가구: 회전 상자의 축 정렬 바깥 상자 → det_prefilter_box, 유령: 중심 점). 돌려주는 값 = 보이는 넓이 화소(0 = 후보 아님)
+DEV float pe_geom(const MapCore& m, const Scratch& sh, const BCtx& bx, int c, DetGeo& g, int& src, float rel[3], float& gsz) {
+  const Cam k = cam_consts();
+  if (c < N_PRIM) {
+    if (!sh.pcand[c]) return 0.f;
+    g = sh.geo[c];
+    int nv = 0;
+    for (int q = 0; q < NPT; ++q) nv += (int)((sh.vism[c] >> q) & 1u);
+    const float npx = g.af * ((float)nv / (float)NPT);
+    src = c;
+    return (nv == 0 || npx < (float)MP::min_points) ? 0.f : npx;
+  }
+  if (c < N_PRIM + NFCAND) {
+    const int f = c - N_PRIM;
+    if (f >= sh.pe_nf) return 0.f;
+    const int j = sh.pe_fid[f];
+    const bsc::SBox& B = bx.sd->box[j];
+    const float ax = absf(B.c) * B.hx + absf(B.s) * B.hy, ay = absf(B.s) * B.hx + absf(B.c) * B.hy;
+    Prim fb;
+    fb.cls = bx.sd->bname[j];
+    fb.lo[0] = B.cx - bx.wx - ax; fb.hi[0] = B.cx - bx.wx + ax;
+    fb.lo[1] = B.cy - bx.wy - ay; fb.hi[1] = B.cy - bx.wy + ay;
+    fb.lo[2] = B.z0; fb.hi[2] = B.z1;
+    const float o[3] = {sh.to[0], sh.to[1], sh.to[2]};
+    if (!det_prefilter_box(fb, o, sh.tc, sh.ts, k, g)) return 0.f;
+    src = SRC_FURN + j;
+    constexpr float px_ray = (float)(MP::img_w / NCOL) * (float)(MP::img_h / NROW);
+    return (float)sh.pe_fcnt[f] * px_ray;
+  }
+  const int gi = c - N_PRIM - NFCAND;
+  if (!MP::noise || gi >= MP::n_ghost) return 0.f;
+  const Ghost& G = m.ghost[gi];
+  const float rx = G.pos[0] - sh.to[0], ry = G.pos[1] - sh.to[1], up = G.pos[2] - sh.to[2];
+  const float fwd = sh.tc * rx + sh.ts * ry, left = -sh.ts * rx + sh.tc * ry;
+  if (!(fwd >= MP::ozmin && fwd <= MP::ozmax)) return 0.f;
+  if (absf(left / fwd) > k.tanh || absf(up / fwd) > k.tanv) return 0.f;
+  rel[0] = fwd; rel[1] = left; rel[2] = up;
+  gsz = G.sz;
+  src = -1 - gi;
+  const float spx = k.fx * G.sz / fwd;
+  return spx * spx;
+}
+// 후보 c 하나: write = false 면 결정만(검출 수 0·1·2 와 놓침 비트), true 면 sh.det[off..] 에 씀(같은 난수 열). 돌려주는 값 = 검출 수
+// 난수는 조건과 상관없이 늘 같은 차례로 뽑는다: `a && rand01(rng) < p` 처럼 짧게 끊는 식 안의 뽑기는 nvcc 12.8 -O3 장치 코드에서 CPU 와 다른 난수 열이 되었다
+// (GPU 만 어긋남 — map_verify 가 잡음, obs.h goal_off_hash 와 같은 종류). 따로 부르는 함수로 둠(같은 까닭의 방어)
+#ifdef __CUDACC__
+static __host__ __device__ __noinline__
+#else
+static inline
+#endif
+int pe_candidate(MapCore& m, Scratch& sh, const BCtx& bx, int c, bool write, int off) {
+  DetGeo g;
+  int src = 0;
+  float rel[3] = {0.f, 0.f, 0.f}, gsz = 0.f;
+  const float npx = pe_geom(m, sh, bx, c, g, src, rel, gsz);
+  if (!(npx > 0.f)) return 0;
+  uint64_t rng = pe_hash(m.rng, pe_key(c, sh));
+  const float u_first = rand01(rng), u_split = rand01(rng);   // 놓침(유령은 나타남)·조각 난수를 맨 앞에서 늘 같은 차례로
   const float o2 = sh.to[2];
   const float ex = m.ex, ey = m.ey, ec = sh.ec, es = sh.es;
   const float cxw = ex + ec * env::K::cam_x, cyw = ey + es * env::K::cam_x;   // 믿는 카메라
-  uint64_t rng = m.rng;
-  int nd = 0;
-  uint32_t miss_now = 0u;
-  auto finish = [&](Det& D, int src, float npx) {   // 공통: 깊이·κ·카메라 거리·이름·흔들림
-    D.src = (int16_t)src; D.src2 = -32768; D.w2 = 0.f;
-    D.npx = npx;
-    D.zmed = ec * (D.pos[0] - cxw) + es * (D.pos[1] - cyw);
-    D.kappa = view_kappa(npx, D.zmed);
-    const float dz = D.pos[2] - o2;
-    D.camd = sqrtf((D.pos[0] - cxw) * (D.pos[0] - cxw) + (D.pos[1] - cyw) * (D.pos[1] - cyw) + dz * dz);
-    D.jit = MP::noise ? gauss(rng) * MP::pe_cos_jit : 0.f;
-    const int tn = src_name(m, src);
-    int nm = tn;
-    // 체계적 혼동: 물체(판·출처)마다 정해진 쪽으로 늘 틀림(p_conf, 같은 물체의 이름 실수는 시점과 무관하게 비슷 — 가정)
-    const uint64_t h = pe_hash(((uint64_t)(uint32_t)m.ep << 8) ^ (uint64_t)(src + 64), 0x4e414d45ull);
-    if (MP::noise && (float)(h >> 40) * (1.0f / 16777216.0f) < MP::p_conf) {
-      const int alt = m.ssim[src_idx(src)][(int)((h >> 8) % 3ull)];
-      nm = alt >= 0 ? alt : tn;
-    }
-    pe_labels(D, rng, m.nlab, m.ssim[src_idx(src)], nm, tn, D.kappa);
-  };
-  for (int p = 0; p < N_PRIM; ++p) {
-    if (!sh.pcand[p]) continue;
-    const DetGeo& g = sh.geo[p];
-    int nv = 0;
-    for (int q = 0; q < NPT; ++q) nv += (int)((sh.vism[p] >> q) & 1u);
-    if (nv == 0) continue;
-    const float npx = g.af * ((float)nv / (float)NPT);
-    if (npx < (float)MP::min_points) continue;
-    const bool was_miss = (m.pe_miss >> p) & 1u;
+  const bool ghost = src < 0;
+  if (ghost) {
+    if (!(u_first < MP::p_ghost)) return 0;
+  } else {   // 놓침: 거리 계단, 지난 keyframe 에 놓쳤으면 pe_p_mm(2 상태 마르코프 — prim 비트·가구 상자 비트)
+    const bool furn = src >= SRC_FURN;
+    const int j = furn ? src - SRC_FURN : src;
+    const bool was_miss = furn ? ((m.pe_fmiss[(j >> 5) & 15] >> (j & 31)) & 1u) : ((m.pe_miss >> j) & 1u);
     const float pm = was_miss ? MP::pe_p_mm : p_miss_at(sqrtf(g.rh * g.rh + g.up * g.up));
-    if (MP::noise && rand01(rng) < pm) { miss_now |= 1u << p; continue; }
-    // 조각: 큰 물체를 수평 긴 축으로 둘(마스크가 둘로 나뉨)
-    const bool split = MP::noise && maxf(g.pe[0], g.pe[1]) >= MP::pe_split_min && rand01(rng) < MP::pe_p_split;
-    for (int part = 0; part < (split ? 2 : 1) && nd < MAXDET; ++part) {
-      Det& D = sh.det[nd++];
-      float med[3], bc[3], pe[3];
+    const bool miss = MP::noise && u_first < pm;
+    if (!write) {
+      if (furn) { if (miss) or_bits(&sh.pe_fset[(j >> 5) & 15], 1u << (j & 31)); else or_bits(&sh.pe_fclr[(j >> 5) & 15], 1u << (j & 31)); }
+      else if (miss) or_bits(&sh.pe_pmiss, 1u << j);
+    }
+    if (miss) return 0;
+  }
+  const bool split = !ghost && MP::noise && maxf(g.pe[0], g.pe[1]) >= MP::pe_split_min && u_split < MP::pe_p_split;
+  const int np = split ? 2 : 1;
+  if (!write) return np;
+  for (int part = 0; part < np && off + part < MAXDET; ++part) {
+    Det& D = sh.det[off + part];
+    float med[3], bc[3], pe[3];
+    if (ghost) {
+      for (int a = 0; a < 3; ++a) { med[a] = rel[a]; bc[a] = rel[a]; pe[a] = gsz; }
+    } else {
       for (int a = 0; a < 3; ++a) { med[a] = g.med[a]; bc[a] = g.bc[a]; pe[a] = g.pe[a]; }
-      if (split) {   // 몸 좌표에서 앞(0)·옆(1) 중 긴 쪽을 반으로
+      if (split) {   // 몸 좌표 앞(0)·옆(1) 중 긴 쪽을 반으로
         const int ax = g.pe[0] >= g.pe[1] ? 0 : 1;
         const float h = 0.25f * pe[ax];
         bc[ax] = bc[ax] + (part == 0 ? -h : h);
         med[ax] = bc[ax];
         pe[ax] = 0.5f * pe[ax];
       }
-      put_det(D, rng, med, bc, pe, o2, ex, ey, ec, es);
-      D.score = 0.9f;
-      D.trunc = (int16_t)((g.inr >> 1) & 1);
-      finish(D, p, split ? 0.5f * npx : npx);
-      // 손에 든 것 거르기(objmap: 점의 절반 이상이 잡는 점 hand_r 안 — 중심으로), 바닥 조각(백분위 상자 윗면 < floor_h)
-      if (dist3(D.pos, m.gp_m) < MP::hand_r || D.bc[2] + 0.5f * D.ext[2] < MP::floor_h) --nd;
+    }
+    put_det(D, rng, med, bc, pe, o2, ex, ey, ec, es);
+    D.score = ghost ? 0.4f : 0.9f;
+    D.trunc = (int16_t)(ghost ? 0 : (g.inr >> 1) & 1);
+    const float dnpx = split ? 0.5f * npx : npx;
+    D.src = (int16_t)src; D.src2 = -32768; D.w2 = 0.f;
+    D.npx = dnpx;
+    D.zmed = ec * (D.pos[0] - cxw) + es * (D.pos[1] - cyw);
+    D.kappa = view_kappa(dnpx, D.zmed);
+    const float dz = D.pos[2] - o2;
+    D.camd = sqrtf((D.pos[0] - cxw) * (D.pos[0] - cxw) + (D.pos[1] - cyw) * (D.pos[1] - cyw) + dz * dz);
+    D.jit = MP::noise ? gauss(rng) * MP::pe_cos_jit : 0.f;
+    const int tn = src_name_x(m, bx, src);
+    int16_t sim3[3];
+    for (int k2 = 0; k2 < 3; ++k2) sim3[k2] = (int16_t)src_sim_x(m, bx, src, k2);
+    int nm = tn;
+    // 체계적 혼동: 물체(판·출처)마다 정해진 쪽으로 늘 틀림(p_conf — 같은 물체의 이름 실수는 시점과 무관하게 비슷, 가정)
+    const uint64_t h = pe_hash(((uint64_t)(uint32_t)m.ep << 16) ^ (uint64_t)(src + 64), 0x4e414d45ull);
+    if (MP::noise && (float)(h >> 40) * (1.0f / 16777216.0f) < MP::p_conf) {
+      const int alt = sim3[(int)((h >> 8) % 3ull)];
+      nm = alt >= 0 ? alt : tn;
+    }
+    pe_labels(D, rng, m.nlab, sim3, nm, tn, D.kappa);
+    // 손에 든 것 거르기(objmap: 점의 절반 이상이 잡는 점 hand_r 안 — 중심으로), 바닥 조각(백분위 상자 윗면 < floor_h): 표시만(D 에서 뺌)
+    if (dist3(D.pos, m.gp_m) < MP::hand_r || D.bc[2] + 0.5f * D.ext[2] < MP::floor_h) or_bits(&sh.pe_drop, 1u << (off + part));
+  }
+  return np;
+}
+template <class Sync>
+DEV void percept_stat(MapCore& m, Scratch& sh, const EnvView& e, const BCtx& bx, int tid, int nt, const Sync& sync) {
+  (void)e;
+  // 0) 가구 후보(BEHAVIOR): phase_cast 가 깊이 광선이 맞은 정적 상자 번호를 해시 칸(sh.pe_hid·pe_hcnt)에 셈. 여기서 쓸 것만 골라 번호 오름차순
+  if (tid == 0) { sh.pe_nf = 0; sh.pe_pmiss = 0u; sh.pe_drop = 0u; }
+  for (int k = tid; k < 16; k += nt) { sh.pe_fset[k] = 0u; sh.pe_fclr[k] = 0u; }
+  sync();
+  if (bx.on)
+    for (int h = tid; h < PE_NFH; h += nt) {   // 쓸 가구: 맞은 광선 2 개 이상, 가구 종류, 이름 있음, prim 아님
+      const int j = sh.pe_hid[h];
+      int ok = j >= 0 && sh.pe_hcnt[h] >= 2 && (bx.sd->bkind[j] & bsc::BK_FURN) && bx.sd->bname[j] >= 0;
+      for (int p = 0; p < N_PRIM && ok; ++p) ok = !(p < bx.bm->nprim && bx.bm->sbox[p] == j);
+      if (!ok) sh.pe_hid[h] = -2 - j;   // 안 쓰는 칸 표시(번호는 둠 — 차례 셈에서 뺌)
+    }
+  sync();
+  if (bx.on)
+    for (int h = tid; h < PE_NFH; h += nt) {
+      const int j = sh.pe_hid[h];
+      if (j < 0) continue;
+      int rank = 0;
+      for (int h2 = 0; h2 < PE_NFH; ++h2) rank += sh.pe_hid[h2] >= 0 && sh.pe_hid[h2] < j;
+      if (rank < NFCAND) { sh.pe_fid[rank] = j; sh.pe_fcnt[rank] = sh.pe_hcnt[h]; sh_add(&sh.pe_nf, 1); }
+    }
+  sync();
+  // A) 후보마다 결정
+  for (int c = tid; c < PE_NC; c += nt) sh.pe_cnp[c] = pe_candidate(m, sh, bx, c, false, 0);
+  sync();
+  // B) 자리
+  if (tid == 0) {
+    int off = 0;
+    for (int c = 0; c < PE_NC; ++c) { sh.pe_coff[c] = off; off += sh.pe_cnp[c]; }
+    sh.nd = off < MAXDET ? off : MAXDET;
+  }
+  sync();
+  // C) 씀
+  for (int c = tid; c < PE_NC; c += nt)
+    if (sh.pe_cnp[c] > 0 && sh.pe_coff[c] < MAXDET) pe_candidate(m, sh, bx, c, true, sh.pe_coff[c]);
+  sync();
+  // D) 거른 것 빼고 모음, 유령 셈(스레드 0)
+  if (tid == 0) {
+    // 마르코프 상태(C 가 같은 결정을 다시 내도록 C 뒤에): prim 은 이번 후보 결정으로 바꿈(후보 아닌 prim 은 지움), 가구는 이번 후보만 켜고 끔
+    m.pe_miss = sh.pe_pmiss;
+    for (int k = 0; k < 16; ++k) m.pe_fmiss[k] = (m.pe_fmiss[k] & ~sh.pe_fclr[k]) | sh.pe_fset[k];
+    int nd = 0, nfp = 0;
+    for (int a = 0; a < sh.nd; ++a) {
+      if ((sh.pe_drop >> a) & 1u) continue;
+      if (nd != a) sh.det[nd] = sh.det[a];
+      nfp += sh.det[nd].src < 0 && sh.det[nd].src > -32768;
+      ++nd;
+    }
+    sh.nd = nd;
+    m.n_fp_total += nfp;
+    m.n_kf_fp += nfp > 0;
+    for (int w = 0; w < 16; ++w) sh.pe_upair[w] = 0u;
+  }
+  sync();
+  // E) 덜 나뉜 마스크: 맞닿은(상자 틈 < pe_under_gap) 참 물체 검출 쌍을 확률 pe_p_under 로(쌍 열쇠 난수) — 판정은 쌍마다 나눠, 합치기는 차례로
+  if (MP::noise) {
+    const int nd = sh.nd, np = nd * (nd - 1) / 2;
+    for (int k = tid; k < np && k < 32 * 16; k += nt) {
+      int a = 0, left = nd - 1, kk = k;
+      while (kk >= left) { kk -= left; ++a; --left; }
+      const int b = a + 1 + kk;
+      const Det &A = sh.det[a], &B = sh.det[b];
+      if (A.src < 0 || B.src < 0 || A.src == B.src) continue;
+      float alo[3], ahi[3], blo[3], bhi[3], g2 = 0.f;
+      det_box(A, alo, ahi);
+      det_box(B, blo, bhi);
+      for (int q = 0; q < 3; ++q) { const float gq = maxf(0.f, maxf(alo[q] - bhi[q], blo[q] - ahi[q])); g2 = g2 + gq * gq; }
+      if (g2 >= MP::pe_under_gap * MP::pe_under_gap) continue;
+      uint64_t r = pe_hash(m.rng ^ 0x554e4445ull, ((uint64_t)(uint16_t)A.src << 16) | (uint16_t)B.src);
+      if (rand01(r) < MP::pe_p_under) or_bits(&sh.pe_upair[k >> 5], 1u << (k & 31));
     }
   }
-  m.pe_miss = miss_now;
-  // 덜 나뉜 마스크: 맞닿은 두 참 물체 검출(상자 틈 < pe_under_gap)을 하나로 — 상자 합집합, 자리는 넓이 무게, 둘째 출처 몫 = 넓이 비
-  if (MP::noise)
-    for (int a = 0; a < nd; ++a)
-      for (int b = a + 1; b < nd; ++b) {
+  sync();
+  if (tid == 0 && MP::noise) {
+    const int nd0 = sh.nd;
+    uint32_t gone = 0u, used = 0u;
+    for (int k = 0, a = 0; a < nd0; ++a)
+      for (int b = a + 1; b < nd0; ++b, ++k) {
+        if (k >= 32 * 16 || !((sh.pe_upair[k >> 5] >> (k & 31)) & 1u) || ((used >> a) & 1u) || ((used >> b) & 1u)) continue;
+        used |= (1u << a) | (1u << b);
         Det& A = sh.det[a];
         const Det& B = sh.det[b];
-        if (A.src < 0 || B.src < 0 || A.src == B.src || A.w2 > 0.f) continue;
-        float alo[3], ahi[3], blo[3], bhi[3], g2 = 0.f;
+        float alo[3], ahi[3], blo[3], bhi[3];
         det_box(A, alo, ahi);
         det_box(B, blo, bhi);
-        for (int k = 0; k < 3; ++k) { const float gk = maxf(0.f, maxf(alo[k] - bhi[k], blo[k] - ahi[k])); g2 = g2 + gk * gk; }
-        if (g2 >= MP::pe_under_gap * MP::pe_under_gap || !(rand01(rng) < MP::pe_p_under)) continue;
         const float wa = A.npx, wb = B.npx, wt = wa + wb;
-        for (int k = 0; k < 3; ++k) {
-          const float lo = minf(alo[k], blo[k]), hi = maxf(ahi[k], bhi[k]);
-          A.pos[k] = (A.pos[k] * wa + B.pos[k] * wb) / wt;
-          A.bc[k] = 0.5f * (lo + hi);
-          A.ext[k] = hi - lo;
+        for (int q = 0; q < 3; ++q) {
+          const float lo = minf(alo[q], blo[q]), hi = maxf(ahi[q], bhi[q]);
+          A.pos[q] = (A.pos[q] * wa + B.pos[q] * wb) / wt;
+          A.bc[q] = 0.5f * (lo + hi);
+          A.ext[q] = hi - lo;
         }
         A.src2 = B.src;
         A.w2 = wb / wt;
         A.npx = wt;
-        A.kappa = view_kappa(wt, minf(A.zmed, B.zmed));
         A.zmed = minf(A.zmed, B.zmed);
+        A.kappa = view_kappa(wt, A.zmed);
         A.trunc = (int16_t)(A.trunc | B.trunc);
-        for (int c = b; c + 1 < nd; ++c) sh.det[c] = sh.det[c + 1];   // b 지움(차례 유지)
-        --nd;
-        --b;
+        gone |= 1u << b;
       }
-  // 유령 자리(가짜 물체): 중심이 깊이 범위·시야 안이면 p_ghost 로 검출된다. 가림은 보지 않는다(비침·잘못 분할 흉내)
-  const Cam k = cam_consts();
-  const float c = sh.tc, s = sh.ts;
-  int nfp = 0;
-  for (int gi = 0; gi < (MP::noise ? MP::n_ghost : 0) && nd < MAXDET; ++gi) {
-    const Ghost& G = m.ghost[gi];
-    const float rx = G.pos[0] - sh.to[0], ry = G.pos[1] - sh.to[1], up = G.pos[2] - o2;
-    const float fwd = c * rx + s * ry, left = -s * rx + c * ry;
-    if (!(fwd >= MP::ozmin && fwd <= MP::ozmax)) continue;
-    if (absf(left / fwd) > k.tanh || absf(up / fwd) > k.tanv) continue;
-    if (!(rand01(rng) < MP::p_ghost)) continue;
-    const float ext[3] = {G.sz, G.sz, G.sz};
-    Det& D = sh.det[nd++];
-    const float rel[3] = {fwd, left, up};
-    put_det(D, rng, rel, rel, ext, o2, ex, ey, ec, es);
-    D.score = 0.4f;
-    D.trunc = 0;
-    const float spx = k.fx * G.sz / fwd;
-    finish(D, -1 - gi, spx * spx);
-    if (dist3(D.pos, m.gp_m) < MP::hand_r || D.bc[2] + 0.5f * D.ext[2] < MP::floor_h) { --nd; continue; }
-    ++nfp;
+    int nd = 0;
+    for (int a = 0; a < nd0; ++a) {
+      if ((gone >> a) & 1u) continue;
+      if (nd != a) sh.det[nd] = sh.det[a];
+      ++nd;
+    }
+    sh.nd = nd;
   }
-  m.n_fp_total += nfp;
-  m.n_kf_fp += nfp > 0;
-  sh.nd = nd;
-  m.rng = rng;
+  sync();
 }

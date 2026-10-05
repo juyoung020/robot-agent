@@ -5,7 +5,7 @@
 //         (../map_calib/limo/tools/map_drift_limo.patch 의 궤적)
 // kind 3: limo4 비슷 — 제자리 한 바퀴(0.6 rad/s) 뒤 3.9 m
 // kind 4: LIMO 탐색 비슷 둘째 판(100358: 38.15 m, 3,100°) — kind 2 와 같은 동작, 길이 합 38.2 m
-// kind 5: 새 LIMO SLAM 기록 넷(behavior-2026 84b373c, ~/datasets/limo_rec r1–r3·r4live: 25.0–37.9 m, 1,788–2,663°, 103–146 s) 비슷 — kind 2 와 같은 동작, 길이 합 30.1 m
+// kind 5: 옛 LIMO SLAM(slam2d, 보관) 기록 넷(data/datasets/limo_rec r1–r3·r4live: 25.0–37.9 m, 1,788–2,663°, 103–146 s) 비슷 — kind 2 와 같은 동작, 길이 합 30.1 m
 // kind 1: G1 방(반치수 2–3.5 m) 안에서 무작위 목표로 돌고(최대 0.8 rad/s) 곧게 가기(0.45 m/s)를 길이 합 16.5 m 까지
 //         (../map_calib/tools/mpdrift.cpp 의 탐색 궤적과 같은 동작이되, 방 밖으로 나가지 않게 목표를 방 안에서 뽑고 굽음은 뺐다)
 // kind 0: gt_move 대본(90°×4, 1 m, 180°, 1 m, −90°, 0.8 m, 180°, 0.8 m, 90°; 0.6 rad/s, 0.27 m/s), 방 가운데에서.
@@ -175,11 +175,13 @@ int main(int argc, char** argv) {
   map.download(h);
 #endif
   long kf = 0, fp = 0, kffp = 0, nconf = 0, nok = 0, nmis = 0;
-  for (auto& c : h.core) {
+  for (size_t i = 0; i < h.core.size(); ++i) {
+    const auto& c = h.core[i];
     kf += c.n_kf_total; fp += c.n_fp_total; kffp += c.n_kf_fp;
     // 끝에 확정된 칸(사라짐 아님)을 참 물체와 견줌: 같은 이름이 짝 문턱 안 = 맞음, 다른 이름만 있으면 틀린 이름, 없으면 가짜
-    for (const auto& S : c.slot) {
-      if (!S.valid || !S.confirmed || S.state == gmap::S_GONE) continue;
+    for (int g = 0; g < gmap::NOBJ; ++g) {
+      const auto& S = h.objs[i * gmap::NOBJ + g];
+      if (!((c.objv[g >> 5] >> (g & 31)) & 1u) || !S.confirmed || S.state == gmap::S_GONE) continue;
       ++nconf;
       int ok = 0, near = 0;
       for (const auto& P : c.prim) {
