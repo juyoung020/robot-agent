@@ -136,15 +136,6 @@ class OgWorld:
         sys.path.insert(0, str(OG_DIR))
         import limo_eef_fix
         limo_eef_fix.install()
-        # 학습과 GPU 를 나눠 씀: 텍스처 스트리밍 예산을 낮추고 큰 mip 을 버림(OG_TEX_BUDGET·OG_MAX_MIP 으로 바꿈)
-        try:
-            import carb
-            st = carb.settings.get_settings()
-            st.set("/rtx-transient/resourcemanager/texturestreaming/enabled", True)
-            st.set("/rtx-transient/resourcemanager/texturestreaming/memoryBudget", float(os.environ.get("OG_TEX_BUDGET", "0.08")))
-            st.set("/rtx-transient/resourcemanager/maxMipCount", int(os.environ.get("OG_MAX_MIP", "10")))
-        except Exception as e:
-            log(f"texture budget not set: {e}")
         sc, task, split, iid = W["scene"], W["task"], int(W["split"]), int(W["inst_id"])
         jd = os.path.join(TI, "scenes" if split == 0 else "scene_test/public", sc, "json")
         tmpl = os.path.join(TI, "scene_test/public", sc, "json", f"{sc}_task_{task}_0_0_template.json")
@@ -166,6 +157,17 @@ class OgWorld:
         self.env = og.Environment(configs=dict(env={"action_frequency": 30, "physics_frequency": 120, "rendering_frequency": 30},
                                                scene={"type": "InteractiveTraversableScene", "scene_model": sc, "scene_file": sfile, "trav_map_resolution": 0.1},
                                                robots=[rc], objects=[]))
+        # 학습과 GPU 를 나눠 씀(선택, OG_TEX_BUDGET 을 줄 때만): 텍스처 스트리밍 예산을 낮추고 큰 mip 을 버림. 예전에는 앱이 뜨기 전에 불러
+        # 늘 "No module named carb" 로 안 먹었다 — 곧 지금까지의 판은 전체 텍스처였다. 낮추면 검출이 달라지므로 기본은 끔(10-06)
+        if os.environ.get("OG_TEX_BUDGET"):
+            try:
+                import carb
+                st = carb.settings.get_settings()
+                st.set("/rtx-transient/resourcemanager/texturestreaming/enabled", True)
+                st.set("/rtx-transient/resourcemanager/texturestreaming/memoryBudget", float(os.environ["OG_TEX_BUDGET"]))
+                st.set("/rtx-transient/resourcemanager/maxMipCount", int(os.environ.get("OG_MAX_MIP", "10")))
+            except Exception as e:
+                log(f"texture budget not set: {e}")
         r = self.env.robots[0]
         while isinstance(r, (list, tuple)):
             r = r[0]
@@ -211,7 +213,16 @@ class OgWorld:
         r.set_position_orientation(position=th.tensor([first_pose[0], first_pose[1], 0.05], dtype=th.float32), orientation=quat_yaw(first_pose[2]))
         for _ in range(20):
             og.sim.step()
-        self.z0 = float(r.get_position_orientation()[0][2])
+        # set_position_orientation 은 뿌리(base_footprint) 자리를, get 은 base_link 자리(+0.15 m)를 준다. 앉힌 높이를 그대로 다시 넣으면
+        # 몸이 0.15 m 떠서 eyes 가 0.33 m(실제 0.18 m)가 됐다(10-06 고침). 한 번 넣어 보고 차이만큼 빼서 바닥 높이를 맞춘다
+        zg = float(r.get_position_orientation()[0][2])
+        r.set_position_orientation(position=th.tensor([first_pose[0], first_pose[1], zg], dtype=th.float32), orientation=quat_yaw(first_pose[2]))
+        self.z0 = zg - (float(r.get_position_orientation()[0][2]) - zg)
+        r.set_position_orientation(position=th.tensor([first_pose[0], first_pose[1], self.z0], dtype=th.float32), orientation=quat_yaw(first_pose[2]))
+        # 장면의 로봇은 LIMO + OMX 하나뿐이어야 한다(과제 템플릿의 R1 Pro 는 위에서 뺌)
+        robots = [type(x).__name__ + ":" + str(getattr(x, "model", getattr(x, "name", "?"))) for x in self.env.scene.robots]
+        assert len(self.env.scene.robots) == 1 and getattr(r, "model", "limo_omx") == "limo_omx", robots
+        log(f"robots in scene: {robots}; eyes z {float(self.eyes.get_position_orientation()[0][2]):.3f} m")
         self.pick = self.reg(W["pick"]["og_name"]) if W.get("pick", {}).get("og_name") else None
         self.p0 = self.q0 = None
         if self.pick is not None:
