@@ -13,13 +13,6 @@
 namespace scenemap {
 namespace {
 
-inline bool maskBit(const sm_detections* d, int k, int i, int j) {
-  if (i < 0 || j < 0 || i >= d->mask_w || j >= d->mask_h) return false;
-  const size_t words = (size_t(d->mask_w) * d->mask_h + 31) / 32;
-  const size_t c = size_t(j) * d->mask_w + i;
-  return (d->mask_bits[k * words + (c >> 5)] >> (c & 31)) & 1u;
-}
-
 double pct(std::vector<double>& v, double q) {
   const size_t k = std::min(v.size() - 1, size_t(q * (v.size() - 1) + 0.5));
   std::nth_element(v.begin(), v.begin() + k, v.end());
@@ -151,8 +144,7 @@ int ObjectMap::applyParams(ObjParams* p, const char* e, bool log) {
                     {"link_wait_s", &p->link_wait_s, nullptr, nullptr},  {"link_window_s", &p->link_window_s, nullptr, nullptr},  {"link_view_gap_s", &p->link_view_gap_s, nullptr, nullptr},
                     {"view_cell", &p->view_cell, nullptr, nullptr},      {"confirm", nullptr, &p->confirm, nullptr},  {"move_v", &p->move_v, nullptr, nullptr},
                     {"move_n", nullptr, &p->move_n, nullptr},  {"move_min_d", &p->move_min_d, nullptr, nullptr},  {"move_max_cam_w", &p->move_max_cam_w, nullptr, nullptr},
-                    {"grasp_check", nullptr, nullptr, &p->grasp_check},  {"self_pad", &p->self_pad, nullptr, nullptr},
-                    {"self_mask", nullptr, nullptr, &p->self_mask},  {"inspect", nullptr, nullptr, &p->insp.on},
+                    {"self_pad", &p->self_pad, nullptr, nullptr},  {"inspect", nullptr, nullptr, &p->insp.on},
                     // objprob(objprob.hpp ApParams — 앞에 ap_)
                     {"ap_same_p", &p->ap.same_p, nullptr, nullptr},  {"ap_merge_p", &p->ap.merge_p, nullptr, nullptr},
                     {"ap_gate", &p->ap.gate, nullptr, nullptr},  {"ap_name_tau", &p->ap.name_tau, nullptr, nullptr},
@@ -404,7 +396,7 @@ double ObjectMap::gripGap(double g) const {
   return T.back().second;
 }
 
-// grasp_check: 틈 gap 으로 쥔 그리퍼 사이에 o 가 있을 수 있나(크기·종류·틈과 폭)
+// 틈 gap 으로 쥔 그리퍼 사이에 o 가 있을 수 있나(크기·종류·틈과 폭)
 bool ObjectMap::holdable(const MapObject& o, double gap) const {
   if (isBig(o)) return false;   // 고정 종류(가구·가전) 또는 한 변 > big
   double e[3];
@@ -455,45 +447,28 @@ void ObjectMap::updateHands(double t, const double eef[2][3], const float grip[2
   };
   for (int h = 0; h < p_.n_hands && h < 2; ++h) {
     const bool closed = grip[h] < p_.grip_closed;
-    if (p_.grasp_check) {
-      // 쥠이 끝났나: 그리퍼 값이 grip_settle_s 동안 grip_settle_eps 안
-      if (gref_t_[h] < -1e299 || std::fabs(grip[h] - gref_[h]) > p_.grip_settle_eps) { gref_[h] = grip[h]; gref_t_[h] = t; }
-      const bool settled = t - gref_t_[h] >= p_.grip_settle_s - 1e-9;
-      if (closed && !closed_[h]) tried_[h] = false;   // 새로 닫힘
-      const double gap = gripGap(grip[h]);
-      if (closed && settled && !tried_[h]) {          // 잡기: 닫힌 채 멈춘 뒤 한 번
-        tried_[h] = true;
-        MapObject* best = nullptr;
-        double bd = p_.grasp_r;
-        for (auto& o : objs_) {
-          if (!o.confirmed || o.held_by >= 0 || o.state == SM_GONE) continue;
-          const double d = dist3(o.pos, eef[h]);
-          if (d < bd && holdable(o, gap)) { bd = d; best = &o; }
-        }
-        if (best) grab(best, h);
-      } else if (closed && settled && gap < p_.grasp_min_gap) {   // 든 뒤 끝까지 닫힘: 놓침
-        for (auto& o : objs_)
-          if (o.held_by == h) release(t, o);
-      }
-      if (!closed && closed_[h])
-        for (auto& o : objs_)
-          if (o.held_by == h) release(t, o);
-      closed_[h] = closed;
-      continue;
-    }
-    if (closed && !closed_[h]) {   // 잡기
+    // 쥠이 끝났나: 그리퍼 값이 grip_settle_s 동안 grip_settle_eps 안
+    if (gref_t_[h] < -1e299 || std::fabs(grip[h] - gref_[h]) > p_.grip_settle_eps) { gref_[h] = grip[h]; gref_t_[h] = t; }
+    const bool settled = t - gref_t_[h] >= p_.grip_settle_s - 1e-9;
+    if (closed && !closed_[h]) tried_[h] = false;   // 새로 닫힘
+    const double gap = gripGap(grip[h]);
+    if (closed && settled && !tried_[h]) {          // 잡기: 닫힌 채 멈춘 뒤 한 번
+      tried_[h] = true;
       MapObject* best = nullptr;
       double bd = p_.grasp_r;
       for (auto& o : objs_) {
         if (!o.confirmed || o.held_by >= 0 || o.state == SM_GONE) continue;
         const double d = dist3(o.pos, eef[h]);
-        if (d < bd) { bd = d; best = &o; }
+        if (d < bd && holdable(o, gap)) { bd = d; best = &o; }
       }
       if (best) grab(best, h);
-    } else if (!closed && closed_[h]) {   // 놓기
+    } else if (closed && settled && gap < p_.grasp_min_gap) {   // 든 뒤 끝까지 닫힘: 놓침
       for (auto& o : objs_)
         if (o.held_by == h) release(t, o);
     }
+    if (!closed && closed_[h])
+      for (auto& o : objs_)
+        if (o.held_by == h) release(t, o);
     closed_[h] = closed;
   }
   for (auto& o : objs_)
@@ -706,7 +681,7 @@ void ObjectMap::update(const ObjFrame& f) {
           const double px = T[0] * xc + T[1] * yc + T[2] * z + T[3];
           const double py = T[4] * xc + T[5] * yc + T[6] * z + T[7];
           const double pz = T[8] * xc + T[9] * yc + T[10] * z + T[11];
-          if (f.n_self_caps > 0 && p_.self_mask && inSelf(f, px, py, pz)) continue;   // 로봇 팔 화소(카메라 앞을 가림)
+          if (f.n_self_caps > 0 && inSelf(f, px, py, pz)) continue;   // 로봇 팔 화소(카메라 앞을 가림)
           X.push_back(px); Y.push_back(py); Z.push_back(pz); ZC.push_back(z);
           PU.push_back(wcol_[ci + 1]); PV.push_back(int32_t(yi));
         }

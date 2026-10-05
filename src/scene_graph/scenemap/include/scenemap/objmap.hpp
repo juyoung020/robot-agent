@@ -25,7 +25,7 @@
 //            link_d0 + link_v·시간 차), n 자리를 처음 검출한 거리 이하에서 link_view_gap_s 넘게 전에 본 적 있음, n 에 더 가까운 같은
 //            이름 물체가 n 이후 아직 안 보였으면 link_wait_s 까지 기다림) 를 가까운 쌍부터 이어 n 을 m 의 id 로(relink)
 //   들기   : 그리퍼가 닫혀 멈췄을 때 팔 끝 grasp_r 안 가장 가까운 들 수 있는 확정 물체를 든 것으로 — 드는 동안 팔 끝을 따라가고,
-//            (grasp_check: 그리퍼가 닫힌 채 멈췄을 때(grip_settle_s 동안 grip_settle_eps 안) 한 번만 고르고, 큰 것·고정 종류·지도
+//            (그리퍼가 닫힌 채 멈췄을 때(grip_settle_s 동안 grip_settle_eps 안) 한 번만 고르고, 큰 것·고정 종류·지도
 //            상자 가운데 변 > grasp_max_w 는 못 듦, 손끝 틈(grip_gap 표) ≥ grasp_min_gap(빈손이면 끝까지 닫힘)이고 틈이 물체 폭과 맞아야
 //            (가장 좁은 변 − grasp_w_tol ≤ 틈 ≤ 가장 넓은 변 + grasp_w_tol). 든 뒤 끝까지 닫히면(놓침) 놓기)
 //            열리는 순간 그 자리에 놓는다(moved_d 넘게 옮겼으면 옮겨짐). 놓은 점 아래에 xy 가 겹치는(0.1 m 여유) 다른 물체
@@ -65,8 +65,7 @@ struct ObjParams {
   double grasp_r = 0.12;          // 그리퍼가 닫힐 때 이 안 물체를 듦
   float grip_closed = 0.6f;       // omx_gripper_joint_1 rad(0 닫힘 .. 1.745 다 열림)가 이보다 작으면 닫힘(틈 ≈ 6.6 cm — 6 cm 물체를 쥐어도 닫힘)
   int n_hands = 1;                // 팔 하나(둘째 칸은 첫째와 같은 값을 받지만 잡기에는 안 씀)
-  // 잡기 확인: 팔이 카메라 앞을 가린 채 빈손으로 닫혀도 뒤 탁자를 들지 않게(끄면 닫히는 순간 grasp_r 안 가장 가까운 확정 물체 — 진단용)
-  bool grasp_check = true;
+  // 잡기 확인: 팔이 카메라 앞을 가린 채 빈손으로 닫혀도 뒤 탁자를 들지 않게
   double grasp_max_w = 0.06;      // 물체 지도 상자(10~90 백분위)의 가운데 변이 이보다 크면 못 듦(그리퍼 한도. 한 축만 긴 것은 됨)
   double grasp_min_gap = 0.005;   // 손끝 틈이 이보다 작으면(끝까지 닫힘) 빈손
   double grasp_w_tol = 0.025;     // 틈과 물체 폭이 맞음: 가장 좁은 변 − tol ≤ 틈 ≤ 가장 넓은 변 + tol(지도 상자는 10~90 백분위·일부만 보임)
@@ -74,7 +73,6 @@ struct ObjParams {
   // 그리퍼 값 → 잡는 점의 손끝 틈 m(오름차순, 사이는 선형, 밖은 끝값). E0(src/robot/og/e0/results) 쥔 각도(폭 1·2·3·4 cm),
   // 그 위는 finger_gap_hull 의 link5 x 0.08 틈(30° 55 mm, 45° 93 mm)
   std::vector<std::pair<double, double>> grip_gap = {{0.0, 0.0}, {0.095, 0.01}, {0.231, 0.02}, {0.347, 0.03}, {0.408, 0.04}, {0.5236, 0.0551}, {0.7854, 0.0933}};
-  bool self_mask = true;          // ObjFrame.self_caps 가 있으면 그 안 점을 버림(진단: SM_OBJ_PARAMS self_mask=0 으로 끔)
   double self_pad = 0.01;         // 팔 캡슐 거르기 여유(m)
   int step = 1;                   // 깊이 화소 간격(최소)
   int max_pts = 6000;             // 검출 하나에서 훑는 화소 수 한도: 큰 상자는 간격을 넓힘(백분위·중앙값에는 충분)
@@ -316,7 +314,7 @@ class ObjectMap {
   std::vector<uint8_t> kinds_, floor_cls_;
   uint32_t next_id_ = 1;
   bool closed_[2] = {false, false};
-  // grasp_check: 그리퍼 값 기준·그때 시각(멈춤 판정), 이번 닫힘에서 이미 골랐는지
+  // 잡기 확인: 그리퍼 값 기준·그때 시각(멈춤 판정), 이번 닫힘에서 이미 골랐는지
   double gref_[2] = {0, 0}, gref_t_[2] = {-1e300, -1e300};
   bool tried_[2] = {false, false};
   double gripGap(double g) const;

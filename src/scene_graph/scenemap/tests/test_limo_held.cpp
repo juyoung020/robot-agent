@@ -1,7 +1,6 @@
 // LIMO 잡기 규칙(held)과 팔 가림 — C ABI 로, 합성 깊이(바닥·탁자·컵 + 순기구학 팔 캡슐을 광선 추적) + 검출 마스크.
 //   1) 탁자 앞을 팔이 가림(검출기가 가린 팔 화소를 탁자 마스크에 넣음) → 그리퍼가 빈손으로 끝까지 닫힘:
 //      탁자는 held 가 아니고 옮겨짐·사라짐도 아님, 상자가 팔 쪽으로 자라지 않음.
-//      대조: 옛 규칙(SM_OBJ_PARAMS grasp_check=0,self_mask=0)이면 같은 입력에서 탁자가 held 가 됨(시험이 뜻 있음)
 //   2) 컵(4 × 4 × 8 cm)이 잡는 점에: 그리퍼 열린 채 → held 아님, 끝까지 닫힘(0 rad, 빈손) → held 아님,
 //      다시 열고 4 cm 를 쥔 각도(0.41 rad, E0)로 닫혀 멈춤 → held
 //   3) 큰 컵(8 × 8 × 8 cm, 그리퍼 한도 넘음)은 0.41 rad 로 닫혀도 held 아님
@@ -223,11 +222,6 @@ int main() {
     CHECK(st == SM_SEEN && !bad, "table under the occluding arm, gripper closed on nothing: not held / moved / gone (state %d, ever bad %d)", st, bad);
     CHECK(mv < 0.03, "table position unchanged by the arm pixels (%.3f m)", mv);
     CHECK(lo > 0.30, "table box did not grow toward the arm (front face x %.3f, true 0.34)", lo);
-    // 대조: 옛 규칙(잡기 확인·팔 거르기 끔)이면 같은 입력에서 held — 이 시험이 실제 실패를 잡음
-    double mv0 = 0, lo0 = 0;
-    int bad0 = 0;
-    const int st0 = tableRun("grasp_check=0,self_mask=0", &mv0, &lo0, &bad0);
-    CHECK(st0 == SM_HELD || bad0, "control: old rule marks the table held (state %d, ever bad %d, front %.3f)", st0, bad0, lo0);
   }
   // 2) 작은 컵이 잡는 점에(공중 받침 — 몸통 카메라에 보이는 높이)
   {
