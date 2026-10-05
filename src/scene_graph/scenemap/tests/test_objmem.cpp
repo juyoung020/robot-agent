@@ -105,20 +105,11 @@ static void render(Frame& f, const std::vector<Rect>& rs, float bg, uint32_t see
   d.mask_bits = f.bits.data();
 }
 
-// 실제 시연 한 장면의 관절(test_fk 와 같은 표본) — 머리가 앞 아래를 봄. 팔 끝은 로봇 뒤로 치움(손 거르기에 안 걸리게)
+// LIMO proprio: 오도메트리 0, 속도 0, 팔 접은 자세(OMX-F home)·그리퍼 닫힘 — 손은 몸 가까이라 장면 물체(1.5 m 이상)를 안 가림
 static std::vector<float> proprio() {
-  static const float S[61] = {
-      0.f, 0.f, 0.f, -0.5135943f, 0.1073003f, -0.0477751f, -1.0079254f, 0.3504786f, 0.6210044f,
-      0.5144721f, -0.0518736f, -0.0281572f, -0.0266854f, -0.2630615f, 0.6464736f, -0.2789042f, 0.010686f, 0.6501044f,
-      0.3716516f, 0.5129846f, -0.1484585f, 0.941596f, 0.1572233f, 0.2581432f, 0.0075572f, 0.0003005f, 0.0209931f,
-      -0.0171822f, -0.4822987f, 0.1745f, 0.7338722f, -1.5772073f, -0.0225522f, 1.0406232f, 0.0773677f, -0.0002653f,
-      0.0003976f, 0.0011009f, 0.0045551f, 0.0169314f, 0.0107928f, 0.0021622f, 0.5823845f, 0.0940711f, 0.6938694f,
-      -0.3479472f, 0.8557385f, 0.1888288f, 0.3331488f, 0.05f, 0.0244954f, 0.008631f, 0.0002444f, 1.2696129f, -1.896482f,
-      -0.9405322f, -0.0004273f, -0.0026646f, -0.0017128f, 0.0187404f, -0.0033622f};
-  std::vector<float> q(S, S + 61);
-  q[17] = -2.0f; q[18] = 1.0f; q[19] = 0.2f;    // 왼 팔 끝(베이스 기준)
-  q[42] = -2.0f; q[43] = -1.0f; q[44] = 0.2f;   // 오른 팔 끝
-  q[24] = q[25] = q[49] = q[50] = 0.05f;        // 그리퍼 열림(합 0.1)
+  std::vector<float> q(12, 0.f);
+  const float arm[5] = {0.f, 1.3f, -1.9f, 0.7f, 0.f};
+  for (int k = 0; k < 5; ++k) q[SM_LIMO_ARM_Q + k] = arm[k];
   return q;
 }
 
@@ -127,14 +118,14 @@ struct Rig {
   std::vector<float> q = proprio();
   Frame f;
   explicit Rig(const std::vector<const char*>& labels) {
-    c = sm_create("{\"robot\": \"r1pro\"}");
+    c = sm_create(nullptr);
     sm_set_labels(c, labels.data(), int(labels.size()));
   }
   ~Rig() { sm_destroy(c); }
   // 시각 t 에 proprio + 영상(장면 rs) 하나. 돌려줌: sm_push_image_ex 시간 ms
   double kf(double t, const std::vector<Rect>& rs, float bg = 3.0f, bool with_rgb = true, bool with_dets = true) {
     render(f, rs, bg, uint32_t(t * 1000) + 7);
-    sm_proprio p{t, q.data(), 61};
+    sm_proprio p{t, q.data(), 12};
     sm_push_proprio(c, &p);
     sm_image im{};
     im.stamp = t; im.cam = 0; im.w = W; im.h = H;
@@ -489,7 +480,7 @@ static void testInspect(const std::string& dir) {
   sm_ctx* c = sm_create("{\"inspect\": 1, \"robot\": \"limo_omx\"}");
   CHECK(c != nullptr, "create");
   if (c) {
-    sm_set_robot(c, SM_ROBOT_R1PRO);
+    sm_set_robot(c, SM_ROBOT_LIMO_OMX);
     sm_snapshot_t* s = nullptr;
     sm_snapshot(c, &s);
     const sm_inspect* q = nullptr;
@@ -716,44 +707,7 @@ static void testCloud() {
     std::printf("  한도 500(복셀 0.005): 최대 %d 점\n", maxn);
     CHECK(maxn > 300 && maxn <= 500, "cap %d", maxn);
   }
-  // (c) 들기: 팔 끝을 컵에 대고 그리퍼 닫음 → 팔을 +0.3 m(x) 옮기면 구름도 같이 0.3 m
-  {
-    Rig g(kLabels);
-    const Rect cup = R(C_CUP, 300, 300, 340, 340, 1.5f, 250, 0, 0);
-    for (int k = 0; k < 4; ++k) g.kf(0.2 * k, {cup});
-    double before[3] = {0, 0, 0}, opos[3] = {0, 0, 0};
-    uint32_t id = 0;
-    {
-      Snap s(g.c);
-      const sm_object* o = s.byName("cup");
-      sm_view v{};
-      if (o && sm_snap_view(s.s, o->id, &v) == 1) {
-        id = o->id;
-        const CloudCheck c = checkCloud(s.s, o->id, v.cam_T, cup);
-        for (int k = 0; k < 3; ++k) { before[k] = c.mean[k]; opos[k] = o->pos[k]; }
-      }
-    }
-    // 베이스는 원점(속도 0) → map = 베이스. 왼 팔 끝을 물체 자리로, 닫음
-    g.q[17] = float(opos[0]); g.q[18] = float(opos[1]); g.q[19] = float(opos[2]);
-    g.q[24] = g.q[25] = 0.02f;
-    g.kf(1.0, {}, 3.0f, true, false);
-    g.q[17] += 0.3f;
-    g.kf(1.2, {}, 3.0f, true, false);
-    Snap s(g.c);
-    const sm_object* o = s.byName("cup");
-    sm_cloud cl{};
-    double mean[3] = {0, 0, 0};
-    if (o && sm_snap_points(s.s, id, &cl) == 1)
-      for (int i = 0; i < cl.n; ++i) {
-        mean[0] += (cl.origin[0] + cl.pts[i].x) / cl.n;
-        mean[1] += (cl.origin[1] + cl.pts[i].y) / cl.n;
-        mean[2] += (cl.origin[2] + cl.pts[i].z) / cl.n;
-      }
-    std::printf("  들기: 상태 %d(3=held), 구름 중심 이동 (%.3f, %.3f, %.3f)\n", o ? o->state : -1, mean[0] - before[0], mean[1] - before[1],
-                mean[2] - before[2]);
-    CHECK(o && o->state == SM_HELD, "held state");
-    CHECK(std::fabs(mean[0] - before[0] - 0.3) < 1e-3 && std::fabs(mean[1] - before[1]) < 1e-3, "held cloud follows hand");
-  }
+  // (c) 들기(구름이 손을 따라감)는 tests/test_limo_e2e.cpp 가 LIMO 순기구학 팔로 본다
   // (d) 사라짐 → 구름 유지, 다른 자리(전에 본 곳)에 나타난 같은 이름 물체를 다시 이음(옮겨짐) → 새 자리 점만.
   //     잇기는 새 물체가 link_min_obs 번 보이고, 그 자리를 link_view_gap_s(5 s) 넘게 전에 본 적 있어야
   {

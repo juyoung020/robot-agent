@@ -1,34 +1,28 @@
 // scenemap — 순기구학(proprio 관절값 + URDF 표). 평가 규칙상 카메라 자세·팔 자세는 이것으로만 만든다.
 //
-// 로봇 둘(scenemap.h SM_ROBOT_*):
-//   R1 Pro(기본)  — 표 include/scenemap/r1pro_fk_table.hpp(tools/gen_fk_table.py ← src/sim/integ/fk/r1pro_cam_fk.json).
-//                   src/agent/planner/src/fk.rs 와 같은 계산. proprio 61.
-//   LIMO + OMX-F — 표 include/scenemap/limo_omx_fk_table.hpp(tools/gen_limo_fk_table.cpp ← map_vla.urdf(robot-agent src/robot/tools/build_urdf.sh 가 저장소 xacro 에서 펼침)).
-//                   베이스 프레임 = base_footprint(바닥). proprio 12(scenemap.h SM_LIMO_*).
+// 로봇: LIMO + OMX-F 하나(scenemap.h SM_ROBOT_LIMO_OMX).
+//   표 include/scenemap/limo_omx_fk_table.hpp(tools/gen_limo_fk_table.cpp ← map_vla.urdf(robot-agent src/robot/tools/build_urdf.sh 가 저장소 xacro 에서 펼침)).
+//   베이스 프레임 = base_footprint(바닥). proprio 12(scenemap.h SM_LIMO_*).
 #pragma once
 
 namespace scenemap {
 
-enum RobotKind { kRobotR1Pro = 0, kRobotLimoOmx = 1 };
+enum RobotKind { kRobotLimoOmx = 0 };
 
-constexpr int kProprioDim = 61;       // R1 Pro
 constexpr int kLimoProprioDim = 12;   // LIMO + OMX-F (뒤에 바퀴 각 4 개는 선택, 뷰어용)
-constexpr int kMaxProprioDim = 61;    // 내부 저장 크기(로봇 중 가장 긴 것)
-inline int proprioDim(int robot) { return robot == kRobotLimoOmx ? kLimoProprioDim : kProprioDim; }
+constexpr int kMaxProprioDim = 16;    // 내부 저장 크기(12 + 바퀴 각 4)
+inline int proprioDim(int) { return kLimoProprioDim; }
 
 struct BodyFk {
   float T_head[12];            // 베이스 ← 머리(LIMO: 깊이) 카메라 광학 프레임(행 우선 3×4) — 스캔에 쓰는 T_bc
   float cam_rel[3][7];         // 카메라 prim 자세(xyz + xyzw, 평가기 cam_rel_poses 와 같은 뜻: −z 앞, y 위)
-  // 팔 뼈대: R1 = 팔 받침, 관절 1..7 원점, 그리퍼, 손가락 끝(그리퍼에서 마지막 링크 방향으로 0.15 m).
-  //          LIMO = omx_link0, 관절 1..5 원점, omx_end_effector_link(T_tip, 나머지는 마지막 점 되풀이)
+  // 팔 뼈대: omx_link0, 관절 1..5 원점, omx_end_effector_link(T_tip, 나머지는 마지막 점 되풀이)
   static constexpr int kArmPts = 11;
   float arm[2][kArmPts][3];
-  float torso[6][3];           // R1: 베이스 원점 위, 몸통 관절 1..4 원점, 머리 카메라. LIMO: 안 씀
-  int n_arms;                  // 쓰는 팔 수(R1 2, LIMO 1) — computeBodyFk·limoBodyFk 가 채움
-  int n_torso;                 // 쓰는 torso 점 수(R1 6, LIMO 0 — 몸은 스캔의 self_r 원으로 뺌)
+  float torso[6][3];           // 안 씀(몸통 관절 없음)
+  int n_arms;                  // 쓰는 팔 수(1) — limoBodyFk 가 채움
+  int n_torso;                 // 쓰는 torso 점 수(0 — 몸은 스캔의 self_r 원으로 뺌)
 };
-
-void computeBodyFk(const float* proprio, BodyFk* out);   // R1 Pro
 
 // LIMO + OMX-F(배정밀도). 모든 자세 = base_footprint ← 그 프레임, 행 우선 3×4
 struct LimoFk {

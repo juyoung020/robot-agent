@@ -2,7 +2,7 @@
 // 장면 그래프)으로 돌린다. scenemap·ovdet·sgclip 은 이 저장소(src/scene_graph)의 것을 같이 빌드해 C ABI 로만 쓴다.
 //
 //   realbag_run <stream dir>[,<stream dir>…] <out dir> [옵션]
-//     --robot limo_omx|r1pro   scenemap 로봇 매개변수(기본 limo_omx — 우리 로봇의 SLAM·몸 크기 설정)
+//     --robot limo_omx         scenemap 로봇(limo_omx 하나 — 우리 로봇의 SLAM·몸 크기 설정)
 //     --pose carto|odom|gt     자세 원천(기본 carto = Cartographer(../../slam_carto): 2D 라이다 scans.bin + 바퀴 오도메트리(bag2stream.py
 //                              --scan-only) → 영상마다 sm_push_ext_pose(SM_POSE_EXT). slam = carto(옛 이름 — 깊이 맞추기 slam2d 는 10-06 archive).
 //                              스트림에 scans.bin 이 없으면 경고하고 odom. --carto-config <lua>(기본 openloris → openloris_hokuyo.lua),
@@ -38,7 +38,7 @@
 #include <set>
 #include <thread>
 
-#include "dom_seq.hpp"   // PNG 읽기(scenemap/tools)
+#include "png_io.hpp"   // PNG 읽기(scenemap/tools)
 #include "ovdet.h"
 #include "rb_util.hpp"   // JSON·폴더·JPEG·스트림 받기
 #include "sgclip.h"
@@ -117,8 +117,8 @@ bool loadStream(const std::string& dir, Stream* s) {
   if (s->name.empty()) s->name = fs::path(dir).parent_path().filename().string();
   const std::string js = slurp(dir + "/meta.json");
   if (js.empty()) return false;
-  s->w = int(dom::jsonNum(js, "width")); s->h = int(dom::jsonNum(js, "height"));
-  s->fx = dom::jsonNum(js, "fx"); s->fy = dom::jsonNum(js, "fy"); s->cx = dom::jsonNum(js, "cx"); s->cy = dom::jsonNum(js, "cy");
+  s->w = int(pio::jsonNum(js, "width")); s->h = int(pio::jsonNum(js, "height"));
+  s->fx = pio::jsonNum(js, "fx"); s->fy = pio::jsonNum(js, "fy"); s->cx = pio::jsonNum(js, "cx"); s->cy = pio::jsonNum(js, "cy");
   {
     const size_t k = js.find("\"kind\"");
     const size_t a = js.find('"', js.find(':', k) + 1), b = js.find('"', a + 1);
@@ -139,7 +139,7 @@ bool loadStream(const std::string& dir, Stream* s) {
   std::string line;
   std::getline(fi, line);
   while (std::getline(fi, line)) {
-    const auto v = dom::splitCsv(line);
+    const auto v = pio::splitCsv(line);
     if (v.size() < 10) continue;
     FrameRow f{};
     f.idx = std::atoi(v[0].c_str()); f.stamp = std::atof(v[1].c_str());
@@ -234,7 +234,7 @@ bool loadPgm(const std::string& dir, Pgm* m) {
   m->v.resize(size_t(m->w) * m->h);
   f.read(reinterpret_cast<char*>(m->v.data()), std::streamsize(m->v.size()));
   const std::string y = slurp(dir + "/map.yaml");
-  m->res = dom::jsonNum(y, "resolution");
+  m->res = pio::jsonNum(y, "resolution");
   if (!(m->res > 0)) {   // yaml: "resolution: 0.05"
     const size_t p = y.find("resolution:");
     m->res = std::atof(y.c_str() + p + 11);
@@ -504,7 +504,7 @@ const char* stateName(int s) { return s == SM_SEEN ? "seen" : s == SM_GONE ? "go
 
 int main(int argc, char** argv) {
   if (argc < 3) {
-    std::fprintf(stderr, "usage: realbag_run <stream dir>[,<stream dir>...] <out dir> [--robot limo_omx|r1pro] [--pose carto|odom|gt] "
+    std::fprintf(stderr, "usage: realbag_run <stream dir>[,<stream dir>...] <out dir> [--robot limo_omx] [--pose carto|odom|gt] "
                          "[--det fastsam|yolo|none] [--namer siglip|engine] [--det-every 3] [--dump f.gz|--load f.gz] [--live host:port] [--rate 1] [--sg run_dir] "
                          "[--ref-map memdir] [--snap-at t,..] [--frames N] [--objprob [--label-prior f.json]] [--inspect]\n");
     return 2;
@@ -668,8 +668,7 @@ int main(int argc, char** argv) {
 #endif
   }
   sm_set_cam_extrinsic(c, 0, streams[0].T_bc);
-  const bool limo = robot == "limo_omx";
-  const int n_prop = limo ? SM_LIMO_PROPRIO_DIM : SM_R1PRO_PROPRIO_DIM;
+  const int n_prop = SM_LIMO_PROPRIO_DIM;
 
   // 스트림·기록
   rb::Capture cap;
@@ -710,26 +709,14 @@ int main(int argc, char** argv) {
   const auto w0 = std::chrono::steady_clock::now();
   bool have_first = false;
   double f_ex = 0, f_ey = 0, f_eyaw = 0, f_gx = 0, f_gy = 0, f_gyaw = 0, f_px = 0, f_py = 0, f_pyaw = 0;   // 첫 정답 프레임(첫 프레임 맞춤)
-  double prev_ox = 0, prev_oy = 0, prev_oyaw = 0, prev_ot = -1;             // R1: 오도메트리 차 → base_qvel
 
   auto make_prop = [&](const Odo& o) {
     std::fill(prop.begin(), prop.end(), 0.f);
-    if (limo) {
-      prop[SM_LIMO_ODOM_X] = float(o.x); prop[SM_LIMO_ODOM_Y] = float(o.y); prop[SM_LIMO_ODOM_YAW] = float(o.yaw);
-      prop[SM_LIMO_VX] = float(o.vx); prop[SM_LIMO_VY] = float(o.vy); prop[SM_LIMO_WZ] = float(o.wz);
-      const float home_q[5] = {0.f, -1.6f, 1.45f, 0.15f, 0.f};   // OMX 홈(팔 접음), 그리퍼 0(닫힌 채 그대로 — 잡기 규칙 안 걸림)
-      for (int k = 0; k < 5; ++k) prop[size_t(SM_LIMO_ARM_Q + k)] = home_q[k];
-      prop[SM_LIMO_GRIPPER] = 0.f;
-    } else {   // R1 61: base_qvel(0..2) = 이 구간 속도(베이스 기준) — 오도메트리 자세 차에서
-      if (prev_ot >= 0 && o.t > prev_ot + 1e-6) {
-        const double dt = o.t - prev_ot, c0 = std::cos(prev_oyaw), s0 = std::sin(prev_oyaw);
-        const double dx = o.x - prev_ox, dy = o.y - prev_oy;
-        prop[0] = float((c0 * dx + s0 * dy) / dt); prop[1] = float((-s0 * dx + c0 * dy) / dt); prop[2] = float(wrap(o.yaw - prev_oyaw) / dt);
-      }
-      prev_ox = o.x; prev_oy = o.y; prev_oyaw = o.yaw; prev_ot = o.t;
-      for (int k : {19, 44}) prop[size_t(k)] = -100.f;
-      for (int k : {24, 25, 49, 50}) prop[size_t(k)] = 0.05f;
-    }
+    prop[SM_LIMO_ODOM_X] = float(o.x); prop[SM_LIMO_ODOM_Y] = float(o.y); prop[SM_LIMO_ODOM_YAW] = float(o.yaw);
+    prop[SM_LIMO_VX] = float(o.vx); prop[SM_LIMO_VY] = float(o.vy); prop[SM_LIMO_WZ] = float(o.wz);
+    const float home_q[5] = {0.f, -1.6f, 1.45f, 0.15f, 0.f};   // OMX 홈(팔 접음), 그리퍼 0(닫힌 채 그대로 — 잡기 규칙 안 걸림)
+    for (int k = 0; k < 5; ++k) prop[size_t(SM_LIMO_ARM_Q + k)] = home_q[k];
+    prop[SM_LIMO_GRIPPER] = 0.f;
   };
   auto interp = [](const std::vector<Odo>& v, double t) {
     auto it = std::lower_bound(v.begin(), v.end(), t, [](const Odo& o, double tt) { return o.t < tt; });
@@ -782,14 +769,14 @@ int main(int argc, char** argv) {
       make_prop(oc);
       { const sm_proprio p{t, prop.data(), n_prop}; sm_push_proprio(c, &p); }
       // 깊이(+ 검출 프레임이면 RGB·검출)
-      if (!dom::readU16(f.depth, S.w, S.h, &dmm)) { std::fprintf(stderr, "depth %s\n", f.depth.c_str()); return 1; }
-      dom::depthToM(dmm, &dm);
+      if (!pio::readU16(f.depth, S.w, S.h, &dmm)) { std::fprintf(stderr, "depth %s\n", f.depth.c_str()); return 1; }
+      pio::depthToM(dmm, &dm);
       for (float& v : dm) if (v > max_depth) v = 0.f;   // 실제 깊이 센서: 먼 값은 잡음이 커서(구조광·스테레오 오차 ∝ z²) 무효로
       const bool kf = (fi % size_t(det_every)) == 0;
       sm_detections Dt{};
       bool have_det = false;
       if (kf) {
-        if (!dom::readRgb(f.rgb, S.w, S.h, &rgb)) { std::fprintf(stderr, "rgb %s\n", f.rgb.c_str()); return 1; }
+        if (!pio::readRgb(f.rgb, S.w, S.h, &rgb)) { std::fprintf(stderr, "rgb %s\n", f.rgb.c_str()); return 1; }
         rgba.resize(size_t(S.w) * S.h * 4);
         for (size_t i = 0; i < size_t(S.w) * S.h; ++i) { rgba[4 * i] = rgb[3 * i]; rgba[4 * i + 1] = rgb[3 * i + 1]; rgba[4 * i + 2] = rgb[3 * i + 2]; rgba[4 * i + 3] = 255; }
         if (D.mode == "load") have_det = dr[si].get(int(fi), t, &Dt);
@@ -988,7 +975,7 @@ int main(int argc, char** argv) {
     std::string line;
     std::getline(tr, line);
     while (std::getline(tr, line)) {
-      const auto v = dom::splitCsv(line);
+      const auto v = pio::splitCsv(line);
       if (v.size() < 14 || v[10] != "1") continue;
       const double t = std::atof(v[2].c_str());
       if (t - lt < 0.1) continue;
@@ -1178,7 +1165,7 @@ int main(int argc, char** argv) {
                                                 .raw("gt_path", gtjson).raw("labels", "{}").raw("cams", camjson + "]").num("duration", t_end)
                                                 .raw("stream", Obj().num("frames", double(cap.frames)).num("pose", double(cap.by_type[1])).num("map", double(cap.by_type[2]))
                                                                    .num("view", double(cap.by_type[3])).num("joints", double(cap.by_type[4])).num("dropped", double(st.dropped)).done())
-                                                .raw("joint_order", limo ? "[\"\",\"\",\"\",\"\",\"\",\"\",\"omx_joint1\",\"omx_joint2\",\"omx_joint3\",\"omx_joint4\",\"omx_joint5\",\"omx_gripper_joint_1\"]" : "[]")
+                                                .raw("joint_order", "[\"\",\"\",\"\",\"\",\"\",\"\",\"omx_joint1\",\"omx_joint2\",\"omx_joint3\",\"omx_joint4\",\"omx_joint5\",\"omx_gripper_joint_1\"]")
                                                 .num("n_objects", n_live).raw("metrics", metrics).done();
     const std::string ep = Obj().num("ep", 0).str("skill", "realbag").str("home", snames).str("task", streams[0].kind).str("stage", "real")
                                .str("outcome", "realbag").str("driver", "human").raw("success", "null").num("t", t_end).num("steps", double(n_frames))

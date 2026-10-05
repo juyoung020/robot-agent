@@ -111,7 +111,7 @@ int main() {
   }
   std::vector<float> dep;
   std::vector<int> hit;
-  // 2. 위에서 본 탁자(R1 머리 높이 1.5 m, 45° 아래): 거의 다 봄
+  // 2. 위에서 본 탁자(카메라 높이 1.5 m, 45° 아래): 거의 다 봄
   {
     InspectState s;
     const Cam c(-0.5, 0.4, 1.5, 0, -0.75);
@@ -192,7 +192,7 @@ int main() {
     CHECK(std::fabs(inspTopSeen(s, kTable.lo, kTable.hi, p) - 0.5f) < 1e-6f && std::fabs(s.closest - 0.7f) < 1e-6f && s.nViews() == 1,
           "merge %.3f %.2f %d", inspTopSeen(s, kTable.lo, kTable.hi, p), s.closest, s.nViews());
   }
-  // 6. ObjectMap 통합: 탁자에 다가가는 R1 높이 카메라 — 켜도 물체·사건은 꺼짐과 같음
+  // 6. ObjectMap 통합: 탁자에 다가가는 1.5 m 높이 카메라 — 켜도 물체·사건은 꺼짐과 같음
   {
     ObjParams on, off;
     on.insp.on = true;

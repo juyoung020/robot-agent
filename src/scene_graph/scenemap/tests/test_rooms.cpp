@@ -452,7 +452,7 @@ static void testSave(const RoomParams& P, const fs::path& dir) {
 // C ABI: 빈 지도에서도 안전, 설정 왕복
 static void testCapi() {
   std::printf("C ABI\n");
-  sm_ctx* c = sm_create("{\"robot\": \"r1pro\"}");
+  sm_ctx* c = sm_create(nullptr);
   sm_room_params rp;
   CHECK(sm_get_room_params(c, &rp) == 0 && std::fabs(rp.dil_max_m - 0.60) < 1e-9, "get params");
   rp.dil_max_m = 0.65;

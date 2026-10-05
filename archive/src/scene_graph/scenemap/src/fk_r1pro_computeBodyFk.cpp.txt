@@ -1,0 +1,50 @@
+}
+
+}  // namespace
+
+void computeBodyFk(const float* q, BodyFk* o) {
+  std::memset(o, 0, sizeof(*o));
+  o->n_arms = 2;
+  o->n_torso = 6;
+  const r1pro::ChainDef* chains[3] = {&r1pro::k_head_chain, &r1pro::k_left_wrist_chain, &r1pro::k_right_wrist_chain};
+  for (int c = 0; c < 3; ++c) {
+    M3 R;
+    double t[3];
+    int na = 0;
+    walk(*chains[c], q, [&](int k, const r1pro::JointDef& j, const M3&, const double* tj) {
+      if (c == 0 && k < 4) {
+        for (int i = 0; i < 3; ++i) o->torso[k + 1][i] = float(tj[i]);
+      }
+      if (c > 0) {
+        const bool arm = std::strstr(j.name, "arm_") || std::strstr(j.name, "gripper_joint");
+        if (arm && na < BodyFk::kArmPts - 1) {
+          for (int i = 0; i < 3; ++i) o->arm[c - 1][na][i] = float(tj[i]);
+          ++na;
+        }
+      }
+    }, &R, t);
+    double qq[4];
+    toQuat(R, qq);
+    for (int i = 0; i < 3; ++i) o->cam_rel[c][i] = float(t[i]);
+    for (int i = 0; i < 4; ++i) o->cam_rel[c][3 + i] = float(qq[i]);
+    if (c == 0) {
+      // 광학 프레임 = prim 자세 × diag(1, −1, −1)
+      for (int i = 0; i < 3; ++i) {
+        o->T_head[i * 4 + 0] = float(R.m[i][0]);
+        o->T_head[i * 4 + 1] = float(-R.m[i][1]);
+        o->T_head[i * 4 + 2] = float(-R.m[i][2]);
+        o->T_head[i * 4 + 3] = float(t[i]);
+        o->torso[5][i] = float(t[i]);
+      }
+    } else {
+      // 손가락 끝: 그리퍼 원점에서 마지막 링크 방향(팔 끝 쪽 −z 가 아니라 직전 관절→그리퍼 방향)으로 0.15 m
+      const float* g = o->arm[c - 1][na - 1];
+      const float* p = o->arm[c - 1][na - 2];
+      float dir[3] = {g[0] - p[0], g[1] - p[1], g[2] - p[2]};
+      const float n = std::sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+      for (int i = 0; i < 3; ++i) o->arm[c - 1][na][i] = g[i] + (n > 1e-6f ? 0.15f * dir[i] / n : 0.f);
+      ++na;
+      for (; na < BodyFk::kArmPts; ++na)
+        for (int i = 0; i < 3; ++i) o->arm[c - 1][na][i] = o->arm[c - 1][na - 1][i];
+    }
+  }

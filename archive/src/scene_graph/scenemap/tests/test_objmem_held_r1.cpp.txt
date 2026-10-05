@@ -1,0 +1,39 @@
+// test_objmem.cpp (c) — R1 proprio 의 팔 끝(17:20)을 직접 정해 구름이 손을 따라가는지 보던 부분. LIMO 는 팔 끝이 순기구학이라 tests/test_limo_e2e.cpp(4) 가 같은 것을 봄
+  // (c) 들기: 팔 끝을 컵에 대고 그리퍼 닫음 → 팔을 +0.3 m(x) 옮기면 구름도 같이 0.3 m
+  {
+    Rig g(kLabels);
+    const Rect cup = R(C_CUP, 300, 300, 340, 340, 1.5f, 250, 0, 0);
+    for (int k = 0; k < 4; ++k) g.kf(0.2 * k, {cup});
+    double before[3] = {0, 0, 0}, opos[3] = {0, 0, 0};
+    uint32_t id = 0;
+    {
+      Snap s(g.c);
+      const sm_object* o = s.byName("cup");
+      sm_view v{};
+      if (o && sm_snap_view(s.s, o->id, &v) == 1) {
+        id = o->id;
+        const CloudCheck c = checkCloud(s.s, o->id, v.cam_T, cup);
+        for (int k = 0; k < 3; ++k) { before[k] = c.mean[k]; opos[k] = o->pos[k]; }
+      }
+    }
+    // 베이스는 원점(속도 0) → map = 베이스. 왼 팔 끝을 물체 자리로, 닫음
+    g.q[17] = float(opos[0]); g.q[18] = float(opos[1]); g.q[19] = float(opos[2]);
+    g.q[24] = g.q[25] = 0.02f;
+    g.kf(1.0, {}, 3.0f, true, false);
+    g.q[17] += 0.3f;
+    g.kf(1.2, {}, 3.0f, true, false);
+    Snap s(g.c);
+    const sm_object* o = s.byName("cup");
+    sm_cloud cl{};
+    double mean[3] = {0, 0, 0};
+    if (o && sm_snap_points(s.s, id, &cl) == 1)
+      for (int i = 0; i < cl.n; ++i) {
+        mean[0] += (cl.origin[0] + cl.pts[i].x) / cl.n;
+        mean[1] += (cl.origin[1] + cl.pts[i].y) / cl.n;
+        mean[2] += (cl.origin[2] + cl.pts[i].z) / cl.n;
+      }
+    std::printf("  들기: 상태 %d(3=held), 구름 중심 이동 (%.3f, %.3f, %.3f)\n", o ? o->state : -1, mean[0] - before[0], mean[1] - before[1],
+                mean[2] - before[2]);
+    CHECK(o && o->state == SM_HELD, "held state");
+    CHECK(std::fabs(mean[0] - before[0] - 0.3) < 1e-3 && std::fabs(mean[1] - before[1]) < 1e-3, "held cloud follows hand");
+  }

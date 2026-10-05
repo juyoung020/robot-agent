@@ -24,18 +24,9 @@ static const int W = 360, H = 360;
 static const double FX = 153, CX = 180;   // 720² 의 306 을 반으로
 
 static std::vector<float> proprio() {
-  static const float S[61] = {
-      0.f, 0.f, 0.f, -0.5135943f, 0.1073003f, -0.0477751f, -1.0079254f, 0.3504786f, 0.6210044f,
-      0.5144721f, -0.0518736f, -0.0281572f, -0.0266854f, -0.2630615f, 0.6464736f, -0.2789042f, 0.010686f, 0.6501044f,
-      0.3716516f, 0.5129846f, -0.1484585f, 0.941596f, 0.1572233f, 0.2581432f, 0.0075572f, 0.0003005f, 0.0209931f,
-      -0.0171822f, -0.4822987f, 0.1745f, 0.7338722f, -1.5772073f, -0.0225522f, 1.0406232f, 0.0773677f, -0.0002653f,
-      0.0003976f, 0.0011009f, 0.0045551f, 0.0169314f, 0.0107928f, 0.0021622f, 0.5823845f, 0.0940711f, 0.6938694f,
-      -0.3479472f, 0.8557385f, 0.1888288f, 0.3331488f, 0.05f, 0.0244954f, 0.008631f, 0.0002444f, 1.2696129f, -1.896482f,
-      -0.9405322f, -0.0004273f, -0.0026646f, -0.0017128f, 0.0187404f, -0.0033622f};
-  std::vector<float> q(S, S + 61);
-  q[17] = -2.0f; q[18] = 1.0f; q[19] = 0.2f;
-  q[42] = -2.0f; q[43] = -1.0f; q[44] = 0.2f;
-  q[24] = q[25] = q[49] = q[50] = 0.05f;
+  std::vector<float> q(12, 0.f);
+  const float arm[5] = {0.f, 1.3f, -1.9f, 0.7f, 0.f};   // 팔 접은 자세(몸통 카메라를 안 가림)
+  for (int k = 0; k < 5; ++k) q[SM_LIMO_ARM_Q + k] = arm[k];
   return q;
 }
 
@@ -44,8 +35,11 @@ struct Box { double lo[3], hi[3]; };
 // world 자세 (x, y, yaw) 의 로봇 머리 카메라로 방 + 상자들의 깊이(광학 z)
 static void render(const double pose[3], const std::vector<Box>& boxes, std::vector<float>* depth) {
   static const std::vector<float> q = proprio();
+  scenemap::LimoFk lf;
+  scenemap::computeLimoFk(q.data(), &lf);
   scenemap::BodyFk fk;
-  scenemap::computeBodyFk(q.data(), &fk);
+  float eef_unused[2][3];
+  scenemap::limoBodyFk(lf, &fk, eef_unused);
   const float* T = fk.T_head;   // 베이스 ← 광학
   const double c = std::cos(pose[2]), s = std::sin(pose[2]);
   const double o[3] = {pose[0] + c * T[3] - s * T[7], pose[1] + s * T[3] + c * T[7], T[11]};
@@ -84,7 +78,7 @@ static void render(const double pose[3], const std::vector<Box>& boxes, std::vec
 }
 
 struct Run {
-  sm_ctx* c = sm_create("{\"robot\": \"r1pro\"}");
+  sm_ctx* c = sm_create("{\"odom\": \"twist\"}");
   std::vector<float> q = proprio(), depth;
   int step = 0;
   ~Run() { sm_destroy(c); }
@@ -95,8 +89,8 @@ struct Run {
       const sm_pose2 g{t, pose[0], pose[1], pose[2]};
       sm_push_pose(c, &g);
     }
-    q[0] = float(vel[0]); q[1] = float(vel[1]); q[2] = float(vel[2]);
-    sm_proprio p{t, q.data(), 61};
+    q[SM_LIMO_VX] = float(vel[0]); q[SM_LIMO_VY] = float(vel[1]); q[SM_LIMO_WZ] = float(vel[2]);
+    sm_proprio p{t, q.data(), 12};
     sm_push_proprio(c, &p);
     if (image) {
       render(pose, boxes, &depth);

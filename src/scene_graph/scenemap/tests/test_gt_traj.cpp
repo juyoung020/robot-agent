@@ -10,7 +10,7 @@ static int g_fail = 0;
 
 int main() {
   std::printf("test_gt_traj\n");
-  sm_ctx* c = sm_create("{\"robot\": \"r1pro\"}");
+  sm_ctx* c = sm_create(nullptr);
   CHECK(c != nullptr, "create");
   CHECK(sm_set_pose_mode(c, SM_POSE_GT) == 0, "pose mode");
   // 30 Hz GT poses only: drive 3 m along +x in 10 s (0.3 m/s), then turn 90 degrees in place in 3 s

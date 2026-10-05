@@ -1,6 +1,6 @@
 # scenemap — 2D 지도 · 물체 기억 · 장면 그래프 (C++)
 
-로봇의 proprio(R1 Pro 61 f32 또는 LIMO + OMX-F 12 f32 — 아래 "LIMO + OMX-F" 절)와 머리(LIMO: 몸통 앞) 깊이, 검출(마스크 + 이름 번호)로 실시간 기억을 만든다.
+로봇(LIMO + OMX-F)의 proprio(12 f32 — 아래 "LIMO + OMX-F" 절)와 머리(LIMO: 몸통 앞) 깊이, 검출(마스크 + 이름 번호)로 실시간 기억을 만든다.
 2D 점유 격자(자세는 밖에서 — Cartographer `../slam_carto`, mapper2d 가 그 자세로 격자를 쌓음), 물체 지도(objmap), 방 나누기, 장면 그래프, 파일 저장, 뷰어 스트림까지 한다.
 밖에서는 C ABI 하나(`include/scenemap.h`)로 부른다. CUDA 는 쓰지 않는다(장치 쪽 자르기는 `../runtime`).
 설계·측정은 [docs/scenemap_설계.md](../../../docs/scenemap_설계.md).
@@ -16,7 +16,7 @@
 |---|---|
 | `include/scenemap.h` | C ABI. 판(`sm_create`·`sm_set_labels`·`sm_reset`), 입력(`sm_push_proprio`·`sm_push_image`·`_ex`·`_rgb`·`sm_push_pose`), 스냅숏 질의(물체·이름 찾기·가까운 물체·격자·벽·방·가상 스캔·best view·점 구름·그래프·`sm_snap_reachable`), 저장(`sm_save_dsg`·`_ex`), 스트림(`sm_stream_*`), 자세 원천·격자 정책·단계 시간·이름 종류 |
 | `src/capi.cpp` | C ABI 구현. 상태는 뮤텍스 하나 아래, 스냅숏은 그 순간의 자세·상태·격자를 통째로 복사(참조 카운트). 이름 종류 기본 표(구조물·고정), `sm_snap_reachable` = 격자 8방향 A*(점유 ≥ 65 % 칸을 0.30 m 부풀려 막음, 모름은 1.5배 비용) |
-| `include/scenemap/fk.hpp` · `src/fk.cpp` · `r1pro_fk_table.hpp` · `limo_omx_fk_table.hpp` | 순기구학(proprio 관절값 + URDF 표) — R1 Pro 와 LIMO + OMX-F. 카메라·팔 끝 자세는 이것으로만 만든다. 표는 `tools/gen_fk_table.py`(R1)·`tools/gen_limo_fk_table.cpp`(LIMO)가 만든다(손으로 고치지 말 것) |
+| `include/scenemap/fk.hpp` · `src/fk.cpp` · `limo_omx_fk_table.hpp` | 순기구학(proprio 관절값 + URDF 표) — LIMO + OMX-F. 카메라·팔 끝 자세는 이것으로만 만든다. 표는 `tools/gen_limo_fk_table.cpp` 가 만든다(손으로 고치지 말 것) |
 | `scan.*` | 깊이 → 베이스 기준 가상 2D 스캔. 높이 띠 안 점 = 장애물(방위 칸마다 가장 가까운 것), 띠 아래 바닥 점 = 빈 광선 끝. 로봇 몸·팔은 뺀다 |
 | `grid.*` | 2D 점유 격자(로그 오즈), 필요하면 넓어짐. 보이는 값(−1 모름, 0..100 %)을 늘 고쳐 두고, 바뀐 영역(dirty)을 추적 |
 | `mapper2d.*` | 자세는 밖에서(SM_POSE_EXT = Cartographer 기본·GT·ODOM): keyframe 사이·외부 자세가 없을 때 `base_qvel` 적분, keyframe 깊이 가상 스캔을 그 자세로 격자에 넣기(넣기 정책), 마지막 스캔. 옛 `slam2d.*`(깊이 스캔 맞추기로 자세를 고치던 것)는 10-06 `archive/src/scene_graph/scenemap` |
@@ -64,12 +64,9 @@ cmake -S src/scene_graph/scenemap -B ~/scenemap_build && cmake --build ~/scenema
 
 | 도구 | 하는 일 |
 |---|---|
-| `map_timeline <ep.bin> <det.bin> <out dir> [--min-cells N]` | 팀 벤치마크 형식 지도 시간표 `map_timeline.csv`, 물체 점 `map_points.npz` |
-| `dom_bench <seq dir> <pred root> [--min-px 100] [--every 1] [--bench-static]` | dynamic-object-mapping-benchmark 시퀀스(toolkit 배치)를 '완벽한 검출'(정답 인스턴스 마스크 + 범주)로 넣어 `<pred root>/<seq>/map_timeline.csv`·`map_points.npz`. 카메라만 있는 기록은 `sm_set_cam_extrinsic`(베이스 = 카메라 바닥 투영, GT 자세 모드)으로 넣는다(`tools/dom_seq.hpp`, libpng 있을 때만 빌드). 실제 검출판은 `../runtime/tools/dom_bench_det.cpp`(`--dump dets.gz` 로 검출·이름을 남기고 `--load` 로 GPU 없이 scenemap 만 다시 돌림 — 규칙 비교용). `moving` 열 = 든 것, 또는 옮겨짐 상태이고 두 프레임 잇달아 중심이 3 cm/프레임 넘게 옮겨 간 것(지도 출력만으로). 점수는 아래 "물체 바뀜 규칙" |
-| `sm_bench <rec.bin> [--pose odom\|gt] [--lag 0\|1] [--policy 0\|1] …` | sgrt 기록(`SGRT_RECORD`)을 C ABI 로 재생: 단계별 µs 표(Cartographer 자세는 libsgrt 안이라 `../runtime/tools/sgrt_replay` 로). `--robot limo_omx`(또는 `--sm-config '<json>'`)로 LIMO 기록 — 기록에는 로봇이 안 적히므로 sgrt 의 `SGRT_ROBOT` 과 같게 준다(없으면 R1) |
+| `sm_bench <rec.bin> [--pose odom\|gt] [--lag 0\|1] [--policy 0\|1] …` | sgrt 기록(`SGRT_RECORD`)을 C ABI 로 재생: 단계별 µs 표(Cartographer 자세는 libsgrt 안이라 `../runtime/tools/sgrt_replay` 로). `--robot limo_omx`(또는 `--sm-config '<json>'`)로 LIMO 기록 — 기록에는 로봇이 안 적히므로 sgrt 의 `SGRT_ROBOT` 과 같게 준다(없으면 limo_omx) |
 | `rooms_pgm <memory dir> [출력 dir] [되풀이 수]` | 저장된 기억(map.pgm·map.yaml·view.json)에서 방을 나눠 표, `rooms.pgm`, `rooms_color.ppm`. 되풀이 수를 주면 시간 중앙값 |
 | `stream_sim <memory_dir> <host:port> [초] [pose_hz] [map_hz] [view_hz]` | 시뮬 없이 sgview(`--ingest`)에 합성 프레임을 높은 주기로 보내는 부하 시험 |
-| `gen_fk_table.py` | `src/sim/integ/fk/r1pro_cam_fk.json` → `include/scenemap/r1pro_fk_table.hpp` |
 | `gen_limo_fk_table <map_vla.urdf> <out.hpp>` | LIMO + OMX-F URDF → `include/scenemap/limo_omx_fk_table.hpp`(같이 빌드됨, 아래 LIMO 절) |
 | `sgrec.hpp` | sgrt 기록 읽기(`sm_bench`·`sgrt_replay` 공용, 'L' 라이다 스캔 포함) |
 
@@ -116,13 +113,13 @@ sgrt 쪽 `SGRT_*` 변수는 [../runtime/README.md](../runtime/README.md).
 | `inspect` | 살펴본 정도: 시점 세기(0.3 m·15° 안은 같은 시점, 한도 32)·가장 가까운 거리, 광선 추적 합성 깊이로 윗면 칸(위에서 본 탁자 = 다 봄, 낮은 카메라 1.7 m = 앞 줄 4/16, 0.5 m = 0(앞 모서리에 가림), 뒤 벽 없으면(깊이 0) 안 셈, 칸 위 작은 컵은 가리지 않음, 가리는 벽 = 0, 2 m 밖 = 0, 윗면 없는 것 = −1), 상자 자람·합치기의 칸 옮김, ObjectMap 통합(켜도 물체·사건이 꺼짐과 같음, 다가가며 거리 단조·시점 6·윗면 1.0), 100 물체 시간. `objmem` 에도 C ABI 판(끄면 `sm_snap_inspect` −2·저장 파일에 없음, 켜면 view.json 이 `inspect` 멤버만 다름, 설정 키 `"inspect": 1` 이 `sm_set_robot` 뒤에도 남음) |
 | `objprob` | 확률 모드: r 합·μ·‖r‖, 같은 영상 조각은 덜 세지 않고 비슷한 시점은 temper 배, 애매한 이름 → 상위어·엔트로피, 바깥 이름 관측이 뒤 영상 모습에 덮이지 않음, 받침이면 같은 것 아님, 평면 맞춤(세운 얇은 평면·수평면), 접촉 칸 |
 | `stream` | 루프백 TCP 로 프레임 내용, 다시 붙을 때 전체 상태 재전송, 스텝 스레드 비용 |
-| `limo_fk` | LIMO 순기구학(깊이·손목 카메라 광학, 잡는 점, 팔 끝)이 URDF 독립 계산(`tests/gen_limo_fk_ref.py`, 15 자세)과 위치 1e-5 m·회전 원소 1e-6 안, 잡는 점이 E0 OmniGibson `get_eef_position`(omx_link5 기준 0.08003)과 1e-4 m 안, C ABI `sm_robot_fk` = 내부 값, R1 `sm_robot_fk` 머리 = `T_head` |
+| `limo_fk` | LIMO 순기구학(깊이·손목 카메라 광학, 잡는 점, 팔 끝)이 URDF 독립 계산(`tests/gen_limo_fk_ref.py`, 15 자세)과 위치 1e-5 m·회전 원소 1e-6 안, 잡는 점이 E0 OmniGibson `get_eef_position`(omx_link5 기준 0.08003)과 1e-4 m 안, C ABI `sm_robot_fk` = 내부 값 |
 | `limo_e2e` | C ABI 만으로 LIMO proprio(odom 원점 ≠ map) + 합성 깊이(벽 둘·바닥·컵) + 컵 마스크: 벽 칸 점유·앞 빈칸·뒤 모름·몸 위 점유 없음, 컵 자리, 0.5 m·14° 주행 뒤 자세(twist 를 일부러 틀려도 오도메트리 자세 차로), 그리퍼를 4 cm 컵 폭(0.41 rad)에서 닫아 멈춤 → 듦 → 따라감 → 놓기(옮겨짐) |
 | `limo_held` | LIMO 잡기 규칙·팔 가림(합성 깊이에 순기구학 팔 캡슐을 광선 추적, 검출기가 가린 팔 화소를 탁자 마스크에 넣음): 탁자 앞을 팔이 가리고 빈손으로 닫힘 → 탁자 held·옮겨짐·사라짐 아님, 자리·상자 그대로(대조: 옛 규칙 `SM_OBJ_PARAMS=grasp_check=0,self_mask=0` 이면 held). 4 cm 컵: 열린 채 → 아님, 0 rad(빈손) → 아님, 0.41 rad 멈춤 → held, 열면 놓음. 8 cm 컵 → 아님 |
 
 ## 물체 바뀜 규칙 (10-04, dynamic-object-mapping-benchmark 로 고침)
 
-벤치마크 어댑터(`dom_bench`·`dom_bench_det`)로 진단한 실패를 objmap 규칙에서 고쳤다. 모든 값은 `ObjParams` 기본값이라 로봇(sgrt·sm_bench, R1·LIMO)도
+벤치마크 어댑터(`dom_bench`·`dom_bench_det`, 지금은 `archive/src/scene_graph`)로 진단한 실패를 objmap 규칙에서 고쳤다. 모든 값은 `ObjParams` 기본값이라 sgrt·sm_bench 도
 같은 규칙을 쓴다(벤치마크 전용 설정 없음). 규칙 요약은 `include/scenemap/objmap.hpp` 머리말.
 
 | 고친 것 | 전 | 후 |
@@ -149,13 +146,8 @@ sgrt 쪽 `SGRT_*` 변수는 [../runtime/README.md](../runtime/README.md).
 
 실제 검출 후: static P/R 0.675/0.699(전 0.299/0.670), 지도 FP(static 시퀀스) phantom 228 → 16, duplicate 99 → 28.
 떼어 보기(실제 검출, 10-04 중간판 기준): 바닥 조각 거르기를 끄면 static 0.555·change 0.110, 이름 모으기를 끄면 static 0.688·change 0.156.
-`gone_eps = 0.1` 이면 실제 검출 static 0.697·change 0.187 이지만 R1 에서 맞은 물체가 3 개 줄어 기본은 0.02.
+`gone_eps = 0.1` 이면 실제 검출 static 0.697·change 0.187 이지만 맞은 물체가 3 개 줄어 기본은 0.02.
 swapped 는 여전히 0: 같은 이름 쌍(의자 ↔ 의자, 스탠드 둘 ↔ 모니터 둘)은 생김새 없이 구별이 안 되고, 9–20 m 떨어진 교환은 잇기 거리 8 m 밖.
-
-**R1 회귀**(sgrt 기록 3 개 × 자세 slam·gt·odom, `sm_bench --labels yolo26s-seg 이름` 과 `sgrt_replay` 결과 같음): keyframe 자세 CSV·`map.pgm` 은 바이트까지 같다(objmap 만 바뀜).
-물체는 바뀐다. 9 판 합(전 → 후): 확정 물체 275 → 249, 살아 있는 것 254 → 236, 사라짐 21 → 13, 옮겨짐 9 → 22(odom 판의 떠밀린 자리 다시 잇기가 대부분),
-정답(`gt.csv.objects.json`, 같은 장면) 비교: 이름이 맞는 짝 49 → 49, 느슨한 짝 14 → 13, 다른 물체 위 59 → 52, 아무 물체에도 없음 132 → 122, 찾은 정답 물체 63 → 62
-(빠진 하나는 의자 조각이 'bench' 이름 물체에 병합된 것). objmap 단계 평균 257 → 374 µs/keyframe.
 
 **GPU 근사판(`training/RL/map`)에 옮길 것** — `map.h` 가 지금 따르는 objmap 규칙 중 바뀐 것:
 1. 짝짓기(`map.h` 3c, `S.cls != D.cls`): 같은 이름 대신 이름 표 몫 ≥ `name_share` 0.2, 이름 다르면 키 +0.02. 칸에 이름 표(이름 번호별 점수 합)와 표 최댓값 이름(1.25 배 문턱) 필요.
@@ -335,7 +327,7 @@ VLA 가 "덜 살펴본 가구로 가서 자세히 볼지"를 고르게 하는 �
 
 ## LIMO + OMX-F
 
-LIMO + OMX-F 가 기본이다(10-06 부터 `sm_create(NULL)` = LIMO; R1 Pro 는 `"robot": "r1pro"` 로 명시하는 옛 기록·시험 전용). 로봇을 고르면 proprio 형식·순기구학·몸 크기 매개변수가 바뀐다.
+로봇은 LIMO + OMX-F 하나다(`sm_create(NULL)` = LIMO, config `"robot"` 은 `"limo_omx"` 만 받고 다른 이름은 NULL). proprio 형식·순기구학·몸 크기 매개변수가 이 로봇 것이다.
 
 ```c
 sm_ctx* c = sm_create("{\"robot\": \"limo_omx\"}");   // 또는 sm_create(NULL) 뒤 sm_set_robot(c, SM_ROBOT_LIMO_OMX)
@@ -344,8 +336,8 @@ sm_ctx* c = sm_create("{\"robot\": \"limo_omx\"}");   // 또는 sm_create(NULL) 
 
 | 함수 | 뜻 |
 |---|---|
-| `sm_set_robot(c, SM_ROBOT_R1PRO \| SM_ROBOT_LIMO_OMX)` | 그 로봇 기본 매개변수로 다시 놓고 `sm_reset`(labels·자세 모드·넣기 정책·구름 설정은 그대로) |
-| `sm_get_robot(c)` · `sm_proprio_dim(robot)` | 지금 로봇, 최소 `n_proprio`(61 / 12) |
+| `sm_set_robot(c, SM_ROBOT_LIMO_OMX)` | 그 로봇 기본 매개변수로 다시 놓고 `sm_reset`(labels·자세 모드·넣기 정책·구름 설정은 그대로) |
+| `sm_get_robot(c)` · `sm_proprio_dim(robot)` | 지금 로봇, 최소 `n_proprio`(12) |
 | `sm_robot_fk(robot, proprio, n, &out)` | ctx 없이 순기구학만: 카메라 광학 자세 `T_cam[k]`, 잡는 점 `T_eef[h]`(LIMO `grasp_point`), 그리퍼 값(GPU 근사판 맞추기·시험용) |
 
 **proprio (f32, 12 개 — `SM_LIMO_*`)**
@@ -358,8 +350,8 @@ sm_ctx* c = sm_create("{\"robot\": \"limo_omx\"}");   // 또는 sm_create(NULL) 
 | 11 | omx_gripper_joint_1(0 닫힘 .. 1.745 다 열림, joint_2 = −이 값) | 잡기 규칙(아래 "잡기 확인"): `grip_closed`(기본 0.6 rad) 아래에서 멈추면 잡는 점 0.12 m 안 들 수 있는 확정 물체를 듦, 올라가면 놓음 |
 | (12..15) | 바퀴 각 fl, fr, rl, rr — 선택 | 뷰어 스트림만 |
 
-- 스트림(sgview `joints`): LIMO 는 뷰어 `robot.json` 의 `joint_order` 순서(omx_joint1..5, gripper_1, gripper_2 = −gripper_1, (바퀴 넷))로 바꿔 보낸다. R1 은 받은 벡터 그대로.
-- 지도 자세: R1 과 같이 첫 proprio 의 베이스가 map 원점.
+- 스트림(sgview `joints`): LIMO 는 뷰어 `robot.json` 의 `joint_order` 순서(omx_joint1..5, gripper_1, gripper_2 = −gripper_1, (바퀴 넷))로 바꿔 보낸다.
+- 지도 자세: 첫 proprio 의 베이스가 map 원점.
 
 **순기구학** — `tools/gen_limo_fk_table.cpp` 가 `map_vla.urdf(robot-agent src/robot/tools/build_urdf.sh 가 저장소 xacro 에서 펼침)` 의 `<joint>` 에서 base_footprint → 목표 링크 사슬을 찾아 원 숫자(origin xyz·rpy, axis)를 표로 쓴다. 계산은 R1 과 같은 `walk`(fk.cpp).
 
@@ -379,21 +371,21 @@ python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py /tmp/map_vla.urdf   # �
 
 검증: URDF 독립 계산(xml.etree + numpy 4×4, 15 자세, cam 0 = 렌즈 광학 프레임 — 0·홈·관절 한계 양끝·임의 10)과 최대 차 위치 1.1e-16 m, 회전 원소 3.3e-16(`limo_fk`). RL 환경의 `limo_omx_model.h`(urdf2hdr, f32 상수)와도 위치 1e-16 m·회전 5e-8(f32 반올림) 안.
 
-**몸 크기 매개변수**(R1 값 → LIMO 값, `capi.cpp` `robotParams`)
+**몸 크기 매개변수**(`capi.cpp` `robotParams`)
 
-| 매개변수 | R1 | LIMO | 까닭 |
-|---|---|---|---|
-| 스캔 `self_r`(베이스 둘레 수평 반경, 이 안 점 버림) | 0.55 | 0.22 | 몸통 0.32 × 0.22 m 반대각선 0.19 + 여유 |
-| 스캔 `eef_r` / 팔 캡슐 반경 / 손 캡슐 | 0.35 / 0.09 / 0.10 | 0.08 / 0.05 / 0.06 | OMX 링크 폭 3–4 cm |
-| 몸통 캡슐 | 몸통 관절 1..4 → 머리 | 없음 | 몸은 `self_r` 원 |
-| 스캔 높이 띠 `band_lo`–`band_hi` | 0.10–1.80 | 0.05–0.50 | 5 cm 턱도 못 넘음, 팔 접은 키 ≈ 0.35 m — 탁자 상판 밑은 지나감 |
-| 붙은 것 거르기 반경 | 1.3 | 0.6 | 팔 닿는 거리 ≈ 0.4 m |
-| objmap `hand_r` / `grasp_r` / `cloud_hand_r` / `body_r` | 0.40 / 0.25 / 0.10 / 0.30 | 0.10 / 0.12 / 0.05 / 0.22 | 작은 그리퍼·몸 |
-| 손 수(`n_hands`) | 2 | 1 | |
-| 그리퍼 닫힘 문턱 | 손가락 합 < 0.09 m | gripper_1 < 0.6 rad(틈 ≈ 6.6 cm) | 홈 자세는 0(닫힘) — 열었다 닫을 때만 잡기 |
-| 잡기 확인(`grasp_check`) · objmap 팔 거르기 | 끔 | 켬 | 아래 |
+| 매개변수 | 값 | 까닭 |
+|---|---|---|
+| 스캔 `self_r`(베이스 둘레 수평 반경, 이 안 점 버림) | 0.22 | 몸통 0.32 × 0.22 m 반대각선 0.19 + 여유 |
+| 스캔 `eef_r` / 팔 캡슐 반경 / 손 캡슐 | 0.08 / 0.05 / 0.06 | OMX 링크 폭 3–4 cm |
+| 몸통 캡슐 | 없음 | 몸은 `self_r` 원 |
+| 스캔 높이 띠 `band_lo`–`band_hi` | 0.05–0.50 | 5 cm 턱도 못 넘음, 팔 접은 키 ≈ 0.35 m — 탁자 상판 밑은 지나감 |
+| 붙은 것 거르기 반경 | 0.6 | 팔 닿는 거리 ≈ 0.4 m |
+| objmap `hand_r` / `grasp_r` / `cloud_hand_r` / `body_r` | 0.10 / 0.12 / 0.05 / 0.22 | 작은 그리퍼·몸 |
+| 손 수(`n_hands`) | 1 | |
+| 그리퍼 닫힘 문턱 | gripper_1 < 0.6 rad(틈 ≈ 6.6 cm) | 홈 자세는 0(닫힘) — 열었다 닫을 때만 잡기 |
+| 잡기 확인(`grasp_check`) · objmap 팔 거르기 | 켬 | 아래 |
 
-**잡기 확인·팔 가림(10-04, LIMO 만 — R1 은 옛 규칙 그대로)**
+**잡기 확인·팔 가림(10-04)**
 
 원인: 시뮬 한 판(turning_on_radio, 대역 정책이 탁자를 "집기")에서 팔이 몸통 카메라 앞을 가리자 검출기(yolo26s-seg)가 가린 팔 화소를 탁자 마스크에
 넣어 탁자(1.2 m, 고정 종류) 상자가 팔 쪽으로 자랐고(큰 물체 위치 = 상자 중심), 그리퍼가 빈손으로 끝까지(0 rad) 닫히는 순간 옛 잡기 규칙 —
@@ -405,12 +397,9 @@ python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py /tmp/map_vla.urdf   # �
   는 못 든다. 손끝 틈(그리퍼 각 → 틈 표: E0 쥔 각도 1·2·3·4 cm = 0.095·0.231·0.347·0.408 rad, 그 위 `finger_gap_hull` link5 x 0.08 틈)이
   5 mm 넘고(끝까지 닫힘 = 빈손), 가장 좁은 변 − 2.5 cm ≤ 틈 ≤ 가장 넓은 변 + 2.5 cm 이어야 든다. 든 뒤 끝까지 닫히면 놓친 것으로 놓는다.
 
-이 값들은 실측 전 추정이다(실제 로봇 기록으로 맞출 것). 나머지(격자·objmap 확정/사라짐 규칙)는 R1 과 같다.
+이 값들은 실측 전 추정이다(실제 로봇 기록으로 맞출 것). 나머지(격자·objmap 확정/사라짐 규칙)는 기본값 그대로다.
 
 **LIMO SLAM**: 10-06 부터 Cartographer(2D 라이다 + 바퀴 오도메트리, `../slam_carto`, libsgrt 가 `sm_push_ext_pose` 로 넣음). 옛 scenemap
 slam2d(깊이 가상 스캔 맞추기 — LIMO 가중 고침 10-04, 시뮬 기록 4 개 표)는 `archive/src/scene_graph/scenemap`(slam2d.cpp·.hpp, slam2d_eval·objmap_eval·
 stage_bench·capi_replay)로 옮겼고, 그 맞춤 기록은 git 이력(이 README 10-04 판)에 남는다. Cartographer 대 slam2d 비교는 `../slam_carto/README.md`.
 
-**R1 회귀**(LIMO SLAM 고침 10-04 에도 다시: sm_bench 9 개 저장·자세 CSV, `sgrt_replay` 9 개 저장 디렉터리 전부 바이트 같음, ctest 12 개 통과): 바꾸기 전 빌드와 sgrt 기록 3 개(`mem_pose_slam_*`, `mem_pose_gt_move*`) × 자세 모드 3 개(slam·gt·odom)를 `sm_bench --save --traj` 로 재생해 keyframe 자세 CSV·`map.pgm`·`scene.json`·`view.json`·물체 PNG/PLY 가 바이트까지 같음, ctest 기존 10 개 통과.
-
-**아직 R1 전용**: `tools/`(map_timeline 은 R1 61 proprio 기록·`computeBodyFk` 를 씀. sm_bench 는 `--robot` 으로 고름), `eval/`(BEHAVIOR 데모·평가기 형식), `test_fk`·`test_objmem`·`test_posemap` 의 proprio, `sm_object`·이름 종류 표의 "person = 로봇 팔 오검출" 규칙, 스캔의 `shoulder`(캡슐이 있으면 안 씀). sgrt(`../runtime`)는 `SGRT_ROBOT=limo_omx` 로 고른다(그쪽 README "로봇 고르기").

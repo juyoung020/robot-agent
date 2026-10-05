@@ -4,7 +4,7 @@
 //   2) 컵이 확정 물체 하나로 정답 자리(3 cm 안)에
 //   3) 오도메트리로 B 까지 0.5 m 가고 0.25 rad 돌면 sm_snap_pose 가 그만큼, 컵은 여전히 하나·같은 자리
 //   4) 팔을 뻗어 잡는 점을 컵에 대고 그리퍼를 열었다 컵 폭(4 cm)에서 닫혀 멈추면 SM_HELD, 베이스가 움직이면 컵이 따라감
-//   5) 같은 벡터를 기본(R1) ctx 에 넣으면 거절(12 < 61), 모르는 로봇 이름은 sm_create NULL
+//   5) 모르는 로봇 이름(r1pro 포함)은 sm_create NULL
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -110,8 +110,7 @@ int main() {
   sm_ctx* dflt = sm_create(nullptr);
   CHECK(dflt && sm_get_robot(dflt) == SM_ROBOT_LIMO_OMX, "default robot is LIMO + OMX-F");
   sm_destroy(dflt);
-  sm_ctx* r1 = sm_create("{\"robot\": \"r1pro\"}");   // R1 Pro: explicit, old recordings only
-  CHECK(r1 && sm_get_robot(r1) == SM_ROBOT_R1PRO, "r1pro stays selectable (old recordings only)");
+  CHECK(sm_create("{\"robot\": \"r1pro\"}") == nullptr, "r1pro no longer exists");
   sm_ctx* c = sm_create("{\"robot\": \"limo_omx\"}");
   CHECK(c && sm_get_robot(c) == SM_ROBOT_LIMO_OMX, "config robot limo_omx");
   if (!c) return 1;
@@ -123,8 +122,8 @@ int main() {
   const double zero3[3] = {0, 0, 0};
   {
     std::vector<float> q = proprio({0, 0, 0}, home, 0, zero3);
-    sm_proprio p{0.0, q.data(), int(q.size())};
-    CHECK(sm_push_proprio(r1, &p) < 0, "12-value LIMO proprio rejected by an R1 ctx (needs 61)");
+    sm_proprio p{0.0, q.data(), 11};
+    CHECK(sm_push_proprio(c, &p) < 0, "11-value proprio rejected (needs 12)");
   }
   // 컵: B 에서 팔을 뻗은 손끝 자리(map). B = A + 0.5 m 앞, 0.25 rad 왼쪽 돌기
   const Pose A{0, 0, 0}, B{0.5, 0, 0.25};
@@ -284,7 +283,6 @@ int main() {
   sm_snapshot_release(s);
 
   sm_destroy(c);
-  sm_destroy(r1);
   std::printf(fail ? "FAILED %d\n" : "all ok\n", fail);
   return fail ? 1 : 0;
 }

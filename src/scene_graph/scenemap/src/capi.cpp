@@ -36,7 +36,7 @@ namespace {
 struct Prop {
   double stamp;
   float q[kMaxProprioDim];
-  double v[3];                  // 적분에 쓰는 베이스 속도(로봇 기준 vx, vy, wz). R1 = q[0..3](base_qvel), LIMO = 오도메트리 자세 차 / dt
+  double v[3];                  // 적분에 쓰는 베이스 속도(로봇 기준 vx, vy, wz). 오도메트리 자세 차 / dt
 };
 struct ViewSlot {
   BestViewPtr v;
@@ -101,8 +101,8 @@ struct sm_ctx {
   std::vector<std::string> kind_names[3];   // [1] 구조물, [2] 고정(정규화한 이름)
   std::vector<uint8_t> kinds;               // labels[i] 의 종류
   std::vector<uint32_t> handled;
-  // 로봇(sm_set_robot·config "robot"): proprio 형식·순기구학·몸 크기 매개변수
-  int robot = kRobotR1Pro;
+  // 로봇(sm_set_robot·config "robot"; limo_omx 하나): proprio 형식·순기구학·몸 크기 매개변수
+  int robot = kRobotLimoOmx;
   bool odom_pose = true;        // LIMO: 오도메트리 자세 차로 적분(false: proprio 의 twist 3..6 을 그대로)
   bool have_odom = false;       // LIMO: 지난 proprio 의 오도메트리 자세
   double odom_prev[3] = {0, 0, 0}, odom_prev_stamp = 0;
@@ -244,16 +244,9 @@ struct sm_snapshot_t {
 
 namespace {
 
-// proprio 의 팔 끝(베이스 기준, 17:20 · 42:45)과 손가락 합(24+25 · 49+50) — docs/scenemap_설계.md 6.1
-void handsOf(const float* q, float eef[2][3], float grip[2]) {
-  for (int k = 0; k < 3; ++k) { eef[0][k] = q[17 + k]; eef[1][k] = q[42 + k]; }
-  grip[0] = q[24] + q[25];
-  grip[1] = q[49] + q[50];
-}
-
-// 로봇별 팔 끝(베이스 기준)·그리퍼 값. R1 = proprio 그대로, LIMO = 순기구학 grasp_point(E0 잡는 점) + omx_gripper_joint_1(두 칸 같은 값)
+// 로봇별 팔 끝(베이스 기준)·그리퍼 값. 순기구학 grasp_point(E0 잡는 점) + omx_gripper_joint_1(두 칸 같은 값)
 void robotHands(int robot, const float* q, float eef[2][3], float grip[2]) {
-  if (robot != kRobotLimoOmx) { handsOf(q, eef, grip); return; }
+  (void)robot;
   LimoFk f;
   computeLimoFk(q, &f);
   for (int k = 0; k < 3; ++k) eef[0][k] = eef[1][k] = float(f.T_eef[k * 4 + 3]);
@@ -262,21 +255,17 @@ void robotHands(int robot, const float* q, float eef[2][3], float grip[2]) {
 
 // 로봇별 순기구학 몸(스캔 가리기 캡슐) + T_head + 팔 끝
 BodyState robotBody(int robot, const float* q, BodyFk* fk) {
-  if (robot == kRobotLimoOmx) {
-    LimoFk f;
-    computeLimoFk(q, &f);
-    float eef[2][3];
-    limoBodyFk(f, fk, eef);
-    return bodyFromFk(*fk, eef, 0.05f, 0.06f, 0.f);   // OMX 링크 폭 ≈ 3–4 cm
-  }
-  computeBodyFk(q, fk);
-  const float eef[2][3] = {{q[17], q[18], q[19]}, {q[42], q[43], q[44]}};
-  return bodyFromFk(*fk, eef);
+  (void)robot;
+  LimoFk f;
+  computeLimoFk(q, &f);
+  float eef[2][3];
+  limoBodyFk(f, fk, eef);
+  return bodyFromFk(*fk, eef, 0.05f, 0.06f, 0.f);   // OMX 링크 폭 ≈ 3–4 cm
 }
 
-// 로봇별 몸 크기 매개변수(R1 = 구조체 기본값 그대로). LIMO 0.32 × 0.22 × 0.25 m, 깊이 카메라 높이 0.18 m, OMX 팔 닿는 거리 ≈ 0.4 m
+// 로봇별 몸 크기 매개변수LIMO 0.32 × 0.22 × 0.25 m, 깊이 카메라 높이 0.18 m, OMX 팔 닿는 거리 ≈ 0.4 m
 void robotParams(int robot, MapperParams* sp, ObjParams* op) {
-  if (robot != kRobotLimoOmx) return;
+  (void)robot;
   ScanParams& s = sp->scan;
   s.self_r = 0.22f;            // 몸통 반대각선 0.19 m + 여유(R1 0.55)
   s.eef_r = 0.08f;             // 팔 끝 둘레(R1 0.35)
@@ -462,12 +451,12 @@ bool cfgNumber(const std::string& j, const char* key, double* out) {
 
 sm_ctx* sm_create(const char* config_json) {
   sm_ctx* c = new sm_ctx(MapperParams{});
-  sm_set_robot(c, SM_ROBOT_LIMO_OMX);            // 기본: LIMO + OMX-F(우리 로봇). R1 Pro 는 config "robot": "r1pro" 로 명시한 옛 기록·시험용
+  sm_set_robot(c, SM_ROBOT_LIMO_OMX);            // 로봇은 LIMO + OMX-F 하나
   if (!config_json || !*config_json) return c;
   const std::string j(config_json);
   std::string r;
   if (cfgString(j, "robot", &r)) {
-    const int k = r == "r1pro" || r == "r1" ? SM_ROBOT_R1PRO : r == "limo_omx" || r == "limo" ? SM_ROBOT_LIMO_OMX : -1;
+    const int k = r == "limo_omx" || r == "limo" ? SM_ROBOT_LIMO_OMX : -1;
     if (k < 0 || sm_set_robot(c, k) != 0) { delete c; return nullptr; }
   }
   std::string od;
@@ -486,7 +475,7 @@ sm_ctx* sm_create(const char* config_json) {
 }
 
 int sm_set_robot(sm_ctx* c, int32_t robot) {
-  if (!c || (robot != SM_ROBOT_R1PRO && robot != SM_ROBOT_LIMO_OMX)) return -1;
+  if (!c || robot != SM_ROBOT_LIMO_OMX) return -1;
   {
     std::lock_guard<std::mutex> g(c->mu);
     c->robot = robot;
@@ -507,7 +496,7 @@ int sm_set_robot(sm_ctx* c, int32_t robot) {
 int sm_get_robot(sm_ctx* c) { return c ? c->robot : -1; }
 
 int sm_proprio_dim(int32_t robot) {
-  return robot == SM_ROBOT_R1PRO ? SM_R1PRO_PROPRIO_DIM : robot == SM_ROBOT_LIMO_OMX ? SM_LIMO_PROPRIO_DIM : -1;
+  return robot == SM_ROBOT_LIMO_OMX ? SM_LIMO_PROPRIO_DIM : -1;
 }
 
 int sm_robot_fk(int32_t robot, const float* q, int32_t n, sm_body_fk* o) {
@@ -515,45 +504,16 @@ int sm_robot_fk(int32_t robot, const float* q, int32_t n, sm_body_fk* o) {
   std::memset(o, 0, sizeof(*o));
   float eef[2][3], grip[2];
   robotHands(robot, q, eef, grip);
-  if (robot == SM_ROBOT_LIMO_OMX) {
-    LimoFk f;
-    computeLimoFk(q, &f);
-    o->n_cams = 2;
-    o->n_hands = 1;
-    o->cam_valid[0] = o->cam_valid[1] = 1;
-    std::memcpy(o->T_cam[0], f.T_depth, sizeof(f.T_depth));
-    std::memcpy(o->T_cam[1], f.T_wrist, sizeof(f.T_wrist));
-    std::memcpy(o->T_eef[0], f.T_eef, sizeof(f.T_eef));
-    o->eef_valid[0] = 1;
-  } else {
-    BodyFk fk;
-    computeBodyFk(q, &fk);
-    o->n_cams = 3;
-    o->n_hands = 2;
-    for (int c = 0; c < 3; ++c) {   // 광학 = prim × diag(1, −1, −1)
-      const float* r = fk.cam_rel[c];
-      const double x = r[3], y = r[4], z = r[5], w = r[6];
-      const double R[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)},
-                              {2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)},
-                              {2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)}};
-      for (int i = 0; i < 3; ++i) {
-        o->T_cam[c][i * 4 + 0] = R[i][0];
-        o->T_cam[c][i * 4 + 1] = -R[i][1];
-        o->T_cam[c][i * 4 + 2] = -R[i][2];
-        o->T_cam[c][i * 4 + 3] = r[i];
-      }
-      o->cam_valid[c] = 1;
-    }
-    for (int h = 0; h < 2; ++h) {   // 회전은 proprio 에서 안 읽음: 위치만(T_eef 의 R = I)
-      for (int i = 0; i < 3; ++i) o->T_eef[h][i * 4 + i] = 1;
-    }
-  }
-  for (int h = 0; h < o->n_hands; ++h) {
-    if (robot != SM_ROBOT_LIMO_OMX)   // LIMO 는 위에서 배정밀도 순기구학 자세를 그대로 넣었음
-      for (int i = 0; i < 3; ++i) o->T_eef[h][i * 4 + 3] = eef[h][i];
-    o->grip[h] = grip[h];
-    o->eef_valid[h] = robot == SM_ROBOT_LIMO_OMX ? 1 : 0;
-  }
+  LimoFk f;
+  computeLimoFk(q, &f);
+  o->n_cams = 2;
+  o->n_hands = 1;
+  o->cam_valid[0] = o->cam_valid[1] = 1;
+  std::memcpy(o->T_cam[0], f.T_depth, sizeof(f.T_depth));
+  std::memcpy(o->T_cam[1], f.T_wrist, sizeof(f.T_wrist));
+  std::memcpy(o->T_eef[0], f.T_eef, sizeof(f.T_eef));
+  o->eef_valid[0] = 1;
+  o->grip[0] = grip[0];
   return 0;
 }
 
@@ -647,7 +607,7 @@ int sm_push_proprio(sm_ctx* c, const sm_proprio* p) {
   std::lock_guard<std::mutex> g(c->mu);
   Prop e;
   e.stamp = p->stamp;
-  if (c->robot == kRobotLimoOmx) {
+  {
     std::memset(e.q, 0, sizeof(e.q));
     std::memcpy(e.q, p->proprio, sizeof(float) * size_t(std::min(p->n_proprio, kMaxProprioDim)));
     const float* q = p->proprio;
@@ -666,20 +626,15 @@ int sm_push_proprio(sm_ctx* c, const sm_proprio* p) {
     c->odom_prev[0] = q[SM_LIMO_ODOM_X]; c->odom_prev[1] = q[SM_LIMO_ODOM_Y]; c->odom_prev[2] = q[SM_LIMO_ODOM_YAW];
     c->odom_prev_stamp = p->stamp;
     c->have_odom = true;
-  } else {
-    std::memcpy(e.q, p->proprio, sizeof(e.q));
-    e.v[0] = e.q[0]; e.v[1] = e.q[1]; e.v[2] = e.q[2];
   }
   c->pending.push_back(e);
   if (c->stream.running()) {
-    if (c->robot == kRobotLimoOmx) {   // 뷰어 robot.json joint_order: omx_joint1..5, gripper_1, gripper_2(= −1), (바퀴 fl, fr, rl, rr)
+    {   // 뷰어 robot.json joint_order: omx_joint1..5, gripper_1, gripper_2(= −1), (바퀴 fl, fr, rl, rr)
       const float* q = p->proprio;
       float j[11] = {q[6], q[7], q[8], q[9], q[10], q[11], -q[11], 0, 0, 0, 0};
       int n = 7;
       if (p->n_proprio >= SM_LIMO_PROPRIO_DIM + 4) { for (int k = 0; k < 4; ++k) j[7 + k] = q[SM_LIMO_WHEEL_FL + k]; n = 11; }
       c->stream.pushJoints(p->stamp, j, n);
-    } else {
-      c->stream.pushJoints(p->stamp, p->proprio, p->n_proprio);   // 관절·상태 벡터 그대로(뷰어가 URDF 로 해석)
     }
   }
   // 영상이 오지 않아도 쌓이지 않게: 최신보다 0.5 s 넘게 오래된 것은 적분해 둔다(영상 stamp 는 최신 − 1 스텝)

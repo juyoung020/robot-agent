@@ -114,22 +114,8 @@ int main() {
   {
     sm_body_fk b;
     const bool ok = sm_robot_fk(SM_ROBOT_LIMO_OMX, kLimoFkRef[0].q, 11, &b) < 0 && sm_robot_fk(7, kLimoFkRef[0].q, 12, &b) < 0 &&
-                    sm_proprio_dim(SM_ROBOT_LIMO_OMX) == 12 && sm_proprio_dim(SM_ROBOT_R1PRO) == 61;
+                    sm_proprio_dim(SM_ROBOT_LIMO_OMX) == 12;
     std::printf("dims / bad input rejected: %s\n", ok ? "ok" : "FAIL");
-    fail += !ok;
-  }
-  // R1: sm_robot_fk 머리 광학 = computeBodyFk T_head(float 반올림 안)
-  {
-    float q[61] = {0};
-    q[53] = 0.3f; q[54] = -0.5f; q[55] = 0.2f; q[56] = 0.1f;
-    BodyFk fk;
-    computeBodyFk(q, &fk);
-    sm_body_fk b;
-    sm_robot_fk(SM_ROBOT_R1PRO, q, 61, &b);
-    double e = 0;
-    for (int k = 0; k < 12; ++k) e = std::fmax(e, std::fabs(b.T_cam[0][k] - fk.T_head[k]));
-    const bool ok = e < 1e-6 && b.n_cams == 3 && b.n_hands == 2;
-    std::printf("R1 sm_robot_fk head = T_head: %.1e %s\n", e, ok ? "ok" : "FAIL");
     fail += !ok;
   }
   return fail ? 1 : 0;

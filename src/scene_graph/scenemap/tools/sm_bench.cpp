@@ -1,7 +1,7 @@
 // sgrt 기록(SGRT_RECORD) 재생 — C ABI 로만 scenemap 을 굴려 자세 모드 비교(떠밀림)·단계별 µs 를 잰다.
 //
 //   sm_bench <rec.bin> [--pose odom|gt] [--lag 0|1] [--policy 0|1] [--no-dets] [--snap-every N] [--save-every S]
-//            [--save DIR] [--traj out.csv] [--labels names.txt] [--frames N] [--loops K] [--robot r1pro|limo_omx] [--sm-config JSON]
+//            [--save DIR] [--traj out.csv] [--labels names.txt] [--frames N] [--loops K] [--robot limo_omx] [--sm-config JSON]
 //
 // 재생은 sgrt_step 과 같은 순서: 스텝마다 (외부 자세) → proprio, keyframe 이면 영상(stamp = 직전 스텝, --lag 1) + 검출.
 // --snap-every N: N 스텝마다 sm_take_dirty + sm_snapshot(탐색 쪽 sgrt_map 흉내). --save-every S: 시뮬 S 초마다 sm_save_dsg.
@@ -27,7 +27,7 @@ using sgrec::load;
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::fprintf(stderr, "usage: sm_bench <rec.bin> [--pose odom|gt] [--lag 0|1] [--policy 0|1] [--no-dets] [--snap-every N] "
-                         "[--save-every S] [--save DIR] [--traj out.csv] [--labels names.txt] [--frames N] [--loops K] [--robot r1pro|limo_omx] [--sm-config JSON]\n");
+                         "[--save-every S] [--save DIR] [--traj out.csv] [--labels names.txt] [--frames N] [--loops K] [--robot limo_omx] [--sm-config JSON]\n");
     return 2;
   }
   std::string pose = "odom", save_dir, traj, labels_path, sm_cfg;   // sm_cfg 비면 sm_create(NULL) = LIMO
