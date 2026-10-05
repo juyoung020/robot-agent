@@ -365,3 +365,7 @@
 
 - 다음(그 뒤): RecallVLA 자체 검색(질의 벡터 → 상위 K 칸, 검색 InfoNCE, 힌트 지우기·틀린 이름 섞기) 구현.
 - 기록: 검출기 비교 `~/datasets/sim_detcmp/README.md`(FastSAM-s-416 / YOLO26s-seg / YOLOE-11L, 영상 포함), 실제 bag 결과 MAP_STATE_PLAN 7 절.
+
+**10-06 추가 (C2 커리큘럼으로 바꿈 — CURRICULUM_BEHAVIOR2026 5.6.2·5.7)**
+- 완료: B4 학생 실험(C0, 큰 학생 BC 0.22, DAgger 떨어짐 까닭) `9b8c33a`; GT 지도 막기(`--debug-gt-map`)·집 나누기·교사 `--slknown` `5a16f13`; GT 지도 설정 archive `7492568`. 예전 학습 기록 모두 지움(사용자 지시).
+- 다음: ① 상태 없는 프런티어 탐사 교사(GPU, 믿는 지도, keyframe 캐시) ② 작은 집을 물체가 지도에 확정되지 않는 것(`--slknown` B4 교사 0.011) ③ 집 전체 지도(창 12.8 m → 집 크기 상한 + 경계 상자) ④ 공유 단계 설정 `config/stage_*.json` + 교사·학생 설정 해시 검사 ⑤ PPO 비대칭 비평자 탐사 교사 ⑥ 단계 1 → 2 → 3 학습, 4 설계.
