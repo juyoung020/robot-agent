@@ -195,12 +195,12 @@ struct sm_ctx {
         for (const std::string& e : kind_names[k])
           if (kinds[i] == SM_KIND_OBJECT && headMatch(n, e)) kinds[i] = uint8_t(k);
     }
-    if (oparams.objprob)   // objprob: 문·창·계단·난간·기둥은 구조 물체(내보냄) — 벽·바닥·천장·걸레받이·칸막이·바깥은 그대로 구조물(지움)
-      for (size_t i = 0; i < labels.size(); ++i) {
-        if (kinds[i] != SM_KIND_STRUCTURE) continue;
-        const std::string n = normName(labels[i]);
-        for (const char* e : kStructObjNames) if (headMatch(n, e)) kinds[i] = SM_KIND_STRUCT_OBJ;
-      }
+    // objprob: 문·창·계단·난간·기둥은 구조 물체(내보냄) — 벽·바닥·천장·걸레받이·칸막이·바깥은 그대로 구조물(지움)
+    for (size_t i = 0; i < labels.size(); ++i) {
+      if (kinds[i] != SM_KIND_STRUCTURE) continue;
+      const std::string n = normName(labels[i]);
+      for (const char* e : kStructObjNames) if (headMatch(n, e)) kinds[i] = SM_KIND_STRUCT_OBJ;
+    }
     om.setClassKinds(kinds);
     std::vector<uint8_t> fl(labels.size(), 0);   // 바닥에 깔리는 것(바닥 조각 거르기에서 뺌)
     for (size_t i = 0; i < labels.size(); ++i) {
@@ -483,7 +483,6 @@ int sm_set_robot(sm_ctx* c, int32_t robot) {
     ObjParams op{};
     op.voxel = c->oparams.voxel;          // sm_set_cloud_params 로 바꾼 값은 둔다
     op.cloud_cap = c->oparams.cloud_cap;
-    op.objprob = c->oparams.objprob;        // sm_set_object_model 도 둔다
     op.insp = c->oparams.insp;              // sm_set_inspect 도 둔다
     robotParams(robot, &sp, &op);
     ObjectMap::applyParams(&op, c->obj_kv.c_str());   // sm_set_obj_params 도 둔다
@@ -915,7 +914,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
     F.self_caps = self_caps.data();
     F.n_self_caps = int(self_caps.size());
   }
-  if (c->oparams.objprob) {   // objprob: 검출 임베딩·벽 선분(기하 구조물 거르기)
+  {   // objprob: 검출 임베딩·벽 선분(기하 구조물 거르기)
     if (c->det_emb_n == dets->n && c->det_emb_dim > 0) { F.emb = c->det_emb.data(); F.emb_dim = c->det_emb_dim; }
     refreshGrid8(c);
     refreshWalls(c);
@@ -1562,7 +1561,7 @@ int sm_save_dsg_ex(sm_ctx* c, const char* dir, sm_save_stats* stats) {
       auto it = c->obj_meta.find(s->objs[i].id);
       if (it != c->obj_meta.end()) in.obj_meta[i] = it->second;
     }
-    if (c->oparams.objprob) apSaveMeta(c, s, &in.obj_meta, &apw);
+    apSaveMeta(c, s, &in.obj_meta, &apw);
     inspMeta(s, &in.obj_meta);
   }
   SaveOut out;
@@ -1881,13 +1880,8 @@ int sm_set_object_meta(sm_ctx* c, uint32_t id, const char* json) {
 int sm_set_object_model(sm_ctx* c, int32_t objprob) {
   if (!c) return -1;
   std::lock_guard<std::mutex> g(c->mu);
-  c->oparams.objprob = objprob != 0;
-  c->om.paramsMut().objprob = objprob != 0;
+  if (!objprob) return -2;   // 물체 지도 규칙은 objprob 하나(옛 이름 규칙은 지움)
   c->applyKinds();
-  if (objprob) {   // 큰 가구(소파 ≈ 4 m²)의 구름이 접촉 판정에 쓰이므로 한도를 넉넉히
-    c->oparams.cloud_cap = std::max(c->oparams.cloud_cap, 8000);
-    c->om.setCloudParams(0, c->oparams.cloud_cap);
-  }
   ObjectMap::envOverrides(&c->om.paramsMut());
   return 0;
 }

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "scenemap.h"
+#include "fake_siglip.h"
 #include "scenemap/fk.hpp"
 
 using namespace scenemap;
@@ -87,6 +88,7 @@ struct Rig {
     if (env) unsetenv("SM_OBJ_PARAMS");
     const char* labels[] = {"cup", "table"};
     sm_set_labels(c, labels, 2);
+    fake_siglip::textModel(c, 2);
   }
   ~Rig() { sm_destroy(c); }
   void step(const double arm[5], double grip) {
@@ -161,6 +163,7 @@ struct Rig {
     d.cls = cls.data(); d.score = score.data(); d.box = box.data();
     d.mask_w = W; d.mask_h = H; d.mask_sx = 1; d.mask_sy = 1; d.mask_ox = 0; d.mask_oy = 0; d.mask_bits = bits.data();
     sm_image im{t, 0, W, H, nullptr, depth.data(), FX, FY, CX, CY};
+    fake_siglip::detEmb(c, &d, 2);
     sm_push_image(c, &im, &d);
   }
   // 이름 name 인 물체(없으면 NULL). 스냅숏은 호출자가 놓음

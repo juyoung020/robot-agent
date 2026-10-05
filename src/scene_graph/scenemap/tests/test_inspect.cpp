@@ -197,6 +197,13 @@ int main() {
     ObjParams on, off;
     on.insp.on = true;
     ObjectMap A(off), B(on);
+    // 물체 지도는 objprob 하나라 검출마다 임베딩이 있어야 함: 라벨 1 개(table), 글 벡터 = 임베딩 = e0
+    const float emb[2] = {1.f, 0.f};
+    for (ObjectMap* m : {&A, &B}) {
+      ApText t;
+      t.dim = 2; t.text = {1.f, 0.f}; t.row_label = {0}; t.scale = 117.3f; t.bias = -12.7f; t.n_labels = 1;
+      m->setTextModel(std::move(t));
+    }
     const std::vector<Box> scene{kTable};
     std::vector<double> dists;
     double t_on = 0, t_off = 0;
@@ -225,13 +232,16 @@ int main() {
       F.fx = float(FX); F.fy = float(FX); F.cx = float(CXP); F.cy = float(CYP);
       std::memcpy(F.T_mc, c.T, sizeof c.T);
       F.dets = &d;
+      F.emb = emb; F.emb_dim = 2;
       F.eef[0][0] = F.eef[1][0] = -50;   // 손은 멀리
       F.base_xy[0] = x; F.base_xy[1] = 0.4;
       double t0 = ms();
       A.update(F);
+      for (const ObsPoints& q : A.lastPoints()) A.addPoints(q.obj_id, q.xyz.data(), nullptr, int(q.xyz.size() / 3), F.stamp);   // 구름(접촉 판정에 씀)
       t_off += ms() - t0;
       t0 = ms();
       B.update(F);
+      for (const ObsPoints& q : B.lastPoints()) B.addPoints(q.obj_id, q.xyz.data(), nullptr, int(q.xyz.size() / 3), F.stamp);
       t_on += ms() - t0;
       // 관측 중심 거리(참값 근사): 카메라 ↔ 이 관측의 마스크 점 중앙값 — 아래에서 단조 감소만 봄
       if (!B.objects().empty()) dists.push_back(B.objects()[0].insp.closest);

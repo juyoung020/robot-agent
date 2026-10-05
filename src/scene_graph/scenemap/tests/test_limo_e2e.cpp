@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "scenemap.h"
+#include "fake_siglip.h"
 
 namespace {
 int fail = 0;
@@ -116,6 +117,7 @@ int main() {
   if (!c) return 1;
   const char* labels[] = {"cup", "wall"};
   sm_set_labels(c, labels, 2);
+  fake_siglip::textModel(c, 2);
 
   const double home[5] = {0, 1.3, -1.9, 0.7, 0};
   const double reach[5] = {0, 0.9, 0.2, 0.4, 0};   // 앞으로 뻗어 손끝을 낮게
@@ -140,10 +142,10 @@ int main() {
     const double cs = std::cos(B.th), sn = std::sin(B.th);
     cup_c[0] = B.x + cs * e[3] - sn * e[7];
     cup_c[1] = B.y + sn * e[3] + cs * e[7];
-    // 컵: 바닥 위 4 × 4 × 10 cm(그리퍼 한도 0.06 m 안), xy 중심 = 잡는 점(높이 e[11] 은 컵 높이 안)
+    // 컵: 바닥 위 4 × 4 × 22 cm(그리퍼 한도 0.06 m 안), xy 중심 = 잡는 점(높이 e[11] 은 컵 높이 안)
     for (int i = 0; i < 2; ++i) { cup_lo[i] = cup_c[i] - 0.02; cup_hi[i] = cup_c[i] + 0.02; }
-    cup_lo[2] = 0.0; cup_hi[2] = 0.10;
-    cup_c[2] = 0.05;
+    cup_lo[2] = 0.0; cup_hi[2] = 0.22;   // 컵이 베이스 몸 반경 안(0.14 m)이라 구름이 안 쌓임 — 윗면이 안 보이는 키로(윗면·옆 조각이 따로 서지 않게)
+    cup_c[2] = 0.11;
     std::printf("cup centre (map) %.3f %.3f %.3f (reach eef in base: %.3f %.3f %.3f)\n", cup_c[0], cup_c[1], cup_c[2], e[3], e[7], e[11]);
   }
 
@@ -181,6 +183,7 @@ int main() {
     d.cls = &cls; d.score = &score; d.box = box;
     d.mask_w = W; d.mask_h = H; d.mask_sx = 1; d.mask_sy = 1; d.mask_ox = 0; d.mask_oy = 0; d.mask_bits = bits.data();
     sm_image im{t, 0, W, H, nullptr, depth.data(), FX, FY, CX, CY};
+    fake_siglip::detEmb(c, &d, 2);
     sm_push_image(c, &im, &d);
     // 손목 카메라(cam 1)는 지도에 안 씀: 넣어도 상태가 그대로여야 함
     sm_image wr{t, 1, W, H, nullptr, depth.data(), FX, FY, CX, CY};

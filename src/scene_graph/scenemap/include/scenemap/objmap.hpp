@@ -80,7 +80,7 @@ struct ObjParams {
   int max_pts = 6000;             // 검출 하나에서 훑는 화소 수 한도: 큰 상자는 간격을 넓힘(백분위·중앙값에는 충분)
   // 점 구름(모양): 위치·크기에 쓴 점(MAD 띠 안) 중 팔 끝 cloud_hand_r 안·베이스 수평 body_r 안 점은 뺌
   double voxel = 0.02;
-  int cloud_cap = 4000;
+  int cloud_cap = 8000;   // 큰 가구(소파 ≈ 4 m²)의 구름이 objprob 접촉 판정에 쓰임
   double cloud_hand_r = 0.10;
   double body_r = 0.30;
   // 병합(da/merge.hpp): 확정된 같은 이름 물체끼리 상자가 이만큼(축별 겹침 비율의 곱) 겹치면 하나로
@@ -129,9 +129,8 @@ struct ObjParams {
   double move_v = 0.3, move_min_d = 0.25;
   double move_max_cam_w = 0.6;    // 카메라 광축이 이보다 빨리(rad/s) 돌면 그 keyframe 은 움직임 근거로 안 씀(자세 오차가 물체를 쓸어 감).
                                   // 상자가 영상 가장자리에 닿은 관측(잘림)도 안 씀
-  // ---- objprob(10-05, objprob.hpp): 이름 없는 같은 것 판정·기하 구조물 거르기·물체 임베딩 vMF·이름 사후. 끄면(기본) 위 규칙 그대로.
-  // 켜려면 검출마다 임베딩(ObjFrame.emb)이 있어야 한다(capi sm_set_object_model·sm_set_det_embeddings)
-  bool objprob = false;
+  // ---- objprob(objprob.hpp): 이름 없는 같은 것 판정·기하 구조물 거르기·물체 임베딩 vMF·이름 사후 — 물체 지도의 유일한 규칙.
+  // 검출마다 임베딩(ObjFrame.emb)이 있어야 한다(capi sm_set_det_embeddings)
   bool ap_name_struct_skip = false; // true: 검출 하나의 이름(cls)이 구조물이면 버림(옛 규칙). 끔(기본): FastSAM 조각의 이름은 자주 틀려
                                     // (소파 조각 → partition·baseboard) 기하·합친 물체의 이름 사후로만 거름
   ApParams ap;
@@ -289,7 +288,7 @@ class ObjectMap {
   // 노드로 내보낼 물체인가: 확정 + (objprob export_named 면) 이름이 정해졌고 구조물 이름이 아님
   bool exportable(const MapObject& m) const {
     if (!m.confirmed) return false;
-    if (!p_.objprob || !p_.ap.export_named || !m.ap) return true;
+    if (!p_.ap.export_named || !m.ap) return true;
     if (m.ap->post.empty() || m.ap->hide) return false;
     if (text_.object_label >= 0 && m.cls == text_.object_label) return false;
     return kindOf(m.cls) != kKindStructure;   // 문·창·계단(kKindStructObj)은 내보냄

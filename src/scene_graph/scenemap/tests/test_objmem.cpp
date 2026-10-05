@@ -1,5 +1,5 @@
 // 물체 기억 시험(C ABI 만 씀): 합성 머리 RGB-D + 검출로
-//   구조물   — 벽·바닥·문 검출은 물체가 안 됨(격자만), 그림 액자·러그·가구는 물체(movable 표)
+//   구조물   — 벽·바닥 조각은 물체가 안 됨(objprob 기하: 바닥·벽 크기 평면), 문은 구조 물체 노드(structural), 그림 액자·가구는 물체(movable 표)
 //   상자     — 마스크 안 깊이 이상값(뒤 벽이 비침)에도 크기가 참값 근처, 큰 가구 상자는 keyframe 마다 자람 한도
 //   사라짐   — 작은 물체는 안 보인 지 gone_min_s 넘어야, 가구는 끝까지 안 사라짐
 //   best view — 품질(넓이 × 점수) 최대·같으면 최근, 자른 그림 내용·상자
@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "scenemap.h"
+#include "fake_siglip.h"
 
 #ifdef SM_TEST_SPARK_DSG
 #include <spark_dsg/dynamic_scene_graph.h>
@@ -59,6 +60,7 @@ struct Rect {
   float out_frac = 0;           // 마스크 안 이 비율의 화소는 out_depth(뒤 벽이 비침)
   float out_depth = 0;
   bool detect = true;           // false: 깊이·색만 그리고 검출은 안 냄
+  float bulge = 0;              // 가운데가 카메라 쪽으로 이만큼(m) 볼록. 큰 물체(소파)는 볼록해야 함 — objprob 은 넓고 얇은 평면을 벽으로 봄
 };
 
 struct Frame {
@@ -82,7 +84,9 @@ static void render(Frame& f, const std::vector<Rect>& rs, float bg, uint32_t see
     for (int y = r.y0; y < r.y1; ++y)
       for (int x = r.x0; x < r.x1; ++x) {
         const size_t i = size_t(y) * W + x;
-        f.depth[i] = (r.out_frac > 0 && U(rng) < r.out_frac) ? r.out_depth : r.depth;
+        const float bu = r.bulge;
+        const float ux = 2.f * (x + 0.5f - r.x0) / std::max(1, r.x1 - r.x0) - 1.f, uy = 2.f * (y + 0.5f - r.y0) / std::max(1, r.y1 - r.y0) - 1.f;
+        f.depth[i] = (r.out_frac > 0 && U(rng) < r.out_frac) ? r.out_depth : r.depth - bu * (1.f - ux * ux) * (1.f - uy * uy);
         std::memcpy(&f.rgba[4 * i], r.rgb, 3);
       }
     if (!r.detect) continue;
@@ -117,9 +121,12 @@ struct Rig {
   sm_ctx* c;
   std::vector<float> q = proprio();
   Frame f;
+  int nlab = 0;
   explicit Rig(const std::vector<const char*>& labels) {
     c = sm_create(nullptr);
     sm_set_labels(c, labels.data(), int(labels.size()));
+    fake_siglip::textModel(c, int(labels.size()));
+    nlab = int(labels.size());
   }
   ~Rig() { sm_destroy(c); }
   // 시각 t 에 proprio + 영상(장면 rs) 하나. 돌려줌: sm_push_image_ex 시간 ms
@@ -134,6 +141,7 @@ struct Rig {
     im.fx = FX; im.fy = FX; im.cx = CX; im.cy = CX;
     f.d.stamp = t;
     const double t0 = nowMs();
+    if (with_dets) fake_siglip::detEmb(c, &f.d, nlab);
     sm_push_image_ex(c, &im, with_dets ? &f.d : nullptr, nullptr, nullptr);
     return nowMs() - t0;
   }
@@ -170,6 +178,7 @@ static Rect R(int cls, int x0, int y0, int x1, int y1, float d, uint8_t r, uint8
   Rect q{};
   q.cls = cls; q.x0 = x0; q.y0 = y0; q.x1 = x1; q.y1 = y1; q.depth = d;
   q.rgb[0] = r; q.rgb[1] = g; q.rgb[2] = b; q.score = sc;
+  q.bulge = x1 - x0 >= 700 || cls == C_RUG ? 0.f : x1 - x0 >= 250 ? 0.3f : 0.08f;   // 물체는 볼록(가구 크기 0.3 m, 작은 것 0.08 m) — 화면 폭 벽·바닥·러그는 평면
   return q;
 }
 
@@ -179,39 +188,43 @@ static void testStructures() {
   Rig g(kLabels);
   std::vector<Rect> rs = {R(C_WALL, 0, 0, 720, 200, 3.0f, 200, 200, 200), R(C_FLOOR, 0, 600, 720, 720, 2.0f, 90, 60, 30),
                           R(C_DOOR, 40, 220, 160, 560, 2.8f, 120, 80, 40), R(C_FRAME, 500, 220, 600, 300, 2.9f, 10, 200, 10),
-                          R(C_RUG, 200, 520, 520, 590, 2.2f, 200, 10, 10), R(C_CUP, 300, 300, 340, 340, 1.5f, 250, 0, 0)};
+                          R(C_RUG, 200, 520, 520, 590, 2.2f, 200, 10, 10), R(C_CUP, 300, 300, 340, 340, 1.5f, 250, 0, 0)};   // 러그(영상 아래쪽 = 바닥 아래): 바닥 평면으로 걸러짐 — 기대 안 함
   for (int k = 0; k < 4; ++k) g.kf(0.2 * k, rs);
   const auto as = g.assoc();
   CHECK(as.size() == rs.size(), "assoc %zu", as.size());
-  CHECK(as[0] == 0 && as[1] == 0 && as[2] == 0, "wall/floor/door assoc %u %u %u", as[0], as[1], as[2]);
-  CHECK(as[3] != 0 && as[4] != 0 && as[5] != 0, "frame/rug/cup assoc %u %u %u", as[3], as[4], as[5]);
+  CHECK(as[0] == 0 && as[1] == 0, "wall/floor assoc %u %u", as[0], as[1]);   // 벽·바닥 조각은 기하(천장·바닥 높이 평면, 벽 크기 평면)로 걸러짐
+  CHECK(as[2] != 0 && as[3] != 0 && as[5] != 0, "door/frame/cup assoc %u %u %u", as[2], as[3], as[5]);
   Snap s(g.c);
-  CHECK(!s.byName("wall") && !s.byName("floor") && !s.byName("glass door"), "structure became a node");
+  CHECK(!s.byName("wall") && !s.byName("floor"), "structure became a node");
+  const sm_object* door = s.byName("glass door");
   const sm_object* fr = s.byName("picture frame");
   const sm_object* cup = s.byName("cup");
-  CHECK(fr && s.byName("rug") && cup, "objects missing");
+  CHECK(door && fr && cup, "objects missing");
+  if (door) CHECK(door->structural == 1 && sm_snap_movable(s.s, door->id) == 0, "door structural %d movable %d", door->structural, sm_snap_movable(s.s, door->id));   // 문·창은 구조 물체 노드
   if (fr && cup) {
     CHECK(sm_snap_movable(s.s, fr->id) == 0, "picture frame movable=%d", sm_snap_movable(s.s, fr->id));
     CHECK(sm_snap_movable(s.s, cup->id) == 1, "cup movable=%d", sm_snap_movable(s.s, cup->id));
   }
-  // 목록 바꾸기(C ABI): 문을 물체로, 컵을 구조물로
+  // 목록 바꾸기(C ABI): 컵을 구조물로 — 구조물 이름은 노드로 안 내보냄(물체 지도는 이름 없이 합치므로 association 은 그대로)
   const char* st[] = {"wall", "floor", "cup"};
   sm_set_kind_names(g.c, SM_KIND_STRUCTURE, st, 3);
   sm_reset(g.c);
   sm_set_labels(g.c, kLabels.data(), int(kLabels.size()));
+  fake_siglip::textModel(g.c, int(kLabels.size()));
+  g.nlab = int(kLabels.size());
   for (int k = 0; k < 3; ++k) g.kf(0.2 * k, rs);
-  const auto as2 = g.assoc();
-  CHECK(as2[2] != 0 && as2[5] == 0, "custom list: door %u cup %u", as2[2], as2[5]);
+  Snap s2(g.c);
+  CHECK(!s2.byName("cup") && s2.byName("picture frame"), "custom list: cup node %d frame node %d", s2.byName("cup") != nullptr, s2.byName("picture frame") != nullptr);
   sm_set_kind_names(g.c, SM_KIND_STRUCTURE, nullptr, -1);   // 기본값으로
-  std::printf("  nodes %zu (wall/floor/door 없음)\n", s.objs().size());
+  std::printf("  nodes %zu (wall/floor 없음, door 는 구조 물체)\n", s.objs().size());
   // COCO-80 이름(닫힌 어휘 YOLO-seg): person 은 노드 아님, dining table·couch·tv 는 고정, cup·chair 는 옮길 수 있음.
-  // (평면 사각형이라 영상 아래쪽에 두면 바닥 높이가 되어 바닥 조각으로 걸러짐 — 소파·탁자는 가운데 높이에)
+  // (평면 사각형이라 영상 아래쪽에 두면 바닥 높이가 되어 바닥 조각으로 걸러짐 — 소파·탁자는 가운데 높이에, tv·화분은 다른 것 앞(뒤면 벽 너머로 걸러짐))
   const std::vector<const char*> coco = {"person", "cup", "chair", "couch", "dining table", "tv", "potted plant"};
   Rig c(coco);
   std::vector<Rect> cr = {R(0, 40, 220, 120, 560, 2.5f, 200, 160, 120), R(1, 300, 300, 340, 340, 1.5f, 250, 0, 0),
                           R(2, 160, 300, 260, 460, 2.0f, 90, 60, 30),   R(3, 400, 310, 700, 400, 1.7f, 30, 30, 160),
-                          R(4, 280, 360, 380, 460, 1.8f, 120, 80, 40),  R(5, 500, 220, 600, 300, 2.9f, 10, 10, 10),
-                          R(6, 620, 220, 700, 300, 2.9f, 10, 200, 10)};
+                          R(4, 280, 360, 380, 460, 1.8f, 120, 80, 40),  R(5, 500, 220, 600, 300, 1.2f, 10, 10, 10),
+                          R(6, 170, 220, 250, 300, 1.3f, 10, 200, 10)};
   for (int k = 0; k < 3; ++k) c.kf(0.2 * k, cr);
   Snap cs(c.c);
   CHECK(!cs.byName("person"), "person became a node");
@@ -247,12 +260,14 @@ static void testBoxes() {
     std::printf("  cup extent %.3f %.3f %.3f (참 한 변 %.3f, 이상값 25 %%)\n", o->extent[0], o->extent[1], o->extent[2], truth);
     CHECK(e < 1.6 * truth, "cup extent %.3f > %.3f", e, 1.6 * truth);
   }
-  // 소파: 처음 두 번은 가운데만(0.6 m), 그 뒤 온 폭(2.9 m)이 갑자기 보이고 마스크의 20 % 는 뒤 벽(4.5 m) — 상자는
-  // keyframe 마다 면마다 grow_max(0.25 m)까지만 자라고, 이상값으로 참 크기를 넘지 않음
+  // 소파: 처음 두 번은 가운데만(0.6 m), 그 뒤 keyframe 마다 한쪽 0.29 m 씩 더 보여 온 폭(2.9 m)이 되고 마스크의 20 % 는 뒤 벽(4.5 m) —
+  // 상자는 keyframe 마다 면마다 grow_max(0.25 m)까지만 자라고, 이상값으로 참 크기를 넘지 않음
   Rig h(kLabels);
   double prev = 0, max_step = 0;
   for (int k = 0; k < 20; ++k) {
-    Rect so = k < 2 ? R(C_SOFA, 300, 350, 420, 470, 1.5f, 30, 30, 160) : R(C_SOFA, 60, 350, 660, 470, 1.5f, 30, 30, 160);
+    const int grow = std::clamp(k - 1, 0, 5) * 60;   // 처음 두 번은 가운데만, 그 뒤 keyframe 마다 한쪽 60 px(≈ 0.29 m)씩 더 보임
+    Rect so = R(C_SOFA, 300 - grow, 350, 420 + grow, 470, 1.5f, 30, 30, 160);
+    so.bulge = 0.3f;
     so.out_frac = k < 2 ? 0.f : 0.2f;
     so.out_depth = 4.5f;
     h.kf(0.2 * k, {so});
@@ -260,7 +275,7 @@ static void testBoxes() {
     const sm_object* q = t.byName("sofa");
     if (!q) continue;
     const double e = std::max({q->extent[0], q->extent[1], q->extent[2]});
-    if (prev > 0) max_step = std::max(max_step, e - prev);
+      if (prev > 0) max_step = std::max(max_step, e - prev);
     prev = e;
   }
   const double sofa_truth = 600 / FX * 1.5;
@@ -309,7 +324,9 @@ static void testBestView() {
   uint32_t ver[5] = {0};
   double stamp[5] = {0};
   for (int k = 0; k < 5; ++k) {
-    g.kf(ts[k], {R(C_BOOK, 320 - fs[k].half, 320 - fs[k].half, 320 + fs[k].half, 320 + fs[k].half, 1.5f, fs[k].r, 100, 200, fs[k].sc)});
+    Rect bk = R(C_BOOK, 320 - fs[k].half, 320 - fs[k].half, 320 + fs[k].half, 320 + fs[k].half, 1.5f, fs[k].r, 100, 200, fs[k].sc);
+    bk.bulge = 0;   // 잘린 그림의 깊이를 평면으로 비교
+    g.kf(ts[k], {bk});
     Snap s(g.c);
     const sm_object* o = s.byName("book");
     sm_view v{};
@@ -339,7 +356,8 @@ static void testBestView() {
   }
   // 큰 상자는 긴 변 256 으로 줄임
   Rig h(kLabels);
-  for (int k = 0; k < 2; ++k) h.kf(0.2 * k, {R(C_SOFA, 60, 200, 660, 500, 2.0f, 30, 30, 160)});
+  const Rect sofa = R(C_SOFA, 60, 350, 660, 440, 1.7f, 30, 30, 160);
+  for (int k = 0; k < 4; ++k) h.kf(0.2 * k, {sofa});
   Snap t(h.c);
   const sm_object* so = t.byName("sofa");
   sm_view u{};
@@ -626,6 +644,8 @@ static void testSave(const std::string& dir) {
   // 새 판: 옛 PNG 지움
   sm_reset(g.c);
   sm_set_labels(g.c, kLabels.data(), int(kLabels.size()));
+  fake_siglip::textModel(g.c, int(kLabels.size()));
+  g.nlab = int(kLabels.size());
   sm_save_dsg(g.c, dir.c_str());
   int left = 0;
   for (const auto& e : fs::directory_iterator(fs::path(dir) / "objects")) left += e.path().extension() == ".png" || e.path().extension() == ".ply";
@@ -675,6 +695,7 @@ static void testCloud() {
   {
     Rig g(kLabels);
     Rect cup = R(C_CUP, 300, 300, 360, 360, 1.5f, 250, 10, 20);
+    cup.bulge = 0;   // 구름 점의 깊이 오차를 평면 참값과 비교
     cup.out_frac = 0.2f;
     cup.out_depth = 2.6f;
     for (int k = 0; k < 5; ++k) g.kf(0.2 * k, {cup});
@@ -698,7 +719,7 @@ static void testCloud() {
     sm_set_cloud_params(g.c, 0.005, 500);
     int maxn = 0;
     for (int k = 0; k < 8; ++k) {
-      g.kf(0.2 * k, {R(C_SOFA, 60 + 5 * k, 350, 660, 520, 1.8f, 30, 30, 160)});
+      g.kf(0.2 * k, {R(C_SOFA, 60 + 5 * k, 350, 660, 440, 1.7f, 30, 30, 160)});
       Snap s(g.c);
       const sm_object* o = s.byName("sofa");
       sm_cloud cl{};

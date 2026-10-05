@@ -408,7 +408,7 @@ int sm_set_object_meta(sm_ctx*, uint32_t obj_id, const char* json_members);
  * 이름 = 범주 사후 확률 → 물체마다 벡터 저장. 켜지 않으면 옛 이름 기준 규칙 그대로(바이트 같음).
  * 순서: sm_set_labels → sm_set_text_model(·sm_set_label_stats) → sm_set_object_model(c, 1). 검출 keyframe 마다
  * sm_set_det_embeddings → sm_push_image_* → sm_reencode_requests → (호출자가 SigLIP) → sm_set_object_embeddings. */
-int sm_set_object_model(sm_ctx*, int32_t objprob);   /* 1 = 확률 모드(objprob), 0 = 옛 규칙 */
+int sm_set_object_model(sm_ctx*, int32_t objprob);   /* 1 = objprob(유일한 규칙 — 이미 기본; 0 은 -2) */
 /* 이름 표의 글 임베딩: rows × dim(L2), row_label[r] = sm_set_labels 번호. logit = SigLIP 시그모이드 척도·치우침 */
 int sm_set_text_model(sm_ctx*, const float* text, const int32_t* row_label, int32_t rows, int32_t dim, float logit_scale, float logit_bias);
 /* 라벨마다 log 사전 확률·log(가장 긴 변 m) 가우스(sd ≤ 0 = 안 씀)·상위어 라벨(-1 = 없음), object_label = 상위어도 못 정할 때 이름(-1 = 없음).
