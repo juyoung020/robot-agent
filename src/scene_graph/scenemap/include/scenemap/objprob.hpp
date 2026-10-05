@@ -148,6 +148,11 @@ struct ApView {
   uint8_t whole = 0;              // 1 = 통째 다시 담기, 0 = 검출 조각
 };
 
+struct ApContactIdx {
+  std::vector<uint64_t> keys;   // 정렬된 칸 열쇠
+  int64_t lo[3] = {0, 0, 0}, hi[3] = {-1, -1, -1};   // 칸 번호 범위
+};
+
 struct ApState {
   uint32_t ver = 0;                     // 벡터·이름이 바뀔 때마다 +1(저장 더러움)
   std::vector<float> r_frag, r_whole;   // Σ κ z
@@ -164,8 +169,12 @@ struct ApState {
   double whole_kappa = 0;               // 가장 좋은 통째 κ
   bool need_whole = true;               // 합친 뒤·아직 통째 없음
   // 접촉 색인(구름 version 이 바뀌면 다시)
+  // μ·벡터 길이 캐시(ver 가 바뀌면 다시 — apMu·apCosMax)
+  mutable uint32_t mu_ver = ~0u;
+  mutable std::vector<float> mu_c;
+  mutable double mu_conf = 0, nrm_frag = 0, nrm_whole = 0;
   uint32_t cidx_ver = ~0u;
-  std::vector<uint64_t> cidx;           // 정렬된 칸 열쇠
+  ApContactIdx cidx;
   // 위치 칼만(대각): 분산 m²
   double P[3] = {1, 1, 1};
   // 이름 결과
@@ -199,6 +208,7 @@ uint64_t apSeed(uint64_t a, uint64_t b);   // 조각·물체 시드(시각 비�
 void apToF16(const float* in, uint16_t* out, int n);
 double apDot(const float* a, const float* b, int d);
 // μ(통째가 있으면 통째, 없으면 조각). 없으면 false
+const std::vector<float>& apMuRef(const ApState& s);   // 위와 같은 μ(복사 없이, 없으면 빈 벡터)
 bool apMu(const ApState& s, std::vector<float>* mu, double* conf = nullptr);
 // z 와 물체의 가장 잘 맞는 cos: μ_frag·μ_whole·보관한 모습 중 최대
 double apCosMax(const ApState& s, const float* z, int d);
@@ -221,10 +231,10 @@ struct ApPair {
   double f[7] = {0, 0, 0, 0, 0, 0, 0};   // contact, gap, cdist, cos − cos0, ov, support, 이름 겹침 Σ√(p_a p_b) − 0.5(물체 쌍만, 관측은 0)
   double logit = 0, p = 0;
 };
-// 접촉 색인: 구름 점(map) → 칸 열쇠 정렬
-void apBuildContact(const float* xyz, int n, double cell, std::vector<uint64_t>* keys);
+// 접촉 색인: 구름 점(map) → 칸 열쇠 정렬 + 칸 범위(범위 밖 점은 찾지 않고 바로 안 닿음)
+void apBuildContact(const float* xyz, int n, double cell, ApContactIdx* idx);
 // 점 xyz(n 개, 표본) 중 색인 칸(이웃 27)에 닿는 비율
-double apContact(const float* xyz, int n, const std::vector<uint64_t>& keys, double cell);
+double apContact(const float* xyz, int n, const ApContactIdx& idx, double cell);
 double apLogit(const ApPair& q, const ApParams& p, bool merge = false);
 
 }  // namespace scenemap

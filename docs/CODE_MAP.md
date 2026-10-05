@@ -125,6 +125,10 @@
 - 최적화 여지: `apMergePass`·관측 짝이 물체 수 n 에 대해 O(n²)·O(관측×n) — 상자 틈 `gate` 로 바로 거르지만 물체가 수백 개면 격자 색인이 나음(지금 실제 bag 118 개라 측정 먼저). `buildReencode` 가 물체마다 마스크 크기 `grid` 를 새로 채움(마스크 160×160 이면 작음). `relink`·`updateHands` 의 id 찾기는 선형.
 - 안 쓰는 것: 없음(모든 물체가 ap 상태를 가짐 — 확인함).
 
+**`src/objprob.cpp`** (480 줄) — objprob 수학(물체 상태 `ApState` 다루기). `apPlaneFit`(RANSAC 적응 반복 + PCA 두 번, 폭·높이 백분위), `apAddView`(vMF 합 벡터 r += κ·z, 비슷한 시점은 temper 배, 이름 우도 누적, 상위 topk 모습 FP16), `apMerge`(합치면 통째도 조각으로), `apName`(조각 + 통째 우도 + 사전 + 크기 → softmax 사후, 못 미치면 상위어·"object"), `apLabelLogLik`(라벨마다 낱말 줄 최대 cos → log σ, 정규화), 접촉 색인(`apBuildContact`·`apContact` — 칸 열쇠 정렬 + 칸 범위로 먼 점은 바로 안 닿음), `apCosMax`(μ·모습들과 최대 cos — FP16 → float 표, μ·벡터 길이는 ver 가 바뀔 때만 다시).
+- 시간(실제 bag ol_office1-1, keyframe 133 개): objmap 31.1 → 19.8 ms/keyframe(접촉 범위 거르기·FP16 표·μ 캐시, 결과 바이트 같음). 남은 큰 몫: 합치기 판정 ~8 ms(물체 쌍 수), 관측 만들기 ~6 ms(라벨 우도 127 줄 × 768·RANSAC), 짝 ~2.4 ms.
+- 더 줄일 곳: `apLabelLogLik`·`apCosMax` 의 double 누적 내적을 float SIMD 로(결과가 아주 조금 달라짐 — 바이트 비교 대신 지표로 확인해야 함).
+
 **`include/scenemap.h`** — 위 C ABI 선언·설명. 로봇은 LIMO + OMX-F 하나(`SM_ROBOT_LIMO_OMX`, proprio 12).
 
 **`include/scenemap/objmap.hpp`** — `ObjParams`(기본값 = 리모: 깊이 0.15–3 m, 손 하나, grasp_r 0.12, 그리퍼 닫힘 0.6 rad, 잡기 확인 켬, 틈 표), `MapObject`, `ObjFrame`, `ObjectMap`. 규칙 요약이 머리말.

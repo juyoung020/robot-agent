@@ -156,7 +156,7 @@ int main() {
   // 6. 접촉: 4 cm 칸 이웃 안
   {
     const float A[6] = {0, 0, 0, 0.1f, 0, 0};
-    std::vector<uint64_t> keys;
+    ApContactIdx keys;
     apBuildContact(A, 2, 0.04, &keys);
     const float B[6] = {0.03f, 0, 0, 0.5f, 0, 0};
     CHECK(std::fabs(apContact(B, 2, keys, 0.04) - 0.5) < 1e-9, "contact %.2f", apContact(B, 2, keys, 0.04));

@@ -84,7 +84,7 @@ double segDist(double px, double py, const double* s) {
 
 // objprob 같은 것 특징(a = 관측 또는 작은 쪽 물체, b = 물체): a 의 점 표본 중 b 접촉 칸에 닿는 비율, 상자 틈, 중심 거리/크기, cos, 겹침, 받침
 ApPair pairFeatures(const double alo[3], const double ahi[3], const double apos[3], const float* apts, int na, const double blo[3],
-                    const double bhi[3], const double bpos[3], const std::vector<uint64_t>& bidx, double cos, const ApParams& P,
+                    const double bhi[3], const double bpos[3], const ApContactIdx& bidx, double cos, const ApParams& P,
                     bool merge = false) {
   ApPair q;
   // 틈·중심 거리·cos·겹침·받침은 objprob_math.h(GPU 학습 지도와 같은 식), 접촉은 점 구름 색인으로 여기서
@@ -327,8 +327,8 @@ void ObjectMap::relink(double t) {
       if (&m == &n || m.state != SM_GONE || !m.confirmed || m.held_by >= 0 || (!m.moved && int(m.n_obs) < p_.spurious_obs)) continue;
       if (!m.ap || !n.ap) continue;
       {   // objprob: 임베딩(μ 끼리 가장 잘 맞는 cos)
-        std::vector<float> mu;
-        if (!apMu(*n.ap, &mu) || apCosMax(*m.ap, mu.data(), int(mu.size())) < p_.ap.link_cos) continue;
+        const std::vector<float>& mu = apMuRef(*n.ap);
+        if (mu.empty() || apCosMax(*m.ap, mu.data(), int(mu.size())) < p_.ap.link_cos) continue;
       }
       if (!(n.first_seen > m.last_seen)) continue;   // 둘이 같이 있던 적이 있으면 다른 물체
       const double d = dist3(n.pos, m.pos);
@@ -771,7 +771,6 @@ void ObjectMap::update(const ObjFrame& f) {
   // '이번에 보임'(놓침으로 안 셈 — 조각 하나를 놓쳐도 물체는 보임)
   const ApParams& A = p_.ap;
   std::vector<float> sp;
-  std::vector<float> mu;
   for (int a = 0; a < int(obs.size()); ++a) {
     Obs& o = obs[a];
     const int nc = int(o.cxyz.size() / 3);
@@ -989,7 +988,7 @@ void ObjectMap::update(const ObjFrame& f) {
         }
         if (g2 > 0.02 * 0.02 || !q.z || !o.z) continue;
         // 닿은 두 조각: 이웃 조각 접촉을 1 로 보고 같은 로지스틱(구름 대신 상자 맞닿음)
-        static const std::vector<uint64_t> none;
+        static const ApContactIdx none;
         ApPair pr = pairFeatures(q.lo, q.hi, q.pos, nullptr, 0, o.lo, o.hi, o.pos, none, apDot(q.z, o.z, f.emb_dim), p_.ap);
         pr.f[0] = 1.0;
         if (1.0 / (1.0 + std::exp(-apLogit(pr, p_.ap))) >= p_.ap.same_p) obs_to[b2] = int(objs_.size()) - 1;
@@ -1088,7 +1087,7 @@ void ObjectMap::update(const ObjFrame& f) {
 
 // ---------------- objprob ----------------
 
-const std::vector<uint64_t>& ObjectMap::apContactIdx(MapObject& m) {
+const ApContactIdx& ObjectMap::apContactIdx(MapObject& m) {
   ApState& s = *m.ap;
   if (s.cidx_ver != m.cloud.version) {
     std::vector<float> xyz;
@@ -1119,11 +1118,13 @@ void cloudSample(const MapObject& m, int n, std::vector<float>* out) {
 ApPair ObjectMap::apPairObj(MapObject& a, MapObject& b) {
   MapObject& sm = a.cloud.size() <= b.cloud.size() ? a : b;
   MapObject& lg = &sm == &a ? b : a;
-  thread_local std::vector<float> sp, mu;
+  thread_local std::vector<float> sp;
   cloudSample(sm, p_.ap.contact_samples, &sp);
   double cs = -2;
-  if (apMu(*a.ap, &mu)) cs = std::max(cs, apCosMax(*b.ap, mu.data(), int(mu.size())));
-  if (apMu(*b.ap, &mu)) cs = std::max(cs, apCosMax(*a.ap, mu.data(), int(mu.size())));
+  for (const auto& [x, y] : {std::pair<MapObject*, MapObject*>{&a, &b}, {&b, &a}}) {
+    const std::vector<float>& mu = apMuRef(*x->ap);
+    if (!mu.empty()) cs = std::max(cs, apCosMax(*y->ap, mu.data(), int(mu.size())));
+  }
   ApPair q = pairFeatures(sm.lo, sm.hi, sm.pos, sp.data(), int(sp.size() / 3), lg.lo, lg.hi, lg.pos, apContactIdx(lg), cs, p_.ap, true);
   if (!a.ap->post.empty() && a.ap->post.size() == b.ap->post.size()) {   // 이름 분포 겹침
     q.f[6] = opm::bhattacharyya<OpmStd, double>(a.ap->post.data(), b.ap->post.data(), int(a.ap->post.size()), 0.0, 0.0, 0);   // objprob_math.h

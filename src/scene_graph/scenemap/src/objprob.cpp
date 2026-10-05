@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 
 namespace scenemap {
@@ -217,31 +218,67 @@ double apDot(const float* a, const float* b, int d) {
   return s;
 }
 
-bool apMu(const ApState& s, std::vector<float>* mu, double* conf) {
-  const std::vector<float>& r = s.k_whole > 0 ? s.r_whole : s.r_frag;
-  if (r.empty()) return false;
+namespace {
+double sqNorm(const std::vector<float>& r) {
   double n = 0;
   for (float x : r) n += double(x) * x;
-  n = std::sqrt(n);
-  if (!(n > 0)) return false;
-  mu->resize(r.size());
-  for (size_t i = 0; i < r.size(); ++i) (*mu)[i] = float(r[i] / n);
-  if (conf) *conf = n;
+  return n;
+}
+// μ(통째가 있으면 통째, 아니면 조각 합 방향)·두 합 벡터의 길이² — ver 가 같으면 그대로
+void apCache(const ApState& s) {
+  if (s.mu_ver == s.ver) return;
+  s.mu_ver = s.ver;
+  s.nrm_frag = sqNorm(s.r_frag);
+  s.nrm_whole = sqNorm(s.r_whole);
+  const std::vector<float>& r = s.k_whole > 0 ? s.r_whole : s.r_frag;
+  const double n = std::sqrt(s.k_whole > 0 ? s.nrm_whole : s.nrm_frag);
+  s.mu_conf = n;
+  s.mu_c.clear();
+  if (r.empty() || !(n > 0)) return;
+  s.mu_c.resize(r.size());
+  for (size_t i = 0; i < r.size(); ++i) s.mu_c[i] = float(r[i] / n);
+}
+}  // namespace
+
+const std::vector<float>& apMuRef(const ApState& s) {
+  apCache(s);
+  return s.mu_c;
+}
+
+bool apMu(const ApState& s, std::vector<float>* mu, double* conf) {
+  apCache(s);
+  if (s.mu_c.empty()) return false;
+  *mu = s.mu_c;
+  if (conf) *conf = s.mu_conf;
   return true;
 }
 
+// FP16 → float 표(65536 개, 한 번 만듦)
+static const float* h2fTable() {
+  static const std::vector<float> t = [] {
+    std::vector<float> v(65536);
+    for (uint32_t h = 0; h < 65536; ++h) v[h] = h2f(uint16_t(h));
+    return v;
+  }();
+  return t.data();
+}
+
 double apCosMax(const ApState& s, const float* z, int d) {
+  const float* H = h2fTable();
   double best = -1;
-  for (const std::vector<float>* r : {&s.r_frag, &s.r_whole}) {
-    if (int(r->size()) != d) continue;
-    double n = 0, dot = 0;
-    for (int i = 0; i < d; ++i) { n += double((*r)[i]) * (*r)[i]; dot += double((*r)[i]) * z[i]; }
-    if (n > 0) best = std::max(best, dot / std::sqrt(n));
+  apCache(s);
+  const std::pair<const std::vector<float>*, double> rs[2] = {{&s.r_frag, s.nrm_frag}, {&s.r_whole, s.nrm_whole}};
+  for (const auto& [r, n] : rs) {
+    if (int(r->size()) != d || !(n > 0)) continue;
+    double dot = 0;
+    for (int i = 0; i < d; ++i) dot += double((*r)[i]) * z[i];
+    best = std::max(best, dot / std::sqrt(n));
   }
   for (const ApView& v : s.views) {
     if (int(v.z.size()) != d) continue;
     double dot = 0;
-    for (int i = 0; i < d; ++i) dot += double(h2f(v.z[size_t(i)])) * z[i];
+    const uint16_t* q = v.z.data();
+    for (int i = 0; i < d; ++i) dot += double(H[q[i]]) * z[i];
     best = std::max(best, dot);
   }
   return best;
@@ -430,22 +467,33 @@ double apGroupProb(const ApState& s, const std::vector<uint8_t>& mask) {
   return q;
 }
 
-void apBuildContact(const float* xyz, int n, double cell, std::vector<uint64_t>* keys) {
-  keys->clear();
-  keys->reserve(size_t(n));
+void apBuildContact(const float* xyz, int n, double cell, ApContactIdx* idx) {
+  std::vector<uint64_t>& keys = idx->keys;
+  keys.clear();
+  keys.reserve(size_t(n));
+  for (int k = 0; k < 3; ++k) { idx->lo[k] = INT64_MAX; idx->hi[k] = INT64_MIN; }
   const double inv = 1.0 / cell;
-  for (int i = 0; i < n; ++i)
-    keys->push_back(cellKey3(int64_t(std::floor(xyz[3 * i] * inv)), int64_t(std::floor(xyz[3 * i + 1] * inv)), int64_t(std::floor(xyz[3 * i + 2] * inv))));
-  std::sort(keys->begin(), keys->end());
-  keys->erase(std::unique(keys->begin(), keys->end()), keys->end());
+  for (int i = 0; i < n; ++i) {
+    int64_t c[3];
+    for (int k = 0; k < 3; ++k) {
+      c[k] = int64_t(std::floor(xyz[3 * i + k] * inv));
+      idx->lo[k] = std::min(idx->lo[k], c[k]);
+      idx->hi[k] = std::max(idx->hi[k], c[k]);
+    }
+    keys.push_back(cellKey3(c[0], c[1], c[2]));
+  }
+  std::sort(keys.begin(), keys.end());
+  keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
 }
 
-double apContact(const float* xyz, int n, const std::vector<uint64_t>& keys, double cell) {
+double apContact(const float* xyz, int n, const ApContactIdx& idx, double cell) {
+  const std::vector<uint64_t>& keys = idx.keys;
   if (n <= 0 || keys.empty()) return 0;
   const double inv = 1.0 / cell;
   int hit = 0;
   for (int i = 0; i < n; ++i) {
     const int64_t a = int64_t(std::floor(xyz[3 * i] * inv)), b = int64_t(std::floor(xyz[3 * i + 1] * inv)), c = int64_t(std::floor(xyz[3 * i + 2] * inv));
+    if (a < idx.lo[0] - 1 || a > idx.hi[0] + 1 || b < idx.lo[1] - 1 || b > idx.hi[1] + 1 || c < idx.lo[2] - 1 || c > idx.hi[2] + 1) continue;
     bool h = false;
     for (int dx = -1; dx <= 1 && !h; ++dx)
       for (int dy = -1; dy <= 1 && !h; ++dy)

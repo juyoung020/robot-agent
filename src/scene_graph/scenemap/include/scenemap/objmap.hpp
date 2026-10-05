@@ -294,7 +294,7 @@ class ObjectMap {
   bool apStructObject(MapObject& m);
   bool labelRelated(int a, int b) const;
   ApPair apPairObj(MapObject& a, MapObject& b);
-  const std::vector<uint64_t>& apContactIdx(MapObject& m);
+  const ApContactIdx& apContactIdx(MapObject& m);
   ApText text_;
   ApStats aps_;
   std::vector<uint8_t> smask_;        // 라벨이 구조물 종류인가(apMergePass)
