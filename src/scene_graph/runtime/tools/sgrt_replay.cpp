@@ -4,7 +4,8 @@
 //
 // 라이브러리는 dlopen 으로 읽는다(옛 빌드와 새 빌드를 같은 도구로 비교 — 바이트 회귀 확인용). 옛 ABI 만 쓴다.
 // 환경 변수는 라이브러리가 읽는 그대로(SGRT_POSE·SGRT_ROBOT·SGRT_SM_CONFIG·SGRT_SAVE_SYNC …). 비교할 때는 SGRT_SAVE_SYNC=1.
-// 재생 순서 = 기록 순서: 'G' → sgrt_push_pose, 'P' → sgrt_step(그 뒤 같은 stamp 'I' 가 오면 그 RGB·깊이·K 를 같이).
+// 재생 순서 = 기록 순서: 'G' → sgrt_push_pose, 'P' → sgrt_step(그 뒤 같은 stamp 'I' 가 오면 그 RGB·깊이·K 를 같이),
+// 'L' → sgrt_push_scan(2D 라이다 — 그 함수가 없는 옛 라이브러리면 건너뜀).
 // 기록 영상 RGB 는 호스트 RGBA(sgrec) 로 넘긴다. 프롬프트는 엔진 어휘 전부(sgrt_begin(NULL, 0)).
 // --traj: keyframe 마다 sgrt_map 자세와 자세 진단(외부 자세가 있으면 그 차)을 CSV 로.
 #include <dlfcn.h>
@@ -52,6 +53,7 @@ int main(int argc, char** argv) {
   auto diag = sym<int (*)(const sgrt*, sgrt_pose_diag*)>(h, "sgrt_get_pose_diag");
   auto map = sym<int (*)(sgrt*, sgrt_map_view*)>(h, "sgrt_map");
   auto stats = sym<void (*)(const sgrt*, int32_t*, int32_t*, int32_t*, float*, float*)>(h, "sgrt_stats");
+  auto push_scan = reinterpret_cast<int (*)(sgrt*, double, int32_t, const float*, double, double, double, double, double)>(dlsym(h, "sgrt_push_scan"));
 
   std::vector<sgrec::Rec> recs;
   if (!sgrec::load(argv[3], &recs, frames)) { std::fprintf(stderr, "cannot read %s\n", argv[3]); return 1; }
@@ -96,6 +98,10 @@ int main(int argc, char** argv) {
       if (pend) run(pend, nullptr);
       pend = nullptr;
       push_pose(s, r.stamp, r.g[0], r.g[1], r.g[2]);
+    } else if (r.tag == 'L' && push_scan) {   // 스캔은 스텝 사이에 온다 — 기다리는 스텝을 먼저 끝냄(기록 순서 그대로)
+      if (pend) run(pend, nullptr);
+      pend = nullptr;
+      push_scan(s, r.stamp, int32_t(r.f.size()), r.f.data(), r.scan[0], r.scan[1], r.scan[2], r.scan[3], r.scan[4]);
     }
   }
   if (pend) run(pend, nullptr);

@@ -17,6 +17,8 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../scenemap ${CMAKE_BINARY_DIR}/sce
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../ovdet ${CMAKE_BINARY_DIR}/ovdet)
 # 물체 영상 임베딩(SigLIP 2 TensorRT + 라벨 찾기, src/scene_graph/clip) — SGRT_CLIP 이면 켜짐
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../clip ${CMAKE_BINARY_DIR}/clip)
+# Cartographer 자세 원천(../slam_carto, SGRT_POSE=slam|carto 기본). Cartographer 가 설치돼 있지 않으면 없이 빌드(slam2d 만)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../slam_carto ${CMAKE_BINARY_DIR}/slam_carto EXCLUDE_FROM_ALL)
 
 add_library(sgrt_crop STATIC src/crop.cu)
 set_target_properties(sgrt_crop PROPERTIES POSITION_INDEPENDENT_CODE ON CUDA_RUNTIME_LIBRARY Static)
@@ -27,6 +29,10 @@ add_library(sgrt SHARED src/sgrt.cpp src/sgrt_clip.cpp)
 target_include_directories(sgrt PUBLIC include PRIVATE ../clip/src)
 target_link_libraries(sgrt PRIVATE sgrt_crop scenemap ovdet sgclip)
 target_compile_options(sgrt PRIVATE -Wall -Wextra)
+if(SLAM_CARTO_FOUND)
+  target_link_libraries(sgrt PRIVATE slam_carto)
+  target_compile_definitions(sgrt PRIVATE SGRT_HAVE_CARTO=1)
+endif()
 # objprob 엔진별 매개변수 폴더: ../tools/realbag/objprob_params (원본은 robot-agent src/scene_graph 하나. DIR2 는 sgrt.cpp 의 두 번째 후보 칸 — 같은 폴더)
 target_compile_definitions(sgrt PRIVATE SGRT_PARAMS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tools/realbag/objprob_params"
                                         SGRT_PARAMS_DIR2="${CMAKE_CURRENT_SOURCE_DIR}/../tools/realbag/objprob_params")

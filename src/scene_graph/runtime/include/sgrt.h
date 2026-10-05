@@ -104,8 +104,9 @@ typedef struct sm_ctx sm_ctx;
 sm_ctx* sgrt_scenemap(sgrt*);
 
 /* ---- 자세 원천·단계 시간·기록(추가 ABI, 10-03) ----
- * 자세 원천: 0 slam(기본, 적분 + 스캔 맞추기), 1 odom(적분만), 2 gt(외부·정답 베이스 자세 — 시뮬 진단·시각화용, 대회 제출 금지).
- *   환경 변수 SGRT_POSE=slam|odom|gt 가 sgrt_create 때 기본값을 정한다. gt 면 map = 시뮬 world 프레임.
+ * 자세 원천: 0 slam2d(옛 scenemap 적분 + 깊이 스캔 맞추기), 1 odom(적분만), 2 gt(외부·정답 베이스 자세 — 시뮬 진단·시각화용,
+ *   대회 제출 금지), 3 ext = Cartographer(기본, 아래 "2D 라이다"). 환경 변수 SGRT_POSE=slam|carto|slam2d|odom|gt 가 sgrt_create 때
+ *   기본값을 정한다. gt 면 map = 시뮬 world 프레임.
  * sgrt_push_pose: 이번 스텝의 외부 베이스 자세(map/world: x, y, yaw rad). 같은 stamp 의 sgrt_step 앞에 부른다.
  *   gt 가 아닌 모드에서도 넣으면 떠밀림 진단(sgrt_get_pose_diag)과 기록에 쓴다.
  * 영상 시각: 평가기 관측 영상(스텝 k)은 스텝 k-1 끝의 장면이다(docs/통합_실시간.md 2.7). sgrt 는 영상 stamp 를 직전 sgrt_step 의
@@ -115,6 +116,17 @@ sm_ctx* sgrt_scenemap(sgrt*);
  * 기록: SGRT_RECORD=<파일> 이면 sgrt 가 받은 입력(proprio·외부 자세·keyframe 깊이·RGB·검출)을 그대로 이진 파일로 쓴다 —
  *   scenemap/tools/sm_bench 가 다시 재생한다(자세 모드 비교·단계 시간). */
 int    sgrt_set_pose_mode(sgrt*, int32_t mode);
+
+/* ---- 2D 라이다 · Cartographer(추가 ABI, 10-06) ----
+ * 기본 자세 원천은 Cartographer(../slam_carto): SGRT_POSE 없음·slam·carto → scenemap SM_POSE_EXT(3). 스텝마다 proprio 의 바퀴
+ *   오도메트리(LIMO 0–2)와 sgrt_push_scan 의 스캔을 Cartographer 에 넣고, 스텝 시각의 자세를 scenemap 에 준다(지도·물체는 그 자세로).
+ *   SGRT_POSE=slam2d 는 옛 scenemap slam2d(오도메트리 + 깊이 가상 스캔 맞추기, 확인 끝나면 archive), odom·gt 는 그대로.
+ *   스캔이 한 번도 안 오면 자세 = 오도메트리만(한 번 경고). Cartographer 없이 빌드했거나 R1 이면 slam2d.
+ *   SGRT_CARTO_CONFIG = lua 이름(기본 limo_x2l.lua), SGRT_LASER = "x,y,z,yaw"(base ← 라이다, 기본 URDF laser_link 0.103,0,-0.034,0).
+ * sgrt_push_scan: 스캔 하나(라이다 프레임). stamp = 마지막 광선 시각, ranges[i] 방향 = angle_min + i·angle_inc.
+ *   범위 밖·NaN·inf 는 버림. 기록(SGRT_RECORD)에 'L' 레코드로 남는다. sgrt_step 과 같은 스레드에서. 0 성공 */
+int    sgrt_push_scan(sgrt*, double stamp, int32_t n, const float* ranges, double angle_min, double angle_inc, double time_inc,
+                      double range_min, double range_max);
 
 /* ---- 로봇 고르기(추가 ABI, 10-04) ----
  * 기본은 LIMO + OMX-F(proprio 12). R1 Pro(proprio 61, 머리 zed_link 깊이)는 옛 기록 재생 전용. sgrt_create 때 환경 변수로 고른다:

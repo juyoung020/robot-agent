@@ -160,6 +160,12 @@ static bool next(FILE* f, Rec& r) {
     return std::fread(r.f.data(), 4, n, f) == size_t(n);
   }
   if (t == 'G') return std::fread(r.g, 8, 3, f) == 3;
+  if (t == 'L') {   // 2D 라이다 스캔(sgrt 'L', 10-06) — 여기서는 안 씀, 건너뜀
+    int32_t n;
+    double h5[5];
+    if (!rd(f, &n) || std::fread(h5, 8, 5, f) != 5) return false;
+    return std::fseek(f, long(n) * 4, SEEK_CUR) == 0;
+  }
   if (t != 'I') return false;
   int32_t w, h;
   if (!rd(f, &w) || !rd(f, &h) || std::fread(r.K, 8, 4, f) != 4) return false;

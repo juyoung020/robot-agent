@@ -11,6 +11,7 @@ struct Rec {
   double stamp;
   std::vector<float> f;       // P: proprio, I: 깊이
   double g[3];                // G
+  double scan[5];             // L: angle_min, angle_inc, time_inc, range_min, range_max (f = 거리)
   int w = 0, h = 0;
   double K[4];
   std::vector<uint8_t> rgba;  // I: RGBA(호스트 자르기용)
@@ -47,6 +48,11 @@ inline bool load(const char* path, std::vector<Rec>* out, int max_frames) {
       ++frames;
     } else if (t == 'G') {
       if (std::fread(r.g, 8, 3, f) != 3) break;
+    } else if (t == 'L') {   // 2D 라이다 스캔(10-06)
+      int32_t n;
+      if (!rd(f, &n) || std::fread(r.scan, 8, 5, f) != 5) break;
+      r.f.resize(size_t(n));
+      if (std::fread(r.f.data(), 4, size_t(n), f) != size_t(n)) break;
     } else if (t == 'I') {
       int32_t w, h;
       if (!rd(f, &w) || !rd(f, &h) || std::fread(r.K, 8, 4, f) != 4) break;

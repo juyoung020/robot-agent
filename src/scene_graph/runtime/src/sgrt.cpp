@@ -23,6 +23,9 @@
 #include "scenemap/bestview.hpp"
 #include "scenemap/timing.hpp"
 #include "sgrt_clip.hpp"
+#ifdef SGRT_HAVE_CARTO
+#include "slam_carto.h"
+#endif
 
 constexpr int kClosedVocabMax = 200;
 
@@ -73,6 +76,11 @@ struct ObjprobFront {
 
 struct sgrt {
   sgrt_config cfg{};
+#ifdef SGRT_HAVE_CARTO
+  sc_ctx* carto = nullptr;          // Cartographer(SGRT_POSE 기본 = slam·carto) — 스캔 + 오도메트리 → 스텝마다 sm_push_ext_pose
+#endif
+  int64_t n_scans = 0;
+  bool warned_noscan = false;
   std::string out_dir;
   std::vector<std::string> labels;   // 이번 판 이름 표(scenemap labels)
   OvdHandle* det = nullptr;
@@ -128,6 +136,7 @@ const char* const kSgNames[kSgCount] = {"det", "step", "map", "record"};
 
 // 기록 파일: 머리 "SGRC" u32 판 1, 그 뒤 레코드(꼬리표 1 바이트):
 //   'P' f64 stamp, i32 n, f32[n] proprio
+//   'L' f64 stamp(마지막 광선), i32 n, f64 angle_min, angle_inc, time_inc, range_min, range_max, f32[n] 거리(2D 라이다, 10-06)
 //   'G' f64 stamp, f64 x, y, yaw                                   (외부 자세)
 //   'I' f64 stamp(스텝 시각, 늦춤 전), i32 w, h, f64 fx, fy, cx, cy, f32[w·h] 깊이 m, u8 has_rgb, [u8[w·h·3] RGB],
 //       i32 n, img_w, img_h, mask_w, mask_h, f32 sx, sy, ox, oy, i32[n] cls, f32[n] score, f32[4n] box, u32[n·words] mask
@@ -396,9 +405,13 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
   if (sm_get_robot(s->sm) != SM_ROBOT_LIMO_OMX)
     std::fprintf(stderr, "[sgrt] robot %d (0 r1pro = 옛 기록 전용, 1 limo_omx), proprio >= %d, config %s\n", sm_get_robot(s->sm),
                  sm_proprio_dim(sm_get_robot(s->sm)), smj.c_str());
-  if (const char* pm = std::getenv("SGRT_POSE")) {
-    const std::string m = pm;
-    sm_set_pose_mode(s->sm, m == "gt" ? SM_POSE_GT : m == "odom" ? SM_POSE_ODOM : SM_POSE_SLAM);
+  {
+    const char* pm = std::getenv("SGRT_POSE");
+    const std::string m = pm && *pm ? pm : "slam";
+    const int mode = m == "gt" ? SM_POSE_GT : m == "odom" ? SM_POSE_ODOM : m == "slam2d" ? SM_POSE_SLAM : SM_POSE_EXT;
+    if (mode == SM_POSE_EXT && m != "slam" && m != "carto")
+      std::fprintf(stderr, "[sgrt] SGRT_POSE=%s unknown -> Cartographer (slam|carto|slam2d|odom|gt)\n", m.c_str());
+    sgrt_set_pose_mode(s, mode);
   }
   if (const char* pl = std::getenv("SGRT_MAP_POLICY")) sm_set_map_update(s->sm, std::atoi(pl) ? 1 : 0, 0);
   if (const char* ip = std::getenv("SGRT_INSPECT"); ip && std::atoi(ip)) sm_set_inspect(s->sm, 1);   // 살펴본 정도(view.json·scene.json "inspect")
@@ -455,7 +468,7 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
       std::fprintf(stderr, "[sgrt] recording inputs to %s\n", rp);
     }
   }
-  std::fprintf(stderr, "[sgrt] pose mode %d (0 slam, 1 odom, 2 gt), image lag %d\n", sm_get_pose_mode(s->sm), s->image_lag);
+  std::fprintf(stderr, "[sgrt] pose mode %d (0 slam2d, 1 odom, 2 gt, 3 Cartographer), image lag %d\n", sm_get_pose_mode(s->sm), s->image_lag);
   return s;
 }
 
@@ -482,6 +495,15 @@ void sgrt_destroy(sgrt* s) {
                  (long long)s->op.n_kf, s->op.enc_ms / double(s->op.n_kf), double(s->op.n_enc) / double(s->op.n_kf),
                  s->op.reenc_ms / double(s->op.n_kf), (long long)s->op.n_reenc);
   if (s->det) ovd_destroy(s->det);
+#ifdef SGRT_HAVE_CARTO
+  if (s->carto) {
+    sc_stats cs{};
+    sc_get_stats(s->carto, &cs);
+    std::fprintf(stderr, "[sgrt] Cartographer: %lld scans, %lld nodes, %lld submaps, %lld loop constraints, push %.0f us/scan\n", (long long)cs.n_scans,
+                 (long long)cs.n_nodes, (long long)cs.n_submaps, (long long)cs.n_loop_constraints, cs.us_scan_mean);
+    sc_destroy(s->carto);
+  }
+#endif
   if (s->sm) sm_destroy(s->sm);
   sgrt_crop::destroy(s->crop);
   sm_snapshot_release(s->map_snap);
@@ -489,12 +511,29 @@ void sgrt_destroy(sgrt* s) {
   delete s;
 }
 
+namespace {
+// 새 판: Cartographer 도 새 궤적(지도·자세 원점을 scenemap 과 같이 비움)
+void cartoReset(sgrt* s) {
+#ifdef SGRT_HAVE_CARTO
+  if (!s->carto) return;
+  sc_destroy(s->carto);
+  s->carto = nullptr;
+  s->n_scans = 0;
+  s->warned_noscan = false;
+  sgrt_set_pose_mode(s, SM_POSE_EXT);
+#else
+  (void)s;
+#endif
+}
+}  // namespace
+
 int sgrt_begin(sgrt* s, const char* const* prompt, int32_t n, char* err, size_t err_len) {
   if (!s) return -1;
   // 프롬프트 방식: SGRT_PROMPT=task(과제 이름만) | all(엔진 어휘 전부) | auto(기본: 어휘가 kClosedVocabMax 이하인 닫힌 어휘
   // 엔진 — COCO-80 YOLO-seg, 옛 규칙 비교용 — 이면 all, 큰 어휘면 task. 기본 ObjectSAM + objprob 는 이름 표를 SigLIP 2 가 가짐)
   if (s->op.on) {   // objprob: 이름은 SigLIP 2 낱말 표(과제 이름 더함), 검출 엔진은 'object' 하나
     sm_reset(s->sm);
+    cartoReset(s);
     s->clip.reset();
     if (objprobBegin(s, prompt, n, err, err_len) != 0) return -1;
     s->step = 0;
@@ -510,6 +549,7 @@ int sgrt_begin(sgrt* s, const char* const* prompt, int32_t n, char* err, size_t 
   const bool all = m == "all" || (m != "task" && V <= kClosedVocabMax) || !prompt || n <= 0;
   const int found = ovd_set_prompt(s->det, prompt, n, err, err_len);   // 어휘 밖 이름은 err 에 적히고 번호는 유지(검출 안 됨)
   sm_reset(s->sm);
+  cartoReset(s);
   s->clip.reset();
   s->labels.clear();
   if (all) {   // 엔진 어휘 전부(순서 = 엔진 번호). 과제 이름 중 어휘 밖의 것은 위 err 에 남음
@@ -548,6 +588,20 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
     wr(s->rec, int32_t(n_proprio));
     std::fwrite(proprio, 4, size_t(std::max(0, n_proprio)), s->rec);
   }
+#ifdef SGRT_HAVE_CARTO
+  if (s->carto && n_proprio >= SM_LIMO_PROPRIO_DIM) {   // 바퀴 오도메트리 → Cartographer, 이 스텝 자세 → scenemap(EXT)
+    sc_push_odom(s->carto, stamp, proprio[SM_LIMO_ODOM_X], proprio[SM_LIMO_ODOM_Y], proprio[SM_LIMO_ODOM_YAW]);
+    double cp[3];
+    if (sc_pose_at(s->carto, stamp, cp) == 0) {
+      const sm_pose2 ep{stamp, cp[0], cp[1], cp[2]};
+      sm_push_ext_pose(s->sm, &ep);
+    } else if (!s->n_scans && !s->warned_noscan && s->step > 90) {
+      s->warned_noscan = true;
+      std::fprintf(stderr, "[sgrt] Cartographer: no lidar scans (sgrt_push_scan) after %lld steps -> pose = wheel odometry only "
+                           "(SGRT_POSE=slam2d for the old depth scan matcher)\n", (long long)s->step);
+    }
+  }
+#endif
   sm_proprio p{stamp, proprio, n_proprio};
   int rc = sm_push_proprio(s->sm, &p);
   // 영상 k = 장면 k-1: 직전 스텝 시각(첫 스텝은 자기 시각)
@@ -728,7 +782,52 @@ sm_snapshot_t* sgrt_map_snapshot(sgrt* s) { return s ? s->map_snap : nullptr; }
 
 sm_ctx* sgrt_scenemap(sgrt* s) { return s ? s->sm : nullptr; }
 
-int sgrt_set_pose_mode(sgrt* s, int32_t mode) { return s ? sm_set_pose_mode(s->sm, mode) : -1; }
+int sgrt_set_pose_mode(sgrt* s, int32_t mode) {
+  if (!s) return -1;
+#ifdef SGRT_HAVE_CARTO
+  if (mode == SM_POSE_EXT && sm_get_robot(s->sm) != SM_ROBOT_LIMO_OMX) {
+    std::fprintf(stderr, "[sgrt] Cartographer needs LIMO wheel odometry (proprio 0-2) -> slam2d for this robot\n");
+    mode = SM_POSE_SLAM;
+  }
+  if (mode == SM_POSE_EXT && !s->carto) {
+    sc_config cc = sc_default_config();
+    const char* cn = std::getenv("SGRT_CARTO_CONFIG");
+    if (cn && *cn) cc.config_name = cn;
+    if (const char* ls = std::getenv("SGRT_LASER"))
+      std::sscanf(ls, "%lf,%lf,%lf,%lf", &cc.laser_xyz[0], &cc.laser_xyz[1], &cc.laser_xyz[2], &cc.laser_yaw);
+    char er[256] = {0};
+    s->carto = sc_create(&cc, er, sizeof er);
+    if (!s->carto) {
+      std::fprintf(stderr, "[sgrt] Cartographer: %s -> slam2d\n", er);
+      mode = SM_POSE_SLAM;
+    } else {
+      std::fprintf(stderr, "[sgrt] Cartographer pose source (%s, laser %.3f %.3f %.3f yaw %.3f)\n", cc.config_name ? cc.config_name : "limo_x2l.lua",
+                   cc.laser_xyz[0], cc.laser_xyz[1], cc.laser_xyz[2], cc.laser_yaw);
+    }
+  }
+  if (mode != SM_POSE_EXT && s->carto) { sc_destroy(s->carto); s->carto = nullptr; }
+#else
+  if (mode == SM_POSE_EXT) {
+    std::fprintf(stderr, "[sgrt] built without slam_carto (tools/build_all.sh cartographer sgrt) -> slam2d\n");
+    mode = SM_POSE_SLAM;
+  }
+#endif
+  return sm_set_pose_mode(s->sm, mode);
+}
+
+int sgrt_push_scan(sgrt* s, double stamp, int32_t n, const float* r, double a0, double da, double dt, double rmin, double rmax) {
+  if (!s || !r || n <= 0) return -1;
+  if (s->rec) {
+    std::fputc('L', s->rec);
+    wr(s->rec, stamp); wr(s->rec, n); wr(s->rec, a0); wr(s->rec, da); wr(s->rec, dt); wr(s->rec, rmin); wr(s->rec, rmax);
+    std::fwrite(r, 4, size_t(n), s->rec);
+  }
+  ++s->n_scans;
+#ifdef SGRT_HAVE_CARTO
+  if (s->carto) return sc_push_scan(s->carto, stamp, n, r, a0, da, dt, rmin, rmax);
+#endif
+  return 0;
+}
 
 int sgrt_set_robot(sgrt* s, int32_t robot) { return s ? sm_set_robot(s->sm, robot) : -1; }
 
