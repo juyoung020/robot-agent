@@ -102,8 +102,10 @@ int main(int argc, char** argv) {
     c.teacher_script = (int)jget(cfg, "teacher_script", 0); c.b_feas = (int)jget(cfg, "feas", 0);
     c.b_gcand = (int)jget(cfg, "gcand", 0); c.b_sltol = (int)jget(cfg, "sltol", 0);
     c.act_mask = (uint32_t)jget(cfg, "act_mask", 0); c.goal_drop = 0.f;
-    c.arch = (int)jget(cfg, "arch", 0);
   }
+  c.arch = (int)jget(cfg, "arch", 0);   // 학생 구조(0 MLP, 1 토큰마다) — 모든 단계(전에는 stage 3 에서만 읽어 A2 토큰 학생이 안 실렸음)
+  c.tf_d = (int)jget(cfg, "tf_d", 0); c.tf_layers = (int)jget(cfg, "tf_layers", 0); c.tf_heads = (int)jget(cfg, "tf_heads", 0);   // arch 1 모양(bc_run 과 같은 키, 0 = tf.h 기본)
+  c.tf_mlp = (int)jget(cfg, "tf_mlp", 0); c.tf_elayers = (int)jget(cfg, "tf_elayers", 0);
   if (actor != "student" && !c.teacher_script) { std::fprintf(stderr, "record_bc: --actor teacher needs teacher_script (BEHAVIOR) in the config\n"); return 2; }
   void* h = bc_create(&c);
   bc::Bc& B = *static_cast<bc::Bc*>(h);

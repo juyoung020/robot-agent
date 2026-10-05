@@ -57,7 +57,7 @@ target/release/trainview --root data/trainview_work/smoke_v2 --root data/trainvi
 
 | 판 | 만드는 것 | 내용 |
 |---|---|---|
-| GPU 환경 판(RL 교사·BC 학생) | `tools/record_replay` 의 `record_ppo` / `record_bc` (C++/CUDA). **학습 중 체크포인트마다 자동**(아래) 또는 손으로 | 체크포인트를 돌려 판 K 개. 판이 끝나면 그 입력으로 **진짜 scenemap**(limo_omx C ABI)을 처음부터 돌림: 스텝마다 proprio 12, 정책 지도 keyframe 마다 깊이 640×400 + id 버퍼(정책 지도와 같은 장면 상자를 같은 카메라에서 CPU 광선 추적 — `training/RL/map_cmp` 와 같은 방법) + 면 음영 RGB, 완벽한 검출 → scenemap 의 sgview 스트림·메모리(점구름 PLY)를 `<판>.sg/` 에, 정책이 본 지도는 `<판>.sg/episode.trp`. (팀 RenderBatch 는 RGB·깊이만 내고 id 버퍼가 없어 마스크를 못 만든다) |
+| GPU 환경 판(RL 교사·BC 학생) | `tools/record_replay` 의 `record_ppo` / `record_bc` (C++/CUDA). **학습 중 체크포인트마다 자동**(아래) 또는 손으로 | 체크포인트를 돌려 판 K 개. `<판>.sg/` 는 **학습이 실제로 본 GPU 지도를 그대로**(`gpu_sg.h`: 믿는 자세·관절 스텝마다, 격자·objprob 저장소의 확정 물체(이름 사후·살펴본 정도 포함)는 keyframe 마다 — sgview 스트림 형식), 정책 기록은 `<판>.sg/episode.trp`. CPU scenemap 다시 돌리기(옛 `sg_feed.h`, 완벽 마스크 + 옛 이름 규칙)는 단일 원천 결정으로 archive — 진짜 파이프라인 모습은 `<판>_og.sg`(og_replay) |
 | OmniGibson LIMO 탐사 | `tools/og2sg` (C++) | sgrt 기록 `rec.bin` → scenemap 재실행 → 스트림·메모리·몸통 카메라 JPEG·GT 궤적. `tools/run_explore_live.sh` 를 `TRAINVIEW_OG=1` 로 돌리면 판 끝에 자동(→ `data/trainview_work/behavior_og/<판>`) |
 | BEHAVIOR 집 배치 | `og2sg --layout --rasc <장면>.rasc` | 다닐 곳 격자(집만)·방 노드·과제 첫 인스턴스 시작 자세·바탕 층(RASC v3) |
 
