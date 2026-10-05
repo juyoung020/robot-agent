@@ -8,7 +8,8 @@ tools/      build_all.sh(빌드 한 진입점)·check_env.sh·run_explore_live.s
 config/     paths.env(외부 경로 기본값, git) · paths.local.env(내 PC, git 밖) · paths.py
 docs/ archive/ refs/ tests/ scripts/
 build/      (git 밖) 모든 빌드 결과 — cmake 폴더 build/<이름>, cargo build/cargo/<이름>, 실행 파일 링크 build/bin/
-models/     (git 밖) 가중치·TensorRT 엔진 (OVDET_MODELS = models/ovdet)
+models/     (git 밖) 로봇·파이프라인이 실행할 때 쓰는 엔진·가중치 (OVDET_MODELS = models/ovdet)
+training/model/ (git 밖) 학습할 때 불러오는 베이스 가중치 — Qwen3.5-0.8B·SigLIP 2(쓰는 것), Qwen3.5-2B·smolvla_base(나중을 위해 보관)
 data/       (git 밖) 데이터셋·기록·실행 폴더 (datasets/ embed_work/ trainview_work/)
 third_party/(git 밖) BEHAVIOR-1K 등 큰 외부 코드·자산 (B1K_ROOT)
 ```
