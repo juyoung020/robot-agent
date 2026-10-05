@@ -14,7 +14,10 @@ closed/open-vocabulary YOLO engines (~/ovdet_models/archive, old name rules). SG
 
 The head RGB stays on the GPU (ovdet reads device memory); depth is copied to host only on keyframe steps.
 
-Pose source (env SGRT_POSE, read by libsgrt): slam (default: base_qvel odometry + depth scan matching), odom, gt.
+Pose source (env SGRT_POSE, read by libsgrt): slam = carto (default: Cartographer 2D lidar + wheel odometry, src/scene_graph/slam_carto),
+slam2d (old scenemap depth scan matching, fallback until Cartographer is verified), odom, gt.
+Sim 2D lidar (env SGRT_LIDAR, default 1 for LIMO): the glue ray-casts the LIMO X2L lidar (src/sim/lidar/limo_lidar.py, 6 Hz,
+500 rays, 0.12-8 m, URDF laser_link) and hands each scan to libsgrt (sgrt_push_scan) before the step; SGRT_LIDAR=0 turns it off.
 The glue pushes the simulator's ground-truth robot base pose (robot.get_position_orientation(), world frame) every step
 whenever it can find the robot (SGRT_GT_POSE=0 turns that off): in gt mode it is the map pose, otherwise it is only
 used for the drift diagnostic. GT is for sim debugging/visualisation only -- the challenge rules forbid it at
@@ -155,6 +158,10 @@ class SceneMemory:
         if self.has_pose:
             L.sgrt_push_pose.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double]
             L.sgrt_get_pose_diag.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Diag)]
+        self.has_scan = hasattr(L, "sgrt_push_scan")
+        if self.has_scan:
+            L.sgrt_push_scan.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_int32, ctypes.c_void_p, ctypes.c_double, ctypes.c_double,
+                                         ctypes.c_double, ctypes.c_double, ctypes.c_double]
         if self.has_timing:
             L.sgrt_get_stage_timing.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Stage), ctypes.c_int32]
         cfg = _Cfg(ENGINE.encode(), (ENGINE + ".names.txt").encode(), out_dir.encode(), kf_every, save_s, 0.25)
@@ -189,7 +196,10 @@ class SceneMemory:
             self.gt_log_path = os.environ["SGRT_GT_LOG"]
             self.gt_log = open(self.gt_log_path, "w")
             self.gt_log.write("step,stamp,x,y,z,yaw,cam_x,cam_y,cam_z,cam_qx,cam_qy,cam_qz,cam_qw\n")
-        self.py_ns = {"gt": 0, "prep": 0, "call": 0}
+        # sim 2D lidar (module docstring): LIMO only, needs the sim robot
+        self.lidar = None
+        self.use_lidar = self.has_scan and self.robot_id == 1 and os.environ.get("SGRT_LIDAR", "1") != "0"
+        self.py_ns = {"gt": 0, "prep": 0, "call": 0, "lidar": 0}
         self.py_n = 0
         print(f"[sgrt] {task}: {len(names)} prompt names, out {out_dir}, robot {self.robot_id} ({HEAD_LINK[self.robot_id]})", flush=True)
 
@@ -292,6 +302,22 @@ class SceneMemory:
                     self.gt_log.write(f"{self.t},{stamp:.4f},{float(pos[0]):.5f},{float(pos[1]):.5f},{float(pos[2]):.5f},{yaw:.6f},"
                                       + ",".join(f"{float(v):.6f}" for v in list(cp) + list(cq)) + "\n")
         t1 = time.perf_counter_ns()
+        if self.use_lidar:
+            if self.lidar is None and self.t % 30 == 0:
+                r = self.robot if self.robot is not None else _find_robot()
+                if r is not None:
+                    import sys
+                    sys.path.insert(0, str(ROOT / "src/sim/lidar"))
+                    from limo_lidar import LimoLidar
+                    self.lidar = LimoLidar(r)
+                    print(f"[sgrt] sim lidar: {self.lidar.n} rays, {self.lidar.s['hz']} Hz, {self.lidar.s['rmin']}-{self.lidar.s['rmax']} m "
+                          f"({'laser_link' if self.lidar.link is not None else 'base_link + URDF offset'})", flush=True)
+            if self.lidar is not None and self.lidar.due(stamp):
+                rg, a0, da, dti, rmin, rmax = self.lidar.scan(stamp)
+                self.L.sgrt_push_scan(self.h, stamp, rg.size, rg.ctypes.data, a0, da, dti, rmin, rmax)
+        t1b = time.perf_counter_ns()
+        self.py_ns["lidar"] += t1b - t1
+        t1 = t1b
         p = obs[kp]
         p = p[0] if p.ndim == 2 else p
         prop = np.ascontiguousarray((p.detach().cpu().numpy() if hasattr(p, "detach") else np.asarray(p)), np.float32)
