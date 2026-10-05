@@ -252,3 +252,29 @@ body.rp_focus main { padding: 0; }
 .tl { margin-bottom: 11px; }
 #tab_replay.focus .replay { grid-template-rows: minmax(0, 1fr); }
 #rp_strip { height: 110px; flex: none; }
+
+/* ===== Training 탭 머리: 한 줄 + 카드 4 + 건강 칩 + 곡선 4 ===== */
+.runmenu { left: 0; right: auto; min-width: 560px; max-width: 92vw; max-height: 70vh; overflow: auto; flex-direction: column; gap: 4px; padding: 8px; }
+.runmenu input[type=search] { width: 100%; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.rm_h { font-weight: 600; margin: 8px 2px 2px; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+.rm_row { display: grid; grid-template-columns: 16px minmax(160px, 1.2fr) 150px 1fr; gap: 8px; align-items: center; padding: 4px 6px; border-radius: 6px; cursor: pointer; font-size: 12.5px; }
+.rm_row:hover, .rm_row.on { background: var(--surface2); } .rm_row.on { outline: 1px solid var(--accent); }
+.rm_n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .rm_k { color: var(--ink2); } .rm_s { font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rm_d { margin-top: 6px; border-top: 1px solid var(--line); padding-top: 4px; } .rm_d summary { cursor: pointer; font-weight: 600; font-size: 12.5px; }
+#runbtn b { font-weight: 600; margin-left: 4px; max-width: 28ch; display: inline-block; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; white-space: nowrap; }
+.runhead { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; margin-bottom: 10px; }
+.rh1 { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.rh_name { font-size: 15px; font-weight: 600; } .rh_stage { font-weight: 600; color: var(--ink2); }
+.rh_state { display: inline-flex; align-items: center; } .rh_state .stl { width: 11px; height: 11px; }
+.rh_res { display: inline-flex; align-items: center; gap: 6px; } .spark { vertical-align: middle; }
+.rh_teacher a { color: var(--accent); }
+.hchip { cursor: pointer; border: 1px solid var(--line); border-radius: 12px; padding: 2px 11px; font-size: 12.5px; user-select: none; }
+.hchip.ok { border-color: var(--good); } .hchip.ok::before { content: "✓ "; color: var(--good); }
+.hchip.warn { border-color: var(--critical); background: color-mix(in srgb, var(--critical) 14%, var(--surface)); } .hchip.warn::before { content: "! "; color: var(--critical); font-weight: 700; }
+.hbox { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; }
+.cards.bigcards { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+.card.big { padding: 10px 14px; min-height: 96px; } .card.big .v { font-size: 26px; } .card.big .t { font-size: 12.5px; }
+.morecards, .morecharts { margin-top: 8px; } .morecards summary, .morecharts summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.morecards .cards { margin-top: 6px; }
+.emptybox { max-width: 760px; margin: 60px auto; padding: 24px 28px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; line-height: 1.6; }
+.emptybox h2 { margin: 0 0 10px; font-size: 20px; }

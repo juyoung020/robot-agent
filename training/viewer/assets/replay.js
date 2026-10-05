@@ -112,7 +112,7 @@ export class Replay {
     $("rp_inon").checked = innerWidth >= 1700; $("rp_in").hidden = !$("rp_inon").checked; $("rp_inbtn").classList.toggle("on", $("rp_inon").checked);
     $("rp_listbtn").onclick = () => { root.classList.toggle("nolist"); this.resize(); };
     $("rp_inbtn").onclick = () => { $("rp_inon").checked = !$("rp_inon").checked; $("rp_inon").onchange({ target: $("rp_inon") }); };
-    $("rp_runbtn").onclick = () => { document.body.classList.toggle("rp_pickers"); setTimeout(() => this.resize(), 0); };
+    $("rp_runbtn").onclick = e => { e.stopPropagation(); document.getElementById("runbtn").click(); };
     $("rp_eprev").onclick = () => this.stepEpisode(-1);
     $("rp_enext").onclick = () => this.stepEpisode(1);
     const menu = $("rp_layers");

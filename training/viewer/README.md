@@ -191,3 +191,8 @@ cmake -S training/viewer/tools/og2sg -B ~/ra_og2sg && cmake --build ~/ra_og2sg -
 - 소스를 고친 뒤: behavior-2026 에서 고침 → 서브모듈 포인터 올림 → `tools/sync_scene_graph.sh` → `build_deps.sh` → trainview 다시 띄움. 그 뒤 재생 화면은 새 sgview 로, 새로 도는 OG 판은 새 인지로 나온다.
 - 각 `_og.sg/meta.json` 의 `pipeline` 에 만든 소스(git 해시, scenemap·runtime·ovdet·clip·da 트리 해시), 엔진, objprob 매개변수 파일·해시, libsgrt 시각을 적는다. 재생 화면 HUD 에 표시하고, 지금 소스와 트리 해시가 다르거나 기록이 없으면 **"stale pipeline — re-run"** 단추: 눌러 og_queue 맨 앞에 다시 넣는다(옛 판은 `*.sg.prev` 로 비켜 둠).
 - 손목 카메라: `og_replay.py` 가 LIMO RGB(`cam/NNNNNN.jpg`, `meta.cams`)와 OMX-F 손목 RGB(`cam/wNNNNNN.jpg`, `meta.wcams`, 로봇 모델의 `wrist_eye` 센서 = URDF `wrist_cam_link`, 화각은 모델 기본값)를 2 Hz 로 함께 기록한다. Replay 에서 `LIMO RGB`·`wrist RGB` 그림 위 그림(켜고 끔, 모서리 끌어 크기 조절).
+
+## Training 탭 머리 (단순화)
+- 기본은 **현재/최신 실행 하나**: 한 줄 머리(실행 이름·단계·상태 불과 말·걸린 시간·핵심 결과 + 작은 곡선·배운 교사 링크) → 큰 카드 4(성공·충돌·판 길이·학습 속도, "More stats" 접힘) → 건강 칩 "Health: OK / N warnings"(누르면 검사 펼침) → 핵심 곡선 4 + "More charts" 접힘.
+- 실행 바꾸기: 위 줄 **Runs ▾**(검색, 단계별·최신순 한 줄 요약). Teachers (RL)·BEHAVIOR explore records·Archive 는 그 안의 접힌 구역. 시험(synthetic) 자료는 `?debug=1` 에서만 보인다.
+- 실행이 하나도 없으면 빈 화면 안내(감시 중인 --root, 시작 방법, 문서 경로).

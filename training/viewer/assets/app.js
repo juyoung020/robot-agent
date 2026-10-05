@@ -19,7 +19,6 @@ const S = {
   eps: 0, rep: 0, plots: [], built: "", epsRows: null, cmpSel: new Set(), cmpData: {}, cmpKeys: {},
 };
 const KIND_ROW = { teacher: "teacher", bc: "student", dagger: "student", rlft: "student", eval: "student", behavior: "behavior" };
-let showSyn = false, showArch = false; try { showSyn = localStorage.getItem("tv_show_syn") === "1"; showArch = localStorage.getItem("tv_show_arch") === "1"; } catch (e) {}
 const STOPS = [10, 20, 50, 100, 200, 500, 0];
 // 학습 상태 불(서버 runs::status): 목록·파이프라인·머리줄, SSE "status" 로 바뀜
 S.status = {};
@@ -37,6 +36,7 @@ function applyStatus(list) {
   document.querySelectorAll("[data-stl]").forEach(el => { const st = S.status[el.dataset.stl]; if (st) { el.textContent = st.state; el.parentElement.title = stTitle(st); } });
   document.querySelectorAll("[data-rec]").forEach(el => { const st = S.status[el.dataset.rec]; el.hidden = !(st && st.recording); if (st && st.recording) el.title = "recording replay: " + st.recording; });
 }
+$("healthchip").onclick = () => { $("checks_box").hidden = !$("checks_box").hidden; };
 const replay = new Replay({ api, getCursorIter: () => cursorIter() });
 
 // ---------------------------------------------------------------- 실행 목록
@@ -46,61 +46,102 @@ async function loadRuns() {
   try { j = await api("/api/runs"); } catch (e) { setText("conn", "server offline"); return; }
   S.runs = j.runs; S.byId = Object.fromEntries(j.runs.map(r => [r.id, r])); S.latest = j.latest;
   for (const r of j.runs) if (r.status) S.status[r.id] = r.status;
-  // 줄: pipelines(학생 ← 교사), teachers(학생 없는 교사), BEHAVIOR, labs, archive(옛 v2 이전, 끔), test data(가짜, 끔)
-  $("show_syn").checked = showSyn; $("show_arch").checked = showArch;
-  const pc = v => v == null ? "—" : (v * 100).toFixed(0) + "%";
   const sr = r => { const h = r.health || {}; return h["rollout/success_rate"] ?? Object.entries(h).find(([k]) => k.startsWith("rollout/success_rate/"))?.[1]; };
-  const teacherHealth = r => r ? `SR ${pc(sr(r))} · coll ${pc((r.health || {})["rollout/collision_rate"])} · len ${(r.health || {})["rollout/ep_len_mean"] != null ? r.health["rollout/ep_len_mean"].toFixed(0) : "—"}` : "";
-  const chip = (r, extra = "") => `<span class="chip${r.id === S.sel ? " on" : ""}" data-id="${esc(r.id)}" title="${esc(r.id)}\n${esc(r.dir)}${r.imported_from ? "\n(imported from " + esc(r.imported_from) + ")" : ""}">${stDot(r.id)}${esc(shortName(r))}<span class="k">${esc(r.kind === "lab" ? "test" : r.kind)}${r.synthetic ? " · syn" : ""}${r.imported_from ? " · csv" : ""}</span>${recBadge(r.id)}${extra}</span>`;
-  const isStudent = r => ["bc", "dagger", "rlft", "eval"].includes(r.kind);
-  // 시험 자료 = synthetic 또는 옛 "lab" 실행(labs/ 밑, kind lab) — 한 무리, 기본으로 숨김
+  // 시험 자료 = synthetic 또는 옛 "lab" 실행 — ?debug=1 이 아니면 아예 숨김
   for (const r of j.runs) r.test = !!(r.synthetic || r.kind === "lab" || (r.lab && r.kind !== "behavior"));
+  S.roots = (j.roots || []).map(x => x.path);
   const live = j.runs.filter(r => !r.test && !r.archive);
-  const students = live.filter(isStudent), used = new Set(students.map(r => r.teacher_run).filter(Boolean));
-  setHTML("pick_pipelines", students.map(r => {
-    const t = S.byId[r.teacher_run], h = r.health || {};
-    const ev = h["eval/success_rate"], tsr = h["eval_teacher/success_rate"];
-    return `<span class="pipe${r.id === S.sel || r.teacher_run === S.sel ? " on" : ""}"><span class="stu chip-like" data-id="${esc(r.id)}" title="student / VLA — ${esc(r.id)}">${stDot(r.id)}${esc(shortName(r))} <span class="m">${esc(r.kind)} · eval SR ${pc(ev)}${tsr != null ? " (teacher " + pc(tsr) + ")" : ""}</span>${recBadge(r.id)}</span><span class="arrow">←</span>` +
-      (t ? `<span class="tea" data-id="${esc(t.id)}" title="teacher (RL, privileged) — ${esc(t.id)}\ncheckpoint ${esc(r.teacher_ckpt || "")}">${stDot(t.id)}teacher ${esc(shortName(t))} · ${esc(r.teacher_ckpt || "")} · ${teacherHealth(t)}${recBadge(t.id)}</span>` : `<span class="tea" title="${esc(r.teacher || "")}">teacher ${esc(String(r.teacher || "?").split("/").slice(-3).join("/"))} (not under roots)</span>`) + `</span>`;
-  }).join(" ") || '<span class="muted small">no student run yet — teachers below</span>');
-  setHTML("pick_teachers", live.filter(r => r.kind === "teacher" && !used.has(r.id)).map(r => chip(r, `<span class="h">${teacherHealth(r)}</span>`)).join("") || '<span class="muted small">none</span>');
-  setHTML("pick_behavior", live.filter(r => r.kind === "behavior").map(r => chip(r)).join("") || '<span class="muted small">none</span>');
-  const arch = j.runs.filter(r => r.archive && !r.test);
-  setHTML("pick_archive", showArch ? arch.map(r => chip(r, isStudent(r) ? "" : `<span class="h">${teacherHealth(r)}</span>`)).join("") : `<span class="muted small">${arch.length} hidden (pre-v2 / csv imports)</span>`);
-  const syn = j.runs.filter(r => r.test);
-  setHTML("pick_synthetic", showSyn ? syn.map(r => chip(r)).join("") : (syn.length ? `<span class="muted small">${syn.length} hidden</span>` : ""));
+  S.shown = j.runs.filter(r => DEBUG || !r.test);
+  renderRunMenu();
+  renderEmpty(S.shown.length === 0);
   if (!S.sel) {
     const want = new URLSearchParams(location.hash.slice(1)).get("run");
-    const ok = id => id && S.byId[id] && (showSyn || !S.byId[id].test);
+    const ok = id => id && S.byId[id] && (DEBUG || !S.byId[id].test);
     // 기본: 가장 최근 학생(결과물), 없으면 최근 본실행
     const stu = live.filter(isStudent).sort((a, b) => (a.age ?? 1e12) - (b.age ?? 1e12))[0];
-    selectRun(ok(want) ? want : (stu && stu.id) || j.latest || (live[0] || {}).id);
+    const pool = S.shown.filter(r => !r.archive), stu2 = pool.filter(isStudent).sort((a, b) => (a.age ?? 1e12) - (b.age ?? 1e12))[0] || stu;
+    selectRun(ok(want) ? want : (stu2 && stu2.id) || (ok(j.latest) ? j.latest : null) || (pool[0] || S.shown[0] || {}).id);
   } else updateStatus();
   buildCompareList();
 }
-$("show_arch").onchange = e => { showArch = e.target.checked; try { localStorage.setItem("tv_show_arch", showArch ? "1" : "0"); } catch (x) {} loadRuns(); };
-$("show_syn").onchange = e => { showSyn = e.target.checked; try { localStorage.setItem("tv_show_syn", showSyn ? "1" : "0"); } catch (x) {} loadRuns(); };
+const DEBUG = /[?&]debug=1/.test(location.search);
+const isStudent = r => ["bc", "dagger", "rlft", "eval"].includes(r.kind);
+const KIND_LABEL = { teacher: "Teacher (RL)", bc: "Student (BC)", dagger: "Student (DAgger)", rlft: "Student (RL fine-tune)", eval: "Student (eval)", behavior: "Explore record" };
+const pc0 = v => v == null ? "—" : (v * 100).toFixed(0) + "%";
+const srOf = r => { const h = r.health || {}; return h["eval/success_rate"] ?? h["rollout/success_rate"] ?? Object.entries(h).find(([k]) => k.startsWith("rollout/success_rate/"))?.[1]; };
+const ageTxt = a => a == null ? "—" : a < 120 ? a.toFixed(0) + " s ago" : a < 7200 ? (a / 60).toFixed(0) + " min ago" : a < 172800 ? (a / 3600).toFixed(1) + " h ago" : (a / 86400).toFixed(0) + " d ago";
+const stageOf = r => r.stage != null && r.stage !== "" ? "Stage " + r.stage : isStudent(r) ? "Student runs" : r.kind === "teacher" ? "Teacher runs" : "Other";
+function runRow(r) {
+  const st = S.status[r.id] || {}, res = isStudent(r) ? `eval ${pc0(srOf(r))}` : r.kind === "teacher" ? `success ${pc0(srOf(r))}` : "";
+  return `<div class="rm_row${r.id === S.sel ? " on" : ""}" data-id="${esc(r.id)}" title="${esc(r.id)}\n${esc(r.dir)}">${stDot(r.id)}<span class="rm_n mono">${esc(shortName(r))}</span><span class="rm_k">${esc(KIND_LABEL[r.kind] || r.kind)}</span><span class="rm_s muted">${res}${res ? " · " : ""}${esc(st.state || "")} · ${ageTxt(r.age)}</span></div>`;
+}
+function renderRunMenu() {
+  const q = ($("runsearch").value || "").toLowerCase().trim(), match = r => !q || (r.id + " " + (r.kind || "") + " " + (r.group || "")).toLowerCase().includes(q);
+  const list = (S.shown || []).filter(match), byAge = (a, b) => (a.age ?? 1e12) - (b.age ?? 1e12);
+  const main = list.filter(r => !r.archive && r.kind !== "behavior" && r.kind !== "teacher" && (DEBUG || !r.test)).sort(byAge);
+  const groups = {}; for (const r of main) (groups[stageOf(r)] = groups[stageOf(r)] || []).push(r);
+  let h = "";
+  for (const [g, rs] of Object.entries(groups)) h += `<div class="rm_h">${esc(g)} <span class="muted">· newest first</span></div>${rs.map(runRow).join("")}`;
+  const sect = (title, tip, rs) => rs.length ? `<details class="rm_d"${q ? " open" : ""}><summary title="${esc(tip)}">${title} <span class="muted">${rs.length}</span></summary>${rs.map(runRow).join("")}</details>` : "";
+  h += sect("Teachers (RL)", "RL teachers: privileged-state policies the students imitate (BC / DAgger)", list.filter(r => r.kind === "teacher" && !r.archive && !r.test).sort(byAge));
+  h += sect("BEHAVIOR explore records", "OmniGibson LIMO explore records and house layouts (no training)", list.filter(r => r.kind === "behavior" && !r.archive).sort(byAge));
+  h += sect("Archive", "runs from before the v2 network/observation change, or imported from csv", list.filter(r => r.archive && !r.test).sort(byAge));
+  if (DEBUG) h += sect("Test data teachers (synthetic) — debug", "fake_run teachers — not real training results", list.filter(r => r.test && r.kind === "teacher").sort(byAge));
+  setHTML("runlist", h || '<div class="muted small" style="padding:6px">no run matches</div>');
+}
+$("runbtn").onclick = e => { e.stopPropagation(); const m = $("runmenu"); m.hidden = !m.hidden; if (!m.hidden) { $("runsearch").value = ""; renderRunMenu(); $("runsearch").focus(); } };
+$("runsearch").oninput = renderRunMenu;
 document.addEventListener("click", e => {
-  const c = e.target.closest(".chip, .stu, .tea"); if (c && c.dataset.id) selectRun(c.dataset.id);
+  const c = e.target.closest(".rm_row, .tea[data-id]"); if (c && c.dataset.id) { $("runmenu").hidden = true; selectRun(c.dataset.id); e.preventDefault(); return; }
+  if (!$("runmenu").hidden && !$("runmenu").contains(e.target)) $("runmenu").hidden = true;
 });
+function renderEmpty(empty) {
+  $("empty_state").hidden = !empty; $("train_body").hidden = empty; $("rundd").hidden = empty;
+  if (!empty) return;
+  const roots = (S.roots || []).map(p => `<code>${esc(p)}</code>`).join(" ") || "<code>(no --root)</code>";
+  $("empty_state").innerHTML = `<h2>No training runs yet</h2>
+    <p>trainview watches the run folders under its <b>--root</b>. A run appears here as soon as a trainer writes <code>run.json</code> + <code>progress.jsonl</code> into a folder there.</p>
+    <p><b>Start one:</b> run a trainer with its run folder inside a root, e.g. <code>training/BC/driver … --run-dir &lt;root&gt;/&lt;name&gt;</code> (BC / DAgger student) or the RL teacher trainer; the C2-curriculum runs will show up here by themselves.</p>
+    <p><b>Watching:</b> ${roots}</p>
+    <p><b>Docs:</b> <code>docs/map_vla/TRAIN_VIEWER.md</code> (viewer + run folder format) · <code>training/viewer/README.md</code> · <code>docs/map_vla/TRAINING_DESIGN.md</code> (what is trained)</p>
+    <p class="muted small">Want to see the screen with fake data? <code>fake_run --root /tmp/tv_fake</code>, then <code>trainview --root /tmp/tv_fake --port 8099</code> and open <code>http://127.0.0.1:8099/?debug=1</code> (test data is hidden without <code>?debug=1</code>).</p>`;
+}
 
+const ST_WORD = { training: "Training", stalled: "Stalled (process alive, nothing written for 60 s)", finished: "Finished", crashed: "Crashed (process gone, no end mark)", unknown: "Status unknown (old run, no pid)" };
+function spark(vals, w = 70, h = 18) {
+  const v = vals.filter(x => x != null && isFinite(x)); if (v.length < 2) return "";
+  const lo = Math.min(...v), hi = Math.max(...v), d = hi - lo || 1, n = v.length;
+  const pts = v.map((x, i) => `${(i / (n - 1) * (w - 2) + 1).toFixed(1)},${(h - 2 - (x - lo) / d * (h - 4)).toFixed(1)}`).join(" ");
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5"/></svg>`;
+}
+function dur(sec) { return sec == null ? "—" : sec >= 86400 ? (sec / 86400).toFixed(1) + " d" : sec >= 3600 ? (sec / 3600).toFixed(1) + " h" : (sec / 60).toFixed(0) + " min"; }
 function updateStatus() {
   const r = S.byId[S.sel]; if (!r) return;
-  setText("runname", r.id);
+  setText("runname", shortName(r));
+  const st = S.status[r.id] || {}, m = S.meta || {}, d = S.d;
+  setHTML("rh_name", esc(r.id) + (r.group ? ` <span class="muted">· ${esc(r.group)}${r.seed != null ? " seed " + r.seed : ""}</span>` : ""));
+  // 단계: run.json stage / 커리큘럼 단계 이름, 없으면 실행 종류의 쉬운 말
+  const stages = m.curriculum && m.curriculum.stages, si = d && d.total ? lastAt("curriculum/stage", d.total - 1) : null;
+  const stN = stages && si != null && stages[si] ? (stages[si].name || stages[si]) : null;
+  const stTxt = r.stage != null && r.stage !== "" ? "Stage " + r.stage : stN ? "Stage " + (si + 1) + " · " + stN : KIND_LABEL[r.kind] || r.kind;
+  setHTML("rh_stage", `<span title="Student = the network we ship, learned from a teacher by imitation (BC) and DAgger. Teacher = RL policy with privileged state. Explore record = OmniGibson LIMO explore replay, no training.">${esc(stTxt)}</span>${isStudent(r) ? "" : ""}`);
+  setHTML("rh_state", `${stDot(r.id)}<b data-stl="${esc(r.id)}" title="${esc(stTitle(st))}">${esc(ST_WORD[st.state] || st.state || "")}</b>${recBadge(r.id)}`);
+  const wall = d && d.total ? lastAt("time/time_elapsed", d.total - 1) : r.wall;
+  setText("rh_time", `${wall != null ? "ran " + dur(wall) : ""}${wall != null ? " · " : ""}last write ${ageTxt(r.age)}`);
+  // 핵심 결과: 평가 성공률(없으면 학습 판 성공률) + 작은 곡선
+  const keyK = ["eval/success_rate", "rollout/success_rate"].find(k => d && d.cols && d.cols[k]) || (d && d.cols ? Object.keys(d.cols).find(k => k.startsWith("rollout/success_rate/")) : null);
+  const cur = keyK ? lastAt(keyK, d.total - 1) : null;
+  setHTML("rh_res", keyK ? `<span title="${esc(keyK)}">${keyK.startsWith("eval") ? "Eval success" : "Success"} <b>${pc0(cur)}</b></span> ${spark((d.cols[keyK] || []).filter(x => x != null).slice(-120))}` : '<span class="muted">no result yet</span>');
+  const t = r.teacher_run ? S.byId[r.teacher_run] : null;
+  setHTML("rh_teacher", r.teacher ? `learned from teacher ${r.teacher_run ? `<a href="#run=${encodeURIComponent(r.teacher_run)}" data-id="${esc(r.teacher_run)}" class="tea" title="open the teacher run (RL, privileged state)\ncheckpoint ${esc(r.teacher_ckpt || "")}">${esc(shortName(t || { id: r.teacher_run }))}</a>` : `<span title="${esc(r.teacher)}">${esc(String(r.teacher).split("/").slice(-2).join("/"))}</span>`}` : "");
   let b = "";
-  const st = S.status[r.id] || {};
-  b += `<span class="badge stb" title="${esc(stTitle(st))}">${stDot(r.id)}<span data-stl="${esc(r.id)}">${esc(st.state || "unknown")}</span></span>${recBadge(r.id)}`;
-  b += `<span class="badge">${esc(r.kind)}</span>`;
-  if (r.synthetic) b += '<span class="badge syn" title="fake_run 이 만든 가짜 실행(synthetic data)">synthetic</span>';
+  if (r.synthetic) b += '<span class="badge syn" title="made by fake_run (synthetic data)">synthetic</span>';
   if (r.imported_from) b += `<span class="badge syn" title="${esc(r.imported_from)}">imported csv</span>`;
-  if (r.archive) b += `<span class="badge" title="신경망·관측 v2 이전 코드 또는 csv 로 옮긴 옛 실행">archive</span>`;
-  if (r.teacher) b += `<span class="badge" title="${esc(r.teacher)}">trained from teacher ${r.teacher_run ? `<a href="#run=${encodeURIComponent(r.teacher_run)}" data-id="${esc(r.teacher_run)}" class="tea">${esc(shortName(S.byId[r.teacher_run] || { id: r.teacher_run }))}</a> · ` : ""}${esc(r.teacher_ckpt || String(r.teacher).split("/").pop())}</span>`;
+  if (r.archive) b += `<span class="badge" title="from before the v2 network/observation change, or imported from csv">archive</span>`;
   setHTML("badges", b);
   $("syn_banner").hidden = !r.test;
-  const d = S.d;
   const last = d && d.total ? lastAt("time/iterations", d.total - 1) : null;
-  const age = r.age != null ? (r.age < 120 ? r.age.toFixed(0) + " s ago" : r.age < 7200 ? (r.age / 60).toFixed(0) + " min ago" : (r.age / 3600).toFixed(1) + " h ago") : "—";
-  setText("status", `iterations ${fmt(last)} · rows ${d ? d.total : 0}${d && d.rewound ? ` (${d.rewound} rewound rows dropped)` : ""} · logged episodes ${r.eps} · last write ${age}`);
+  setText("status", `iteration ${fmt(last)} · ${d ? d.total : 0} rows${d && d.rewound ? ` (${d.rewound} rewound rows dropped)` : ""} · ${r.eps} logged episodes`);
 }
 
 async function selectRun(id) {
@@ -282,32 +323,41 @@ function chartsSpec() {
 }
 const WANT = { "Rollout (all episodes)": ["rollout/success_rate", "rollout/ep_len_mean", "rollout/timeout_rate"], "Safety": ["rollout/contacts_per_ep", "rollout/min_clear_m"], "Policy optimization (train/)": ["train/explained_variance"], "FP8": ["fp8/grad_cos"], "Imitation (BC · DAgger · RL fine-tuning)": ["train/loss", "dagger/action_mse"], "Reward": ["rollout/ep_rew_mean", "reward/<skill>/<term>"] };
 
+const KEY_CHARTS = ["Success rate", "Eval success rate", "Training loss — train/loss", "Episode length (steps) — rollout/ep_len_mean", "Timeout · collision · drop rate", "Student success by start map", "Episode return — rollout/ep_rew_mean"];
 function buildCharts() {
   const sig = S.sel + "|" + S.keys.join(",");
   if (S.built === sig) return;
   S.built = sig; S.plots = [];
   const host = $("groups"); host.innerHTML = "";
-  for (const grp of chartsSpec()) {
-    const have = grp.c.map(c => ({ c, keys: expand(c.k) })).filter(x => x.keys.length);
+  const mk = (c, keys, box) => {
+    const el = document.createElement("div"); el.className = "chart";
+    el.innerHTML = `<div class="ct"><span title="${esc(c.ko || "")}">${esc(c.t)}</span><span class="u mono"></span></div><canvas></canvas><div class="lg"></div><div class="cn"></div>`;
+    box.appendChild(el);
+    S.plots.push({ c, keys, el, p: new Plot(el.querySelector("canvas")), sig: "" });
+  };
+  const spec = chartsSpec(), all = spec.flatMap(g => g.c.map(c => ({ c, keys: expand(c.k) }))).filter(x => x.keys.length);
+  // 처음 보이는 건 가장 중요한 4 장(있는 것만, 순서대로), 나머지는 "More charts" 접힘
+  const key = KEY_CHARTS.map(t => all.find(x => x.c.t === t)).filter(Boolean).slice(0, 4), keySet = new Set(key.map(x => x.c));
+  const top = document.createElement("div"); top.className = "group"; top.innerHTML = `<h3 title="the four charts that matter most for this run">Key charts <span class="nl">${key.length ? "" : "nothing logged yet"}</span></h3>`;
+  const tb = document.createElement("div"); tb.className = "charts"; top.appendChild(tb); host.appendChild(top);
+  for (const x of key) mk(x.c, x.keys, tb);
+  const more = document.createElement("details"); more.className = "morecharts"; more.id = "more_charts";
+  more.innerHTML = `<summary>More charts <span class="muted">${all.length - key.length} more, grouped</span></summary>`;
+  host.appendChild(more);
+  for (const grp of spec) {
+    const have = grp.c.map(c => ({ c, keys: expand(c.k) })).filter(x => x.keys.length && !keySet.has(x.c));
     const missing = grp.c.filter(c => !expand(c.k).length).flatMap(c => c.k);
     const div = document.createElement("div"); div.className = "group";
     const nl = have.length ? "" : `not logged: ${(WANT[grp.g] || missing.slice(0, 4)).map(k => "<code>" + esc(k) + "</code>").join(" ")}`;
     div.innerHTML = `<h3 title="${esc(grp.ko)}">${esc(grp.g)} <span class="nl">${have.length ? `${have.length} charts` : nl}</span></h3>`;
-    if (!have.length) { host.appendChild(div); continue; }
-    const box = document.createElement("div"); box.className = "charts"; div.appendChild(box);
-    for (const { c, keys } of have) {
-      const el = document.createElement("div"); el.className = "chart";
-      el.innerHTML = `<div class="ct"><span title="${esc(c.ko || "")}">${esc(c.t)}</span><span class="u mono"></span></div><canvas></canvas><div class="lg"></div><div class="cn"></div>`;
-      box.appendChild(el);
-      const p = new Plot(el.querySelector("canvas"));
-      S.plots.push({ c, keys, el, p, sig: "" });
-    }
-    host.appendChild(div);
+    if (have.length) { const box = document.createElement("div"); box.className = "charts"; div.appendChild(box); for (const x of have) mk(x.c, x.keys, box); }
+    more.appendChild(div);
   }
   // 판 기록 ⚠ 표본: 모집단에 없는 칸만(분포)
   const div = document.createElement("div"); div.className = "group"; div.id = "sample_group";
   div.innerHTML = `<h3 title="판 기록(표본)">Logged episodes <span class="warn-s">⚠ sample</span> <span class="nl" id="sample_note"></span></h3><div class="charts" id="sample_charts"></div>`;
-  host.appendChild(div);
+  more.appendChild(div);
+  more.addEventListener("toggle", () => { if (more.open) { for (const P of S.plots) P.sig = ""; drawCharts(); } });
   if (S.eps) debounce("smp", loadSample, 100);
 }
 
@@ -325,7 +375,7 @@ function drawCharts() {
   const xl = { iter: "time/iterations", env_steps: "time/total_timesteps", wall: "time/time_elapsed (s)" }[S.xmode];
   const theme = matchMedia("(prefers-color-scheme: dark)").matches;
   for (const P of S.plots) {
-    const w = P.el.clientWidth;
+    const w = P.el.clientWidth; if (!w) continue;
     const sig = [n, S.xmode, S.ema, cx, w, theme].join("|");
     if (P.sig === sig) continue;
     P.sig = sig;
@@ -390,7 +440,19 @@ function renderCards() {
   const et = g("eval_teacher/success_rate") ?? expand(["eval_teacher/success_rate/*"]).map(g).find(v => v != null);
   if (es != null || et != null) out.push(card("eval/success_rate (student · teacher)", `${fmt(es, 1)}`, `teacher ${fmt(et, 1)}${es != null && et ? " · ratio " + fmt(es / et, 1) : ""}`, false, "평가 성공률 학생 / 교사"));
   if (col("train/loss")) out.push(card("train/loss (BC)", fmt(g("train/loss")), `dagger/action_mse ${fmt(g("dagger/action_mse"))} · round ${fmt(g("dagger/round"))}`, false, "BC 손실 · 학생–교사 행동 차"));
-  setHTML("cards", out.join(""));
+  // 기본은 큰 카드 4 장(성공·충돌·판 길이·학습 속도), 나머지는 "More stats" 접힘
+  const sg = k => g(k) ?? expand([k + "/*"]).map(g).find(v => v != null);
+  const succ = sg("eval/success_rate") ?? sg("rollout/success_rate"), succK = g("eval/success_rate") != null || expand(["eval/success_rate/*"]).length ? "eval" : "training rollouts";
+  const coll = sg("eval/collision_rate") ?? sg("rollout/collision_rate");
+  const len = g("rollout/ep_len_mean") ?? g("eval/mean_ep_length"), fps = g("time/fps") ?? g("time/fps_gpu");
+  const big = (t, v, sub, ko, key) => `<div class="card big" title="${esc(ko)}"><div class="t">${t}</div><div class="v">${v}</div><div class="s">${sub}</div>${key ? spark((col(key) || []).slice(0, i + 1).filter(x => x != null).slice(-100), 120, 22) : ""}</div>`;
+  setHTML("cards", [
+    big("Success", pc0(succ), `${succK}${et != null ? " · teacher " + pc0(et) : ""}`, "share of episodes that finished the task (eval episodes if logged, else training rollouts)", col("eval/success_rate") ? "eval/success_rate" : "rollout/success_rate"),
+    big("Collisions", pc0(coll), "share of episodes with a collision", "lower is better", col("eval/collision_rate") ? "eval/collision_rate" : "rollout/collision_rate"),
+    big("Episode length", len != null ? fmt(len) + " steps" : "—", "mean steps per episode", "shorter = faster task (a timeout is the budget)", "rollout/ep_len_mean"),
+    big("Training speed", fps != null ? fmt(fps) + " steps/s" : "—", `${wall != null ? (wall >= 3600 ? (wall / 3600).toFixed(1) + " h" : (wall / 60).toFixed(0) + " min") : "—"} elapsed · iteration ${fmt(g("time/iterations"))}`, "environment steps per second and total training time", col("time/fps") ? "time/fps" : "time/fps_gpu"),
+  ].join(""));
+  setHTML("cards_more", `<details class="morecards"><summary>More stats <span class="muted">${out.length} cards: KL, log std, GPU memory, return, losses …</span></summary><div class="cards">${out.join("")}</div></details>`);
 }
 
 // ---------------------------------------------------------------- 학습 진단(training health checks). 못 잰 검사는 이유와 함께 따로
@@ -403,7 +465,7 @@ function slope(k, a, b) {
 }
 function meanOf(k, a, b) { const c = col(k); if (!c) return null; let s = 0, n = 0; for (let i = a; i <= b; i++) if (c[i] != null && isFinite(c[i])) { s += c[i]; n++; } return n ? s / n : null; }
 function renderChecks() {
-  if (!S.d || !S.d.total) { setHTML("checks", '<span class="muted">no progress rows — nothing to check</span>'); setText("checks_sum", ""); return; }
+  if (!S.d || !S.d.total) { setHTML("checks", '<span class="muted">no progress rows — nothing to check</span>'); setText("checks_sum", ""); $("healthchip").className = "hchip na"; $("healthchip").textContent = "Health: —"; return; }
   const b = cursorRow(), a = Math.max(0, b - Math.max(20, Math.floor((b + 1) * 0.2))), m = S.meta || {}, th = m.checks || {};
   const R = [];
   const add = (st, name, msg, ko) => R.push({ st, name, msg, ko });
@@ -441,6 +503,9 @@ function renderChecks() {
   setHTML("checks", R.map(r => `<div class="chk ${r.st}" title="${esc(r.ko)}"><span class="ic">${ic[r.st]}</span><b>${r.name}</b> <span>${esc(r.msg)}</span></div>`).join(""));
   const ok = R.filter(r => r.st !== "na").length, warn = R.filter(r => r.st === "warn").length;
   setText("checks_sum", `checked ${ok} (flagged ${warn}) · not measurable ${R.length - ok} · window = last ${b - a + 1} rows before cursor`);
+  const hc = $("healthchip"); hc.className = "hchip " + (warn ? "warn" : ok ? "ok" : "na");
+  hc.textContent = warn ? `Health: ${warn} warning${warn > 1 ? "s" : ""}` : ok ? "Health: OK" : "Health: not measurable";
+  hc.title = "Training health checks (" + ok + " measured, " + warn + " flagged). Click to " + ($("checks_box").hidden ? "expand" : "collapse");
 }
 
 function renderFirstNote() {

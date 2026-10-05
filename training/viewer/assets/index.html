@@ -11,22 +11,19 @@
   <div class="row1">
     <b class="brand">trainview</b>
     <nav id="tabs">
-      <button data-tab="train" class="on" title="학습">Training</button>
-      <button data-tab="replay" title="재생: 판 하나를 3D 로">Replay</button>
-      <button data-tab="compare" title="비교: 실행 여럿">Compare</button>
+      <button data-tab="train" class="on" title="Training: curves and health of one run">Training</button>
+      <button data-tab="replay" title="Replay: watch one episode in the scene-graph viewer">Replay</button>
+      <button data-tab="compare" title="Compare: several runs side by side">Compare</button>
     </nav>
-    <span id="runname" class="mono"></span>
-    <span id="badges"></span>
+    <span class="dd" id="rundd">
+      <button id="runbtn" title="Switch run (search; grouped by stage, newest first)">Runs ▾ <b id="runname" class="mono"></b></button>
+      <div id="runmenu" class="menu runmenu" hidden>
+        <input id="runsearch" type="search" placeholder="search runs…" autocomplete="off">
+        <div id="runlist"></div>
+      </div>
+    </span>
     <span class="grow"></span>
-    <span id="status" class="muted mono"></span>
     <span id="conn" class="pill" title="live connection (SSE); falls back to 3 s polling">—</span>
-  </div>
-  <div id="pickers">
-    <div class="pick"><span class="lab" title="실험마다 교사(RL, 특권) → 학생/VLA(BC·DAgger, 결과물). 학생이 주인공, 교사는 핵심 건강만">pipelines</span><div id="pick_pipelines" class="chips pipes"></div></div>
-    <div class="pick"><span class="lab" title="학생이 아직 없는 교사 실행">teachers</span><div id="pick_teachers" class="chips"></div></div>
-    <div class="pick"><span class="lab">BEHAVIOR</span><div id="pick_behavior" class="chips"></div></div>
-    <div class="pick"><span class="lab" title="옛 실행: 신경망·관측 v2(2026-10-04) 이전 코드, csv 로 옮긴 것"><label><input type="checkbox" id="show_arch"> archive</label></span><div id="pick_archive" class="chips"></div></div>
-    <div class="pick" id="syn_row"><span class="lab" title="가짜·시험 자료(fake_run 의 synthetic, 옛 labs 실행) — 실제 학습 결과 아님"><label><input type="checkbox" id="show_syn"> test data (synthetic)</label></span><div id="pick_synthetic" class="chips"></div></div>
   </div>
 </header>
 
@@ -34,15 +31,32 @@
 <!-- ============================== 학습 ============================== -->
 <div id="syn_banner" class="synbanner" hidden>가짜 시험 자료(synthetic) — 실제 학습 결과 아님 · synthetic test fixture, not a real training result</div>
 <section id="tab_train" class="tab on">
-  <div id="metaline" class="muted"></div>
-  <div id="cards" class="cards"></div>
+  <div id="empty_state" class="emptybox" hidden></div>
+  <div id="train_body">
+  <div id="runhead" class="runhead">
+    <div class="rh1">
+      <span id="rh_name" class="rh_name mono"></span>
+      <span id="rh_stage" class="rh_stage"></span>
+      <span id="rh_state" class="rh_state"></span>
+      <span id="rh_time" class="muted"></span>
+      <span id="rh_res" class="rh_res"></span>
+      <span id="rh_teacher" class="rh_teacher"></span>
+      <span id="badges"></span>
+      <span class="grow"></span>
+      <span id="healthchip" class="hchip" tabindex="0" title="Training health checks — click to expand">Health: —</span>
+    </div>
+    <div id="status" class="muted small mono"></div>
+    <div id="metaline" class="muted small"></div>
+  </div>
+  <div id="checks_box" class="hbox" hidden><div id="checks_sum" class="muted small"></div><div id="checks"></div></div>
+  <div id="cards" class="cards bigcards"></div>
+  <div id="cards_more"></div>
   <div class="bar">
     <label title="x 축">X-axis <select id="xmode"><option value="iter">time/iterations</option><option value="env_steps" selected>time/total_timesteps</option><option value="wall">time/time_elapsed (relative)</option></select></label>
     <label title="EMA 평활 (TensorBoard·W&B 의 Smoothing)">Smoothing <input id="ema" type="range" min="0" max="0.99" step="0.01" value="0.6"><span id="ema_v" class="mono"></span></label>
     <label class="grow" title="시점 커서: 카드·검사·표·재생 목록을 이 시점까지로 자름">Step cursor <input id="cursor" type="range" min="0" max="1000" value="1000" class="grow"><span id="cursor_v" class="mono"></span></label>
     <button id="cursor_off" title="커서를 끝(실시간)으로">Latest</button>
   </div>
-  <details id="checks_box" open><summary title="고장 무늬 검사">Training health checks <span id="checks_sum" class="muted"></span></summary><div id="checks"></div></details>
   <div id="note_first" class="note" hidden></div>
   <div id="groups"></div>
   <section class="panel">
@@ -65,6 +79,7 @@
   </section>
   <details class="panel"><summary title="사건 기록">Events <span class="muted">events.txt</span></summary><pre id="events" class="mono small"></pre></details>
   <details class="panel"><summary>run.json</summary><pre id="metajson" class="mono small"></pre></details>
+  </div>
 </section>
 
 <!-- ============================== 재생 ============================== -->
