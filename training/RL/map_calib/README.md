@@ -1,5 +1,7 @@
 # map 의 (가정) 잡음 값 맞추기 — 기록으로
 
+> TODO: R1/COCO-era — to be re-measured with ObjectSAM pipeline (GPU_MAP_PORT). 이 보정값은 R1 기록 또는 COCO-80 검출기 기록으로 잰 것이다(값은 그대로 둠).
+
 > **기록(지금 기본값 아님).** 이 문서의 R1 값은 2026-10-04 까지 `map.h` 의 기본이었다. 지금 기본은 LIMO 값이다(`limo/`, `../map/README.md` "LIMO 보정"). 아래는 R1 기록으로 맞춘 이력으로 남긴다.
 
 `../map/include/map.h` 의 `MP` 에 있는 (가정) 값을 실제 기록으로 맞춘 **제안**이다. 이 폴더는 map 코드를 바꾸지 않는다. 값은 `calib.json` 에 있다.

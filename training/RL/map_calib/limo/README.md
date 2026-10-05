@@ -1,5 +1,7 @@
 # map 잡음 값 — LIMO 기록으로 다시 맞추기
 
+> TODO: R1/COCO-era — to be re-measured with ObjectSAM pipeline (GPU_MAP_PORT). 이 보정값은 R1 기록 또는 COCO-80 검출기 기록으로 잰 것이다(값은 그대로 둠).
+
 `../map/include/map.h` 의 `MP` 값을 **LIMO(limo_omx) 시뮬 기록**으로 다시 맞춘 제안이다. 값은 `calib_limo.json` 에 있다. R1 보정(`../README.md`, `../calib.json`)은 그대로 둔다. 이 폴더는 map 코드를 바꾸지 않는다(적용은 map 담당이 한다).
 
 **단서 두 가지**
