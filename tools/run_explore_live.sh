@@ -29,6 +29,7 @@ AG=$ROOT/src/agent/runtime/target/release/run-skill   # 에이전트 런타임(�
 SV=$ROOT/src/scene_graph/sgview/target/release/sgview
 [ -x "$SV" ] || (cd "$ROOT/src/scene_graph/sgview" && cargo build --release)
 
+export SGRT_ROBOT=${SGRT_ROBOT:-limo_omx}   # 우리 로봇은 LIMO + OMX-F 하나(R1 Pro 는 10-06 에 뺌 — run_explore.sh 도 같은 기본)
 export SGRT_LIB=$BUILD/libsgrt.so SGRT_POSE=$POSE SGRT_STREAM=127.0.0.1:9001 SGRT_MAP_EVERY=${SGRT_MAP_EVERY:-1}
 # 학습 뷰어 재생 판(선택, TRAINVIEW_OG=1): sgrt 기록(rec.bin, 약 2 GB/판)을 켜고, 판이 끝나면 og2sg 로 sgview 판을 만든다
 #   → ~/trainview_work/behavior_og/<판 이름>/ (trainview --root ~/trainview_work/behavior_og). og2sg 빌드: training/viewer/README.md

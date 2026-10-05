@@ -4,7 +4,7 @@
 set -u
 TASK=${1:-turning_on_radio}; IDX=${2:-0}
 HERE=$(cd "$(dirname "$0")" && pwd)
-OG=$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/OmniGibson
+OG=$(cd "$(dirname "$0")/../../behavior-2026/BEHAVIOR-1K/OmniGibson" && pwd)
 source ~/miniconda3/etc/profile.d/conda.sh; conda activate behavior
 export OMNI_KIT_ACCEPT_EULA=YES OMNIGIBSON_KEEP_VIEWER_CAMERA=1
 cd /tmp && python "$HERE/eval_with_limo.py" --policy local --task-name "$TASK" --mode public_test --instance-indices "$IDX" --num-envs 1 \
