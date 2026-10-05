@@ -14,6 +14,7 @@ CpuMap::CpuMap(int N_, uint64_t seed, const bsc::SceneSet* ss_host) : N(N_), ss(
     h.navorg.assign(N, 0);
     h.navtag.assign(N, -1);
     h.navconf.assign(N, 0);
+    h.navcov.assign(N, 0);
   }
   h.core.resize(N);
   h.objs.assign((size_t)NOBJ * N, Slot{});
@@ -44,6 +45,7 @@ void CpuMap::step(const env::Soa& s, int force_kf, const MapCurr& cu) {
     if (bx.on) {   // 다가가기 거리장(GPU map_nav_kernel 과 같은 조건·같은 단계 집합)
       const MapCore& m = h.core[i];
       h.navconf[i] = m.n_task_conf;
+      h.navcov[i] = cov_permille(m);
       if (nav_due(m, h.navtag[i], cu)) {
         nav_bfs_ref(g.occ, s.f[env::F_TX * N + i], s.f[env::F_TY * N + i], env::seed_r_of(s.iv[env::I_B_KIND * N + i]), s.f[env::F_X * N + i], s.f[env::F_Y * N + i],
                     nav_period(cu), h.lev.data() + (size_t)i * NAV_P * NAV_P, h.navorg[i]);

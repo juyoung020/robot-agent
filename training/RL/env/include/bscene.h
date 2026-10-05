@@ -153,8 +153,9 @@ struct BCurr {
   float p_slip;           // 실패 판: 들고 있는 동안(받침에서 뜸) 제어 스텝마다 이 확률로 미끄러져 떨어짐 — 다시 잡기 연습(가정 값은 설정에서)
   float p_occ;            // 실패 판: 판 리셋 때 이 확률로 놓을 자리(점·면 점)에 다른 물체(작은 상자)가 이미 있음 — 옆 빈 자리에 놓기
   int phys;               // 물리 비트(PhysFlag): 음성 대조·실험용 끄기
+  float p_cov;            // B1 판을 "지도 쌓기" 로 바꿀 확률(커리큘럼 1단계, 2026-10-06). 0 = 예전 난수 흐름·같은 판
 };
-constexpr BCurr kBCurrDefault = {0.34f, 0.33f, 0xffu, 0, 0.f, 0, 0, 0, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0};
+constexpr BCurr kBCurrDefault = {0.34f, 0.33f, 0xffu, 0, 0.f, 0, 0, 0, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0, 0.f};
 // 물리 끄기 비트(BCurr::phys, 음성 대조·실험): 무게 미끄러짐 끔, 폭 검사 끔(손가락 사이 아무 폭이나 잡힘), 팔 충돌 막기 끔
 // PF_FEAS(고르기, 물리 아님): B4–B6 판을 잡기 가능 표(Entry::feas, SceneSet::has_feas)가 그 단계로 된다고 한 짝에서만 뽑음 — 0 이면 예전 난수 흐름
 // PF_FIND(고르기): 찾을 수 없는 물체(findable.h)는 목표로 안 고름 — B4 = 집을 물체, B5 = 놓을 곳, B6 = 둘 다(FE_FIND·FE_FINDP). PF_FEAS 와 같은 거절 표집
@@ -162,7 +163,8 @@ constexpr BCurr kBCurrDefault = {0.34f, 0.33f, 0xffu, 0, 0.f, 0, 0, 0, 0.f, 0.f,
 enum PhysFlag { PF_NO_SLIP = 1, PF_NO_WIDTH = 2, PF_NO_ARMCOLL = 4, PF_FEAS = 8, PF_FIND = 16, PF_FINDSTART = 32 };
 // 판의 목표 꼴(env I_B_GMODE 비트, 지도 BMapEnv::gmode)
 enum GoalMode { GM_PLACE_PT = 1,   // 놓을 칸(목표 칸 1)이 점(F_B_GPX..Z)
-                GM_GOTO = 2 };     // 점으로 가기: 집을 칸 없음, 지금 가는 목표 = 놓을 점(B1·B3 변형)
+                GM_GOTO = 2,       // 점으로 가기: 집을 칸 없음, 지금 가는 목표 = 놓을 점(B1·B3 변형)
+                GM_COVER = 4 };    // 지도 쌓기(커리큘럼 1단계, B1 변형): 목표 없음, 새로 덮은 방 칸 = 보상
 // 점에 놓기 성공(B5 점 판, 잡기 물리 E6 뒤 — 정의만): 놓은 물체(손 안 아님)의 바닥 자국 가운데가 점에서 수평 place_r 안, 바닥 높이가 점 z ± place_tz
 struct KPt {
   static constexpr float place_r = 0.05f;    // 2D 반경 m (가정: 앱 지도 칸 0.05 m·OMX 위치 오차 ~1 cm 보다 넉넉히)
@@ -175,6 +177,7 @@ struct NavFb {
   const int* org;         // [N] 조각 원점 창 칸(열 & 0xffff | 행 << 16, 16 비트 부호)
   const int* tag;         // [N] 거리장을 만든 판 번호(env ep), 다르면 쓰지 않음
   const int* conf;        // [N] 목표 물체가 지도에 확정(B2 성공 조건)
+  const int* cov;         // [N] 방 칸 덮은 비율 천분율(지도 n_seen_room / room_cells × 1000) — 지도 쌓기 판(GM_COVER) 보상·성공
 };
 
 // ---------------------------------------------------------------------------------------------------------------------

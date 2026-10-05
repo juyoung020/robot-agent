@@ -23,7 +23,7 @@ struct MapHost {   // 내려받은 한 벌(검증용)
   std::vector<uint8_t> view;    // 본 곳 칸(나타남 판정) [N][VIEW_BYTES]
   std::vector<BMapEnv> bm;      // BEHAVIOR 판 덧붙임 [N](장면 묶음이 있을 때만)
   std::vector<uint8_t> lev;     // BEHAVIOR 다가가기 거리장 조각 [N][NAV_P²] (map.h 8 절)
-  std::vector<int> navorg, navtag, navconf;   // [N] 조각 원점, 거리장을 만든 판 번호(−1 없음), 목표 확정
+  std::vector<int> navorg, navtag, navconf, navcov;   // [N] 조각 원점, 거리장을 만든 판 번호(−1 없음), 목표 확정
 };
 
 // 장치 다시 시작 요청(다시 만들기 없이 — 환경 EnvCtl 과 짝): pend 1 이면 apply() 가 모든 판을 생성자와 같은 상태로(배열 0·init_core(seed))
@@ -52,7 +52,7 @@ class DeviceMap {
   void set_tokens(bool on) { tok_on_ = on; }      // 측정용: 토큰 커널 끄기
   void set_nav(bool on) { nav_on_ = on; }          // 측정용: 거리장 커널 끄기(BEHAVIOR)
   // 환경 되먹임(BEHAVIOR): env DeviceEnv::set_nav 에 넣는다. 장면 묶음이 없으면 모두 nullptr
-  bsc::NavFb nav_fb() const { return bsc::NavFb{lev_, navorg_, navtag_, navconf_}; }
+  bsc::NavFb nav_fb() const { return bsc::NavFb{lev_, navorg_, navtag_, navconf_, navcov_}; }
   void download(MapHost& h, const MapTok* tok = nullptr) const;   // tok: 토큰을 읽을 장치 자리(기본 안쪽 버퍼)
   // 다시 시작 요청(비동기 복사 하나, 동기 없음) → 다음 apply() 에서. apply 는 요청이 없으면 바로 끝난다(그래프에 늘 넣어 둠).
   // 학습기 장치 커리큘럼은 ctl() 에 직접 pend 를 쓴다
@@ -80,6 +80,7 @@ class DeviceMap {
   int* navorg_ = nullptr;
   int* navtag_ = nullptr;
   int* navconf_ = nullptr;
+  int* navcov_ = nullptr;   // [N] 방 칸 덮은 비율 천분율
   bool nav_on_ = true;
   uint32_t* list_ = nullptr;   // 이번 스텝 keyframe·리셋·벽 판 번호(+ 시작 결과 3 비트), 장치 안에서 채움
   int* count_ = nullptr;       // 목록 길이
@@ -122,7 +123,7 @@ struct CpuMap {
   MapHost h;
   const bsc::SceneSet* ss = nullptr;
   CpuMap(int N_, uint64_t seed, const bsc::SceneSet* ss_host = nullptr);
-  bsc::NavFb nav_fb() const { return ss ? bsc::NavFb{h.lev.data(), h.navorg.data(), h.navtag.data(), h.navconf.data()} : bsc::NavFb{nullptr, nullptr, nullptr, nullptr}; }
+  bsc::NavFb nav_fb() const { return ss ? bsc::NavFb{h.lev.data(), h.navorg.data(), h.navtag.data(), h.navconf.data(), h.navcov.data()} : bsc::NavFb{nullptr, nullptr, nullptr, nullptr, nullptr}; }
   void step(const env::Soa& s, int force_kf = 0, const MapCurr& cu = kCurrEmpty);
 };
 

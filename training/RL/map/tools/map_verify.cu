@@ -263,9 +263,9 @@ int main(int argc, char** argv) {
     if (std::memcmp(gh.view.data(), ch.view.data(), gh.view.size())) {
       for (size_t k = 0; k < gh.view.size(); ++k) if (gh.view[k] != ch.view[k]) { note("view cells (env)", (long)(k / gmap::VIEW_BYTES)); break; }
     }
-    if (beh && (std::memcmp(gh.lev.data(), ch.lev.data(), gh.lev.size()) || gh.navtag != ch.navtag || gh.navconf != ch.navconf || gh.navorg != ch.navorg)) {
+    if (beh && (std::memcmp(gh.lev.data(), ch.lev.data(), gh.lev.size()) || gh.navtag != ch.navtag || gh.navconf != ch.navconf || gh.navcov != ch.navcov || gh.navorg != ch.navorg)) {
       for (size_t k = 0; k < gh.lev.size(); ++k) if (gh.lev[k] != ch.lev[k]) { note("BEHAVIOR approach distance field", (long)(k / (gmap::NAV_P * gmap::NAV_P))); break; }
-      if (gh.navtag != ch.navtag || gh.navconf != ch.navconf || gh.navorg != ch.navorg) note("BEHAVIOR field tag / origin / target confirmed", 0);
+      if (gh.navtag != ch.navtag || gh.navconf != ch.navconf || gh.navcov != ch.navcov || gh.navorg != ch.navorg) note("BEHAVIOR field tag / origin / target confirmed", 0);
     }
     if (beh && std::memcmp(gh.bm.data(), ch.bm.data(), sizeof(gmap::BMapEnv) * gh.bm.size())) {
       for (int i = 0; i < N; ++i) if (std::memcmp(&gh.bm[i], &ch.bm[i], sizeof(gmap::BMapEnv))) { note("BEHAVIOR map extras (BMapEnv)", i); break; }

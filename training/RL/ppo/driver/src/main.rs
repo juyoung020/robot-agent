@@ -38,6 +38,7 @@ struct PpoBCurr {
     p_slip: f32,
     p_occ: f32,
     phys: i32,
+    p_cov: f32,   // 지도 쌓기(커리큘럼 1단계) 섞음
 }
 
 #[repr(C)]
@@ -223,6 +224,7 @@ struct BSpec {
     pnp: [f32; 3],
     fail: [f32; 2],
     feas: i32,
+    p_cov: f32,
 }
 fn parse_bspec(v: &Value, base: &BSpec) -> BSpec {
     let mut b = base.clone();
@@ -245,6 +247,7 @@ fn parse_bspec(v: &Value, base: &BSpec) -> BSpec {
     if let Some(m) = v.get("fail").and_then(|x| x.as_array()) {  // 실패 판: [p_slip, p_occ]
         for k in 0..2 { b.fail[k] = m.get(k).and_then(|x| x.as_f64()).unwrap_or(b.fail[k] as f64) as f32; }
     }
+    b.p_cov = gf(v, "p_cov", b.p_cov as f64) as f32;   // 지도 쌓기(B1 변형, 목표 없음) 섞음
     b.feas = gi(v, "feas", b.feas as i64) as i32;   // 1 = B4–B6 를 잡기 가능 짝에서만(env PF_FEAS = phys 8, 학습기가 시작 때 표를 만듦)
     b
 }
@@ -259,7 +262,7 @@ fn bcurr_of(h: *mut std::ffi::c_void, b: &BSpec, all: u32) -> PpoBCurr {
     };
     PpoBCurr {
         p1: b.p1, p2: b.p2, scene_mask: mask, split: b.split, yaw_jit: b.yaw_jit, strict: b.strict, nofilter: 0, eval_instr: b.eval_instr, p_point: b.p_point, p_goto: b.p_goto,
-        p4: b.pnp[0], p5: b.pnp[1], p6: b.pnp[2], p_slip: b.fail[0], p_occ: b.fail[1], phys: if b.feas != 0 { 8 } else { 0 },
+        p4: b.pnp[0], p5: b.pnp[1], p6: b.pnp[2], p_slip: b.fail[0], p_occ: b.fail[1], phys: if b.feas != 0 { 8 } else { 0 }, p_cov: b.p_cov,
     }
 }
 

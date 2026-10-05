@@ -16,7 +16,7 @@
 static_assert(sizeof(PpoBCurr) == sizeof(bsc::BCurr) && offsetof(PpoBCurr, scene_mask) == offsetof(bsc::BCurr, scene_mask) &&
                   offsetof(PpoBCurr, yaw_jit) == offsetof(bsc::BCurr, yaw_jit) && offsetof(PpoBCurr, eval_instr) == offsetof(bsc::BCurr, eval_instr) &&
                   offsetof(PpoBCurr, p_point) == offsetof(bsc::BCurr, p_point) && offsetof(PpoBCurr, p_goto) == offsetof(bsc::BCurr, p_goto) &&
-                  offsetof(PpoBCurr, p4) == offsetof(bsc::BCurr, p4) && offsetof(PpoBCurr, p_occ) == offsetof(bsc::BCurr, p_occ) && offsetof(PpoBCurr, phys) == offsetof(bsc::BCurr, phys),
+                  offsetof(PpoBCurr, p4) == offsetof(bsc::BCurr, p4) && offsetof(PpoBCurr, p_occ) == offsetof(bsc::BCurr, p_occ) && offsetof(PpoBCurr, p_cov) == offsetof(bsc::BCurr, p_cov) && offsetof(PpoBCurr, phys) == offsetof(bsc::BCurr, phys),
               "PpoBCurr == bsc::BCurr");
 
 namespace ppo {

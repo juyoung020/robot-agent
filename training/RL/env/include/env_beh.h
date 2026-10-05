@@ -27,6 +27,9 @@ __device__ unsigned long long g_env_prof[8];
 // BEHAVIOR 판 상수(가정 표시는 env.h K 와 같은 뜻)
 struct KB {
   static constexpr float b1_r = 0.5f;          // B1: 목표 점 0.5 m 안(CURRICULUM_BEHAVIOR2026 3절)
+  // 지도 쌓기 판(GM_COVER, 커리큘럼 1단계 — 가정 값): 시간 60 s, 방 칸 60 % 덮으면 성공, 보상 = 새로 덮은 천분율 × r_cov(다 덮으면 20)
+  static constexpr int cov_steps = 600, cov_succ = 600;
+  static constexpr float r_cov = 0.02f;
   static constexpr float b1_tz = 0.05f;        // B1 목표 점 높이(보임 판정용, 가정)
   static constexpr int b2_ticks = 3;           // B2: 보임 + 확정 0.3 s (가정)
   static constexpr float seed_b1 = 0.15f;      // 거리장 씨앗 반경(지도 쪽과 같은 값): B1 점 둘레
@@ -292,6 +295,12 @@ DEV void reset_beh(Core& c, BState& b, PState& p, const bsc::SceneSet& ss, const
     const float ug = rand01(c.rng);
     go = ug < cu.p_goto && (kind == bsc::EK_B1 || E.ppt_ok != 0);
   }
+  // 지도 쌓기(B1 변형, 목표 없음): p_cov > 0 일 때만 난수를 하나 더 뽑는다(0 이면 예전과 같은 난수 흐름 = 같은 판)
+  bool cov = false;
+  if (cu.p_cov > 0.f && kind == bsc::EK_B1) {
+    cov = rand01(c.rng) < cu.p_cov;
+    if (cov) go = false;
+  }
   const int nt = cu.eval_instr ? ss.ntpl - ss.ntpl_train : ss.ntpl_train;
   const int toff = cu.eval_instr ? ss.ntpl_train : 0;
   const bool blk3 = ss.iblocks >= 3 && ss.ntpl > 0 && nt > 0;   // 지시문 표 v2(점 묶음 있음)
@@ -348,7 +357,12 @@ DEV void reset_beh(Core& c, BState& b, PState& p, const bsc::SceneSet& ss, const
       if (pt_txt && blk3 && E.combo >= 0 && b.instr >= 0) b.instr = b.instr + ss.ncombo * ss.ntpl;   // 같은 조합·같은 문장 번호의 "put the {o} here" 행
     }
   }
-  b.pd3 = -1.f;
+  if (cov) {   // 목표 없음: 목표 자리 = 시작 자리(관측의 목표 값은 0 근처), 지시문 없음
+    b.gmode = bsc::GM_COVER;
+    c.tx = c.x; c.ty = c.y;
+    b.instr = -1;
+  }
+  b.pd3 = -1.f;   // 지도 쌓기: 지난 덮은 비율 천분율(−1 = 아직 없음)
   c.rhx = bsc::WIN_HALF; c.rhy = bsc::WIN_HALF;   // 창 반 변(상자 방 값 자리 — 지도 완성도 계산만 씀)
   c.nf = 0;
   b.wx = E.wx; b.wy = E.wy;
@@ -384,12 +398,13 @@ DEV void reset_beh(Core& c, BState& b, PState& p, const bsc::SceneSet& ss, const
   c.max_steps = (int)ceilf((plen / 0.3f + slack) * 10.f);
   if (is_pnp(kind))   // 잡기 물리 판 시간 예산(가정): B4 30 s, B5 직선 × 1.5 / 0.3 m/s + 40 s, B6 (시작 → 물체 + 물체 → 놓을 곳) × 1.5 / 0.3 + 60 s
     c.max_steps = kind == bsc::EK_B4 ? 300 : kind == bsc::EK_B5 ? (int)ceilf((1.5f * b.dist / 0.3f + 40.f) * 10.f) : (int)ceilf((1.5f * (b.dist + pdist) / 0.3f + 60.f) * 10.f);
+  if (cov) c.max_steps = KB::cov_steps;
   c.ep += 1;
 }
 
-// 한 제어 스텝(BEHAVIOR 판). lev: 이 판의 지도 거리장(앞 스텝 지도, 판 번호가 맞을 때만, 아니면 nullptr), conf: 목표 확정(−1 = 지도 없음 → B2 는 보임만)
+// 한 제어 스텝(BEHAVIOR 판). lev: 이 판의 지도 거리장(앞 스텝 지도, 판 번호가 맞을 때만, 아니면 nullptr), conf: 목표 확정(−1 = 지도 없음 → B2 는 보임만), cov: 방 칸 덮은 천분율(−1 = 없음, 지도 쌓기 판만 씀)
 template <class Hook>
-DEV void step_core_beh(Core& c, BState& b, const bsc::SceneSet& ss, const uint8_t* lev, int org, int conf, const float act_in[N_ACT], StepOut& o, bool arm_free,
+DEV void step_core_beh(Core& c, BState& b, const bsc::SceneSet& ss, const uint8_t* lev, int org, int conf, int cov, const float act_in[N_ACT], StepOut& o, bool arm_free,
                        const Hook& hook) {
   float act[N_ACT], jerk, v_cmd, w_cmd, q_cmd[N_Q];
   act_prepare(c, act_in, act, jerk, v_cmd, w_cmd, q_cmd, arm_free);
@@ -426,9 +441,17 @@ DEV void step_core_beh(Core& c, BState& b, const bsc::SceneSet& ss, const uint8_
   o.obs[n++] = 1.f;
 
   float r = 0.f;
-  r = r + K::r_prog * prog;
-  if (dist < 1.5f) r = r + K::r_aim * (c.prev_aim - aim);
-  if (visible && !c.seen) { r = r + K::r_seen; c.seen = 1; }
+  const bool cover = (b.gmode & bsc::GM_COVER) != 0;
+  if (cover) {   // 지도 쌓기: 새로 덮은 방 칸(천분율)만 보상, 목표 쪽 보상 없음
+    if (cov >= 0) {
+      if (b.pd3 >= 0.f) r = r + KB::r_cov * ((float)cov - b.pd3);
+      b.pd3 = (float)cov;
+    }
+  } else {
+    r = r + K::r_prog * prog;
+    if (dist < 1.5f) r = r + K::r_aim * (c.prev_aim - aim);
+    if (visible && !c.seen) { r = r + K::r_seen; c.seen = 1; }
+  }
   float wmin = 4.f;
   for (int i = 0; i < N_RAYS; ++i) wmin = minf(wmin, rays[i] * 4.f);
   const float clear = wmin - K::half_wid;
@@ -444,7 +467,10 @@ DEV void step_core_beh(Core& c, BState& b, const bsc::SceneSet& ss, const uint8_
   const bool still = absf(c.v) <= K::succ_v && absf(c.w) <= K::succ_w;
   bool ok;
   int need = K::succ_ticks;
-  if (b.kind == bsc::EK_B1) {
+  if (cover) {
+    ok = cov >= KB::cov_succ;
+    need = 1;
+  } else if (b.kind == bsc::EK_B1) {
     const float gdx = c.tx - c.x, gdy = c.ty - c.y;
     ok = still && gdx * gdx + gdy * gdy <= KB::b1_r * KB::b1_r && bsc::room_at(ss.sc[b.scene], c.x + b.wx, c.y + b.wy) == b.room;
   } else if (b.kind == bsc::EK_B2) {
@@ -457,7 +483,7 @@ DEV void step_core_beh(Core& c, BState& b, const bsc::SceneSet& ss, const uint8_
   c.ok_ticks = ok ? c.ok_ticks + 1 : 0;
   int done = kRunning;
   if (hit) { done = kCollision; r = r + K::r_coll; }
-  else if (c.ok_ticks >= need) { done = kSuccess; r = r + K::r_succ + K::r_succ_aim * cosf_d(aim); }
+  else if (c.ok_ticks >= need) { done = kSuccess; r = r + K::r_succ + (cover ? 0.f : K::r_succ_aim * cosf_d(aim)); }
   else if (c.step + 1 >= c.max_steps) done = kTimeout;
   c.prev_dist = dist;
   c.prev_aim = aim;
@@ -504,6 +530,7 @@ DEV void step_env_beh(const Soa& s, int i, const float* act, float* obs, float* 
   const uint8_t* lev = fresh ? fb.lev + (size_t)i * (bsc::NAV_P * bsc::NAV_P) : nullptr;
   const int org = fresh ? fb.org[i] : 0;
   const int conf = fb.conf == nullptr ? -1 : (fresh ? fb.conf[i] : 0);
+  const int cov = (fb.cov != nullptr && fresh) ? fb.cov[i] : -1;
   if (bug == 2) b.room = -2;   // 음성 대조(장면): B1 목표 방을 지움
   StepOut o;
   // 잡기 물리 판(E6)만 물체 상태를 읽고 쓴다(다른 판은 예전 길 그대로)
@@ -516,7 +543,7 @@ DEV void step_env_beh(const Soa& s, int i, const float* act, float* obs, float* 
     if (bug == 4) cuv.phys |= bsc::PF_NO_ARMCOLL;                   // 음성 대조(팔 충돌): 막기 끔
     step_core_pnp(c, b, p, ss, cuv, lev, org, a, o, NoHook{});
   } else if (SEL != 2) {
-    step_core_beh(c, b, ss, lev, org, conf, a, o, arm_free, NoHook{});
+    step_core_beh(c, b, ss, lev, org, conf, cov, a, o, arm_free, NoHook{});
   }
   for (int k = 0; k < N_OBS; ++k) obs[k * s.N + i] = o.obs[k];
   rew[i] = o.reward;

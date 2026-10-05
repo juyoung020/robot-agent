@@ -478,6 +478,8 @@ struct BMapEnv {
   float dx[bsc::MAXBD], dy[bsc::MAXBD];   // 창 안 문(창 좌표)
   int8_t da[bsc::MAXBD], db[bsc::MAXBD];  // 문 양쪽 창 방(−1 = 없음/창 밖)
 };
+// 방 칸 덮은 비율 천분율(지도 쌓기 판 보상·성공 — 환경 NavFb::cov)
+DEV int cov_permille(const MapCore& m) { return m.room_cells > 0 ? (int)(((long long)m.n_seen_room * 1000) / m.room_cells) : 0; }
 struct BCtx {   // 한 판의 BEHAVIOR 맥락(값으로). on = 0 이면 상자 방
   int on;
   const bsc::SceneSet* ss;

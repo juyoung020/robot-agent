@@ -96,6 +96,7 @@ int main(int argc, char** argv) {
   c.bcurr.p1 = (float)jarr(cfg, "mix", 0, 0.0); c.bcurr.p2 = (float)jarr(cfg, "mix", 1, 0.0);
   c.bcurr.p_goto = (float)jget(cfg, "p_goto", 0.0); c.bcurr.p_point = (float)jget(cfg, "p_point", 0.0);
   c.bcurr.yaw_jit = (float)jget(cfg, "yaw_jit", 0.0);
+  c.bcurr.p_cov = (float)jget(cfg, "p_cov", 0.0);
   c.bcurr.p4 = pnp[0]; c.bcurr.p5 = pnp[1]; c.bcurr.p6 = pnp[2];
   if (pnp[0] + pnp[1] + pnp[2] > 0.f) c.bcurr.phys = 8;   // PF_FEAS: 잡기 가능 짝에서만(ppo_pnp 의 feas 1 과 같음)
   ppo::Trainer tr(c);
@@ -145,7 +146,7 @@ int main(int argc, char** argv) {
   std::unique_ptr<rec::BehRec> beh;   // BEHAVIOR 판(stage 3): 장면 머리 = 벽·창·가구·문 + 집을 물체·놓을 곳(beh_rec.h, record_bc 와 같음)
   if (stage >= 3 && tr.scenes) {   // .trp 만 — 점구름 지도는 og_replay(_og.sg)가 만든다
     R.sg = false;
-    R.skill = pnp[0] + pnp[1] + pnp[2] > 0.f ? "pick" : c.bcurr.p_goto > 0.5f ? "goto" : c.bcurr.p2 > 0.5f ? "explore" : "approach";
+    R.skill = pnp[0] + pnp[1] + pnp[2] > 0.f ? "pick" : c.bcurr.p_cov > 0.5f ? "cover" : c.bcurr.p_goto > 0.5f ? "goto" : c.bcurr.p2 > 0.5f ? "explore" : "approach";
     R.home_prefix = "B";
     beh = std::make_unique<rec::BehRec>(tr.scenes.get());
     R.scene_fn = [&](int i) {

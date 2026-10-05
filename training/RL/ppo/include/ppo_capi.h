@@ -23,6 +23,7 @@ typedef struct PpoBCurr {
   float p_slip;           /* 실패 판: 든 동안 제어 스텝마다 미끄러질 확률 */
   float p_occ;            /* 실패 판: 놓을 자리에 막는 물체가 있을 확률 */
   int32_t phys;           /* 물리 끄기 비트(음성 대조, 0) */
+  float p_cov;            /* B1 판을 "지도 쌓기"(커리큘럼 1단계, 목표 없음, 새로 덮은 방 칸 = 보상)로 바꿀 확률. 0 = 예전 판 그대로 */
 } PpoBCurr;
 
 typedef struct PpoConfig {
