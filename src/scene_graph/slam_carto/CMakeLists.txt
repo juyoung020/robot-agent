@@ -1,0 +1,40 @@
+# slam_carto — Cartographer(2D, ROS 없이) 자세 원천. README.md
+#   tools/build_all.sh cartographer slam_carto     (Cartographer 를 $RA_BUILD/cartographer/install 에 먼저 설치)
+# 다른 CMake 프로젝트(runtime·tools/realbag)는 add_subdirectory 로 붙이고 SLAM_CARTO_FOUND 를 본다(없으면 carto 없이 빌드).
+cmake_minimum_required(VERSION 3.18)
+project(slam_carto LANGUAGES CXX)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+
+if(NOT CARTO_PREFIX)
+  if(DEFINED ENV{RA_BUILD})
+    set(CARTO_PREFIX "$ENV{RA_BUILD}/cartographer/install")
+  else()
+    get_filename_component(CARTO_PREFIX "${CMAKE_CURRENT_LIST_DIR}/../../../build/cartographer/install" ABSOLUTE)
+  endif()
+endif()
+find_package(cartographer QUIET HINTS "${CARTO_PREFIX}/share/cartographer" NO_DEFAULT_PATH)
+if(NOT cartographer_FOUND)
+  message(STATUS "slam_carto: Cartographer not found under ${CARTO_PREFIX} (tools/build_all.sh cartographer) — skipping")
+  set(SLAM_CARTO_FOUND OFF PARENT_SCOPE)
+  return()
+endif()
+
+find_package(Boost REQUIRED COMPONENTS iostreams)   # cartographer 의 내보낸 대상이 Boost::iostreams 를 가리킴
+add_library(slam_carto STATIC src/slam_carto.cpp)
+set_target_properties(slam_carto PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_STANDARD 17)
+target_include_directories(slam_carto PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include)
+target_compile_definitions(slam_carto PRIVATE SLAM_CARTO_SRC_CONFIG="${CMAKE_CURRENT_LIST_DIR}/config")
+target_compile_options(slam_carto PRIVATE -Wall -Wno-sign-compare)
+target_link_libraries(slam_carto PRIVATE cartographer)
+
+# 스트림 폴더(scans.bin + odom.csv + frames.csv) → Cartographer → 궤적·ATE·지도·떠밀림 통계(GPU·검출 없이 빠르게)
+add_executable(carto_run tools/carto_run.cpp)
+set_target_properties(carto_run PROPERTIES CXX_STANDARD 17)
+target_compile_options(carto_run PRIVATE -Wall)
+target_link_libraries(carto_run slam_carto)
+
+if(NOT CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+  set(SLAM_CARTO_FOUND ON PARENT_SCOPE)
+endif()

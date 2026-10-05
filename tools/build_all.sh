@@ -15,7 +15,7 @@ SG=$ROOT/src/scene_graph
 TR=$ROOT/training
 mkdir -p "$B/bin" "$B/cargo"
 
-ALL=(scenemap sgrt sgclip realbag sgview og2sg env map map_cmp ppo bc vla record_replay trainview agent ppo_driver bc_driver)
+ALL=(cartographer slam_carto scenemap sgrt sgclip realbag sgview og2sg env map map_cmp ppo bc vla record_replay trainview agent ppo_driver bc_driver)
 if [ "${1:-}" = "--list" ]; then printf '%s\n' "${ALL[@]}"; exit 0; fi
 TARGETS=("$@"); [ ${#TARGETS[@]} -gt 0 ] || TARGETS=("${ALL[@]}")
 
@@ -37,6 +37,14 @@ cg() { # cg <이름> <crate 폴더> <실행 파일...> — cargo release
 for t in "${TARGETS[@]}"; do
   echo "== [build] $t"
   case $t in
+    cartographer)   # Cartographer 코어(Apache-2.0, ROS 없이) — third_party/cartographer 를 받아 build/cartographer 에 빌드·설치
+                CARTO_SRC=$ROOT/third_party/cartographer
+                [ -d "$CARTO_SRC" ] || git clone -q https://github.com/cartographer-project/cartographer.git "$CARTO_SRC"
+                (cd "$CARTO_SRC" && git checkout -q "${CARTO_REV:-877157a}")
+                cm cartographer "$CARTO_SRC" -DBUILD_TESTING=OFF -DCMAKE_INSTALL_PREFIX="$B/cartographer/install" -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+                cmake --install "$B/cartographer" >/dev/null ;;
+    slam_carto) [ -f "$B/cartographer/install/lib/libcartographer.a" ] || "$0" cartographer
+                cm slam_carto "$SG/slam_carto" -DCMAKE_PREFIX_PATH="$B/cartographer/install"; link "$B/slam_carto/carto_run" ;;
     scenemap)   cm scenemap "$SG/scenemap" ;;                                  # 시험은 ctest --test-dir $RA_BUILD/scenemap
     sgrt)       CM_TARGETS=sgrt cm sgrt "$SG/runtime" -DCMAKE_CUDA_ARCHITECTURES="$RA_CUDA_ARCH"; link "$B/sgrt/libsgrt.so" ;;
     sgclip)     cm sgclip "$SG/clip"; link "$B/sgclip/libsgclip_c.so" ;;       # 에이전트 search_objects 가 링크(SGCLIP_LIB_DIR=$RA_BUILD/sgclip)
