@@ -42,10 +42,9 @@ import numpy as np
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[3]  # repo root (src/scene_graph/runtime/glue -> ../../../..)
-LIB = os.environ.get("SGRT_LIB", str(pathlib.Path(__file__).resolve().parents[4] / "build/bin/libsgrt.so"))
+LIB = os.environ.get("SGRT_LIB", str(ROOT / "build/bin/libsgrt.so"))
 # 분할 엔진 기본 = ObjectSAM(YOLO26n 학생, 이름 없는 'object') + SigLIP 2 + objprob(libsgrt 가 켬)
-REPO = HERE.parents[3]
-OVDET_MODELS = pathlib.Path(os.environ.get("OVDET_MODELS") or REPO / "models/ovdet")
+OVDET_MODELS = pathlib.Path(os.environ.get("OVDET_MODELS") or ROOT / "models/ovdet")
 ENGINE = os.environ.get("SGRT_ENGINE", str(OVDET_MODELS / "x86_sm120/yolo26n-seg-obj-416.plan"))
 PROMPTS = ROOT / "src/scene_graph/ovdet/config/task_prompts.txt"
 HEAD_K = (306.0, 306.0, 360.0, 360.0)  # fallback intrinsics (fx, fy, cx, cy) until the OmniGibson sensor is read (_limo_head_k)
@@ -111,7 +110,7 @@ def _yaw(q):
 
 
 def task_prompt_names(task: str) -> list[str]:
-    """Task BDDL objects + scene structures, the ovdet prompt table (config/task_prompts.txt)."""
+    """Task BDDL objects + scene structures (ovdet/config/task_prompts.txt) — added to the SigLIP 2 word table."""
     lines = dict(l.split(":", 1) for l in PROMPTS.read_text(encoding="utf-8").splitlines() if ":" in l and not l.startswith("#"))
     names = [n.strip() for n in lines.get(task, "").split(",") if n.strip()]
     return names + [n.strip() for n in lines["_scene"].split(",") if n.strip() and n.strip() not in names]
@@ -131,10 +130,8 @@ class SceneMemory:
         self.L = ctypes.CDLL(LIB)
         L = self.L
         # robot selection (module docstring). Nothing set -> limo_omx (the library default too).
-        self.has_robot = hasattr(L, "sgrt_get_robot")
-        if self.has_robot:
-            L.sgrt_get_robot.argtypes = [ctypes.c_void_p]
-            L.sgrt_set_robot.argtypes = [ctypes.c_void_p, ctypes.c_int32]
+        L.sgrt_get_robot.argtypes = [ctypes.c_void_p]
+        L.sgrt_set_robot.argtypes = [ctypes.c_void_p, ctypes.c_int32]
         want = (robot_model or "").lower()
         if not want and not (os.environ.get("SGRT_ROBOT") or os.environ.get("SGRT_SM_CONFIG")):
             r0 = _find_robot()
@@ -151,29 +148,19 @@ class SceneMemory:
         L.sgrt_save.argtypes = [ctypes.c_void_p]
         L.sgrt_stats.argtypes = [ctypes.c_void_p] + [ctypes.c_void_p] * 5
         L.sgrt_destroy.argtypes = [ctypes.c_void_p]
-        # newer ABI (pose source, timing): an older libsgrt.so without these still works (no GT push, no timing)
-        self.has_pose = hasattr(L, "sgrt_push_pose")
-        self.has_timing = hasattr(L, "sgrt_get_stage_timing")
-        if self.has_pose:
-            L.sgrt_push_pose.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double]
-            L.sgrt_get_pose_diag.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Diag)]
-        self.has_scan = hasattr(L, "sgrt_push_scan")
-        if self.has_scan:
-            L.sgrt_push_scan.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_int32, ctypes.c_void_p, ctypes.c_double, ctypes.c_double,
-                                         ctypes.c_double, ctypes.c_double, ctypes.c_double]
-        if self.has_timing:
-            L.sgrt_get_stage_timing.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Stage), ctypes.c_int32]
+        L.sgrt_push_pose.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double]
+        L.sgrt_get_pose_diag.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Diag)]
+        L.sgrt_push_scan.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_int32, ctypes.c_void_p, ctypes.c_double, ctypes.c_double,
+                                     ctypes.c_double, ctypes.c_double, ctypes.c_double]
+        L.sgrt_get_stage_timing.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Stage), ctypes.c_int32]
         cfg = _Cfg(ENGINE.encode(), (ENGINE + ".names.txt").encode(), out_dir.encode(), kf_every, save_s, 0.25)
         err = ctypes.create_string_buffer(512)
         self.h = L.sgrt_create(ctypes.byref(cfg), err, 512)
         if not self.h:
             raise RuntimeError(f"sgrt_create: {err.value.decode()}")
-        if want:
-            if not self.has_robot:
-                raise RuntimeError(f"[sgrt] {LIB} has no robot selection (sgrt_set_robot) — rebuild libsgrt for {want}")
-            if L.sgrt_get_robot(self.h) != ROBOTS[want]:
-                L.sgrt_set_robot(self.h, ROBOTS[want])
-        self.robot_id = L.sgrt_get_robot(self.h) if self.has_robot else 0
+        if want and L.sgrt_get_robot(self.h) != ROBOTS[want]:
+            L.sgrt_set_robot(self.h, ROBOTS[want])
+        self.robot_id = L.sgrt_get_robot(self.h)
         self._limo_init()
         names = task_prompt_names(task)
         arr = (ctypes.c_char_p * len(names))(*[n.encode() for n in names])
@@ -184,11 +171,11 @@ class SceneMemory:
         self.keys = (f"{robot}::proprio", f"{robot}::{robot}:{cam}:Camera:0::rgb", f"{robot}::{robot}:{cam}:Camera:0::depth_linear")
         self.t = 0
         self.robot = None
-        self.use_gt = os.environ.get("SGRT_GT_POSE", "1") != "0" and self.has_pose
+        self.use_gt = os.environ.get("SGRT_GT_POSE", "1") != "0"
         self.gt_every = os.environ.get("SGRT_GT_EVERY", "0") == "1"
         self.kf_every = kf_every
         # SGRT_MAP_EVERY=n: the occupancy map is updated every n steps (depth only, ~0.4 ms) instead of only on detection keyframes (kf_every).
-        # 0/unset = keyframes only (old behaviour). Detection, the object map and embeddings stay on keyframes.
+        # 0/unset = keyframes only. Detection, the object map and embeddings stay on keyframes.
         self.map_every = int(os.environ.get("SGRT_MAP_EVERY", "0"))
         self.gt_log = None
         if os.environ.get("SGRT_GT_LOG"):
@@ -197,7 +184,7 @@ class SceneMemory:
             self.gt_log.write("step,stamp,x,y,z,yaw,cam_x,cam_y,cam_z,cam_qx,cam_qy,cam_qz,cam_qw\n")
         # sim 2D lidar (module docstring): LIMO only, needs the sim robot
         self.lidar = None
-        self.use_lidar = self.has_scan and os.environ.get("SGRT_LIDAR", "1") != "0"
+        self.use_lidar = os.environ.get("SGRT_LIDAR", "1") != "0"
         self.py_ns = {"gt": 0, "prep": 0, "call": 0, "lidar": 0}
         self.py_n = 0
         print(f"[sgrt] {task}: {len(names)} prompt names, out {out_dir}, robot limo_omx ({HEAD_LINK})", flush=True)
@@ -375,16 +362,12 @@ class SceneMemory:
         return self._cam
 
     def pose_diag(self):
-        if not self.has_pose:
-            return {}
         d = _Diag()
         self.L.sgrt_get_pose_diag(self.h, ctypes.byref(d))
         return dict(n=d.n, last_xy=d.last_xy, last_yaw_deg=math.degrees(d.last_yaw), max_xy=d.max_xy,
                     max_yaw_deg=math.degrees(d.max_yaw), rms_xy=d.rms_xy, rms_yaw_deg=math.degrees(d.rms_yaw))
 
     def timing(self):
-        if not self.has_timing:
-            return {}
         arr = (_Stage * 64)()
         n = self.L.sgrt_get_stage_timing(self.h, arr, 64)
         out = {arr[i].name.decode(): dict(n=arr[i].n, mean=arr[i].mean_us, p50=arr[i].p50_us, p99=arr[i].p99_us, max=arr[i].max_us)

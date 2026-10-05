@@ -1,14 +1,12 @@
 # scenemap — 2D 지도 · 물체 기억 · 장면 그래프 (C++)
 
-로봇(LIMO + OMX-F)의 proprio(12 f32 — 아래 "LIMO + OMX-F" 절)와 머리(LIMO: 몸통 앞) 깊이, 검출(마스크 + 이름 번호)로 실시간 기억을 만든다.
-2D 점유 격자(자세는 밖에서 — Cartographer `../slam_carto`, mapper2d 가 그 자세로 격자를 쌓음), 물체 지도(objmap), 방 나누기, 장면 그래프, 파일 저장, 뷰어 스트림까지 한다.
-밖에서는 C ABI 하나(`include/scenemap.h`)로 부른다. CUDA 는 쓰지 않는다(장치 쪽 자르기는 `../runtime`).
-설계·측정은 [docs/scenemap_설계.md](README.md).
+로봇(LIMO + OMX-F)의 proprio(12 f32 — 아래 "LIMO + OMX-F" 절)와 몸통 앞 깊이, 검출(마스크 + SigLIP 2 임베딩)로 실시간 기억을 만든다.
+2D 점유 격자(자세는 밖에서 — Cartographer `../slam_carto`, mapper2d 가 그 자세로 격자를 쌓음), 물체 지도(objmap, objprob 하나), 방 나누기, 장면 그래프, 파일 저장, 뷰어 스트림까지 한다.
+밖에서는 C ABI 하나(`include/scenemap.h`)로 부른다. CUDA 는 쓰지 않는다(장치 쪽 자르기는 `../runtime`). 보통은 `../runtime`(libsgrt)이 검출기·SigLIP 2·Cartographer 와 묶어 부른다.
 
 - 장면 그래프에 기억하는 층은 **물체**(OBJECTS)와 **방**(ROOMS) 두 층이다. 로봇 keyframe 자세(궤적)는 물체 층 번호의 agent partition 에 붙는다.
 - 장소(place)는 `sgraph.cpp` 가 2D 격자에서 계산하는 백엔드 값이다. 길 찾기(`sm_snap_place_path`)·이동·탐색이 쓰고, 뷰어는 그리지 않는다.
 - 물체끼리 관계(on/in/near)는 만들지 않는다. 위치·상자 메타데이터로 쓰는 쪽이 판단한다. 물체의 부모는 방, place.
-- 보통은 `../runtime`(libsgrt)이 검출기와 묶어 부른다.
 
 ## 배치
 
@@ -21,20 +19,20 @@
 | `grid.*` | 2D 점유 격자(로그 오즈), 필요하면 넓어짐. 보이는 값(−1 모름, 0..100 %)을 늘 고쳐 두고, 바뀐 영역(dirty)을 추적 |
 | `mapper2d.*` | 자세는 밖에서(SM_POSE_EXT = Cartographer 기본·GT·ODOM): keyframe 사이·외부 자세가 없을 때 `base_qvel` 적분, keyframe 깊이 가상 스캔을 그 자세로 격자에 넣기(넣기 정책), 마지막 스캔. |
 | `objmap.*` | 검출 마스크 + 깊이 + 자세 → 물체 3D 위치·크기 → 같은 물체 판단(objprob 하나) → 갱신. 확정·옮겨짐·사라짐·들기·받침 따라가기. 이름 종류(옮길 수 있음 / 구조물 — 노드 안 됨 / 고정 가구 / 구조 물체 — 문·창·계단). 다음 keyframe 앞 `apMergePass` 가 이름 없이 같은 것 병합 |
-| `objprob_math.h` | objprob 계산 한 곳(10-06): 같은 것 로지스틱·기하 특징·κ(viewKappa)·이름 사후 정규화·상위어 고르기·이름 분포 겹침·칼만 — `__host__ __device__` 인라인, STL 없음. scenemap(double, `OpmStd`)과 GPU 학습 지도(`training/RL/map`, float 결정적 수학)가 같이 부름. 규칙을 바꾸면 여기를 고침(두 쪽이 함께 바뀜). 맞춤 시험 `training/RL/map/tools/objprob_parity.cpp` |
+| `objprob_math.h` | objprob 계산 한 곳: 같은 것 로지스틱·기하 특징·κ(viewKappa)·이름 사후 정규화·상위어 고르기·이름 분포 겹침·칼만 — `__host__ __device__` 인라인, STL 없음. scenemap(double, `OpmStd`)과 GPU 학습 지도(`training/RL/map`, float 결정적 수학)가 같이 부름. 규칙을 바꾸면 여기를 고침(두 쪽이 함께 바뀜). 맞춤 시험 `training/RL/map/tools/objprob_parity.cpp` |
 | `objprob.*` | 확률 물체 모델(아래 "scenemap 확률 모드"): vMF 임베딩 사후(r = Σκz)·상위 K 모습·이름 범주 사후(상위어로 올림·엔트로피·바깥 관측)·같은 것 로지스틱 특징·평면 맞춤(PCA)·접촉 칸. 물체 지도의 유일한 규칙 |
 | `inspect.*` | 살펴본 정도(아래 "살펴본 정도"): 물체마다 가장 가까이 본 거리·본 시점 수·윗면 본 비율. `ObjParams::insp.on` 일 때만, 판단에는 안 씀 |
 | `bestview.*` | 물체별 best view: 품질 = 유효 마스크 넓이 × 점수가 가장 큰(같으면 최근) 모습. 상자 + 변마다 10 % 여유, 긴 변 최대 256 px. RGB 자르기는 호출자 함수 또는 호스트 RGBA |
-| `cloud.*` | 물체 점 구름: 복셀(기본 0.02 m)마다 점 하나, 물체당 한도(기본 4000), 물체가 움직이면 원점만 옮김 |
+| `cloud.*` | 물체 점 구름: 복셀(기본 0.02 m)마다 점 하나, 물체당 한도(기본 8000), 물체가 움직이면 원점만 옮김 |
 | `rooms.*` | 방 나누기(Hydra room finder 의 2D 판): 빈칸 거리 변환 → 지속성 거름·붙이기 → 합치기 → 문(방–방 변). 방 id 유지, 물체 배정(바닥 자리 다수결), 들어 있는 물체로 규칙 이름(kitchen·bedroom …), 외부 이름 덮어쓰기 |
 | `sgraph.*` | 살아 있는 장면 그래프: 물체·방 노드, agent(0.5 m·30° 또는 10 s 마다), place 계산(바뀐 격자 둘레 2 m 창만 다시). `publish()` 가 바뀐 때만 읽기 전용 사본을 만든다 |
-| `walls.*` | 점유 격자 → 축에 맞는 벽 선분 → 벽 상태 벡터(길이 56: 16방향 거리 + 가까운 선분 8개). `viewer/walls2d.py` 의 C++ 판. sgview 도 이 파일을 컴파일해 쓴다. `wallSegmentsAligned`: slam 지도(지도 좌표 = 출발 자세라 벽이 기울어짐)용 — 벽 방향 θ 를 찾아(`wallAngle`, 투영 히스토그램) 돌린 격자에서 뽑고 되돌림, \|θ\| ≤ 1° 이거나 θ 로 돌려도 투영 점수가 8 % 미만으로 늘면(gt 지도의 −1°대 잡음) `wallSegments` 와 같은 결과. 돌린 격자에서 뽑은 선분은 원래 격자의 점유 띠에 다시 맞춤(±3 칸 안 가장 진한 띠 가운데로, 4 칸 넘는 끊김에서 나누고 양끝 자름, 점유 < 70 % 버림, 2 칸 안 겹치는 나란한 선 합침) — 돌린 격자 덩어리 가운데 행을 그대로 쓰면 slam 지도에서 선이 벽 옆 빈칸·두 줄 벽 사이에 놓이고 벽 끝을 지나 뻗음. sgview 가 쓰고, capi(정책이 받는 `sm_snap_wall_segments`·`wall_state`)도 10-05 부터 같은 길: θ 를 2 s 마다 재어 1° 넘게 바뀔 때만 바꾸고 \|θ\| > 1° 면 `wallSegmentsAtAngle`(0.5 s 에 한 번까지), 축에 맞으면 예전 증분 추출(`SM_WALLS_AXIS=1` = 옛 동작) |
+| `walls.*` | 점유 격자 → 벽 선분 → 벽 상태 벡터(길이 56: 16방향 거리 + 가까운 선분 8개). sgview 도 이 파일을 컴파일해 쓴다. 지도가 기울어 있으면 벽 방향 θ(`wallAngle`, 투영 히스토그램)를 찾아 돌린 격자에서 뽑고(`wallSegmentsAligned`·`wallSegmentsAtAngle`) 원래 격자의 점유 띠에 다시 맞춘다. capi 는 θ 를 2 s 마다 재어 1° 넘게 바뀔 때만 바꾼다(\|θ\| ≤ 1° 면 축 정렬 증분 추출) |
 | `stream.*` | sgview 실시간 스트림. 스텝 스레드는 링 버퍼에 복사만, 송신 스레드가 비차단 소켓으로 보냄. 프레임 POSE · MAP_RECT · VIEW · JOINTS. 다시 붙으면 전체 상태를 다시 보냄 |
 | `dsg_save.*` | 저장(아래 "저장 파일"). 모든 파일은 임시 이름 → rename. scene.json 은 Spark-DSG JSON 형식을 직접 문자열로 쓴다(바뀐 노드만 다시 만드는 캐시) |
 | `png.*` | 최소 PNG 쓰기(8 비트 RGB, 16 비트 회색) |
 | `timing.hpp` | 단계별 µs 막대그래프(할당·잠금 없음). `sm_get_timing` 이 읽음 |
 | `geom.hpp` | 평면 자세·작은 선형대수 |
-| `../da/` | 중복 물체 병합. 이 라이브러리에 같이 들어간다([../da/README.md](../da/README.md)) |
+| `../da/` | 물체 둘 합치기(`absorbObject`)·상자 겹침(`boxOverlap`) — objprob 병합이 씀. 이 라이브러리에 같이 들어간다([../da/README.md](../da/README.md)) |
 
 ## 저장 파일 (`sm_save_dsg` · `sm_save_dsg_ex`)
 
@@ -51,14 +49,8 @@
 
 ## 만들기
 
-CUDA 없음. C++20, zlib 필요. sgrt 를 빌드하면 `../runtime/CMakeLists.txt` 가 이 폴더를 `add_subdirectory` 로 같이 빌드한다(그쪽은 CUDA 12.8).
-
-```bash
-cmake -S src/scene_graph/scenemap -B build/scenemap && cmake --build build/scenemap -j && ctest --test-dir build/scenemap
-```
-
-- Spark-DSG: 우리 사본 `../spark_dsg` 가 있으면 그것을, 없으면 `~/.local` 설치본을 찾는다. 있으면 `SM_HAVE_SPARK_DSG` 를 켠다.
-  scene.json 은 라이브러리 없이 직접 쓰므로 Spark-DSG 는 `SM_DSG_SAVE=spark`(라이브러리로 쓰기, 비교용)와 시험의 다시 읽기 확인에만 쓰인다.
+CUDA 없음. C++20, zlib 필요. `tools/build_all.sh scenemap`(→ `build/scenemap`), 시험 `ctest --test-dir build/scenemap`. sgrt 를 빌드하면 `../runtime` 이 이 폴더를 같이 빌드한다.
+Spark-DSG 는 우리 사본 `../spark_dsg` 를 쓴다(`SM_HAVE_SPARK_DSG`). scene.json 은 라이브러리 없이 직접 쓰므로 Spark-DSG 는 `SM_DSG_SAVE=spark`(비교용)와 시험의 다시 읽기 확인에만 쓰인다.
 
 ### 도구 (`tools/`, 같이 빌드됨)
 
@@ -72,7 +64,7 @@ cmake -S src/scene_graph/scenemap -B build/scenemap && cmake --build build/scene
 
 ### 채점 (`eval/`, 파이썬, 로봇 밖)
 
-정답은 채점에만 쓴다. BEHAVIOR R1 시연 채점 도구(export_episode·score_slam·score_objmap …)는 10-06 (git 태그 `pre-clean-2026-10-06`).
+정답은 채점에만 쓴다.
 
 | 파일 | 하는 일 |
 |---|---|
@@ -83,16 +75,14 @@ cmake -S src/scene_graph/scenemap -B build/scenemap && cmake --build build/scene
 | 이름 | 뜻 |
 |---|---|
 | `SM_DSG_SAVE=spark` | scene.json 을 Spark-DSG 라이브러리로 쓴다(비교용, `SM_HAVE_SPARK_DSG` 빌드에서만) |
-| `SM_NO_MERGE` | 있으면 중복 병합(da) 끔 |
-| `SM_MERGE_LOG` | 있으면 병합마다 stderr 에 한 줄 |
 | `SM_WALLS_CHECK` | 있으면 벽 증분 계산을 처음부터 계산한 것과 비교 |
 | `SM_KEEP` | `test_scene_json` 이 출력 폴더를 지우지 않음 |
 | `SM_SLAM_LOG=<파일>` | keyframe 마다 넣은 자세·정답(맞춤)·스캔 점 수·넣음·적분 이동 CSV |
 | `SM_OBJ_PARAMS="key=val,…"` | objmap 바뀜 판정 매개변수 덮어쓰기(이름은 `ObjParams` 그대로 — `objmap.cpp` `envOverrides`, 모르는 이름은 stderr 에 알림). A/B 비교용 |
 | `SM_OBJ_LOG` | 있으면 objmap 사건(후보·확정·옮겨짐·사라짐·병합 …)과 옮겨짐 잇기(`[link]`)를 stderr 에 |
-| `SM_WALLS_AXIS` | 있으면 capi 벽 추출을 예전처럼 축 정렬만(기운 slam 지도에서 벽이 거의 없음 — 비교용) |
+| `SM_WALLS_AXIS` | 있으면 capi 벽 추출을 축 정렬만(비교용) |
 | `SM_OBJ_PARAMS=inspect=1` | 살펴본 정도 켜기(`sm_set_inspect` 와 같음 — 진단용) |
-| `SM_AP_LOG` | objprob: 물체 쌍 같은 것 확률(`[ap-pair]`, p > 0.2)·병합(`[ap-merge]`)을 stderr 에. 매개변수는 `SM_OBJ_PARAMS` 의 `objprob`·`ap_*`(`objmap.cpp` `envOverrides`) |
+| `SM_AP_LOG` | objprob: 물체 쌍 같은 것 확률(`[ap-pair]`, p > 0.2)·병합(`[ap-merge]`)을 stderr 에. 매개변수는 `SM_OBJ_PARAMS` 의 `ap_*`(`objmap.cpp` `envOverrides`) |
 | `SM_ABS_LOG=<id>` · `SM_LINK_LOG=<id>` · `SM_MOVE_LOG=<id\|0>` | 물체 하나의 사라짐 근거(보인 표본 수·화소 크기·놓침) / 새 물체 하나의 잇기 후보 / 움직임 따라가기(0 = 전부) |
 
 sgrt 쪽 `SGRT_*` 변수는 [../runtime/README.md](../runtime/README.md).
@@ -101,75 +91,29 @@ sgrt 쪽 `SGRT_*` 변수는 [../runtime/README.md](../runtime/README.md).
 
 | 시험 | 확인 |
 |---|---|
-| `fk` | 순기구학이 시연 robot2cam 자세를 재현 |
-| `objmem` | C ABI 만으로 합성 RGB-D + 검출: 구조물·movable, 상자 이상값, 큰 가구 상자 자람 한도, 사라짐(컵 2 s, 큰 소파 4 s), 다른 자리에 나타난 같은 이름을 사라진 물체 id 로 다시 잇기, best view, PNG(자체 디코더로 화소 비교)·scene.json 다시 읽기, 점 구름(자리·색·한도·들기·옮겨짐), 시간 |
+| `objmem` | C ABI 만으로 합성 RGB-D + 검출(가짜 SigLIP 임베딩 `tests/fake_siglip.h`): 구조물·movable, 상자 이상값, 큰 가구 상자 자람 한도, 사라짐(컵 2 s, 큰 소파 4 s), 다른 자리에 나타난 같은 물체를 사라진 물체 id 로 다시 잇기, best view, PNG(자체 디코더로 화소 비교)·scene.json 다시 읽기, 점 구름(자리·색·한도·들기·옮겨짐), 시간 |
 | `rooms` | 두 방 + 문, ㄱ자, 복도 + 방 셋, 잡음, 크기 다른 방, 이상한 설정, 자람(id 유지), 물체 배정·이름, 외부 이름, 저장, C ABI, 600 × 600 시간 |
 | `posemap` | 자세 원천(GT/EXT/ODOM, EXT = 외부 SLAM 자세가 지도 자세·정답은 진단만), 서 있을 때 장애물이 생기고 없어지는 것(사건 기반 넣기), 단계 시간 |
 | `relations` | 물체끼리 on/in/near 변이 없음, 물체 부모는 방·place 만 |
 | `gt_traj` | GT 자세 모드에서 agent 노드가 `sm_push_pose` 정답 자세를 그대로 따라감(영상·proprio 없이) |
 | `scene_json` | scene.json 에 frontier·mesh·건물 층·GVD 필드가 없음, 줄인 Spark-DSG 로 다시 읽힘 |
 | `walls` | 합성 격자 속도, 증분 = 처음부터 계산, 물체 자리(소파) 빼기, 49.2° 기울어진 방(축 추출 0 개 → 돌려 뽑기 4 벽, θ 오차 < 0.3°, 양끝이 벽 가운데선 1 cm 안·벽 밖으로 안 나감), 축에 맞는 격자에서 돌려 뽑기 = 그대로. 인자로 파이썬 기준(`<cells.bin> <ref.json>`)을 주면 값 비교(ctest 는 인자 없이 돔) |
-| `da_merge` | `../da/tests/test_merge.cpp` |
+| `da_merge` | `../da/tests/test_merge.cpp`: `absorbObject`(관측 수·자리·이름 표·구름)·`boxOverlap` |
 | `inspect` | 살펴본 정도: 시점 세기(0.3 m·15° 안은 같은 시점, 한도 32)·가장 가까운 거리, 광선 추적 합성 깊이로 윗면 칸(위에서 본 탁자 = 다 봄, 낮은 카메라 1.7 m = 앞 줄 4/16, 0.5 m = 0(앞 모서리에 가림), 뒤 벽 없으면(깊이 0) 안 셈, 칸 위 작은 컵은 가리지 않음, 가리는 벽 = 0, 2 m 밖 = 0, 윗면 없는 것 = −1), 상자 자람·합치기의 칸 옮김, ObjectMap 통합(켜도 물체·사건이 꺼짐과 같음, 다가가며 거리 단조·시점 6·윗면 1.0), 100 물체 시간. `objmem` 에도 C ABI 판(끄면 `sm_snap_inspect` −2·저장 파일에 없음, 켜면 view.json 이 `inspect` 멤버만 다름, 설정 키 `"inspect": 1` 이 `sm_set_robot` 뒤에도 남음) |
 | `objprob` | 확률 모드: r 합·μ·‖r‖, 같은 영상 조각은 덜 세지 않고 비슷한 시점은 temper 배, 애매한 이름 → 상위어·엔트로피, 바깥 이름 관측이 뒤 영상 모습에 덮이지 않음, 받침이면 같은 것 아님, 평면 맞춤(세운 얇은 평면·수평면), 접촉 칸 |
 | `stream` | 루프백 TCP 로 프레임 내용, 다시 붙을 때 전체 상태 재전송, 스텝 스레드 비용 |
 | `limo_fk` | LIMO 순기구학(깊이·손목 카메라 광학, 잡는 점, 팔 끝)이 URDF 독립 계산(`tests/gen_limo_fk_ref.py`, 15 자세)과 위치 1e-5 m·회전 원소 1e-6 안, 잡는 점이 E0 OmniGibson `get_eef_position`(omx_link5 기준 0.08003)과 1e-4 m 안, C ABI `sm_robot_fk` = 내부 값 |
 | `limo_e2e` | C ABI 만으로 LIMO proprio(odom 원점 ≠ map) + 합성 깊이(벽 둘·바닥·컵) + 컵 마스크: 벽 칸 점유·앞 빈칸·뒤 모름·몸 위 점유 없음, 컵 자리, 0.5 m·14° 주행 뒤 자세(twist 를 일부러 틀려도 오도메트리 자세 차로), 그리퍼를 4 cm 컵 폭(0.41 rad)에서 닫아 멈춤 → 듦 → 따라감 → 놓기(옮겨짐) |
-| `limo_held` | LIMO 잡기 규칙·팔 가림(합성 깊이에 순기구학 팔 캡슐을 광선 추적, 검출기가 가린 팔 화소를 탁자 마스크에 넣음): 탁자 앞을 팔이 가리고 빈손으로 닫힘 → 탁자 held·옮겨짐·사라짐 아님, 자리·상자 그대로(대조: 옛 규칙 `SM_OBJ_PARAMS=grasp_check=0,self_mask=0` 이면 held). 4 cm 컵: 열린 채 → 아님, 0 rad(빈손) → 아님, 0.41 rad 멈춤 → held, 열면 놓음. 8 cm 컵 → 아님 |
+| `limo_held` | LIMO 잡기 규칙·팔 가림(합성 깊이에 순기구학 팔 캡슐을 광선 추적, 검출기가 가린 팔 화소를 탁자 마스크에 넣음): 탁자 앞을 팔이 가리고 빈손으로 닫힘 → 탁자 held·옮겨짐·사라짐 아님, 자리·상자 그대로(대조: `SM_OBJ_PARAMS=grasp_check=0,self_mask=0` 이면 held). 4 cm 컵: 열린 채 → 아님, 0 rad(빈손) → 아님, 0.41 rad 멈춤 → held, 열면 놓음. 8 cm 컵 → 아님 |
 
-## 물체 바뀜 규칙 (10-04, dynamic-object-mapping-benchmark 로 고침)
+## 물체 지도 — objprob(확률론적 물체 수준 매핑: 분할 조각 + SigLIP 2)
 
-벤치마크 어댑터(`dom_bench`·`dom_bench_det`, 지금은 (git 태그 `pre-clean-2026-10-06`))로 진단한 실패를 objmap 규칙에서 고쳤다. 모든 값은 `ObjParams` 기본값이라 sgrt·sm_bench 도
-같은 규칙을 쓴다(벤치마크 전용 설정 없음). 규칙 요약은 `include/scenemap/objmap.hpp` 머리말.
-
-| 고친 것 | 전 | 후 |
-|---|---|---|
-| 사라짐 → 옮겨짐 잇기 | 안 맞은 관측이 나오는 순간 같은 이름 '사라짐' 중 가장 가까운 것과 이음(거리·시간 문턱 없음) | `relink`: 새 물체 n 이 확정·3 번 이상 보이고, n 처음 > m 마지막, 거리 ≤ min(8 m, 1 m + 1 m/s·시간 차), n 자리를 처음 검출한 거리 이하에서 5 s 넘게 전에 본 적 있음(처음 가 본 곳에서 찾은 것은 새 물체 — 2D 0.5 m 칸 × 거리 띠 1..5 m 의 처음 본 시각), n 에 더 가까운 같은 이름 물체가 n 이후 안 보였으면 30 s 기다림. 가까운 쌍부터 1:1, n 의 자리·모양·관측을 m 의 id 로 옮기고 n 은 지움. n 은 처음 본 뒤 180 s 까지만 후보 |
-| 새 자리를 옛 자리보다 먼저 봄 | 새 id(옮겨짐이 추가 + 사라짐) | 새 자리는 먼저 새 id 로 생기고, 옛 자리가 사라짐이 되면 위 규칙으로 다시 이음(re-association) |
-| 큰 것(한 변 > 0.5 m)·고정 종류 사라짐 | 판정 안 함 | 판정함. 놓침 6 번, 첫 놓침에서 4 s 또는 카메라 0.5 m 이동 |
-| 사라짐 근거 | 물체 중심 한 점 + 3×3 깊이 | 구름 점(없으면 상자 27 점) 48 개 투영: 시야 안·안 가림 ≥ 50 %, 보이는 부분 ≥ 12 px, 카메라 거리 ≤ 이 물체를 검출한 가장 먼 거리 × 1.15 + 0.2 m. 새 근거만 셈(지난 놓침 뒤 카메라 0.1 m·5° 넘게 바뀜, 또는 자리 너머가 보임 — 서 있는 카메라의 같은 영상을 되풀이해 세지 않음). 물체 상자 안에 그 물체 이름 표에 있던 다른 이름 관측이 있으면 안 셈(이름 흔들림). 필요한 놓침 = max(3, 검출률 p 로 (1−p)^k < 0.02 인 k). 첫 놓침에서 2 s 또는 카메라 0.5 m 이동 |
-| 헛검출 | 사라짐으로 남음 | 관측 5 번 미만이던 것이 사라짐이 되면 지움(잇기 후보가 안 되게) |
-| 이름 | 관측마다 이름 하나, 같은 이름끼리만 이음 | 물체마다 이름 표(점수 합), 이름 = 최댓값(1.25 배 넘어야 바뀜). 관측 이름이 표에서 20 % 이상이면 짝 후보(이름 다르면 0.02 뒤로). 병합(da)은 이름이 달라도 3D IoU ≥ 0.5 면 합침 |
-| 바닥 조각 | 물체로 만듦 | 점의 90 백분위 높이 < 0.05 m(map, 바닥 = 0)면 버림. 러그·카펫·매트(`capi.cpp kFloorLevelNames`)는 둠 |
-| 움직이는 중 | 로봇이 든 것만 | 관측 중심이 3 번 잇달아 0.3 m/s 넘게 같은 쪽으로 가고 쉬던 상자를 벗어나면(상자 겹침 < 0.1, 0.25 m 또는 반 폭 넘게) 평균 대신 관측 자리로 따라감. 영상 가장자리에 닿은 관측·카메라가 0.6 rad/s 넘게 도는 keyframe 은 근거로 안 씀 |
-| 조각 합치기(`frag_overlap`) | 없음 | 코드는 있으나 기본 끔(실제 검출에서 끈 쪽이 조금 나음) |
-
-**점수**(세 시퀀스 합, class-agnostic 기본 채점, F1. 재현: `docs/map_vla/MAP_STATE_PLAN.md` §6 의 명령 — 로봇 에이전트 저장소)
-
-| 입력 | static | change | moved | removed | added | swapped | dynamic | static 시퀀스 거짓 변화 |
-|---|---|---|---|---|---|---|---|---|
-| 완벽한 검출, 전 | 0.919 | 0.275 | 0.154 | 0.286 | 0.444 | 0 | 0 | 1 |
-| 완벽한 검출, 후 | **0.928** | **0.591** | 0.667 | 0.600 | 0.800 | 0 | **0.431** | 1 |
-| FastSAM-s + SigLIP 2 이름, 전 | 0.414 | 0.047 | 0 | 0.102 | 0.083 | 0 | 0 | 186 |
-| FastSAM-s + SigLIP 2 이름, 후 | **0.687** | **0.152** | 0.195 | 0.063 | 0.203 | 0 | 0 | 48 |
-| (참고) ConceptGraphs | 0.621 | 0.143 | 0 | 0 | | | | |
-
-실제 검출 후: static P/R 0.675/0.699(전 0.299/0.670), 지도 FP(static 시퀀스) phantom 228 → 16, duplicate 99 → 28.
-떼어 보기(실제 검출, 10-04 중간판 기준): 바닥 조각 거르기를 끄면 static 0.555·change 0.110, 이름 모으기를 끄면 static 0.688·change 0.156.
-`gone_eps = 0.1` 이면 실제 검출 static 0.697·change 0.187 이지만 맞은 물체가 3 개 줄어 기본은 0.02.
-swapped 는 여전히 0: 같은 이름 쌍(의자 ↔ 의자, 스탠드 둘 ↔ 모니터 둘)은 생김새 없이 구별이 안 되고, 9–20 m 떨어진 교환은 잇기 거리 8 m 밖.
-
-**GPU 근사판(`training/RL/map`)에 옮길 것** — `map.h` 가 지금 따르는 objmap 규칙 중 바뀐 것:
-1. 짝짓기(`map.h` 3c, `S.cls != D.cls`): 같은 이름 대신 이름 표 몫 ≥ `name_share` 0.2, 이름 다르면 키 +0.02. 칸에 이름 표(이름 번호별 점수 합)와 표 최댓값 이름(1.25 배 문턱) 필요.
-2. 관측 거르기: 점 90 백분위 높이 < `floor_h` 0.05 m 면 버림(러그·카펫·매트 이름 제외).
-3. 안 맞은 관측의 옮겨짐 잇기(`map.h` 1148–1160 근처, 사라짐 중 가장 가까운 것과 바로 이음): 없앰. 새 후보로 만들고 `appeared`(자리를 처음 검출한 거리 이하에서 5 s 넘게 전에 본 적 — 2D 0.5 m 칸 × 거리 띠 1..5 m 처음 본 시각) 표시, keyframe 끝에 `relink`(위 표의 조건)로 잇기.
-4. 부재 확인(`map.h` 1194–1208): 고정 종류·큰 것도 판정(놓침 6, 4 s), 중심 광선 하나 대신 물체 점 48 개(근사판은 상자 27 점) 투영 — 시야 안·안 가림 ≥ 50 %, 보이는 부분 ≥ 12 px, 거리 ≤ 검출한 가장 먼 거리 × 1.15 + 0.2. 새 근거만(카메라 0.1 m·5° 또는 자리 너머가 보임), 다른 이름 관측 예외, 검출률 k(`gone_eps` 0.02), 시간 대신 카메라 0.5 m 이동도 됨. 칸에 `max_det_z`·`n_vis_miss`·마지막 놓침 카메라 자리·광축·첫 놓침 카메라 자리 필요.
-5. 사라짐 때 관측 < 5 인 것은 지움(`spurious_obs`).
-6. 움직임 따라가기(위 표). 칸에 마지막 관측 중심·시각·걸음·연속 수·`moving_t` 필요.
-7. 병합(da): 이름이 달라도 3D IoU ≥ 0.5 면 합침, 이름 표 합.
-8. 값은 그대로: `min_points`·`confirm`·`prune_s`·`moved_d`·`gone_misses` 3·`gone_min_s` 2·`occl`·`da_*`·`big`·`grow_max`·`max_ext`.
-
-## scenemap 확률 모드(`objprob`) — 확률론적 물체 수준 매핑: 분할 조각 + SigLIP 2 (10-05)
-
-> 10-05 결정: 쓰는 길은 ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 + objprob — 물체 지도의 유일한 규칙이라 늘 켜져 있다(옛 이름 규칙은 10-06 에 지움 — 아래 표의 "옛 규칙" 열은 그 전 비교 기록). 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞음 — 기기 위 시간은 아직 안 잼. 아래 표의 FastSAM-s 판들은 그 전 비교 기록이다.
-
-용어(stuff·things, PCA 와 RANSAC 등)는 robot-agent `docs/terms.md`.
+검출 엔진은 ObjectSAM(FastSAM-s 에서 증류한 YOLO26n, things 만 — `yolo26n-seg-obj-416`, https://github.com/juyoung020/ObjectSAM), 이름·임베딩은 SigLIP 2. 물체 지도의 유일한 규칙이라 늘 켜져 있다. 용어(stuff·things, PCA 와 RANSAC 등)는 `docs/terms.md`.
 
 검출마다 임베딩(`sm_set_det_embeddings`)과 글 모델(`sm_set_text_model`)이 있어야 물체가 생긴다. `sm_set_object_model(c, 0)` 은 -2(끄는 길 없음).
-켜는 길: `sm_set_labels` → `sm_set_text_model`(글 임베딩 줄 → 라벨, SigLIP logit 척도·치우침) → `sm_set_label_stats`(라벨 log 사전·크기 가우스·
-상위어·"object"). keyframe 마다 `sm_set_det_embeddings`(검출마다 768-d L2) → `sm_push_image_*` →
-`sm_reencode_requests`(통째 다시 담기 마스크) → 호출자 SigLIP → `sm_set_object_embeddings`. 진단 셈 `sm_get_objprob_stats`.
-예: `tools/realbag/realbag_run`(검출·SigLIP·다시 담기 모두 호출자).
+켜는 길: `sm_set_labels` → `sm_set_text_model`(글 임베딩 줄 → 라벨, SigLIP logit 척도·치우침) → `sm_set_label_stats`(라벨 log 사전·크기 가우스·상위어·"object").
+keyframe 마다 `sm_set_det_embeddings`(검출마다 768-d L2) → `sm_push_image_*` → `sm_reencode_requests`(통째 다시 담기 마스크) → 호출자 SigLIP → `sm_set_object_embeddings`. 진단 셈 `sm_get_objprob_stats`.
+예: `../runtime/src/sgrt.cpp`, `../tools/realbag/realbag_run.cpp`.
 
 **흐름(objmap.cpp `update`)**
 1. 기하 구조물 거르기(조각마다 RANSAC 평면 맞춤 — 안쪽 문턱 1 cm + 0.25 cm·d², 안쪽 점 비율 ≥ 0.8, 합친 물체는 2 cm·≥ 0.92 일 때만 평면): 얇은 수평면이 천장 높이 위(`ceil_z` 2.0 m 와 정답 없이 잰 천장 − 0.35 m 중 낮은 쪽)면 천장, 바닥 높이면 바닥.
@@ -195,8 +139,30 @@ swapped 는 여전히 0: 같은 이름 쌍(의자 ↔ 의자, 스탠드 둘 ↔ 
 7. 바뀜(사라짐·옮겨짐)은 합친 물체 단위: 이번 영상의 어떤 조각이 물체에 닿으면(접촉 ≥ 0.3 또는 P ≥ 0.2) 놓침으로 안 셈. 옮겨짐 잇기는 이름 대신
    μ cos ≥ 0.8.
 
+**엔진별 매개변수**: 로지스틱 가중치(`ap_w0..7`·`ap_wm0..7`)·κ(`kap_k0`·`kap_s0`·`kap_trunc`·`kap_d0`)·문턱·그 밖 `ap_*` 를
+  `sm_set_obj_params(c, "key=val,…")`(SM_OBJ_PARAMS 와 같은 이름, `sm_reset`·`sm_set_robot` 뒤에도 남음, 환경 변수가 이김)로 싣는다.
+  파일은 `tools/realbag/objprob_params/<엔진>.json`(+ 라벨 사전), 맞추기·비교는 `tools/realbag/objprob_refit.sh`(그쪽 README).
+  `FastSAM-s-416.json`(선생 엔진)은 내장 기본값과 같다.
+
+`ap_bridge_drop`(기본 끔): 관측 하나가 이미 있는 물체 둘 이상과 P ≥ same_p 면(식탁 + 의자를 한 마스크로 낸 덜 나뉜 조각) 어느 쪽에도 안 붙이고 버림.
+  엔진 파일에서 켤 수 있다(r3 에서 중복·잘못 합침이 늘어 기본 끔).
+
+### 바뀜 규칙(옮겨짐·사라짐·헛검출·움직임)
+
+값은 `ObjParams` 기본값(sgrt·realbag·sm_bench 가 같음). 규칙 요약은 `include/scenemap/objmap.hpp` 머리말. 10-04 dynamic-object-mapping-benchmark 로 진단해 정함(점수는 맨 아래 기록).
+
+| 항목 | 규칙 |
+|---|---|
+| 사라짐 → 옮겨짐 잇기 | `relink`: 새 물체 n 이 확정·3 번 이상 보이고, n 처음 > m 마지막, 거리 ≤ min(8 m, 1 m + 1 m/s·시간 차), n 자리를 처음 검출한 거리 이하에서 5 s 넘게 전에 본 적 있음(처음 가 본 곳에서 찾은 것은 새 물체 — 2D 0.5 m 칸 × 거리 띠 1..5 m 의 처음 본 시각), μ cos ≥ 0.8, n 에 더 가까운 같은 이름 물체가 n 이후 안 보였으면 30 s 기다림. 가까운 쌍부터 1:1, n 의 자리·모양·관측을 m 의 id 로 옮기고 n 은 지움. n 은 처음 본 뒤 180 s 까지만 후보 |
+| 새 자리를 옛 자리보다 먼저 봄 | 새 자리는 먼저 새 id 로 생기고, 옛 자리가 사라짐이 되면 위 규칙으로 다시 이음(re-association) |
+| 큰 것(한 변 > 0.5 m)·고정 종류 사라짐 | 판정함. 놓침 6 번, 첫 놓침에서 4 s 또는 카메라 0.5 m 이동 |
+| 사라짐 근거 | 구름 점(없으면 상자 27 점) 48 개 투영: 시야 안·안 가림 ≥ 50 %, 보이는 부분 ≥ 12 px, 카메라 거리 ≤ 이 물체를 검출한 가장 먼 거리 × 1.15 + 0.2 m. 새 근거만 셈(지난 놓침 뒤 카메라 0.1 m·5° 넘게 바뀜, 또는 자리 너머가 보임 — 서 있는 카메라의 같은 영상을 되풀이해 세지 않음). 이번 영상의 어떤 조각이 물체에 닿으면 안 셈. 필요한 놓침 = max(3, 검출률 p 로 (1−p)^k < 0.02 인 k). 첫 놓침에서 2 s 또는 카메라 0.5 m 이동 |
+| 헛검출 | 관측 5 번 미만이던 것이 사라짐이 되면 지움(잇기 후보가 안 되게) |
+| 바닥 조각 | 점의 90 백분위 높이 < 0.05 m(map, 바닥 = 0)면 버림. 러그·카펫·매트(`capi.cpp kFloorLevelNames`)는 둠 |
+| 움직이는 중 | 관측 중심이 3 번 잇달아 0.3 m/s 넘게 같은 쪽으로 가고 쉬던 상자를 벗어나면(상자 겹침 < 0.1, 0.25 m 또는 반 폭 넘게) 평균 대신 관측 자리로 따라감. 영상 가장자리에 닿은 관측·카메라가 0.6 rad/s 넘게 도는 keyframe 은 근거로 안 씀 |
+
 **저장 형식(확률 모드 물체만, 물체 검색 도구가 읽음)**
-- `objects/O<id>_emb.f16`: μ, 768 × FP16 리틀 엔디언, L2 정규화(예전 sgrt 형식과 같음).
+- `objects/O<id>_emb.f16`: μ, 768 × FP16 리틀 엔디언, L2 정규화.
 - `objects/O<id>_views.f16`: 상위 K(≤ 5) 모습 벡터, K × 768 FP16(각 L2), 순서 = 통째 먼저·κ 큰 순. K 는 metadata `emb.n_views`.
 - scene.json 노드 metadata 와 view.json `objects[]` 에 같은 멤버:
   - `emb`: `{"path", "views", "dim": 768, "n_views", "conf": ‖r‖, "kappa_sum": Σκ, "source": "whole"|"frag", "n_whole", "kappa": [K], "whole": [K 0/1]}`
@@ -205,92 +171,16 @@ swapped 는 여전히 0: 같은 이름 쌍(의자 ↔ 의자, 스탠드 둘 ↔ 
 - 바깥 이름 관측: `sm_observe_object_name(c, id, name, log_lr)` — 라벨 `name` 에 로그 우도비를 더해 두고 줄이지 않는다(영상 모습이 더 와도 남음).
   RecallVLA 지도 토큰의 불확실성 칸(‖r‖·엔트로피·pos_sd)은 아직 안 씀(토큰 형식 그대로).
 
-**잰 값(radio r3, LIMO 기록 731 keyframe, 정답 34, `tools/realbag/objprob_eval.py`)** — slam 자세 / gt 자세
-
-| | 확률 모드(FastSAM-s-416 + SigLIP 2) | 옛 규칙: FastSAM-s-416 + 이름 | 옛 규칙: YOLO26s-seg | 옛 규칙: YOLOE-11L |
-|---|---|---|---|---|
-| 살아 있는 노드 | 122 / 109 | 290 / 274 | 28 / 27 | 78 / 77 |
-| 정답 34 중 찾음 | **28** / 27 | 27 / 26 | 14 / 14 | 24 / 23 |
-| 크기별: 작은 것·가구 25·벽 장식 8 | 1·22·5 / 1·18·8 | 1·21·5 | 0·14·0 | 1·20·3 |
-| 중복(정답 하나 → 노드 여럿, 남는 수) | 59 / 45 | 140 / 133 | 9 / 8 | 32 / 32 |
-| 잘못 합침(서로 다른 정답이 한 노드) — 작은 것+가구 / 같은 종류 이웃 | 11(1 / 5) / 9(0 / 3) | 18(2 / 3) | 5(0 / 3) | 8(0 / 3) |
-| 벽·천장·바닥 위 헛노드 | 5·1·0 / 4·2·0 | 10·13·2 | 0·0·0 | 1·7·1 |
-| 문 6·창 2·계단 1 찾음(맞는 이름) | 2·2·1 / 1·2·1 | 0·0·0 | 0·0·0 | 0·0·0 |
-| 이름 정확도 노드 / 정답 | 0.45 / 0.88 | 0.21 / 0.56 | 0.68 / 0.92 | 0.52 / 0.86 |
-| 글 질의 R@1(20 종류): μ / 이름 같음 | 0.40 / 0.30 | – / 0.20 | – / 0.15 | – / 0.30 |
-| 검출 keyframe 당 GPU ms: 검출 + SigLIP(조각) + 통째 | 0.90 + 4.59 + 0.39 | 0.96 + 4.70 | 1.10 + 0.71 | 4.50 + 1.62 |
-| SigLIP 자르기 / keyframe | 21.6 + 0.75 | 21.6 | 1.2 | 5.6 |
-| 프로세스 GPU 최대 | 662 MiB | 662 MiB | 640 MiB | 890 MiB |
-
-- YOLO26s-seg(옛 규칙)보다 못한 곳: 중복(59 vs 9 — 소파·hall tree·커피 탁자 위 것들·같은 이름 조각), 잘못 합침(식탁 의자 묶음·주방 줄), 노드 이름 정확도(0.45 vs 0.68),
-  문 조각의 물체 이름(curtain·bag — 문 6 개 중 2 개만 door). 중복 셈은 중심이 정답 상자 안인 노드를 다 세므로 소파 위 쿠션·탁자 위 물건도 들어간다.
-- 평면 맞춤 PCA → RANSAC(같은 검출 캐시, slam / gt 자세): 찾음 28 → 28 / 27 → 27, 벽·천장·바닥 위 헛노드 5·1·0 → 4·1·1 / 4·2·0 → 4·2·1,
-  문·창·계단 위 헛노드 9·4·5 → 10·3·4, 문 6·창 2·계단 1 찾음 그대로, 중복 59 → 62 / 45 → 53, 잘못 합침 11 → 9 / 9 → 9, keyframe 당 CPU 차이 없음(약 30 ms, 잡음 안),
-  OpenLORIS office1-1·1-5 노드 120 → 120·107 → 111. 남은 천장 쪽 헛것은 평면 맞춤 실패가 아니라(평면이 아닌 덩어리·작은 것) 줄지 않음.
-- 구조물 후처리(10-05): 문·창·계단·기둥 이름 보호는 그 모양 크기 안일 때만(문·창 수평 폭 ≤ 2.2 m·두께 ≤ 0.45 m·높이 ≤ 2.8 m, 기둥 ≤ 1 m,
-  계단 ≤ 6 m — `ApParams::so_*`), 크기 밖이고 벽 모양(평면·벽 선 근처·세운 평면 안쪽 ≥ 0.5·한도 1.5 배 넘음)이면 숨김(`ApState::hide` — 지우면 그 자리
-  벽 조각이 새 작은 문·창이 되어 다시 남아서, 기억에 두고 노드로만 안 냄). 벽 선 근처 얇은 세운 평면 + 구조물 확률 ≥ 0.5 조각은 구조물 아닌 물체에
-  안 붙고 버림(`struct_look_block`), 납작한 벽걸이 이름(액자·TV …)은 상자 폭 2.2 m 넘게 안 키움(`flat_max_w`), 벽 선 없이 높고 넓은 세운 평면은 벽(`tall_*`).
-  radio r3 slam / gt(RANSAC 판 → 이 판): 노드 125 → 108 / 115 → 109, 찾음 28 → 28 / 27 → 28, 벽·천장·바닥 헛노드 4·1·1 → 3·1·1 / 4·2·1 → 4·2·1,
-  문·창·계단 위 헛노드 10·3·4 → 7·2·4 / 9·4·5 → 11·3·5, 문 6·창 2·계단 1 찾음 2·2·1 → 1·1·1 / 1·2·1 → 1·2·1, 중복 62 → 57 / 53 → 46,
-  잘못 합침 9 → 8 / 9 → 9, 문·창 이름 노드 7·17 → 2·11, 액자·TV 노드 가장 큰 폭 3.1 → 2.9 / 3.0 → 1.9 m(정답 최대 1.4), CPU 그대로.
-  OpenLORIS office1-1·1-5 노드 120·111 → 121·110. 벽 선 없는 벽 규칙은 r3 에서 1 번만 맞음. 노드 상자는 관측 상자 합집합이라 구름보다 클 수 있음.
-- **엔진별 매개변수**(10-05): 로지스틱 가중치(`ap_w0..7`·`ap_wm0..7`)·κ(`kap_k0`·`kap_s0`·`kap_trunc`·`kap_d0`)·문턱·그 밖 `ap_*` 를
-  `sm_set_obj_params(c, "key=val,…")`(SM_OBJ_PARAMS 와 같은 이름, `sm_reset`·`sm_set_robot` 뒤에도 남음, 환경 변수가 이김)로 싣는다.
-  파일은 `tools/realbag/objprob_params/<엔진>.json`(+ 라벨 사전), 맞추기·비교는 `tools/realbag/objprob_refit.sh`(그쪽 README).
-  `FastSAM-s-416.json` 은 내장 기본값과 같다(radio r3 objects·events 바이트 같음, 이 엔진 캐시로 다시 맞춰도 같은 값이 나옴).
-- `ap_bridge_drop`(기본 끔): 관측 하나가 이미 있는 물체 둘 이상과 P ≥ same_p 면(식탁 + 의자를 한 마스크로 낸 덜 나뉜 조각) 어느 쪽에도 안 붙이고 버림.
-  기본은 끔 — 엔진 파일에서 켤 수 있음(새 엔진 r3 0.5/0.7: 찾음 28/27 → 28/28, OpenLORIS 노드 120·135 → 105·125, 하지만 중복 53/49 → 55/55·잘못 합침 11/7 → 12/9 라 그 파일에서도 끔).
-- **새 분할 엔진 `FastSAM-s-416-obj`(things 만 다시 학습, 보정 t 0.05 = conf 0.25) 다시 맞추기**(10-05, `tools/realbag/objprob_refit.sh`, 같은 검출 캐시로 재생).
-  radio r3 slam / gt(정답 34), OpenLORIS office1-1 · 1-5 는 노드 수 / 같은 이름 0.5 m 쌍(정답 없음):
-
-  | 엔진 · 매개변수 | 노드 | 찾음 | 중복 | 잘못 합침 | 벽·천장·바닥 헛노드 | 문·창·계단 찾음 | OL 1-1 · 1-5 |
-  |---|---|---|---|---|---|---|---|
-  | 옛 엔진 · 옛 매개변수(기본) | 108 / 109 | 28 / 28 | 57 / 46 | 8 / 9 | 3·1·1 / 4·2·1 | 1·1·1 / 1·2·1 | 121/45 · 110/12 |
-  | 새 엔진 · 옛 매개변수 | 109 / 109 | 26 / 29 | 50 / 40 | 8 / 6 | 1·0·0 / 1·1·0 | 3·1·1 / 3·1·1 | 123/54 · 110/8 |
-  | 새 엔진 · 다시 맞춤 0.6/0.7 | 132 / 140 | 28 / 29 | 58 / 57 | 12 / 12 | 2·2·0 / 3·1·0 | 4·2·1 / 4·2·1 | 135/37 · 145/17 |
-  | 새 엔진 · 다시 맞춤 0.5/0.7(파일 `FastSAM-s-416-obj.json`) | 128 / 124 | 28 / 27 | 53 / 49 | 11 / 7 | 2·1·0 / 3·1·0 | 3·2·1 / 3·2·1 | 120/31 · 135/14 |
-  | 새 엔진 · 다시 맞춤 0.5/0.7 + `bridge_drop` | 132 / 125 | 28 / 28 | 55 / 55 | 12 / 9 | 2·0·0 / 2·2·0 | 2·2·1 / 3·1·1 | 105/26 · 125/10 |
-  | 새 엔진 conf 0.44(실효 t ≈ 0.11) · 그 검출로 다시 맞춤 0.5/0.7 + `bridge_drop` | 103 / 96 | 29 / 26 | 43 / 33 | 15 / 12 | 2·0·0 / 2·0·0 | 3·2·1 / 3·1·1 | 100/25 · 93/13 |
-
-  - 다시 맞춘 값: 관측 ↔ 물체 cos 가중치 8.8 → 6.1, 받침 −0.19 → +0.87, 물체 ↔ 물체 상수 −4.3 → −1.9·cos 8.8 → 2.2(새 엔진 조각 임베딩이 덜 갈림). κ 는 같은 값.
-    라벨 사전은 window·cabinet·chair 가 위(옛 엔진은 window·baseboard·partition — 벽 조각이 줄어듦).
-  - 새 엔진은 벽·천장·바닥 헛노드를 줄이고(5–7 → 1–4) 문·창·계단을 더 찾지만, 식탁 + 의자를 한 마스크로 내는 덜 나눔 때문에 잘못 합침이 는다(식탁 ·
-    의자 둘이 한 노드, 오븐 + 바 등). 이름 없이 붙이는 objprob 은 그 마스크를 나눌 수 없다. `bridge_drop` 은 OpenLORIS 노드는 줄이지만 r3 중복·잘못 합침은 줄이지 못했다. 합친 물체를
-    윗면 높이 칸으로 나누는 시도(탁자 윗면 덩어리 밖 칸을 떼어 냄)는 r3 에서 잘못 합침 12 → 15, 중복 58 → 62 로 나빠져 넣지 않았다
-    (의자를 식탁 밑에 넣어 두어 정답 상자부터 겹침 — 기하로 갈라지지 않음).
-  - **기본 엔진은 그대로**(옛 엔진 + 옛 매개변수, 시뮬·실제 둘 다): 새 엔진은 찾음은 같거나(28/28) 낫고 stuff 헛노드는 분명히 적지만,
-    gt 판 찾음 27·중복 49(옛 46)로 "찾음과 중복·stuff 둘 다" 이기는 판이 없다. 새 엔진을 쓸 때는
-    `--engine …/FastSAM-s-416-obj.plan` 이면 `FastSAM-s-416-obj.json` 이 자동으로 실린다. 실제(OpenLORIS)는 conf 0.44 쪽이 노드·같은 이름 쌍이
-    가장 적다(100 · 93) — 실제에서 새 엔진을 쓰면 conf 0.44 를 권함(시뮬 gt 판 찾음 26 으로 내려가므로 시뮬은 conf 0.25).
-- **작은 학생 `yolo26n-seg-obj-416`(ObjectSAM YOLO26n v0.2) 다시 맞추기**(10-05, 같은 방법).
-  - 엔진: 덜 나눔 벌점(다른 정답 위 픽셀 BCE ×3)으로 학습, 보정 t 0.03 = conf 0.25. robot-agent `training/fastsam` README 에 있다.
-  - 파일은 `objprob_params/yolo26n-seg-obj-416.json`, 문턱 0.5/0.7. `--engine …/yolo26n-seg-obj-416.plan` 이면 자동으로 실린다.
-
-  | 엔진 · 매개변수 | 노드 | 찾음 | 중복 | 잘못 합침 | 벽·천장·바닥 헛노드 | OL 1-1 · 1-5 |
-  |---|---|---|---|---|---|---|
-  | 앞 학생(v0) · FastSAM-s-416-obj 매개변수 빌림 | 100 / — | 26 / 26 | 32 / — | — | — | — |
-  | v0.2 학생 · 옛 매개변수 | 112 / 95 | 26 / 23 | 56 / 41 | 13 / 9 | 0·1·0 / 1·2·0 | 116/24 · 127/20 |
-  | v0.2 학생 · 다시 맞춤 0.6/0.7 | 118 / 114 | 28 / 29 | 59 / 56 | 16 / 16 | 0·1·0 / 2·1·0 | 120/24 · 129/18 |
-  | **v0.2 학생 · 다시 맞춤 0.5/0.7(파일)** | 96 / 108 | 27 / 27 | 45 / 51 | 12 / 14 | 1·2·0 / 1·4·0 | 110/16 · 126/15 |
-
-  - FastSAM-s-416-obj 0.5/0.7(128 / 124 노드, 찾음 28 / 27, OL 120 · 135)보다 노드는 적고, 찾음은 1 낮거나 같다.
-  - **10-05: decided ObjectSAM — 기본 엔진 = ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 + objprob(매개변수 = 이 파일).** 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞음 — 기기 위 시간은 아직 안 잼. `realbag_run`(`--engine` 없이, objprob 기본 켬)·
-    libsgrt(`SGRT_ENGINE` 기본, 분할 엔진이면 objprob 자동 — runtime README "objprob 앞단")·LIMO/explore 시작 스크립트 모두. 원래 FastSAM-s(`FastSAM-s-416.plan`)와
-    버린 FastSAM-s 재학습 엔진과 그 매개변수는 지웠다.
-    위 "기본 엔진은 그대로"(FastSAM-s-416-obj 표)는 그때 판단이다.
-- scenemap 확률 모드 CPU: gt 판 731 keyframe 18.2 s vs 옛 규칙 11.9 s(keyframe 당 약 +8.6 ms, 통째 다시 담기 GPU 포함).
-
-## 살펴본 정도(inspection) — 가장 가까이 본 거리·본 시점 수·윗면 본 비율 (10-05, 기본 꺼짐)
+## 살펴본 정도(inspection) — 가장 가까이 본 거리·본 시점 수·윗면 본 비율 (기본 꺼짐)
 
 VLA 가 "덜 살펴본 가구로 가서 자세히 볼지"를 고르게 하는 물체마다 세 값. 멀리서는 가구 위 작은 물체를 놓치므로(검출 해상도) 얼마나 가까이·여러 시점에서·
 윗면까지 봤는지를 지도가 들고 있는다. 물체끼리 관계는 쓰지 않는다(물체 하나의 기하·관측만). objmap 판단(짝짓기·병합·사라짐)에는 쓰지 않는 읽기 전용 상태다.
 
 **켜기**: `sm_set_inspect(c, 1)` 또는 `sm_create("{\"inspect\": 1}")`(`sm_set_robot`·`sm_reset` 뒤에도 남음). `realbag_run --inspect`.
-꺼져 있으면(기본) 계산도 내보내기도 안 하고 결과·저장 파일이 옛것과 바이트 같다. 판 중간에 켜면 그때부터 센다.
+꺼져 있으면(기본) 계산도 내보내기도 안 하고 결과·저장 파일이 켜기 전과 바이트 같다. 판 중간에 켜면 그때부터 센다.
 
 **정의**(GPU 근사판이 그대로 따라 할 수 있게 — 값은 `InspectParams` 기본값). "관측" = 검출 keyframe(검출이 있는 `sm_push_image*`)에서 검출 하나가
-거르기(깊이 점 수·손·바닥 조각·구조물 거르기)를 지나 물체에 붙은 것(objprob 이면 한 물체에 붙은 조각 하나하나가 관측). 카메라 = 지도에 쓰는 깊이 카메라
+거르기(깊이 점 수·손·바닥 조각·구조물 거르기)를 지나 물체에 붙은 것(한 물체에 붙은 조각 하나하나가 관측). 카메라 = 지도에 쓰는 깊이 카메라
 광학 중심(map, LIMO 몸통 앞 0.18 m).
 
 | 값 | 정의 | 없음 |
@@ -305,9 +195,9 @@ VLA 가 "덜 살펴본 가구로 가서 자세히 볼지"를 고르게 하는 �
 - **본 칸**(검출 keyframe 마다, 아직 안 본 칸만): 카메라 → 칸 점 벡터 v 에 대해 ① ‖v‖ ≤ 2.0 m(작은 물체가 검출될 해상도), ② |v.z| ≥ cos 80°·‖v‖
   (시선과 연직(윗면 법선) 사이 각 ≤ 80°, 스치듯 본 것은 안 셈 — 아래에서 올려 보는 낮은 카메라도 같은 식), ③ 카메라 깊이 z_c > 0.15 m 이고 투영 화소
   (u, v) = (f_x x_c/z_c + c_x, f_y y_c/z_c + c_y)가 영상 가장자리 2 px 안쪽, ④ 그 화소(정수로 내림)의 깊이 d 가 유효(> 0.15 m, 0·NaN 은 모름 — 안 셈.
-  `zmax`(5 m) 넘는 값은 점 너머라 봄)이고 d ≥ z_c − (0.05 + 0.02·z_c) m(가리는 것 없음 — 점 너머가 보이거나 거기 놓인 작은 물체 앞면). 한 번 본 칸은 계속 봄.
+  `zmax`(LIMO 3 m) 넘는 값은 점 너머라 봄)이고 d ≥ z_c − (0.05 + 0.02·z_c) m(가리는 것 없음 — 점 너머가 보이거나 거기 놓인 작은 물체 앞면). 한 번 본 칸은 계속 봄.
 - **상자가 바뀔 때**(큰 가구 상자 자람·칼만): 변 하나라도 1 cm 넘게 바뀌면 새 칸마다 그 가운데가 든 옛 칸의 값을 옮긴다(옛 상자 밖이면 안 봄).
-- **합치기**(da 병합·조각 합치기·objprob 물체 병합): `closest` = 최솟값, 시점 = 남는 쪽 시점에 버리는 쪽 시점 중 새 것을 더함(같은 0.3 m·15° 규칙, 한도 32),
+- **합치기**(objprob 물체 병합·조각 합치기): `closest` = 최솟값, 시점 = 남는 쪽 시점에 버리는 쪽 시점 중 새 것을 더함(같은 0.3 m·15° 규칙, 한도 32),
   윗면 = 두 쪽 칸을 각각 합친 상자로 옮겨 OR. **옮겨짐 잇기**(relink): 새 자리 물체의 값을 그대로 씀.
 - 낮은 카메라(LIMO 0.18 m)는 윗면 자체를 못 본다. 그래서 "윗면 바로 위 공간이 보였나"로 잰다: 탁자 0.75 m·안길이 0.8 m 를 1.7 m 앞에서 보면 앞 줄만(1/4),
   0.5 m 앞에서는 앞 모서리에 가려 0 이다. 가까이 갈수록 `closest_view_m` 은 줄지만 `top_seen` 은 늘지 않을 수 있다(그 자체가 정보).
@@ -317,13 +207,6 @@ VLA 가 "덜 살펴본 가구로 가서 자세히 볼지"를 고르게 하는 �
 - C ABI: `sm_snap_inspect(snap, &arr)` → `sm_inspect {id, closest_view_m, n_views, top_seen}` 배열, `sm_snap_objects` 와 같은 순서·개수. 꺼짐 −2.
 - `view.json` `objects[]`·`scene.json` 물체 노드 `metadata`·sgview 스트림 view: `"inspect": {"closest_view_m": 0.479, "n_views": 16, "top_seen": 0.4375}`
   (없음은 `null`). 꺼져 있으면 멤버가 없다.
-
-**잰 값**(radio r3, LIMO 기록 731 검출 keyframe, gt 자세, 같은 검출 캐시 `final.gz`)
-- 켜도 `objects.csv`·`events.csv`·`traj.csv`·`walls.csv` 바이트 같음, `view.json`·`scene.json` 은 `inspect` 멤버를 빼면 바이트 같음(옛 규칙·objprob 둘 다).
-- CPU(objmap 단계 평균, 번갈아 3 번·2 번): 옛 규칙 1.437 → 1.448 ms/keyframe, objprob 13.61 → 13.63 ms/keyframe — 차이 +0.01–0.02 ms, 잡음 안.
-  윗면 칸만 따로: 윗면 있는 물체 100 개 × 깊이 한 장 11–14 µs(`test_inspect`).
-- objprob 노드 111 개 중 윗면 있음 13 개: 의자(묶음) 0.44, 소파 0.69, 낮은 탁자(위 끝 0.40 m) 0.25, 높은 탁자(0.65 m) 0(가장 가까이 0.94 m — 낮은 카메라라 윗면 위가 앞 모서리에 가림),
-  선반·찬장 0. `n_views` 중앙값 2(옛 규칙 노드 268 개), 많이 지나간 가구는 16–30.
 
 ## LIMO + OMX-F
 
@@ -353,10 +236,10 @@ sm_ctx* c = sm_create("{\"robot\": \"limo_omx\"}");   // 또는 sm_create(NULL) 
 - 스트림(sgview `joints`): LIMO 는 뷰어 `robot.json` 의 `joint_order` 순서(omx_joint1..5, gripper_1, gripper_2 = −gripper_1, (바퀴 넷))로 바꿔 보낸다.
 - 지도 자세: 첫 proprio 의 베이스가 map 원점.
 
-**순기구학** — `tools/gen_limo_fk_table.cpp` 가 `map_vla.urdf(robot-agent src/robot/tools/build_urdf.sh 가 저장소 xacro 에서 펼침)` 의 `<joint>` 에서 base_footprint → 목표 링크 사슬을 찾아 원 숫자(origin xyz·rpy, axis)를 표로 쓴다. 계산은 R1 과 같은 `walk`(fk.cpp).
+**순기구학** — `tools/gen_limo_fk_table.cpp` 가 `map_vla.urdf(robot-agent src/robot/tools/build_urdf.sh 가 저장소 xacro 에서 펼침)` 의 `<joint>` 에서 base_footprint → 목표 링크 사슬을 찾아 원 숫자(origin xyz·rpy, axis)를 표로 쓴다. 계산은 `walk`(fk.cpp).
 
 ```bash
-$ROBOT_AGENT/src/robot/tools/build_urdf.sh /tmp/map_vla.urdf   # 저장소 xacro → URDF(ra_ws 없음)
+src/robot/tools/build_urdf.sh /tmp/map_vla.urdf   # 저장소 xacro → URDF
 build/scenemap/gen_limo_fk_table /tmp/map_vla.urdf src/scene_graph/scenemap/include/scenemap/limo_omx_fk_table.hpp
 python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py /tmp/map_vla.urdf   # 시험 기준값(numpy 필요, URDF 가 바뀌면 같이)
 ```
@@ -364,9 +247,9 @@ python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py /tmp/map_vla.urdf   # �
 | 프레임 | 링크 | 뜻 |
 |---|---|---|
 | 베이스 | `base_footprint` | 바닥(z = 0), x 앞, y 왼쪽. 스캔 높이 띠·물체 z 가 이 기준 |
-| cam 0 | `depth_camera_lens_optical_frame`(`depth_camera_link` +x 0.010 m 렌즈 + 광학 회전) | 몸통 앞 Orbbec Dabai 렌즈: base_footprint 에서 (0.094, 0, 0.18) m, 수평 앞(OmniGibson `eyes` 와 같은 자리, robot-agent 391c04b). `depth_link` 는 센서 몸체 중심(0.084)이라 쓰지 않는다. 지도(격자·objmap)에 쓰는 유일한 깊이 |
+| cam 0 | `depth_camera_lens_optical_frame`(`depth_camera_link` +x 0.010 m 렌즈 + 광학 회전) | 몸통 앞 Orbbec Dabai 렌즈: base_footprint 에서 (0.094, 0, 0.18) m, 수평 앞(OmniGibson `eyes` 와 같은 자리). 깊이 0.3–3 m(데이터시트) — 스캔·물체 모두 3 m 까지. `depth_link` 는 센서 몸체 중심(0.084)이라 쓰지 않는다. 지도(격자·objmap)에 쓰는 유일한 깊이 |
 | cam 1 | `wrist_cam_optical_frame` | OMX-F link5 메시 안 RGB 카메라(37.9° 아래), 깊이 없음 → 지도에 안 씀(`sm_push_image` 가 cam ≠ 0 은 지나감) |
-| 잡는 점 | `grasp_point`(omx_link5 x 0.08003) | `T_eef`·잡기 규칙. E0 실측(robot-agent 66fe1ee, `docs/map_vla/CURRICULUM_BEHAVIOR2026.md` 5.3): 물체가 실제로 쥐이는 자리 = OmniGibson `get_eef_position`, `omx_end_effector_link` 에서 손가락 축으로 0.0119 m 뒤. URDF(map_vla_description xacro)에 프레임으로 넣음 |
+| 잡는 점 | `grasp_point`(omx_link5 x 0.08003) | `T_eef`·잡기 규칙. E0 실측(`docs/map_vla/CURRICULUM_BEHAVIOR2026.md` 5.3): 물체가 실제로 쥐이는 자리 = OmniGibson `get_eef_position`, `omx_end_effector_link` 에서 손가락 축으로 0.0119 m 뒤. URDF(map_vla_description xacro)에 프레임으로 넣음 |
 | 팔 끝 | `omx_end_effector_link` | `T_tip`(내부). 팔 뼈대 = omx_link0, joint1..5 원점, 팔 끝 — 스캔·objmap 팔 가리기 캡슐 |
 
 검증: URDF 독립 계산(xml.etree + numpy 4×4, 15 자세, cam 0 = 렌즈 광학 프레임 — 0·홈·관절 한계 양끝·임의 10)과 최대 차 위치 1.1e-16 m, 회전 원소 3.3e-16(`limo_fk`). RL 환경의 `limo_omx_model.h`(urdf2hdr, f32 상수)와도 위치 1e-16 m·회전 5e-8(f32 반올림) 안.
@@ -375,6 +258,7 @@ python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py /tmp/map_vla.urdf   # �
 
 | 매개변수 | 값 | 까닭 |
 |---|---|---|
+| 깊이 범위 `zmax`(스캔·objmap) | 3.0 m | Orbbec DaBai 0.3–3 m(`refs/datasheets`) |
 | 스캔 `self_r`(베이스 둘레 수평 반경, 이 안 점 버림) | 0.22 | 몸통 0.32 × 0.22 m 반대각선 0.19 + 여유 |
 | 스캔 `eef_r` / 팔 캡슐 반경 / 손 캡슐 | 0.08 / 0.05 / 0.06 | OMX 링크 폭 3–4 cm |
 | 몸통 캡슐 | 없음 | 몸은 `self_r` 원 |
@@ -385,11 +269,9 @@ python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py /tmp/map_vla.urdf   # �
 | 그리퍼 닫힘 문턱 | gripper_1 < 0.6 rad(틈 ≈ 6.6 cm) | 홈 자세는 0(닫힘) — 열었다 닫을 때만 잡기 |
 | 잡기 확인(`grasp_check`) · objmap 팔 거르기 | 켬 | 아래 |
 
-**잡기 확인·팔 가림(10-04)**
+**잡기 확인·팔 가림**
 
-원인: 시뮬 한 판(turning_on_radio, 대역 정책이 탁자를 "집기")에서 팔이 몸통 카메라 앞을 가리자 검출기(yolo26s-seg)가 가린 팔 화소를 탁자 마스크에
-넣어 탁자(1.2 m, 고정 종류) 상자가 팔 쪽으로 자랐고(큰 물체 위치 = 상자 중심), 그리퍼가 빈손으로 끝까지(0 rad) 닫히는 순간 옛 잡기 규칙 —
-"닫히는 순간 팔 끝 `grasp_r` 안 가장 가까운 확정 물체" — 이 크기·종류·그리퍼 벌림을 안 보고 탁자를 `held` 로 들어 0.49 m 옮겼다.
+팔이 몸통 카메라 앞을 가리면 검출기가 팔 화소를 뒤 물체(탁자) 마스크에 넣을 수 있고, 빈손으로 닫힌 그리퍼가 큰 탁자를 '들었다'고 볼 수 있다. 그래서:
 
 - 팔 거르기: 물체 관측 점 중 순기구학 팔 캡슐(스캔 몸 가리기와 같은 것, map 으로 옮김) 반경 + `self_pad` 0.01 m 안 점은 검출 마스크 안이어도 버린다.
   팔 화소가 물체 상자·자리·구름을 바꾸지 않는다(옮겨짐·사라짐 근거도 안 됨 — 가린 자리는 깊이가 더 가까워 '가림'으로 셈).
@@ -399,7 +281,54 @@ python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py /tmp/map_vla.urdf   # �
 
 이 값들은 실측 전 추정이다(실제 로봇 기록으로 맞출 것). 나머지(격자·objmap 확정/사라짐 규칙)는 기본값 그대로다.
 
-**LIMO SLAM**: 10-06 부터 Cartographer(2D 라이다 + 바퀴 오도메트리, `../slam_carto`, libsgrt 가 `sm_push_ext_pose` 로 넣음). 옛 scenemap
-slam2d(깊이 가상 스캔 맞추기 — LIMO 가중 고침 10-04, 시뮬 기록 4 개 표)는 (git 태그 `pre-clean-2026-10-06`)(slam2d.cpp·.hpp, slam2d_eval·objmap_eval·
-stage_bench·capi_replay)로 옮겼고, 그 맞춤 기록은 git 이력(이 README 10-04 판)에 남는다. Cartographer 대 slam2d 비교는 `../slam_carto/README.md`.
+## 기록 (잰 값 — 결정 근거)
 
+**점수**(세 시퀀스 합, class-agnostic 기본 채점, F1. 재현: `docs/map_vla/MAP_STATE_PLAN.md` §6 의 명령 — 로봇 에이전트 저장소)
+
+| 입력 | static | change | moved | removed | added | swapped | dynamic | static 시퀀스 거짓 변화 |
+|---|---|---|---|---|---|---|---|---|
+| 완벽한 검출, 전 | 0.919 | 0.275 | 0.154 | 0.286 | 0.444 | 0 | 0 | 1 |
+| 완벽한 검출, 후 | **0.928** | **0.591** | 0.667 | 0.600 | 0.800 | 0 | **0.431** | 1 |
+| FastSAM-s + SigLIP 2 이름, 전 | 0.414 | 0.047 | 0 | 0.102 | 0.083 | 0 | 0 | 186 |
+| FastSAM-s + SigLIP 2 이름, 후 | **0.687** | **0.152** | 0.195 | 0.063 | 0.203 | 0 | 0 | 48 |
+| (참고) ConceptGraphs | 0.621 | 0.143 | 0 | 0 | | | | |
+
+실제 검출 후: static P/R 0.675/0.699(전 0.299/0.670), 지도 FP(static 시퀀스) phantom 228 → 16, duplicate 99 → 28.
+떼어 보기(실제 검출, 10-04 중간판 기준): 바닥 조각 거르기를 끄면 static 0.555·change 0.110, 이름 모으기를 끄면 static 0.688·change 0.156.
+`gone_eps = 0.1` 이면 실제 검출 static 0.697·change 0.187 이지만 맞은 물체가 3 개 줄어 기본은 0.02.
+swapped 는 여전히 0: 같은 이름 쌍(의자 ↔ 의자, 스탠드 둘 ↔ 모니터 둘)은 생김새 없이 구별이 안 되고, 9–20 m 떨어진 교환은 잇기 거리 8 m 밖.
+
+**objprob 첫 측정**(10-05, radio r3 LIMO 기록 731 keyframe, 정답 34, slam / gt 자세, FastSAM-s 엔진 — 옛 이름 규칙 엔진들과 비교)
+
+| | 확률 모드(FastSAM-s-416 + SigLIP 2) | 옛 규칙: FastSAM-s-416 + 이름 | 옛 규칙: YOLO26s-seg | 옛 규칙: YOLOE-11L |
+|---|---|---|---|---|
+| 살아 있는 노드 | 122 / 109 | 290 / 274 | 28 / 27 | 78 / 77 |
+| 정답 34 중 찾음 | **28** / 27 | 27 / 26 | 14 / 14 | 24 / 23 |
+| 크기별: 작은 것·가구 25·벽 장식 8 | 1·22·5 / 1·18·8 | 1·21·5 | 0·14·0 | 1·20·3 |
+| 중복(정답 하나 → 노드 여럿, 남는 수) | 59 / 45 | 140 / 133 | 9 / 8 | 32 / 32 |
+| 잘못 합침(서로 다른 정답이 한 노드) — 작은 것+가구 / 같은 종류 이웃 | 11(1 / 5) / 9(0 / 3) | 18(2 / 3) | 5(0 / 3) | 8(0 / 3) |
+| 벽·천장·바닥 위 헛노드 | 5·1·0 / 4·2·0 | 10·13·2 | 0·0·0 | 1·7·1 |
+| 문 6·창 2·계단 1 찾음(맞는 이름) | 2·2·1 / 1·2·1 | 0·0·0 | 0·0·0 | 0·0·0 |
+| 이름 정확도 노드 / 정답 | 0.45 / 0.88 | 0.21 / 0.56 | 0.68 / 0.92 | 0.52 / 0.86 |
+| 글 질의 R@1(20 종류): μ / 이름 같음 | 0.40 / 0.30 | – / 0.20 | – / 0.15 | – / 0.30 |
+| 검출 keyframe 당 GPU ms: 검출 + SigLIP(조각) + 통째 | 0.90 + 4.59 + 0.39 | 0.96 + 4.70 | 1.10 + 0.71 | 4.50 + 1.62 |
+| SigLIP 자르기 / keyframe | 21.6 + 0.75 | 21.6 | 1.2 | 5.6 |
+| 프로세스 GPU 최대 | 662 MiB | 662 MiB | 640 MiB | 890 MiB |
+
+**ObjectSAM(`yolo26n-seg-obj-416`) 매개변수 맞추기**(10-05, `tools/realbag/objprob_refit.sh`, 같은 검출 캐시)
+  - 엔진: 덜 나눔 벌점(다른 정답 위 픽셀 BCE ×3)으로 학습, 보정 t 0.03 = conf 0.25(`training/fastsam` README). 파일 `objprob_params/yolo26n-seg-obj-416.json`, 문턱 0.5/0.7(굵은 줄).
+
+  | 엔진 · 매개변수 | 노드 | 찾음 | 중복 | 잘못 합침 | 벽·천장·바닥 헛노드 | OL 1-1 · 1-5 |
+  |---|---|---|---|---|---|---|
+  | v0.2 학생 · 옛 매개변수 | 112 / 95 | 26 / 23 | 56 / 41 | 13 / 9 | 0·1·0 / 1·2·0 | 116/24 · 127/20 |
+  | v0.2 학생 · 다시 맞춤 0.6/0.7 | 118 / 114 | 28 / 29 | 59 / 56 | 16 / 16 | 0·1·0 / 2·1·0 | 120/24 · 129/18 |
+  | **v0.2 학생 · 다시 맞춤 0.5/0.7(파일)** | 96 / 108 | 27 / 27 | 45 / 51 | 12 / 14 | 1·2·0 / 1·4·0 | 110/16 · 126/15 |
+
+**살펴본 정도 측정**(10-05, radio r3 LIMO 기록 731 검출 keyframe, gt 자세)
+- 켜도 `objects.csv`·`events.csv`·`traj.csv`·`walls.csv` 바이트 같음, `view.json`·`scene.json` 은 `inspect` 멤버를 빼면 바이트 같음(옛 규칙·objprob 둘 다).
+- CPU(objmap 단계 평균, 번갈아 3 번·2 번): 옛 규칙 1.437 → 1.448 ms/keyframe, objprob 13.61 → 13.63 ms/keyframe — 차이 +0.01–0.02 ms, 잡음 안.
+  윗면 칸만 따로: 윗면 있는 물체 100 개 × 깊이 한 장 11–14 µs(`test_inspect`).
+- objprob 노드 111 개 중 윗면 있음 13 개: 의자(묶음) 0.44, 소파 0.69, 낮은 탁자(위 끝 0.40 m) 0.25, 높은 탁자(0.65 m) 0(가장 가까이 0.94 m — 낮은 카메라라 윗면 위가 앞 모서리에 가림),
+  선반·찬장 0. `n_views` 중앙값 2(옛 규칙 노드 268 개), 많이 지나간 가구는 16–30.
+
+엔진 비교(FastSAM-s 재학습판 등)·옛 이름 규칙·slam2d 맞춤 기록은 git 태그 `pre-clean-2026-10-06` 의 이 README.

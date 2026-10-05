@@ -1,6 +1,6 @@
 // scenemap ② objmap — 검출(마스크 + 이름 번호) + 깊이 + 자세 → 물체 3D 위치 → 같은 물체 판단 → 바뀐 부분만 갱신.
 //
-// docs/scenemap_설계.md 3.2. 규칙 요약
+// 규칙 요약(값은 ObjParams — 로봇 LIMO + OMX-F)
 //   종류   : 이름 번호마다 물체 / 구조물(벽·바닥·천장·문·창·기둥·칸막이·계단·난간·걸레받이 — 물체가 안 되고 격자만) /
 //            고정(가구·가전·붙박이 — 물체 노드지만 movable=false, 사라짐은 큰 것 기준으로 판정). 표는 capi(sm_set_kind_names)가 정함
 //   위치   : 마스크를 1 칸 깎은 안쪽 깊이 점(map)의 축별 중앙값, 크기 = 10~90 백분위 폭.
@@ -18,14 +18,14 @@
 //   사라짐 : 확정·안 든·통에 안 넣은 물체(큰 것·고정 종류 포함). 물체 점(구름, 없으면 상자 격자)을 투영해 시야 안·안 가림 비율 ≥
 //            absent_vis, 보이는 부분 ≥ absent_min_px, 카메라 거리 ≤ 이 물체를 검출한 가장 먼 거리·absent_det_k + 0.2, 팔 끝
 //            hand_r+0.1 밖인데 검출이 없으면 놓침 +1 — 단 지난 놓침 뒤 카메라가 gone_step_d·gone_step_deg 넘게 바뀌었거나 자리 너머가
-//            보일 때만(같은 영상 되풀이는 안 셈), 물체 상자 안에 전에 그 물체 이름 표에 있던 다른 이름 관측이 있으면 안 셈.
+//            보일 때만(같은 영상 되풀이는 안 셈), 이번 영상의 어떤 조각이 물체에 닿으면 안 셈.
 //            필요한 놓침 수 = max(gone_misses(큰 것 gone_misses_big), 검출률 p 로 (1−p)^k < gone_eps 인 k), 그리고 첫 놓침에서
 //            gone_min_s(큰 것 gone_min_s_big) 지났거나 카메라가 gone_view_d 넘게 옮김. 관측이 spurious_obs 보다 적던 것은 지움(헛검출)
-//   옮겨짐 : 사라진 m ↔ 새로 나타난 n(같은 이름, n 확정·관측 link_min_obs 이상, n 처음 > m 마지막, 거리 ≤ min(link_max_d,
+//   옮겨짐 : 사라진 m ↔ 새로 나타난 n(임베딩 μ cos ≥ link_cos, n 확정·관측 link_min_obs 이상, n 처음 > m 마지막, 거리 ≤ min(link_max_d,
 //            link_d0 + link_v·시간 차), n 자리를 처음 검출한 거리 이하에서 link_view_gap_s 넘게 전에 본 적 있음, n 에 더 가까운 같은
 //            이름 물체가 n 이후 아직 안 보였으면 link_wait_s 까지 기다림) 를 가까운 쌍부터 이어 n 을 m 의 id 로(relink)
-//   들기   : 그리퍼가 닫히는 순간 팔 끝 grasp_r 안 가장 가까운 확정 물체를 든 것으로 — 드는 동안 팔 끝을 따라가고,
-//            (grasp_check — LIMO: 그리퍼가 닫힌 채 멈췄을 때(grip_settle_s 동안 grip_settle_eps 안) 한 번만 고르고, 큰 것·고정 종류·지도
+//   들기   : 그리퍼가 닫혀 멈췄을 때 팔 끝 grasp_r 안 가장 가까운 들 수 있는 확정 물체를 든 것으로 — 드는 동안 팔 끝을 따라가고,
+//            (grasp_check: 그리퍼가 닫힌 채 멈췄을 때(grip_settle_s 동안 grip_settle_eps 안) 한 번만 고르고, 큰 것·고정 종류·지도
 //            상자 가운데 변 > grasp_max_w 는 못 듦, 손끝 틈(grip_gap 표) ≥ grasp_min_gap(빈손이면 끝까지 닫힘)이고 틈이 물체 폭과 맞아야
 //            (가장 좁은 변 − grasp_w_tol ≤ 틈 ≤ 가장 넓은 변 + grasp_w_tol). 든 뒤 끝까지 닫히면(놓침) 놓기)
 //            열리는 순간 그 자리에 놓는다(moved_d 넘게 옮겼으면 옮겨짐). 놓은 점 아래에 xy 가 겹치는(0.1 m 여유) 다른 물체
@@ -48,8 +48,8 @@ namespace scenemap {
 
 struct ObjParams {
   int min_points = 20;
-  float zmin = 0.15f, zmax = 5.0f;
-  float hand_r = 0.40f, hand_frac = 0.5f;
+  float zmin = 0.15f, zmax = 3.0f;   // 몸통 DaBai 0.3–3 m(zmin 0.15 — 손목 카메라도 가까이 봄)
+  float hand_r = 0.10f, hand_frac = 0.5f;   // 손에 든 것 거르기
   double big = 0.5;               // 상자 한 변이 이보다 크면 합집합으로 키움(작은 물체는 평균)
   int confirm = 2;
   double prune_s = 10.0;
@@ -62,16 +62,18 @@ struct ObjParams {
   double max_ext = 4.0;           // 큰 가구 상자 한 변 최대 m
   double occl = 0.10;
   int min_px = 6;                 // 시야 안 판정: 물체가 이 화소보다 작게 보이면 부재 증거로 안 씀
-  double grasp_r = 0.25;
-  float grip_closed = 0.09f;      // 손가락 합이 이보다 작으면 닫힘(열림 0.1). LIMO: omx_gripper_joint_1 rad(0 닫힘 .. 1.745 열림)
-  int n_hands = 2;                // 잡기 규칙을 보는 손 수(R1 2, LIMO 1 — 둘째 칸은 첫째와 같은 값을 받지만 잡기에는 안 씀)
-  // 잡기 확인(10-04, LIMO 만 — capi robotParams 가 켬. 끄면 옛 규칙 그대로: 닫히는 순간 grasp_r 안 가장 가까운 확정 물체)
-  bool grasp_check = false;
+  double grasp_r = 0.12;          // 그리퍼가 닫힐 때 이 안 물체를 듦
+  float grip_closed = 0.6f;       // omx_gripper_joint_1 rad(0 닫힘 .. 1.745 다 열림)가 이보다 작으면 닫힘(틈 ≈ 6.6 cm — 6 cm 물체를 쥐어도 닫힘)
+  int n_hands = 1;                // 팔 하나(둘째 칸은 첫째와 같은 값을 받지만 잡기에는 안 씀)
+  // 잡기 확인: 팔이 카메라 앞을 가린 채 빈손으로 닫혀도 뒤 탁자를 들지 않게(끄면 닫히는 순간 grasp_r 안 가장 가까운 확정 물체 — 진단용)
+  bool grasp_check = true;
   double grasp_max_w = 0.06;      // 물체 지도 상자(10~90 백분위)의 가운데 변이 이보다 크면 못 듦(그리퍼 한도. 한 축만 긴 것은 됨)
   double grasp_min_gap = 0.005;   // 손끝 틈이 이보다 작으면(끝까지 닫힘) 빈손
   double grasp_w_tol = 0.025;     // 틈과 물체 폭이 맞음: 가장 좁은 변 − tol ≤ 틈 ≤ 가장 넓은 변 + tol(지도 상자는 10~90 백분위·일부만 보임)
   double grip_settle_s = 0.2, grip_settle_eps = 0.01;   // 그리퍼 값이 이 시간 동안 eps 안이면 쥠이 끝남(멈춤)
-  std::vector<std::pair<double, double>> grip_gap;      // 그리퍼 값 → 잡는 점의 손끝 틈 m(오름차순, 사이는 선형, 밖은 끝값)
+  // 그리퍼 값 → 잡는 점의 손끝 틈 m(오름차순, 사이는 선형, 밖은 끝값). E0(src/robot/og/e0/results) 쥔 각도(폭 1·2·3·4 cm),
+  // 그 위는 finger_gap_hull 의 link5 x 0.08 틈(30° 55 mm, 45° 93 mm)
+  std::vector<std::pair<double, double>> grip_gap = {{0.0, 0.0}, {0.095, 0.01}, {0.231, 0.02}, {0.347, 0.03}, {0.408, 0.04}, {0.5236, 0.0551}, {0.7854, 0.0933}};
   bool self_mask = true;          // ObjFrame.self_caps 가 있으면 그 안 점을 버림(진단: SM_OBJ_PARAMS self_mask=0 으로 끔)
   double self_pad = 0.01;         // 팔 캡슐 거르기 여유(m)
   int step = 1;                   // 깊이 화소 간격(최소)
@@ -79,8 +81,8 @@ struct ObjParams {
   // 점 구름(모양): 위치·크기에 쓴 점(MAD 띠 안) 중 팔 끝 cloud_hand_r 안·베이스 수평 body_r 안 점은 뺌
   double voxel = 0.02;
   int cloud_cap = 8000;   // 큰 가구(소파 ≈ 4 m²)의 구름이 objprob 접촉 판정에 쓰임
-  double cloud_hand_r = 0.10;
-  double body_r = 0.30;
+  double cloud_hand_r = 0.05;
+  double body_r = 0.22;
   double merge_min_ext = 0.05;    // 상자 겹침 비율(da::boxOverlap)에서 얇은 변을 이 값까지 부풀림
   // ---- 바뀜 판정(10-04, dynamic-object-mapping-benchmark 로 고침 — README "바뀜 규칙") ----
   // 바닥 조각: 관측 점의 90 백분위 높이가 이보다 낮으면(map z, 바닥 = 0) 물체가 아님
@@ -95,10 +97,10 @@ struct ObjParams {
   int gone_misses_big = 6;
   double gone_min_s_big = 4.0;
   int spurious_obs = 5;            // 관측이 이보다 적은 확정 물체가 사라짐이 되면 헛검출로 보고 지움
-  double gone_view_d = 0.5;
+  double gone_view_d = 0.5;       // 첫 놓침 자리에서 카메라가 이만큼(m) 옮긴 뒤에도 놓침이면(다른 시점의 근거) 시간을 안 기다림
   double gone_step_d = 0.10, gone_step_deg = 5.0;   // 새 놓침 근거: 지난 놓침 뒤 카메라가 이만큼 옮기거나 돌았을 때(또는 자리 너머가 보일 때)만 셈
-  double gone_eps = 0.02;         // 검출률 p 인 물체가 있는데 연속 k 번 놓칠 확률 (1−p)^k 가 이보다 작아야 사라짐(k 하한)       // 또는 첫 놓침 자리에서 카메라가 이만큼(m) 옮긴 뒤에도 놓침이면(다른 시점의 근거) 시간을 안 기다림
-  // 옮겨짐 잇기(다시 잇기): '사라짐' m 과 새로 나타난 같은 이름 물체 n 을 잇는다(n 의 관측을 m 의 id 로). 조건
+  double gone_eps = 0.02;         // 검출률 p 인 물체가 있는데 연속 k 번 놓칠 확률 (1−p)^k 가 이보다 작아야 사라짐(k 하한)
+  // 옮겨짐 잇기(다시 잇기): '사라짐' m 과 새로 나타난 같은 물체(임베딩) n 을 잇는다(n 의 관측을 m 의 id 로). 조건
   //   시간: n 을 처음 본 때 > m 을 마지막으로 본 때, n 이 확정·관측 link_min_obs 번 이상
   //   거리: |n − m| ≤ min(link_max_d, link_d0 + link_v·(n 처음 − m 마지막))
   //   나타남: n 자리(view_cell 칸)를 n 을 처음 보기 link_view_gap_s 넘게 전에, n 을 처음 검출한 거리(수평, + view_cell) 이하에서
@@ -167,27 +169,27 @@ struct MapObject {
   double first_miss = 0;          // 연속 놓침이 시작된 시각
   double miss_cam[3] = {0, 0, 0}; // 그때 카메라 자리(map)
   double last_miss_cam[3] = {0, 0, 0}, last_miss_fwd[3] = {0, 0, 0};   // 마지막으로 센 놓침의 카메라 자리·광축
-  uint32_t n_vis_miss = 0;
+  uint32_t n_vis_miss = 0;        // 보일 만한데 검출이 없던 keyframe 수(평생) — 검출률 추정
   double trk_pos[3] = {0, 0, 0}, trk_t = 0, trk_step[2] = {0, 0};   // 마지막 관측 중심(날 것)·시각·한 걸음
   int mv_cnt = 0;                 // 잇달아 빠르게 같은 쪽으로 간 관측 수
-  double moving_t = -1e300, move_from_t = 0;   // 마지막으로 움직임을 따라간 시각, 이번 움직임 시작 시각        // 보일 만한데 검출이 없던 keyframe 수(평생) — 검출률 추정
-  int held_by = -1;               // 0 왼손, 1 오른손
+  double moving_t = -1e300, move_from_t = 0;   // 마지막으로 움직임을 따라간 시각, 이번 움직임 시작 시각
+  int held_by = -1;               // 든 손(0), -1 = 안 듦
   double held_rel[3] = {0, 0, 0}, grasp_pos[3] = {0, 0, 0};   // held_rel: 팔 끝 → 물체, 베이스 축(로봇이 돌면 같이 돔)
   uint32_t parent = 0;            // 놓을 때 다른 물체(들고 있는 통·탁자) 위·안이면 그 물체에 붙어 같이 움직임
   double parent_rel[3] = {0, 0, 0};
   float score = 0;
   double last_kf = -1;
   ObjCloud cloud;                 // 모양(점 구름): 옮겨짐 잇기(사라짐 → 다른 자리)면 새 자리 물체의 것으로, 들기·받침은 org 를 옮김
-  std::vector<std::pair<int32_t, float>> votes;   // 이름 표: (이름 번호, 점수 합)
+  std::vector<std::pair<int32_t, float>> votes;   // 검출 이름 표: (이름 번호, 점수 합) — 기록만(이름은 objprob 사후)
   double max_det_z = 0;           // 이 물체를 검출한 가장 먼 카메라 깊이(사라짐 판정은 이 거리 안에서만)
   double gone_t = 0;              // 사라짐 판정 시각
   bool appeared = false;          // 전에 본 자리에 새로 나타남(옮겨짐 잇기 후보)
-  ApStatePtr ap;                  // objprob 상태(임베딩·이름 사후·칼만 분산) — objprob 일 때만
+  ApStatePtr ap;                  // objprob 상태(임베딩·이름 사후·칼만 분산)
   InspectState insp;              // 살펴본 정도(ObjParams::insp.on 일 때만 채움)
 };
 
 // 이름 번호의 종류
-// kKindStructObj(objprob 만): 문·창·계단 — 지우지 않고 노드(구조 물체: structural·안 옮김)로 내보냄. 벽·바닥·천장만 kKindStructure(지움)
+// kKindStructObj: 문·창·계단 — 지우지 않고 노드(구조 물체: structural·안 옮김)로 내보냄. 벽·바닥·천장만 kKindStructure(지움)
 enum ClassKind : uint8_t { kKindObject = 0, kKindStructure = 1, kKindStatic = 2, kKindStructObj = 3 };
 
 // 한 keyframe 의 검출 k → 물체(update 가 채움, lastAssoc()). obj_id 0 = 물체에 안 붙음(점 부족·손에 든 것 등)
@@ -208,10 +210,10 @@ struct ObjFrame {
   double T_mc[12] = {0};              // map ← 카메라 광학(행 우선 3×4)
   const sm_detections* dets = nullptr;
   double eef[2][3] = {{0}};           // map 기준 팔 끝
-  float grip[2] = {0.1f, 0.1f};       // 손가락 합
+  float grip[2] = {1.f, 1.f};         // 그리퍼 값(omx_gripper_joint_1 rad)
   double base_yaw = 0;                // map 기준 베이스 yaw
   double base_xy[2] = {0, 0};         // map 기준 베이스 위치(몸 점 거르기)
-  const Capsule* self_caps = nullptr; // map 기준 로봇 팔 캡슐(순기구학) — 이 안 깊이 점은 버림. NULL = 안 거름(R1)
+  const Capsule* self_caps = nullptr; // map 기준 로봇 팔 캡슐(순기구학) — 이 안 깊이 점은 버림. NULL = 안 거름
   int n_self_caps = 0;
   // objprob: 검출마다 SigLIP 임베딩(dets->n × emb_dim, L2 정규화), 벽 선분(map, ax ay bx by — 기하 구조물 거르기)
   const float* emb = nullptr;
@@ -269,7 +271,7 @@ class ObjectMap {
                      std::vector<ReencReq>* out);
   // 통째 임베딩 하나(z: dim, L2) — 조각 벡터 대신 μ·이름에 쓰임
   void addWholeView(uint32_t id, const float* z, int dim, double kappa, double stamp, const double cam[6]);
-  // 노드로 내보낼 물체인가: 확정 + (objprob export_named 면) 이름이 정해졌고 구조물 이름이 아님
+  // 노드로 내보낼 물체인가: 확정 + (export_named 면) 이름이 정해졌고 구조물 이름이 아님
   bool exportable(const MapObject& m) const {
     if (!m.confirmed) return false;
     if (!p_.ap.export_named || !m.ap) return true;

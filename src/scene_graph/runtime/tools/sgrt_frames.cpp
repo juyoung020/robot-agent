@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "scenemap.h"
 #include "sgrt.h"
 
 int main(int argc, char** argv) {
@@ -27,12 +28,10 @@ int main(int argc, char** argv) {
   char err[1024] = {0};
   sgrt* s = sgrt_create(&c, err, sizeof err);
   if (!s) { std::fprintf(stderr, "create: %s\n", err); return 1; }
-  const char* prompt[] = {"radio receiver", "sofa", "table", "cup"};   // 닫힌 어휘면 auto → 어휘 전부
+  const char* prompt[] = {"radio receiver", "sofa", "table", "cup"};   // 과제 이름 → SigLIP 2 낱말 표에 더함
   sgrt_begin(s, prompt, 4, err, sizeof err);
   if (err[0]) std::printf("prompt: %s\n", err);
-  std::vector<float> q(61, 0.f), depth(size_t(W) * H, 2.0f);
-  q[17] = q[42] = -2.f;
-  q[24] = q[25] = q[49] = q[50] = 0.05f;
+  std::vector<float> q(SM_LIMO_PROPRIO_DIM, 0.f), depth(size_t(W) * H, 2.0f);   // LIMO 제자리, 팔 0 자세
   std::vector<uint8_t> rgb(size_t(W) * H * 3);
   uint8_t* d_rgb = nullptr;
   cudaMalloc(&d_rgb, rgb.size());
@@ -45,7 +44,7 @@ int main(int argc, char** argv) {
     cudaMemcpy(d_rgb, rgb.data(), rgb.size(), cudaMemcpyHostToDevice);
     for (int rep = 0; rep < 2; ++rep) {   // 같은 프레임 두 번(물체 확정 = 서로 다른 keyframe 2 번)
       const double t = (2 * (f - 5) + rep) / 30.0;
-      sgrt_step(s, t, q.data(), 61, d_rgb, 1, int64_t(W) * 3, 3, W, H, depth.data(), 306, 306, W / 2.0, H / 2.0);
+      sgrt_step(s, t, q.data(), int32_t(q.size()), d_rgb, 1, int64_t(W) * 3, 3, W, H, depth.data(), 306, 306, W / 2.0, H / 2.0);
       sgrt_timing tm;
       sgrt_get_timing(s, &tm);
       det += tm.det_ms; kf += tm.kf_ms; crop += tm.crop_ms; gather += tm.gather_ms;

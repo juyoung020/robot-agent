@@ -14,7 +14,7 @@ namespace scenemap {
 struct DepthView {
   int w = 0, h = 0;
   const uint16_t* mm = nullptr;   // 깊이 mm (0 = 없음)
-  const float* m = nullptr;       // 또는 깊이 m(평가기 원 텐서, 0·NaN = 없음). m 이 있으면 m 을 쓴다
+  const float* m = nullptr;       // 또는 깊이 m(0·NaN = 없음). m 이 있으면 m 을 쓴다
   int step = 1;                   // 화소 간격(원 해상도 입력이면 4)
   float fx = 0, fy = 0, cx = 0, cy = 0;
   float T_bc[12] = {0};           // 베이스 ← 카메라 광학 프레임, 행 우선 3×4
@@ -35,23 +35,24 @@ struct BodyFk;
 BodyState bodyFromFk(const BodyFk& fk, const float eef[2][3], float arm_r = 0.09f, float hand_r = 0.10f);
 
 struct ScanParams {
-  float zmin = 0.3f, zmax = 8.0f;       // 광학 z 범위(8 m: 12비트 로그 양자화 간격 약 4 mm, 긴 판 넓은 방에서 필요)
-  float band_lo = 0.10f, band_hi = 1.80f;
+  // 값은 LIMO + OMX-F: 몸통 앞 Orbbec DaBai 깊이 0.3–3 m(데이터시트, refs/datasheets)
+  float zmin = 0.3f, zmax = 3.0f;       // 광학 z 범위
+  float band_lo = 0.05f, band_hi = 0.50f;   // 5 cm 넘는 턱이면 못 넘음, 팔 접은 키 ≈ 0.35 m — 탁자 상판(≈ 0.7 m) 밑으로는 지나감
   int bins = 720;                       // 0.5°
-  float self_r = 0.55f, eef_r = 0.35f, arm_r = 0.20f;
-  float shoulder[2][3] = {{0.f, 0.22f, 1.25f}, {0.f, -0.22f, 1.25f}};
-  // 맞추기 점: 수직면(|n_z| < vert_nz) 쪽 점을 [band_lo, match_hi] 에서 모아 2D 칸(match_cell)마다 하나로.
-  // 가장 가까운 것만 쓰는 레이저 한 줄과 달리, 탁자 뒤 벽·띠 위 벽도 쓴다(머리 카메라가 탁자를 볼 때가 많다).
+  float self_r = 0.22f, eef_r = 0.08f, arm_r = 0.06f;   // 몸통 반대각선 0.19 m + 여유, 팔 끝 둘레, 캡슐이 없을 때만 쓰는 어깨–팔 끝 선분
+  float shoulder[2][3] = {{-0.05f, 0.f, 0.25f}, {-0.05f, 0.f, 0.25f}};   // omx_joint2 근처
+  // 지도 점: 수직면(|n_z| < vert_nz) 쪽 점을 [band_lo, match_hi] 에서 모아 2D 칸(match_cell)마다 하나로 — 격자에 맞음으로 넣음(광선은 안 쏨).
+  // 가장 가까운 것만 쓰는 레이저 한 줄과 달리 탁자 뒤 벽·띠 위 벽도 지도에 들어간다.
   float match_hi = 3.0f, vert_nz = 0.7f, match_cell = 0.025f;
-  bool dense = true;   // false: 레이저 한 줄(hx, hy)로만 맞춘다
+  bool dense = true;   // false: 레이저 한 줄(hx, hy)만 넣는다
 };
 
 struct Scan2 {
   float ox = 0, oy = 0;                 // 광선 시작(카메라의 베이스 기준 수평 위치)
   std::vector<float> hx, hy;            // 장애물 점(베이스 기준)
   std::vector<float> fx, fy;            // 빈칸만 있는 광선의 끝(장애물 없음)
-  std::vector<float> mx, my;            // 맞추기 점(지도에도 맞음으로 넣음, 광선은 안 쏨)
-  std::vector<float> mnx, mny;          // 맞추기 점의 수평 법선(깊이 영상 이웃으로, 카메라 쪽을 향하게)
+  std::vector<float> mx, my;            // 지도 점(격자에 맞음으로 넣음, 광선은 안 쏨)
+  std::vector<float> mnx, mny;          // 지도 점의 수평 법선(깊이 영상 이웃으로, 카메라 쪽을 향하게)
   // 방위 칸 서명(넣기 정책의 '스캔이 바뀌었나'): 칸마다 장애물 거리(칸 단위, 양수) 또는 −빈 광선 길이, 0 = 없음
   std::vector<int16_t> sig;
 };
@@ -59,13 +60,13 @@ struct Scan2 {
 // makeScan 작업 버퍼(keyframe 마다 다시 쓰고 할당하지 않음)
 struct ScanWork {
   std::vector<float> P, Zo, hit_r, hx, hy, floor_r;
-  // 맞추기 칸(2.5 cm) 열린 주소 해시: 열쇠·세대·모음 번호. 모음은 처음 본 순서(래스터)로 쌓는다
+  // 지도 점 칸(2.5 cm) 열린 주소 해시: 열쇠·세대·모음 번호. 모음은 처음 본 순서(래스터)로 쌓는다
   std::vector<int64_t> hkey;
   std::vector<uint32_t> hgen, hidx;
   uint32_t gen = 0;
   struct Acc { float x, y, nx, ny; int n; };
   std::vector<Acc> acc;
-  // 화소마다 방위 칸·수평 거리 배율²(카메라 회전·내부 파라미터에만 달림 — 머리가 그대로면 keyframe 사이에 다시 씀)
+  // 화소마다 방위 칸·수평 거리 배율²(카메라 회전·내부 파라미터에만 달림 — 카메라가 그대로면 keyframe 사이에 다시 씀)
   std::vector<int16_t> pbin;
   std::vector<float> phs2;
   float pkey[16] = {0};
@@ -79,7 +80,7 @@ struct ScanWork {
 // 피하려고 로봇 가까이(radius) 점만 본다.
 struct AttachParams {
   bool enabled = true;
-  float vox = 0.05f, radius = 1.3f;
+  float vox = 0.05f, radius = 0.6f;   // LIMO 팔 닿는 거리 ≈ 0.4 m
   double move_xy = 0.10, move_yaw = 6.0 * M_PI / 180.0;   // 이만큼 움직일 때마다 한 번 비교
   int min_score = 2;                                      // 연속 몇 번 같은 자리면 붙은 것
 };

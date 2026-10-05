@@ -13,7 +13,7 @@ add_library(scenemap STATIC src/scan.cpp src/grid.cpp src/mapper2d.cpp src/fk.cp
 target_include_directories(scenemap PUBLIC include ../da/include)
 find_package(ZLIB REQUIRED)   # best view PNG(deflate·crc32)
 target_link_libraries(scenemap PUBLIC ZLIB::ZLIB)
-# Spark-DSG(저장, scene.json). 우리 수정본 src/scene_graph/spark_dsg 를 먼저 쓰고(병목을 고치려고 가져옴, OUR_CHANGES.md),
+# Spark-DSG(저장, scene.json). 우리 수정본 src/scene_graph/spark_dsg(병목을 고치려고 가져옴, OUR_CHANGES.md),
 # 없으면 설치본(사용자 .local). 둘 다 없어도 scene.json 은 빠른 쓰기(sceneJsonFast, 같은 형식)로 쓴다 — 라이브러리는 SM_DSG_SAVE=spark 비교·시험 읽기용.
 set(SM_SPARK_DSG_DIR "${CMAKE_CURRENT_LIST_DIR}/../spark_dsg")
 if(NOT TARGET spark_dsg::spark_dsg AND EXISTS "${SM_SPARK_DSG_DIR}/CMakeLists.txt")
@@ -46,7 +46,7 @@ add_executable(sm_bench tools/sm_bench.cpp)
 target_link_libraries(sm_bench scenemap)
 
 enable_testing()
-# 물체 기억(C ABI): 구조물·movable, 상자 이상값, 사라짐, best view, PNG·scene.json(spark_dsg 로 다시 읽음)
+# 물체 기억(C ABI, objprob + 가짜 SigLIP): 구조물·movable, 상자 이상값, 사라짐, best view, PNG·scene.json(spark_dsg 로 다시 읽음)
 add_executable(test_objmem tests/test_objmem.cpp)
 target_link_libraries(test_objmem scenemap ZLIB::ZLIB)
 if(spark_dsg_FOUND)
@@ -64,7 +64,7 @@ add_test(NAME rooms COMMAND test_rooms ${CMAKE_CURRENT_BINARY_DIR}/test_rooms_ou
 add_executable(test_posemap tests/test_posemap.cpp)
 target_link_libraries(test_posemap scenemap)
 add_test(NAME posemap COMMAND test_posemap)
-# 물체 관계 on/in/near (in 에 컨테이너 크기·포함 비율 제한)
+# 물체끼리 관계(on/in/near) 변이 없음, 물체 부모는 방·place 만
 add_executable(test_relations tests/test_relations.cpp)
 target_link_libraries(test_relations scenemap)
 add_test(NAME relations COMMAND test_relations)
@@ -84,7 +84,7 @@ target_link_libraries(rooms_pgm scenemap)
 
 add_executable(test_walls tests/test_walls.cpp)
 target_link_libraries(test_walls scenemap)
-# 파이썬(viewer/walls2d.py) 기준과 비교하려면 -DWALLS_REF_CELLS=<cells.bin> -DWALLS_REF_JSON=<ref.json>. 비우면 합성 격자로 속도만
+# 기준 값과 비교하려면 -DWALLS_REF_CELLS=<cells.bin> -DWALLS_REF_JSON=<ref.json>. 비우면 합성 격자로 속도·증분 확인
 set(WALLS_REF_CELLS "" CACHE FILEPATH "test_walls 기준 격자(cells.bin), 비우면 비교 없음")
 set(WALLS_REF_JSON "" CACHE FILEPATH "test_walls 기준 값(walls2d.py json), 비우면 비교 없음")
 if(WALLS_REF_CELLS AND WALLS_REF_JSON)
@@ -95,7 +95,7 @@ endif()
 
 add_executable(test_da_merge ../da/tests/test_merge.cpp)
 target_link_libraries(test_da_merge scenemap)
-add_test(NAME da_merge COMMAND test_da_merge)
+add_test(NAME da_merge COMMAND test_da_merge)   # absorbObject·boxOverlap
 
 add_executable(test_stream tests/test_stream.cpp)
 target_link_libraries(test_stream scenemap pthread)
@@ -115,10 +115,11 @@ add_test(NAME limo_e2e COMMAND test_limo_e2e)
 add_executable(test_limo_held tests/test_limo_held.cpp)
 target_link_libraries(test_limo_held scenemap)
 add_test(NAME limo_held COMMAND test_limo_held)
-# 확률 물체 모델(objprob)(objprob.hpp): vMF r·μ·합침, 덜 세기, 이름 사후(상위어·엔트로피·바깥 관측), 받침 막기, 평면 맞춤, 접촉
+# 살펴본 정도(inspect.hpp)
 add_executable(test_inspect tests/test_inspect.cpp)
 target_link_libraries(test_inspect scenemap)
 add_test(NAME inspect COMMAND test_inspect)
+# 확률 물체 모델(objprob.hpp): vMF r·μ·합침, 덜 세기, 이름 사후(상위어·엔트로피·바깥 관측), 받침 막기, 평면 맞춤, 접촉
 add_executable(test_objprob tests/test_objprob.cpp)
 target_link_libraries(test_objprob scenemap)
 add_test(NAME objprob COMMAND test_objprob)

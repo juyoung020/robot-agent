@@ -9,7 +9,7 @@ BIN=$REPO/build/bin/sgview
 [ -x "$BIN" ] || "$REPO/tools/build_all.sh" sgview || { echo "[viewer] sgview build failed"; exit 1; }
 for i in $(seq 1 240); do [ -f "$MEM/view.json" ] && break; sleep 5; done
 [ -f "$MEM/view.json" ] || { echo "[viewer] no view.json in $MEM"; exit 1; }
-for pid in $(ps -eo pid,args | awk '/release\/sgview/ && /--port 8080/ && !/awk/ {print $1}'); do kill "$pid"; done
+for pid in $(ps -eo pid,args | awk '/bin\/sgview/ && /--port 8080/ && !/awk/ {print $1}'); do kill "$pid"; done
 sleep 2
 setsid nohup "$BIN" "$MEM" --port 8080 > "$RUN/viewer.log" 2>&1 < /dev/null &
 for i in $(seq 1 30); do

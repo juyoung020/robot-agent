@@ -108,16 +108,16 @@ sm_ctx* sgrt_scenemap(sgrt*);
  *   gt 면 map = 시뮬 world 프레임.
  * sgrt_push_pose: 이번 스텝의 외부 베이스 자세(map/world: x, y, yaw rad). 같은 stamp 의 sgrt_step 앞에 부른다.
  *   gt 가 아닌 모드에서도 넣으면 떠밀림 진단(sgrt_get_pose_diag)과 기록에 쓴다.
- * 영상 시각: 평가기 관측 영상(스텝 k)은 스텝 k-1 끝의 장면이다(docs/통합_실시간.md 2.7). sgrt 는 영상 stamp 를 직전 sgrt_step 의
+ * 영상 시각: 평가기 관측 영상(스텝 k)은 스텝 k-1 끝의 장면이다. sgrt 는 영상 stamp 를 직전 sgrt_step 의
  *   stamp 로 넣는다(SGRT_IMAGE_LAG=1 기본 = 직전 스텝, 0..7 스텝; 실제 로봇처럼 영상과 proprio 가 같은 순간이면 0).
  * 격자 넣기 정책: SGRT_MAP_POLICY=1(기본, 사건 기반 — 서 있어도 바뀐 장애물을 넣고 지움) | 0(옛 움직임 거르기).
  * 저장: sgrt_step 의 주기 저장(save_s)은 저장 스레드에서 한다(SGRT_SAVE_SYNC=1 이면 스텝 안에서). 앞 저장이 덜 끝났으면 그 주기는 건너뜀.
  * 기록: SGRT_RECORD=<파일> 이면 sgrt 가 받은 입력(proprio·외부 자세·keyframe 깊이·RGB·검출)을 그대로 이진 파일로 쓴다 —
- *   scenemap/tools/sm_bench 가 다시 재생한다(자세 모드 비교·단계 시간). */
+ *   tools/sgrt_replay(검출·Cartographer 포함)·scenemap/tools/sm_bench 가 다시 재생한다. */
 int    sgrt_set_pose_mode(sgrt*, int32_t mode);
 
 /* ---- 2D 라이다 · Cartographer(추가 ABI, 10-06) ----
- * SLAM 은 Cartographer(../slam_carto) 하나: SGRT_POSE 없음·carto(·옛 이름 slam) → scenemap SM_POSE_EXT(3). 스텝마다 proprio 의 바퀴
+ * SLAM 은 Cartographer(../slam_carto) 하나: SGRT_POSE 없음·carto → scenemap SM_POSE_EXT(3). 스텝마다 proprio 의 바퀴
  *   오도메트리(LIMO 0–2)와 sgrt_push_scan 의 스캔을 Cartographer 에 넣고, 스텝 시각의 자세를 scenemap 에 준다(지도·물체는 그 자세로).
  *   스캔이 한 번도 안 오면 자세 = 오도메트리만(한 번 경고).
  *   Cartographer 없이 빌드했으면 odom.
@@ -166,7 +166,6 @@ int    sgrt_reset_stage_timing(sgrt*);
  * 매개변수 SGRT_OBJPROB_PARAMS = 파일 | none(내장), 없으면 tools/realbag/objprob_params/<엔진 줄기>.json. 과제 이름은 낱말 표에 더함.
  * SGRT_INSPECT=1 = 살펴본 정도(sm_set_inspect, scenemap README "살펴본 정도").
  * 물체 벡터 objects/O<id>_emb.f16(μ)·_views.f16 은 scenemap 이 씀(sgsearch·search_objects 가 읽음). */
-int    sgrt_objprob_enabled(const sgrt*);
 
 #ifdef __cplusplus
 }

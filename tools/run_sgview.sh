@@ -4,7 +4,7 @@
 #   tools/run_sgview.sh <memory_dir> --live     시뮬/로봇이 소켓(127.0.0.1:9001)으로 보내는 실시간 스트림 받기
 #                                               (시뮬 쪽: SGRT_STREAM=127.0.0.1:9001 [SGRT_MAP_EVERY=1])
 #   옵션: --port 8080
-# 처음에는 cargo 로 빌드한다(src/scene_graph/sgview). 브라우저에서 http://localhost:<port>
+# 빌드 결과가 없으면 tools/build_all.sh sgview. 브라우저에서 http://localhost:<port>
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DIR=${1:?usage: run_sgview.sh <memory_dir> [--live] [--port N]}; shift

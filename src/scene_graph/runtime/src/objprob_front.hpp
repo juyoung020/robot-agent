@@ -25,7 +25,7 @@ namespace objprob_front {
 // (선생 FastSAM-s-416.plan 도 매개변수 파일 있음)
 constexpr const char* kDefaultEngine = "yolo26n-seg-obj-416.plan";
 
-// 검출 낱말: 글 → 지도 이름. 구조물(wall·floor …, person)은 scenemap 기본 표대로 노드가 안 된다. fastsam 은 SigLIP 2 라벨 표에 있는 글만,
+// 검출 낱말: 글 → 지도 이름. 구조물(wall·floor …, person)은 scenemap 기본 표대로 노드가 안 된다. SigLIP 2 라벨 표에 있는 글만 쓴다.
 struct Word { const char* text; const char* label; };
 inline const Word kVocab[] = {
     // 구조물·사람(노드 안 됨)
@@ -83,8 +83,8 @@ inline const ApLabel kApLabels[] = {
     {"cable", 1.0f, 1.0f, nullptr}, {"pole", 1.8f, 0.5f, nullptr},
 };
 
-// objprob 만 더하는 배경 낱말(구조물 쪽): FastSAM 조각은 계단 디딤판·문틀·창 밖 덤불이 많은데 원래 어휘에는 그 말이 없어 book·curtain·plant 로
-// 불렸다. 물체 낱말은 더하지 않음(A/B/C 와 같은 물체 어휘 — 이름 정확도를 같은 표로 비교). "outdoors" = 창·유리문 너머 바깥(구조물 종류)
+// 배경 낱말(구조물 쪽): 분할 조각에 계단 디딤판·문틀·창 밖 덤불이 많아 그 말이 없으면 book·curtain·plant 로 불린다.
+// "outdoors" = 창·유리문 너머 바깥(구조물 종류)
 inline const Word kVocabAp[] = {
     {"stair", "staircase"}, {"stairway", "staircase"}, {"steps", "staircase"}, {"handrail", "railing"}, {"doorcase", "door"},
     {"window frame", "window"}, {"windowpane", "window"}, {"skirting board", "baseboard"}, {"bush", "outdoors"}, {"shrub", "outdoors"},

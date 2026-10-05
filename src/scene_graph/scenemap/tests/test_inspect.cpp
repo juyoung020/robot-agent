@@ -208,7 +208,7 @@ int main() {
     std::vector<double> dists;
     double t_on = 0, t_off = 0;
     int nk = 0;
-    const double xs[] = {-3.0, -2.5, -2.0, -1.5, -1.0, -0.6, -0.6};   // 마지막은 같은 자리(같은 시점)
+    const double xs[] = {-2.2, -1.8, -1.4, -1.0, -0.6, -0.2, -0.2};   // 0.3 m 넘게 떨어진 시점 6 개, 마지막은 같은 자리. 깊이 한계 3 m 안
     for (double x : xs) {
       const Cam c(x, 0.4, 1.5, 0, -std::atan2(1.5 - 0.4, 0.5 - x));
       render(c, scene, &dep, &hit);

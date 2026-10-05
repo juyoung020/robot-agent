@@ -264,35 +264,6 @@ BodyState robotBody(int robot, const float* q, BodyFk* fk) {
 }
 
 // 로봇별 몸 크기 매개변수LIMO 0.32 × 0.22 × 0.25 m, 깊이 카메라 높이 0.18 m, OMX 팔 닿는 거리 ≈ 0.4 m
-void robotParams(int robot, MapperParams* sp, ObjParams* op) {
-  (void)robot;
-  ScanParams& s = sp->scan;
-  // 머리 깊이 카메라 Orbbec DaBai: 0.3–3 m(데이터시트 refs/datasheets). 지도·물체 모두 3 m 까지(GPU 학습 지도와 같은 값)
-  s.zmin = 0.3f;
-  s.zmax = 3.0f;
-  op->zmax = 3.0f;             // zmin 은 기본 0.15 m 그대로 — 손목 카메라(가까이 봄)도 같은 물체 지도에 들어감
-  s.self_r = 0.22f;            // 몸통 반대각선 0.19 m + 여유
-  s.eef_r = 0.08f;             // 팔 끝 둘레
-  s.arm_r = 0.06f;             // 캡슐이 없을 때만 쓰는 어깨–팔 끝 선분
-  for (int k = 0; k < 2; ++k) { s.shoulder[k][0] = -0.05f; s.shoulder[k][1] = 0.f; s.shoulder[k][2] = 0.25f; }   // omx_joint2 근처
-  s.band_lo = 0.05f;           // 5 cm 넘는 턱이면 못 넘음
-  s.band_hi = 0.50f;           // 팔 접은 키 ≈ 0.35 m: 탁자 상판(≈ 0.7 m) 밑으로는 지나감
-  sp->attach.radius = 0.6f;    // 로봇에 붙어 같이 움직이는 것 판정 반경
-  op->hand_r = 0.10f;          // 손에 든 것 거르기
-  op->grasp_r = 0.12f;         // 그리퍼가 닫힐 때 이 안 물체를 듦
-  op->cloud_hand_r = 0.05;
-  op->body_r = 0.22;
-  op->n_hands = 1;
-  // 잡기 확인(10-04): 시뮬 한 판에서 팔이 탁자 앞을 가린 채 그리퍼가 빈손으로 끝까지 닫히자 탁자(1.2 m, 고정 종류)를 'held' 로 들고
-  // 0.49 m 옮겼다 — 옛 규칙은 '닫히는 순간 팔 끝 grasp_r 안 가장 가까운 확정 물체' 뿐이었다. 이제 닫힌 채 멈춘 뒤(0.2 s) 한 번 고르고,
-  // 큰 것·고정 종류·가장 좁은 변 > 0.06 m 는 못 들고, 손끝 틈이 비지 않았고(≥ 5 mm) 물체 폭과 맞아야(± 2.5 cm) 든다.
-  // 틈 표(omx_gripper_joint_1 rad → 잡는 점 손끝 틈 m): E0(robot-agent src/robot/og/e0/results) 쥔 각도 width_height_kp1e6·verify_eef_kp1e6
-  // (폭 1·2·3·4 cm 를 쥐면 0.095·0.231·0.347·0.408 rad), 그 위는 finger_gap_hull 의 link5 x 0.08 틈(30° 55 mm, 45° 93 mm).
-  // 닫힘 문턱 0.6 rad(틈 ≈ 6.6 cm): 6 cm 물체를 쥐어도 '닫힘'(옛 0.35 rad 는 4 cm 를 쥔 0.41 rad 를 닫힘으로 못 봄)
-  op->grip_closed = 0.6f;      // 0 = 완전히 닫힘, 1.745 = 다 열림
-  op->grasp_check = true;
-  op->grip_gap = {{0.0, 0.0}, {0.095, 0.01}, {0.231, 0.02}, {0.347, 0.03}, {0.408, 0.04}, {0.5236, 0.0551}, {0.7854, 0.0933}};
-}
 
 // 베이스 기준 점 → map (slam 자세)
 void toMap(const Pose2& P, const float b[2][3], double m[2][3]) {
@@ -488,7 +459,6 @@ int sm_set_robot(sm_ctx* c, int32_t robot) {
     op.voxel = c->oparams.voxel;          // sm_set_cloud_params 로 바꾼 값은 둔다
     op.cloud_cap = c->oparams.cloud_cap;
     op.insp = c->oparams.insp;              // sm_set_inspect 도 둔다
-    robotParams(robot, &sp, &op);
     ObjectMap::applyParams(&op, c->obj_kv.c_str());   // sm_set_obj_params 도 둔다
     c->params = sp;
     c->oparams = op;

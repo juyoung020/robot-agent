@@ -1,13 +1,10 @@
-/* scenemap C ABI (docs/scenemap_설계.md 3.3·4절). simlink(Rust)·평가기 프로세스가 같은 프로세스에서 부른다.
+/* scenemap C ABI (README.md). libsgrt(src/scene_graph/runtime)·realbag_run·도구가 같은 프로세스에서 부른다.
  *
- * 함수 이름·형은 통합 담당 제안(src/sim/integ/scenemap_stub/sm_api.h, 00d745b)을 그대로 옮긴 것이다. 두 헤더는 같은 가드
- * (SM_API_H)를 써서 어느 쪽을 먼저 include 해도 한 번만 정의된다.
- *
- * 스레드: sm_push_* · sm_reset 은 한 스레드(simlink 관측 스레드)에서. sm_snapshot 과 sm_snap_* 는 아무 스레드에서
+ * 스레드: sm_push_* · sm_reset 은 한 스레드(관측 스레드)에서. sm_snapshot 과 sm_snap_* 는 아무 스레드에서
  * (읽기 전용 스냅숏, 참조 카운트). sm_set_labels·sm_mark_handled 는 계획기 스레드에서 온다(scenemap 이 잠금, 다음 스냅숏부터 보임).
  * 시각: stamp 는 전부 시뮬 시각 [s](판 시작 = 0). 영상 k 의 stamp = 장면 시각 k-1, proprio 는 그 스텝 상태의 stamp.
  * 짝짓기: 영상은 stamp 가 같은 proprio(없으면 그 앞 가장 가까운 것)의 순기구학 카메라 자세로 올린다. base_qvel 은
- * proprio i 가 (i-1 → i) 구간 속도다(학습 데모 정답에서 잰 짝, 3.1.1).
+ * proprio i 가 (i-1 → i) 구간 속도다.
  */
 #ifndef SCENEMAP_H
 #define SCENEMAP_H
@@ -17,15 +14,15 @@
 extern "C" {
 #endif
 
-/* 검출기(ObjectSAM 분할, src/scene_graph/ovdet) 출력 — 4.2 절 약속. ovdet.h 와 똑같은 정의라 둘 다 include 해도 된다. */
+/* 검출기(ObjectSAM 분할, src/scene_graph/ovdet) 출력. ovdet.h 와 똑같은 정의라 둘 다 include 해도 된다. */
 #ifndef SM_DETECTIONS_DEFINED
 #define SM_DETECTIONS_DEFINED
 typedef struct {
   double stamp;               /* the input image's stamp, unchanged */
-  int cam;                    /* 0 head, 1 left wrist, 2 right wrist (passed through) */
+  int cam;                    /* 0 body depth camera, 1 wrist (passed through) */
   int img_w, img_h;           /* input image size */
   int n;                      /* number of detections (score order) */
-  const int32_t* cls;         /* n: index into the prompt table (order of the names given to ovd_set_prompt) */
+  const int32_t* cls;         /* n: label index (objprob: SigLIP 2 word table → sm_set_labels order) */
   const float* score;         /* n: confidence */
   const float* box;           /* n x 4: x0, y0, x1, y1 in input pixels */
   int mask_w, mask_h;         /* mask grid */
@@ -49,7 +46,7 @@ typedef struct {
                                             지도(mapper2d·objmap)는 cam 0 깊이만 쓴다. 원 텐서 크기 */
   const uint8_t* rgba;                   /* w×h×4 (NULL 가능) */
   const float* depth_m;                  /* w×h 미터 (NULL 가능) */
-  double fx, fy, cx, cy;                 /* 그 해상도의 내부 파라미터(평가기 eval_utils.CAMERA_INTRINSICS) */
+  double fx, fy, cx, cy;                 /* 그 해상도의 내부 파라미터(카메라·시뮬 센서) */
 } sm_image;
 
 typedef struct { double stamp; double x, y, yaw; } sm_pose2;
@@ -57,7 +54,7 @@ typedef struct { double stamp; double x, y, yaw; } sm_pose2;
 enum { SM_SEEN = 0, SM_GONE = 1, SM_MOVED = 2, SM_HELD = 3 };
 typedef struct {
   uint32_t id;
-  const char* name;           /* 프롬프트 표 이름(스냅숏 수명 동안 유효) */
+  const char* name;           /* 라벨 이름(objprob 이름 사후, 스냅숏 수명 동안 유효) */
   float score;
   double pos[3], extent[3], first_pos[3];   /* map */
   uint32_t n_obs;
@@ -82,11 +79,11 @@ typedef struct {
  * 예: sm_create("{\"robot\": \"limo_omx\"}") */
 sm_ctx* sm_create(const char* config_json);
 void    sm_destroy(sm_ctx*);
-int     sm_set_labels(sm_ctx*, const char* const* names, int n);   /* 프롬프트 표(검출기와 같은 순서) */
+int     sm_set_labels(sm_ctx*, const char* const* names, int n);   /* 라벨 표(검출 cls 번호 순서) */
 int     sm_reset(sm_ctx*);                                    /* 새 판: 지도·물체 비우고 원점 */
 /* 입력 */
 int     sm_push_proprio(sm_ctx*, const sm_proprio*);
-int     sm_push_image(sm_ctx*, const sm_image*, const sm_detections* dets /* NULL: scenemap 이 검출기를 부름 */);
+int     sm_push_image(sm_ctx*, const sm_image*, const sm_detections* dets /* NULL: 격자만(물체 지도 안 고침) */);
 int     sm_mark_handled(sm_ctx*, uint32_t id);
 /* 질의(스냅숏) */
 int     sm_snapshot(sm_ctx*, sm_snapshot_t** out);
@@ -98,7 +95,7 @@ int     sm_snap_find(const sm_snapshot_t*, const char* name, uint32_t* ids, floa
 int     sm_snap_near(const sm_snapshot_t*, const double p[3], double r, uint32_t* ids, int cap);        /* 가까운 순 */
 /* 격자: cells[y·width + x] 는 칸 (x, y), 칸 왼쪽 아래 모서리 = origin + (x, y)·resolution. −1 모름, 0..100 점유 % */
 int     sm_snap_map(const sm_snapshot_t*, sm_grid* out);
-/* 벽(2D): 격자에서 축에 맞는 벽 선분을 뽑아 로봇 좌표 수치로. 격자가 바뀐 스냅숏에서만 다시 계산(같은 격자 배열이면 캐시) — 실시간 SLAM 갱신에 맞춤.
+/* 벽(2D): 격자에서 벽 선분을 뽑아(지도가 기울면 벽 방향을 찾아 돌려 뽑음, walls.hpp) 로봇 좌표 수치로. 격자가 바뀐 스냅숏에서만 다시 계산(같은 격자 배열이면 캐시) — 실시간 SLAM 갱신에 맞춤.
    벡터 배치(float32, 길이 SM_WALL_STATE_LEN = 16 + 8·5): [0..16) 정면부터 반시계 16방향의 첫 점유 칸까지 거리/4 m(1.0 = 없음),
    [16 + 5j .. +5) 가까운 순 j번째 벽 선분 ax ay bx by(m/4 m, ±1 로 자름) valid. pose = {x, y, yaw}(map), NULL = 스냅숏의 로봇 자세. 0 성공. */
 #define SM_WALL_STATE_LEN 56
@@ -166,7 +163,7 @@ int sm_robot_fk(int32_t robot, const float* proprio, int32_t n_proprio, sm_body_
  * sm_set_kind_names 는 그 종류의 표를 통째로 바꾼다(names == NULL: 기본 표로). 지금 labels 에 바로 적용되고,
  * 이미 만들어진 물체는 그대로 둔다(sm_reset 뒤부터 깨끗). */
 enum { SM_KIND_OBJECT = 0, SM_KIND_STRUCTURE = 1, SM_KIND_STATIC = 2,
-       SM_KIND_STRUCT_OBJ = 3 /* objprob 만: 문·창·계단·난간·기둥 — 노드로 내보내되 structural = 1·movable = 0(집는 물체 아님). 옛 규칙은 구조물(1) */ };
+       SM_KIND_STRUCT_OBJ = 3 /* 문·창·계단·난간·기둥 — 노드로 내보내되 structural = 1·movable = 0(집는 물체 아님) */ };
 int sm_set_kind_names(sm_ctx*, int32_t kind, const char* const* names, int32_t n);
 /* 스냅숏 물체 id 가 옮길 수 있는 것인가: 1 / 0(고정), -1 = 없음 */
 int sm_snap_movable(const sm_snapshot_t*, uint32_t id);
@@ -189,7 +186,7 @@ int sm_push_image_ex(sm_ctx*, const sm_image*, const sm_detections*, sm_crop_fn 
 /* 마지막 영상의 검출 k → 물체 id(0 = 안 붙음). 검출 수를 돌려주고 ids 에 min(n, cap) 개. */
 int sm_last_assoc(sm_ctx*, uint32_t* ids, int cap);
 /* 마지막 영상의 검출 k 가 그 물체의 best view 를 바꿨는가(updated[k] = 1) 와 모습 품질(quality[k] = 유효 마스크 넓이 × 점수,
- * 안 붙은 검출 0). best view 가 바뀐 물체만 영상 임베딩(CLIP)을 다시 하는 신호. 검출 수를 돌려주고 min(n, cap) 개(NULL 가능) */
+ * 안 붙은 검출 0). best view 가 바뀐 물체만 영상 임베딩을 다시 하는 신호. 검출 수를 돌려주고 min(n, cap) 개(NULL 가능) */
 int sm_last_views(sm_ctx*, uint8_t* updated, float* quality, int cap);
 
 typedef struct {
@@ -211,7 +208,7 @@ int sm_snap_view(const sm_snapshot_t*, uint32_t id, sm_view* out);
 
 /* ---- 물체 모양: 점 구름(추가 ABI) ----
  * objmap 이 물체에 붙인 관측의 마스크 안 깊이 점(MAD 띠 안, 팔 끝 0.10 m·베이스 수평 0.30 m 안 점 뺌)을 map 에 올려
- * 복셀(기본 0.02 m)마다 점 하나로 쌓는다(같은 칸은 새 관측으로 바꿈). 물체마다 최대 cap(기본 4000) — 넘으면 오래 안 고쳐진
+ * 복셀(기본 0.02 m)마다 점 하나로 쌓는다(같은 칸은 새 관측으로 바꿈). 물체마다 최대 cap(기본 8000) — 넘으면 오래 안 고쳐진
  * 점부터 버려 cap 의 90 % 로. 들기·받침 따라가기는 구름을 평행 이동(회전 없음), 사라짐은 마지막 구름 유지,
  * 사라졌다 다른 자리에서 다시 찾으면(옮겨짐 잇기) 비우고 새로 쌓음, sm_reset 은 비움.
  * 색: 머리 RGB 에서 남긴 화소만 — gather(user, xy, n, rgb) 가 화소 n 개(xy: 검출 입력 영상 화소 x, y 쌍)의 RGB 를 채운다
@@ -244,7 +241,7 @@ int sm_snap_points(const sm_snapshot_t*, uint32_t id, sm_cloud* out);
  *                (물체 best view 가 있으면 노드 metadata.rgbd = 그림 경로·stamp·상자·넓이·깊이·카메라 자세 — sm_save_dsg_ex)
  *   view.json  — 계획기·뷰어용 요약(자세, 물체 표, 최근 사건)
  *   map.pgm    — 2D 점유 격자(+ map.yaml: 해상도·원점)
- *   (방이 있으면 scene.json ROOMS 층·방→물체·방–방 변, view.json rooms·room_doors·objects[].room, rooms.pgm — 3.4)
+ *   (방이 있으면 scene.json ROOMS 층·방→물체·방–방 변, view.json rooms·room_doors·objects[].room, rooms.pgm)
  * scene.json 은 Spark-DSG 없이도 늘 빠른 쓰기(같은 JSON 형식)로 쓴다 — SM_DSG_SAVE=spark 는 라이브러리 빌드 때만. 0 = 성공. */
 int sm_save_dsg(sm_ctx*, const char* dir);
 /* sm_save_dsg + best view PNG(dir/objects/O<id>_rgb.png · O<id>_depth.png, 지난 저장 뒤 바뀐 것·없는 것만 씀)와 시간.
@@ -258,7 +255,7 @@ typedef struct {
 } sm_save_stats;
 int sm_save_dsg_ex(sm_ctx*, const char* dir, sm_save_stats* stats /* NULL 가능 */);
 
-/* ---- 방(추가 ABI, rooms.hpp · docs/scenemap_설계.md 3.4) ----
+/* ---- 방(추가 ABI, rooms.hpp) ----
  * 2D 격자 빈칸의 거리 변환 → 문턱 거름(Hydra room finder 의 2D 판) → 씨앗 → 넘치기 → 합치기. sm_snapshot 이 주기
  * (period_s, 시뮬 시각)마다, 빈칸이 min_change 이상 바뀌었을 때만 다시 나누고(잠금 밖, 600×600 에 수 ms), 그 사이엔 지난
  * 나눔을 쓴다. 방 id 는 겹침으로 이어져 다시 나눠도 그대로(sm_reset 에서 1 부터). 물체 배정·이름은 스냅숏마다 새로. */
@@ -301,7 +298,7 @@ uint32_t sm_snap_room_at(const sm_snapshot_t*, const double p[2]);         /* 0 
 uint32_t sm_snap_object_room(const sm_snapshot_t*, uint32_t obj_id);       /* 0 = 방 없음/물체 없음 */
 
 
-/* ---- 마지막 가상 스캔(추가 ABI): 머리 깊이 → 베이스 기준 2D 스캔(높이 띠 0.10–1.80 m 장애물 점, 장애물 없는 광선 끝).
+/* ---- 마지막 가상 스캔(추가 ABI): 몸통 깊이 → 베이스 기준 2D 스캔(로봇 높이 띠 — LIMO 0.05–0.50 m — 장애물 점, 장애물 없는 광선 끝).
  * 지도에 아직 안 들어간(모르는) 방향의 살아 있는 깊이 여유를 재는 데 쓴다. pose = 그 keyframe 의 map 자세(stamp = 영상 시각).
  * 0 = 있음, 1 = 아직 없음. 배열은 스냅숏 수명 동안. */
 typedef struct {
@@ -347,7 +344,7 @@ int sm_get_pose_diag(sm_ctx*, sm_pose_diag* out);
 int sm_set_cam_extrinsic(sm_ctx*, int32_t cam, const double* T_bc);
 
 /* ---- 격자 넣기 정책(추가 ABI) ----
- * policy 0: 움직임 거르기(옛 판) — 5 cm·2° 움직였거나 still_every keyframe 마다 한 번.
+ * policy 0: 움직임 거르기 — 5 cm·2° 움직였거나 still_every keyframe 마다 한 번.
  * policy 1(기본): 사건 기반 — 움직였거나, 가상 스캔(방위 칸 서명)이 지난번 넣은 것과 다르거나, 지난 넣기가 아직 칸 값을
  *   바꾸고 있으면(로그 오즈 한계 전) 매 keyframe 넣는다(광선 빈칸 지우기 포함). 서 있는 동안 생기고 없어진 장애물이 keyframe
  *   몇 번(점유 ≈ 6 번, 비움 ≈ 10 번) 안에 격자에 보인다. 아무것도 안 바뀌면 건너뜀(still_every 마다 한 번은 넣음).
@@ -366,14 +363,14 @@ typedef struct {
 int sm_get_timing(sm_ctx*, sm_stage_timing* out, int32_t cap);
 int sm_reset_timing(sm_ctx*);
 
-/* ---- 살아 있는 장면 그래프(추가 ABI, 10-03, sgraph.hpp · 설계 3.5) ----
+/* ---- 살아 있는 장면 그래프(추가 ABI, sgraph.hpp) ----
  * Hydra 식 층: OBJECTS(층 2, 'O'<물체 id>) · AGENTS(층 2 partition 'a', 로봇 keyframe 자세 'a'<k>) · PLACES(층 3, 2D 빈칸 뼈대
  * 'p'<k>, clearance = 장애물까지 m, state 1 = frontier) · ROOMS(층 4, 'R'<방 id>) · BUILDINGS(층 5, 'B'0).
  * 노드 id = Spark-DSG NodeSymbol((문자 << 56) | 번호). 그래프는 keyframe 마다 바뀐 곳만 고치고, 스냅숏이 그때의 사본을 나눠 쓴다.
  * 변 rel: 층 사이(부모 → 자식: 건물→방, 방→place, 방→물체, place→물체, place→agent), place–place(weight = 병목 여유 m),
- * 방–방 문(weight = 폭 m, pos = 자리), 물체 on/in(a 가 b 위·안), near, agent 앞뒤. */
+ * 방–방 문(weight = 폭 m, pos = 자리), agent 앞뒤. 물체끼리 관계 변은 없다. */
 enum { SM_GL_OBJECTS = 0, SM_GL_AGENTS = 1, SM_GL_PLACES = 2, SM_GL_ROOMS = 3, SM_GL_BUILDINGS = 4, SM_GL_ALL = -1 };
-/* Edge kinds. Numbers 3, 4, 5 were the object-object prepositions on / in / near; they were removed (Map_Vla) and the numbers stay unused so the others keep their values. */
+/* Edge kinds. Numbers 3, 4, 5 are unused (no object-object relations) so the others keep their values. */
 enum { SM_REL_PARENT = 0, SM_REL_PLACE = 1, SM_REL_DOOR = 2, SM_REL_AGENT = 6 };
 typedef struct {
   uint64_t id;
@@ -402,10 +399,10 @@ int sm_snap_place_path(const sm_snapshot_t*, const double from[2], const double 
  * json == NULL 이면 지움. 물체 id 기준(사라져도 남음, sm_reset 에서 비움) */
 int sm_set_object_meta(sm_ctx*, uint32_t obj_id, const char* json_members);
 
-/* ---- 확률 물체 모델(objprob)(10-05, scenemap/objprob.hpp — README "scenemap 확률 모드") ----
- * FastSAM 조각 + SigLIP 2 임베딩: 기하 구조물 거르기 → 이름 없는 같은 것 판정(로지스틱 = 로그 우도비) → 합친 물체 통째 다시 담기 →
- * 이름 = 범주 사후 확률 → 물체마다 벡터 저장. 켜지 않으면 옛 이름 기준 규칙 그대로(바이트 같음).
- * 순서: sm_set_labels → sm_set_text_model(·sm_set_label_stats) → sm_set_object_model(c, 1). 검출 keyframe 마다
+/* ---- 확률 물체 모델(objprob)(scenemap/objprob.hpp — README "물체 지도") — 물체 지도의 유일한 규칙 ----
+ * 분할 조각 + SigLIP 2 임베딩: 기하 구조물 거르기 → 이름 없는 같은 것 판정(로지스틱 = 로그 우도비) → 합친 물체 통째 다시 담기 →
+ * 이름 = 범주 사후 확률 → 물체마다 벡터 저장. 검출마다 임베딩이 있어야 물체가 생긴다.
+ * 순서: sm_set_labels → sm_set_text_model(·sm_set_label_stats). 검출 keyframe 마다
  * sm_set_det_embeddings → sm_push_image_* → sm_reencode_requests → (호출자가 SigLIP) → sm_set_object_embeddings. */
 int sm_set_object_model(sm_ctx*, int32_t objprob);   /* 1 = objprob(유일한 규칙 — 이미 기본; 0 은 -2) */
 /* 이름 표의 글 임베딩: rows × dim(L2), row_label[r] = sm_set_labels 번호. logit = SigLIP 시그모이드 척도·치우침 */
@@ -434,10 +431,10 @@ int sm_get_objprob_stats(sm_ctx*, int64_t out[16]);
  * 환경 변수 SM_OBJ_PARAMS 가 그 위에 이긴다. 판 중간에 부르면 다음 keyframe 부터. 0 성공, -2 모르는 이름 있음(나머지는 씀) */
 int sm_set_obj_params(sm_ctx*, const char* kv);
 
-/* ---- 살펴본 정도(inspection)(10-05, scenemap/inspect.hpp — README "살펴본 정도") ----
+/* ---- 살펴본 정도(inspection)(scenemap/inspect.hpp — README "살펴본 정도") ----
  * 물체마다: closest_view_m = 그 물체에 붙은 관측의 카메라 ↔ 관측 중심 거리 최소(m, -1 = 없음), n_views = 서로 다른 keyframe
  * 시점 수(0.3 m·15° 안은 같은 시점, 32 에서 멈춤), top_seen = 윗면 4 × 4 칸 중 윗면 위 5 cm 점이 2.0 m·시선–연직 80° 안에서
- * 안 가리고 보인 칸 비율(0..1, 윗면 없는 물체 = -1). 판단에는 안 씀. 기본 꺼짐 — 끄면 저장 파일·결과가 옛것과 바이트 같음.
+ * 안 가리고 보인 칸 비율(0..1, 윗면 없는 물체 = -1). 판단에는 안 씀. 기본 꺼짐 — 끄면 저장 파일·결과가 켜기 전과 바이트 같음.
  * 켜는 길: sm_set_inspect(c, 1) 또는 sm_create 설정 "inspect": 1(sm_set_robot·sm_reset 뒤에도 남음). 판 중간에 켜면 그때부터 셈. */
 typedef struct { uint32_t id; float closest_view_m; int32_t n_views; float top_seen; } sm_inspect;
 int sm_set_inspect(sm_ctx*, int32_t on);   /* 0 성공 */

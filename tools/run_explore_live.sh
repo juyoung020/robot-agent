@@ -2,7 +2,7 @@
 # 탐사 한 판 + 실시간 뷰어를 한 번에 — 경로·라이브러리·뷰어 폴더를 스크립트가 맞춘다(사람이 틀릴 자리를 없앰).
 #   tools/run_explore_live.sh [policy=frontier] [task=turning_on_radio] [tag=live] [--port 8080] [--pose carto|odom|gt]
 # 검출 기본 = ObjectSAM(YOLO26n 학생) + SigLIP 2 + objprob(src/sim/explore/run_explore.sh·sgrt_glue.py), 살펴본 정도 켬. 원래 FastSAM-s 는 SGRT_ENGINE=…/FastSAM-s-416.plan
-# 하는 일: ① libsgrt 증분 빌드(-j4) + SGRT_STREAM·objprob 지원 확인(없으면 중단) ② 에이전트 런타임 바이너리(run-skill) 확인
+# 하는 일: ① libsgrt·sgview·에이전트 런타임(run-skill) 증분 빌드(tools/build_all.sh, -j4)
 #          ③ 시뮬 판을 저장소 뿌리에서 실행(src/sim/explore/run_explore.sh → data/outputs/explore_*, 자세 기본 Cartographer, 지도는 매 갱신 전송)
 #          ④ 판의 memory/ 가 생기면 뷰어를 그 폴더로 켠다(예전 뷰어는 PID 로만 끈다)
 set -euo pipefail
@@ -18,16 +18,8 @@ done
 [ ${#pos[@]} -ge 1 ] && POL=${pos[0]}; [ ${#pos[@]} -ge 2 ] && TASK=${pos[1]}; [ ${#pos[@]} -ge 3 ] && TAG=${pos[2]}
 
 . "$ROOT/config/paths.env"
-BUILD=${SGRT_BUILD:-$RA_BUILD/sgrt}
-[ -d "$BUILD" ] || { echo "[live] 빌드 폴더 없음: $BUILD (tools/build_all.sh sgrt)"; exit 1; }
-cmake --build "$BUILD" -j"${BUILD_JOBS:-4}" --target sgrt >/dev/null   # -j4: 시뮬·학습과 같이 돌 때 RAM
-grep -aqF sgrt_objprob_enabled "$BUILD/libsgrt.so" || { echo "[live] libsgrt 에 objprob 앞단이 없다(옛 빌드): $BUILD"; exit 1; }
-grep -aqF SGRT_STREAM "$BUILD/libsgrt.so" ||  # strings|grep -q 는 pipefail 에서 SIGPIPE(141)로 항상 실패
-  { echo "[live] libsgrt 에 SGRT_STREAM 이 없다(옛 빌드): $BUILD"; exit 1; }
-AG=${RA_BUILD:-$ROOT/build}/bin/run-skill   # tools/build_all.sh agent
-[ -x "$AG" ] || { echo "[live] 에이전트 런타임 없음: $ROOT/tools/build_all.sh agent"; exit 1; }
-SV=$RA_BUILD/bin/sgview
-[ -x "$SV" ] || "$ROOT/tools/build_all.sh" sgview
+JOBS=${BUILD_JOBS:-4} "$ROOT/tools/build_all.sh" sgrt sgview agent >/dev/null   # 증분, -j4: 시뮬·학습과 같이 돌 때 RAM
+BUILD=$RA_BUILD/sgrt
 
 export SGRT_ROBOT=${SGRT_ROBOT:-limo_omx}   # 로봇: LIMO + OMX-F
 export SGRT_LIB=$BUILD/libsgrt.so SGRT_POSE=$POSE SGRT_STREAM=127.0.0.1:9001 SGRT_MAP_EVERY=${SGRT_MAP_EVERY:-1}
@@ -52,7 +44,7 @@ for i in $(seq 1 120); do
 done
 [ -n "$RUN" ] || { echo "[live] 출력 폴더가 안 생김"; tail -5 "/tmp/run_explore_$TAG.log"; exit 1; }
 MEM=$ROOT/$RUN/memory; mkdir -p "$MEM"
-for pid in $(ps -eo pid,args | awk -v p="--port $VPORT" '/release\/sgview/ && index($0,p) && !/awk/ {print $1}'); do kill "$pid"; done
+for pid in $(ps -eo pid,args | awk -v p="--port $VPORT" '/bin\/sgview/ && index($0,p) && !/awk/ {print $1}'); do kill "$pid"; done
 sleep 1
 setsid nohup "$ROOT/tools/run_sgview.sh" "$MEM" --live --port "$VPORT" > "/tmp/run_sgview_$VPORT.log" 2>&1 &
 echo "[live] 뷰어 http://localhost:$VPORT  (메모리 $MEM)"

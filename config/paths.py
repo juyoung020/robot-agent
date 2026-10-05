@@ -5,7 +5,8 @@ import subprocess
 
 _ENV = pathlib.Path(__file__).resolve().parent / "paths.env"
 _KEYS = ["RA_ROOT", "RA_BUILD", "RA_CUDA_ROOT", "RA_CUDA_ARCH", "RA_DATASETS", "RA_MODELS", "OVDET_MODELS", "RA_EMBED_WORK", "RA_TRAIN_DATA", "RA_B1K_SCENES", "RA_CHECKPOINTS",
-         "RA_LABELS", "RA_TRAINVIEW_WORK", "B1K_ROOT", "OG_CONDA_ENV", "OG_PYTHON"]
+         "RA_LABELS", "RA_TRAINVIEW_WORK", "B1K_ROOT", "OG_CONDA_ENV", "CONDA_SH", "OG_PYTHON",
+         "CLIP_PY", "FS_PY", "TRT_PY", "EMBED_PY", "REALBAG_PY"]
 _cache = None
 
 

@@ -1,12 +1,12 @@
 # libsgrt.so — ovdet(분할 엔진 TensorRT, 기본 ObjectSAM + SigLIP 2 objprob) + slam_carto(Cartographer 자세) + scenemap(격자·objmap·Spark-DSG 저장) 을 한 C ABI 로 (include/sgrt.h).
-#   cmake -S src/scene_graph/runtime -B build/sgrt && cmake --build build/sgrt -j
+#   tools/build_all.sh sgrt   (→ build/sgrt, build/bin/libsgrt.so)
 cmake_minimum_required(VERSION 3.18)
 # CUDA: ovdet 과 같은 툴킷(12.8, sm_120). best view 자르기 커널(src/crop.cu)
 set(OVDET_CUDA_ROOT "/usr/local/cuda-12.8" CACHE PATH "CUDA toolkit root")
 set(CMAKE_CUDA_COMPILER ${OVDET_CUDA_ROOT}/bin/nvcc)
 set(CMAKE_CUDA_ARCHITECTURES 120 CACHE STRING "GPU architectures")
 project(sgrt LANGUAGES CXX CUDA)
-# 저장소 안 기본 경로(common/ra_paths.h): models/ovdet, training/data/embed/labels — config/paths.env 와 같은 규칙
+# 저장소 안 기본 경로(common/ra_paths.h): models/ovdet, models/labels/objects-v1 — config/paths.env 와 같은 규칙
 get_filename_component(RA_ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
 add_compile_definitions(RA_ROOT_DIR="${RA_ROOT_DIR}")
 include_directories(${CMAKE_CURRENT_LIST_DIR}/../common)
@@ -37,9 +37,8 @@ if(SLAM_CARTO_FOUND)
   target_link_libraries(sgrt PRIVATE slam_carto)
   target_compile_definitions(sgrt PRIVATE SGRT_HAVE_CARTO=1)
 endif()
-# objprob 엔진별 매개변수 폴더: ../tools/realbag/objprob_params (원본은 robot-agent src/scene_graph 하나. DIR2 는 sgrt.cpp 의 두 번째 후보 칸 — 같은 폴더)
-target_compile_definitions(sgrt PRIVATE SGRT_PARAMS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tools/realbag/objprob_params"
-                                        SGRT_PARAMS_DIR2="${CMAKE_CURRENT_SOURCE_DIR}/../tools/realbag/objprob_params")
+# objprob 엔진별 매개변수 폴더(realbag_run 과 같은 파일)
+target_compile_definitions(sgrt PRIVATE SGRT_PARAMS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tools/realbag/objprob_params")
 
 # best view 장치 자르기 시험(작은 GPU 시험): 호스트 식과 같은지, 시간
 enable_testing()
@@ -51,7 +50,7 @@ add_test(NAME crop COMMAND test_crop)
 add_executable(sgrt_frames tools/sgrt_frames.cpp)
 target_link_libraries(sgrt_frames sgrt CUDA::cudart_static)
 
-# sgrt 기록(SGRT_RECORD)을 libsgrt(dlopen — 옛 빌드와 비교 가능)로 다시 굴리기: 검출 → 지도 → 저장
+# sgrt 기록(SGRT_RECORD)을 libsgrt(dlopen — 두 빌드를 같은 입력으로 비교 가능)로 다시 굴리기: 검출 → 지도 → 저장
 add_executable(sgrt_replay tools/sgrt_replay.cpp)
 target_include_directories(sgrt_replay PRIVATE include ../scenemap/tools)
 target_link_libraries(sgrt_replay ${CMAKE_DL_LIBS})

@@ -69,12 +69,12 @@ struct ObjprobFront {
     if (enc) sgc_destroy(enc);
     if (lt) sgc_labels_close(lt);
   }
-};   // 이 이하 어휘 = 닫힌 어휘 엔진(COCO-80), 기본으로 어휘 전부
+};
 
 struct sgrt {
   sgrt_config cfg{};
 #ifdef SGRT_HAVE_CARTO
-  sc_ctx* carto = nullptr;          // Cartographer(SGRT_POSE 기본 = slam·carto) — 스캔 + 오도메트리 → 스텝마다 sm_push_ext_pose
+  sc_ctx* carto = nullptr;          // Cartographer(SGRT_POSE 기본 carto) — 스캔 + 오도메트리 → 스텝마다 sm_push_ext_pose
 #endif
   int64_t n_scans = 0;
   bool warned_noscan = false;
@@ -105,7 +105,7 @@ struct sgrt {
   std::vector<uint8_t> rec_rgb;
   // sgrt 단계 시간: det, step, map, record
   scenemap::Timings tm;
-  // 주기 저장은 저장 스레드에서(PNG·JSON·파일 쓰기가 스텝을 막지 않게). SGRT_SAVE_SYNC=1 이면 예전처럼 스텝 안에서
+  // 주기 저장은 저장 스레드에서(PNG·JSON·파일 쓰기가 스텝을 막지 않게). SGRT_SAVE_SYNC=1 이면 스텝 안에서
   bool save_async = true;
   std::thread saver;
   std::mutex smu;
@@ -235,10 +235,8 @@ bool objprobInit(sgrt* s, char* err, size_t err_len) {
   std::string pf = pe ? pe : "";
   if (pf.empty()) {
     const std::string stem = objprob_front::engineStem(s->cfg.engine);
-    for (const char* d : {SGRT_PARAMS_DIR, SGRT_PARAMS_DIR2}) {
-      const std::string c = std::string(d) + "/" + stem + ".json";
-      if (std::FILE* f = std::fopen(c.c_str(), "r")) { std::fclose(f); pf = c; break; }
-    }
+    const std::string c = std::string(SGRT_PARAMS_DIR) + "/" + stem + ".json";
+    if (std::FILE* f = std::fopen(c.c_str(), "r")) { std::fclose(f); pf = c; }
     if (pf.empty()) std::fprintf(stderr, "[sgrt] objprob: no params file for %s (built-in defaults)\n", stem.c_str());
   }
   if (!pf.empty() && pf != "none") {
@@ -820,10 +818,5 @@ int sgrt_reset_stage_timing(sgrt* s) {
   s->tm.clear();
   return sm_reset_timing(s->sm);
 }
-
-}  // extern "C"
-
-extern "C" {
-
 
 }  // extern "C"
