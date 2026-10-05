@@ -1,12 +1,12 @@
 """Reference data for the C++ engine test (tests/test_encoder.cpp) and the lookup test.
 
-parity.bin: for N eval crops (~/clip_bench/evalset.json, spread over demo / mem sources):
+parity.bin: for N eval crops (data/clip_bench/evalset.json, spread over demo / mem sources):
     int32 magic 0x31524150 ('PAR1'), int32 N, then per item
     int32 w, h | uint8 rgb[h][w][3] | float32 box[4] | uint32 mask bits (full-res grid w x h, row-major, LSB first)
     | float32 emb[768]  = PyTorch FP32 SigLIP 2 mask embedding of the CPU reference crop (eval_variants.prep_kernel)
 queries_f32.bin: all 567 eval embeddings (FP32 reference), Q x 768 — real image queries for test_sgclip_lookup.
 
-    ~/clip_venv/bin/python make_parity.py [--n 64] [--out ~/ovdet_models/x86_sm120/siglip2_b32]
+    python make_parity.py [--n 64] [--out models/ovdet/x86_sm120/siglip2_b32]
 """
 import argparse
 import os
@@ -19,10 +19,15 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import eval_variants as EV  # noqa: E402
 import export_siglip2 as EX  # noqa: E402
+RA_ROOT = os.environ.get("RA_ROOT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../.."))
+RA_MODELS = os.environ.get("OVDET_MODELS", os.path.join(RA_ROOT, "models/ovdet"))
+RA_EMBED = os.environ.get("RA_EMBED_WORK", os.path.join(RA_ROOT, "data/embed_work"))
+RA_BENCH = os.path.join(RA_ROOT, "data/clip_bench")
+RA_BUILD = os.environ.get("RA_BUILD", os.path.join(RA_ROOT, "build"))
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--n", type=int, default=64)
-ap.add_argument("--out", default=os.path.expanduser("~/ovdet_models/x86_sm120/siglip2_b32"))
+ap.add_argument("--out", default=os.path.join(RA_MODELS, "x86_sm120/siglip2_b32"))
 a = ap.parse_args()
 mod = EX.build()
 idx = list(range(0, len(EV.ITEMS), max(1, len(EV.ITEMS) // a.n)))[: a.n]
@@ -48,6 +53,6 @@ with open(f"{a.out}/parity.bin", "wb") as f:
         bits = np.concatenate([bits, np.zeros(pad, np.uint8)])
         f.write(np.packbits(bits, bitorder="little").view(np.uint32).tobytes())
         f.write(e.astype(np.float32).tobytes())
-ref = np.load(os.path.expanduser("~/clip_bench/emb/siglip2_b32_mask_fp32.npy")).astype(np.float32)
+ref = np.load(os.path.join(RA_BENCH, "emb/siglip2_b32_mask_fp32.npy")).astype(np.float32)
 ref.tofile(f"{a.out}/queries_f32.bin")
 print("wrote", f"{a.out}/parity.bin", len(idx), "items;", f"{a.out}/queries_f32.bin", ref.shape)

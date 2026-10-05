@@ -278,7 +278,7 @@ def main():
     ap.add_argument('--walls', help='scenemap walls.csv(map) — 기하 구조물 표에 벽 선분 거리')
     ap.add_argument('--metrics', help='그 판의 metrics.json(se2_map_to_gt)')
     ap.add_argument('--cos0', type=float, default=0.75)
-    ap.add_argument('--labels', default=os.path.expanduser('~/embed_work/labels/objects-v1'))
+    ap.add_argument('--labels', default=os.environ.get('RA_LABELS', os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../../data/embed_work/labels/objects-v1')))
     ap.add_argument('--engine', default='', help='objprob_params.json 의 engine(검출 엔진 파일 이름)')
     ap.add_argument('--same-p', type=float, default=0.6)
     ap.add_argument('--merge-p', type=float, default=0.7)

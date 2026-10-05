@@ -6,7 +6,7 @@
 //   저장    : sgrt_save(저장 스레드) 가 sm_save_dsg_ex 앞에서 부름 — 바뀐 물체만 objects/O<id>_emb.f16, 라벨 표 이름 캐시
 //             (cache/names.json, 표 sha·emb_sha 가 바뀐 것만 다시), scene.json 노드 metadata 는 sm_set_object_meta 로(emb·names).
 //   켜기    : 환경 변수 SGRT_CLIP = 엔진 plan 경로(또는 1 = 기본 경로). 없으면 꺼짐(다른 실행에 영향 없음).
-//             SGRT_LABELS = 라벨 표 폴더(기본 ~/embed_work/labels/objects-v1), SGC_IMG_SAMPLE = 투영 맞출 영상 표본(기본 있으면).
+//             SGRT_LABELS = 라벨 표 폴더(기본 data/embed_work/labels/objects-v1), SGC_IMG_SAMPLE = 투영 맞출 영상 표본(기본 있으면).
 #pragma once
 #include <atomic>
 #include <cstdint>

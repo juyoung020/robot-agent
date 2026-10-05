@@ -1,7 +1,7 @@
 """INT8 calibration inputs for build_engine.py --int8: N LVIS object crops (training/embed build_crops.py shards, not the
 eval set) through the runtime's crop/normalise/mask-grid reference (eval_variants.prep_kernel).
 
-    ~/clip_venv/bin/python make_calib.py OUT.npz [--n 512] [--res 256]
+    python make_calib.py OUT.npz [--n 512] [--res 256]
 """
 import argparse
 import io
@@ -16,12 +16,17 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from eval_variants import prep_kernel  # noqa: E402
+RA_ROOT = os.environ.get("RA_ROOT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../.."))
+RA_MODELS = os.environ.get("OVDET_MODELS", os.path.join(RA_ROOT, "models/ovdet"))
+RA_EMBED = os.environ.get("RA_EMBED_WORK", os.path.join(RA_ROOT, "data/embed_work"))
+RA_BENCH = os.path.join(RA_ROOT, "data/clip_bench")
+RA_BUILD = os.environ.get("RA_BUILD", os.path.join(RA_ROOT, "build"))
 
 ap = argparse.ArgumentParser()
 ap.add_argument("out")
 ap.add_argument("--n", type=int, default=512)
 ap.add_argument("--res", type=int, default=256)
-ap.add_argument("--crops", default=os.path.expanduser("~/embed_work/data/lvis_crops"))
+ap.add_argument("--crops", default=os.path.join(RA_EMBED, "data/lvis_crops"))
 a = ap.parse_args()
 g = a.res // 32
 X, W = [], []

@@ -5,7 +5,7 @@ open_clip `ViT-B-32-SigLIP2-256`(webli, HF 캐시에 이미 있는 가중치, �
 vit_verify dump 가 쓴 DIR/imgs.u8 (n × [256][256][3] u8) 의 끝 LN 뒤 패치 토큰을 FP32 로 DIR/ref_tok.f32 ([n × 64][768]) 에 쓴다.
 전처리는 GPU K11 과 같은 식: x = u8/255, (x − 0.5)/0.5 (크기 조정 없음 — 이미 256²).
 
-  ~/clip_venv/bin/python training/BC/tools/siglip_ref.py DIR
+  python training/BC/tools/siglip_ref.py DIR
 """
 import os
 import sys

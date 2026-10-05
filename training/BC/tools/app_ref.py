@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PyTorch FP32 reference for the appearance tool (OFFLINE check, HF cache only — not on any training/inference path).
 
-  app_table --dump DIR [--negative B];  ~/embed_venv/bin/python training/BC/tools/app_ref.py DIR [--min 0.999]
+  app_table --dump DIR [--negative B];  python training/BC/tools/app_ref.py DIR [--min 0.999]
 (1) same tokens: open_clip ViT-B-32-SigLIP2-256 trunk.attn_pool + embed head h (train_head.Head) on the C++ tool's encoder tokens
     vs the C++ MAP pool + head (apph::encode)  → isolates the pool+head implementation.
 (2) end to end: open_clip image tower on the same rendered RGB (no mask = plain MAP) + head h vs the C++ path
@@ -16,7 +16,7 @@ import open_clip
 from train_head import Head
 
 ap = argparse.ArgumentParser(); ap.add_argument('dir'); ap.add_argument('--min', type=float, default=0.999)
-ap.add_argument('--head', default=os.path.expanduser('~/embed_work/runs/sb32_pe_300k/head.pt')); a = ap.parse_args()
+ap.add_argument('--head', default=os.path.join(os.environ.get('RA_EMBED_WORK', os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../data/embed_work')), 'runs/sb32_pe_300k/head.pt')); a = ap.parse_args()
 NI, E, V, bug = map(int, open(f'{a.dir}/meta.txt').read().split())
 tok = torch.from_numpy(np.fromfile(f'{a.dir}/tokens.f32', np.float32).reshape(NI, 64, 768))
 pc = np.fromfile(f'{a.dir}/pooled_cpp.f32', np.float32).reshape(NI, 768)

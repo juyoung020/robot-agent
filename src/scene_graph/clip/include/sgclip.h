@@ -152,7 +152,7 @@ typedef struct {
   int32_t device;
   int32_t max_batch;        /* 8(엔진 프로필 안) */
 } sgc_text_config;
-/* dir(NULL = 환경 변수 SGC_TEXT_DIR, 없으면 ~/ovdet_models/x86_sm120/siglip2_b32) 아래 기본 파일 이름. 문자열은 정적 버퍼 */
+/* dir(NULL = 환경 변수 SGC_TEXT_DIR, 없으면 models/ovdet/x86_sm120/siglip2_b32) 아래 기본 파일 이름. 문자열은 정적 버퍼 */
 void sgc_text_default_config(sgc_text_config* c, const char* dir);
 sgc_text* sgc_text_create(const sgc_text_config* c, char* err, size_t err_len);
 void sgc_text_destroy(sgc_text*);

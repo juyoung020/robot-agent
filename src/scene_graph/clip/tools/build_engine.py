@@ -5,7 +5,7 @@ FP16 with the numerically sensitive layers pinned to FP32 (docs/clip_candidates.
 inside the opset-13 decomposed LayerNorm -> cosine 0.64-0.74 without this). Pinned: every layer whose ONNX name contains
 'norm' (LayerNorm ReduceMean/Sub/Pow/Sqrt/Div/Mul/Add and the final L2 normalisation), optionally softmax.
 
-    ~/ovdet_venv/bin/python build_engine.py ONNX PLAN [--profiles 1-8 | 1,2,4,8] [--pin norm,softmax] [--int8 CALIB.npz]
+    python build_engine.py ONNX PLAN [--profiles 1-8 | 1,2,4,8] [--pin norm,softmax] [--int8 CALIB.npz]
                                             [--half-input]
 
 --profiles 1-8     one dynamic profile min 1 / opt 8 / max 8 (default)

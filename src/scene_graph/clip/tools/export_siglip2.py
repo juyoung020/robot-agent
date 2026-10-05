@@ -14,8 +14,8 @@ Variants (efficiency study, docs/clip_candidates.md 8):
                      mask weight and size carried through, size enters the MAP head as log(size))
 
 Python only for this offline export (clip_venv: torch CPU, open_clip 3.3, timm 1.0). Run:
-    ~/clip_venv/bin/python export_siglip2.py --out ~/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask.onnx
-then build the engine with build_engine.py (TensorRT Python from ~/ovdet_venv).
+    python export_siglip2.py --out models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_mask.onnx
+then build the engine with build_engine.py (TensorRT Python from the TensorRT Python env).
 """
 import argparse
 import math

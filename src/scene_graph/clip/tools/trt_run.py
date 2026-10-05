@@ -1,6 +1,6 @@
 """Minimal TensorRT 10 runner for the SigLIP 2 mask engine from Python (offline checks / study only — the robot runs C++).
 
-Works from ~/clip_venv (torch CPU) by borrowing the TensorRT bindings of ~/ovdet_venv (same Python 3.11) and the CUDA 12.8
+Works from the torch Python env (torch CPU) by borrowing the TensorRT bindings of the TensorRT Python env (same Python 3.11) and the CUDA 12.8
 runtime through ctypes — no pycuda / cuda-python needed.
 
     from trt_run import Engine
@@ -14,7 +14,7 @@ import sys
 
 import numpy as np
 
-_site = glob.glob(os.path.expanduser("~/ovdet_venv/lib/python3*/site-packages"))
+_site = glob.glob(os.path.expanduser("the TensorRT Python env/lib/python3*/site-packages"))
 if _site and _site[0] not in sys.path:
     sys.path.append(_site[0])
 import tensorrt as trt  # noqa: E402

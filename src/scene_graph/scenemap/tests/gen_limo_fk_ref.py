@@ -20,7 +20,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 def _default_urdf():
     import subprocess
-    ra = os.environ.get('ROBOT_AGENT') or os.path.expanduser('~/robot-agent')
+    ra = os.environ.get('RA_ROOT') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../..')
     return subprocess.check_output([os.path.join(ra, 'src', 'robot', 'tools', 'build_urdf.sh'), '/tmp/map_vla_fkref.urdf'], text=True).strip()
 
 

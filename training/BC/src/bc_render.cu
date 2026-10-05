@@ -1,4 +1,4 @@
-// BC 영상 학생 렌더 — 설명은 include/bc_render.h. 팀 RenderBatch 는 include 로 읽기만 한다(src/behavior-2026 서브모듈, 고친 것 없음).
+// BC 영상 학생 렌더 — 설명은 include/bc_render.h. 팀 RenderBatch 는 include 로 읽기만 한다(training/render_enginevior-2026 서브모듈, 고친 것 없음).
 // 이 파일만 팀 렌더 빌드 규칙(-fmad=false -prec-div=true -prec-sqrt=true -ftz=true)으로 컴파일한다(CMakeLists).
 //
 // 그래프로 잡기(작업 1): RenderBatch::render 안의 일은 커널 실행뿐(kBuild, kRigs, kShade/kAtrous/kCompose)이고 호스트 값(판 수, 잡음 제거 횟수,

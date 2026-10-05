@@ -6,9 +6,9 @@
 //     confirm ID NAME SOURCE [Q]   이름 고치기(SOURCE = user | close_look) → 결과 JSON
 //     object ID                   물체 이름·속성 JSON
 //     stats                       열기 통계 JSON
-//   --encode: objprob 벡터가 없는 물체를 best view 사진에서 뽑음(영상 엔진 SGC_ENGINE, 기본 ~/ovdet_models/x86_sm120/siglip2_b32/
+//   --encode: objprob 벡터가 없는 물체를 best view 사진에서 뽑음(영상 엔진 SGC_ENGINE, 기본 models/ovdet/x86_sm120/siglip2_b32/
 //             siglip2_b32_mask_fp16.plan). --no-text: 글 인코더 없이(라벨 표 이름 질의만). 라벨 표 기본 SGRT_LABELS 또는
-//             ~/embed_work/labels/objects-v1, 색인 캐시 ~/.cache/sgclip.
+//             data/embed_work/labels/objects-v1, 색인 캐시 ~/.cache/sgclip.
 #include <algorithm>
 #include <chrono>
 #include <cstdio>

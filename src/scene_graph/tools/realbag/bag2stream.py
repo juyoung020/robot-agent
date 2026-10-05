@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ROS1 bag(실제 로봇) → realbag 스트림 폴더. 오프라인 변환 전용(ROS 설치 없이 `rosbags` 라이브러리로 읽음).
 
-    ~/realbag_venv/bin/python src/scene_graph/tools/realbag/bag2stream.py <kind> <bag> <out_dir> [--hz 15] [--t0 S] [--t1 S] [--gt FILE]
+    python src/scene_graph/tools/realbag/bag2stream.py <kind> <bag> <out_dir> [--hz 15] [--t0 S] [--t1 S] [--gt FILE]
 
 kind: openloris | tum_pioneer
 

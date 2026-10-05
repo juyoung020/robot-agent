@@ -1,5 +1,5 @@
 # realbag — 공개 실제 로봇 ROS bag → 우리 지각 파이프라인(ovdet 검출 + scenemap SLAM·물체 기억·장면 그래프) + sgview 재생. README.md
-#   cmake -S src/scene_graph/tools/realbag -B ~/realbag_build && cmake --build ~/realbag_build -j 4
+#   cmake -S src/scene_graph/tools/realbag -B build/realbag && cmake --build build/realbag -j 4
 cmake_minimum_required(VERSION 3.18)
 set(OVDET_CUDA_ROOT "/usr/local/cuda-12.8" CACHE PATH "CUDA toolkit root")
 set(CMAKE_CUDA_COMPILER ${OVDET_CUDA_ROOT}/bin/nvcc)

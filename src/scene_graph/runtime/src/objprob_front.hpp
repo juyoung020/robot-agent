@@ -20,9 +20,9 @@
 
 namespace objprob_front {
 
-// 기본 분할 엔진(~/ovdet_models/x86_sm120/ 아래): ObjectSAM = YOLO26n 학생(things 만, 이름 없는 'object').
+// 기본 분할 엔진(models/ovdet/x86_sm120/ 아래): ObjectSAM = YOLO26n 학생(things 만, 이름 없는 'object').
 // objprob 매개변수는 objprob_params/<이 이름에서 .plan 뺀 것>.json. 다른 엔진은 --engine / SGRT_ENGINE 으로
-// (원래 FastSAM-s-416.plan, 버린 FastSAM-s 재학습 ~/ovdet_models/archive/x86_sm120/FastSAM-s-416-obj.plan(보관) — 둘 다 매개변수 파일 있음)
+// (원래 FastSAM-s-416.plan, 버린 FastSAM-s 재학습 models/ovdet/archive/x86_sm120/FastSAM-s-416-obj.plan(보관) — 둘 다 매개변수 파일 있음)
 constexpr const char* kDefaultEngine = "yolo26n-seg-obj-416.plan";
 
 // 검출 낱말: 글 → 지도 이름. 구조물(wall·floor …, person)은 scenemap 기본 표대로 노드가 안 된다. fastsam 은 SigLIP 2 라벨 표에 있는 글만,

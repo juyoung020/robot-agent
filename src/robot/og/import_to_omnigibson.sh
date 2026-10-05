@@ -1,6 +1,6 @@
 #!/bin/bash
 # LIMO+OMX URDF → OmniGibson 로봇(USD+정의). 결과: <gm.DATA_PATH>/omnigibson-robot-assets/objects/robot/limo_omx/
-#   conda 'behavior' 환경에서 실행. URDF 는 저장소 xacro 에서 tools/build_urdf.sh 로 펼쳐 쓴다(ra_ws 없음; 메시는 src/robot/ 안).
+#   conda 'behavior' 환경에서 실행. URDF 는 저장소 xacro 에서 tools/build_urdf.sh 로 펼쳐 쓴다(작업 공간 없음; 메시는 src/robot/ 안).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 W=${W:-/tmp/limo_omx_import}; mkdir -p "$W"

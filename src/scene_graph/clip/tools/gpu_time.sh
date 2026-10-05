@@ -5,7 +5,7 @@ set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=$(mktemp -d)
 N=60
-/usr/local/cuda-12.8/bin/nsys profile -o "$OUT/p" -f true -t cuda ~/clip_venv/bin/python -c "
+/usr/local/cuda-12.8/bin/nsys profile -o "$OUT/p" -f true -t cuda python -c "
 import sys; sys.path.insert(0, '$HERE')
 from trt_run import Engine
 e = Engine('$1'); b = e.bucket($2); e.bench(b, iters=$N, graph=False, warm=0)" > /dev/null 2>&1

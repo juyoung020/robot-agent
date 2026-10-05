@@ -7,7 +7,7 @@ Split: the 256k x 768 token-embedding table (197 M of the tower's ~282 M paramet
 gathers rows from an mmap'd FP16 file on the CPU (a query touches <= 64 rows), so the GPU engine is only the 12-layer
 transformer (~85 M parameters, ~170 MB FP16) — this matters on the Jetson Nano (4 GB shared).
 
-    outputs (all in --out, default ~/ovdet_models/x86_sm120/siglip2_b32)
+    outputs (all in --out, default models/ovdet/x86_sm120/siglip2_b32)
       siglip2_b32_text.onnx     input  tok_emb  N x 64 x 768 float32  (token embedding rows, pad id 0 included)
                                 output emb      N x 768       float32  L2-normalised (positional emb, 12 blocks, ln_final,
                                                                         'last' pool = position 63, projection with bias)
@@ -25,9 +25,9 @@ The tokenizer is open_clip's HFTokenizer(timm/ViT-B-32-SigLIP2-256, clean="canon
 ASCII punctuation removed -> lower case -> whitespace collapsed -> ' ' to '▁' -> one BPE word (merges by rank, byte
 fallback) -> + <eos> -> truncate to 64 (eos kept last) -> pad 0. ftfy / html unescape are not reproduced (queries are plain).
 
-    ~/clip_venv/bin/python export_siglip2_text.py
-    ~/ovdet_venv/bin/python build_engine.py ~/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_text.onnx \
-        ~/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_text_fp16.plan --pin norm
+    python export_siglip2_text.py
+    python build_engine.py models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_text.onnx \
+        models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_text_fp16.plan --pin norm
 """
 import argparse
 import json
@@ -41,6 +41,11 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+RA_ROOT = os.environ.get("RA_ROOT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../.."))
+RA_MODELS = os.environ.get("OVDET_MODELS", os.path.join(RA_ROOT, "models/ovdet"))
+RA_EMBED = os.environ.get("RA_EMBED_WORK", os.path.join(RA_ROOT, "data/embed_work"))
+RA_BENCH = os.path.join(RA_ROOT, "data/clip_bench")
+RA_BUILD = os.environ.get("RA_BUILD", os.path.join(RA_ROOT, "build"))
 
 
 def _sdpa(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None, enable_gqa=False):
@@ -110,7 +115,7 @@ def write_tokenizer(tok, path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=os.path.expanduser("~/ovdet_models/x86_sm120/siglip2_b32"))
+    ap.add_argument("--out", default=os.path.join(RA_MODELS, "x86_sm120/siglip2_b32"))
     ap.add_argument("--batch", type=int, default=4)
     a = ap.parse_args()
     import open_clip

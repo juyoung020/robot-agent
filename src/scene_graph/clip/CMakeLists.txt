@@ -1,5 +1,5 @@
 # sgclip: SigLIP 2 B/32-256 물체 영상 임베딩(TensorRT FP16 + CUDA 자르기 커널) + 라벨 표 찾기(CPU SIMD) + 기억 폴더 캐시.
-#   cmake -S src/scene_graph/clip -B ~/sgclip_build && cmake --build ~/sgclip_build -j && ctest --test-dir ~/sgclip_build
+#   cmake -S src/scene_graph/clip -B build/sgclip && cmake --build build/sgclip -j && ctest --test-dir build/sgclip
 # runtime(libsgrt) 가 add_subdirectory 로 같이 빌드한다. TensorRT 8.2(Jetson Nano, JetPack 4.6) 와 10(PC) 둘 다.
 cmake_minimum_required(VERSION 3.18)
 if(NOT DEFINED OVDET_CUDA_ROOT)

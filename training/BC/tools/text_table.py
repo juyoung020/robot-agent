@@ -6,7 +6,7 @@ VLA_INPUT 1·6절: 지시 문장은 얼린 SigLIP 2 글 인코더 벡터로 넣�
 내려받지 않음)의 글 탑으로 L2 정규화 768-d 를 뽑아 √768 배(원소 크기 약 1) 한 f32 [k][768] 을 쓴다. 학습·추론은 이 표만 읽는다(C++).
 SigLIP 2 글 탑은 다국어(Gemma 토크나이저)라 한국어 문장도 같은 공간에 들어간다.
 
-  ~/clip_venv/bin/python training/BC/tools/text_table.py training/BC/data/instr_a2.f32
+  python training/BC/tools/text_table.py training/BC/data/instr_a2.f32
 """
 import os
 import sys

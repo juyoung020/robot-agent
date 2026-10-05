@@ -2,12 +2,12 @@
 same space as the robot's object embeddings (memory/objects/O<id>_emb.f16).
 
     # one shot: top-k objects of a memory folder for each query (JSON on stdout)
-    ~/clip_venv/bin/python text_query.py --mem MEMORY_DIR "radio" "라디오" "흰 의자"
+    python text_query.py --mem MEMORY_DIR "radio" "라디오" "흰 의자"
     # encode only: raw 768 x FP32 little-endian per query to OUT (for sgrt_query_embedding)
-    ~/clip_venv/bin/python text_query.py --encode OUT.f32 "white chair"
+    python text_query.py --encode OUT.f32 "white chair"
     # server: model stays loaded. GET /encode?q=...  -> {"q", "vec": [768]}
     #                             GET /search?mem=DIR&q=...&k=5 -> {"q", "hits": [{"id", "score", "name", "name_ko"}]}
-    ~/clip_venv/bin/python text_query.py --serve 8091
+    python text_query.py --serve 8091
 
 Query text is used as is (SigLIP 2's Gemma tokenizer is multilingual: Korean works without translation); English single
 nouns also get the label-table prompt ("a photo of a {}."), like the label table. Names come from memory/cache/names.json.

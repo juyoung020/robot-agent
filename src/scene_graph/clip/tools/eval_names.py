@@ -4,7 +4,7 @@ Uses the FP32 reference mask embeddings of the 567 eval crops (make_parity.py qu
 roll-up names with the study's leniency (clip_bench/score.py ok(): synset keys, aliases, last word) plus WordNet
 hypernym credit for rolled-up names. Settings: exact vs default IVF, main tier only vs all, roll-up delta.
 
-    ~/clip_venv/bin/python eval_names.py [--lib ~/sgclip_build/libsgclip_c.so] [--labels ~/embed_work/labels/objects-v1]
+    python eval_names.py [--lib build/sgclip/libsgclip_c.so] [--labels data/embed_work/labels/objects-v1]
 """
 import argparse
 import ctypes
@@ -15,16 +15,21 @@ import sys
 import numpy as np
 
 sys.argv, _a = ["x"], sys.argv
-sys.path.insert(0, os.path.expanduser("~/clip_bench"))
+sys.path.insert(0, RA_BENCH)
 import score as SC  # noqa: E402
+RA_ROOT = os.environ.get("RA_ROOT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../.."))
+RA_MODELS = os.environ.get("OVDET_MODELS", os.path.join(RA_ROOT, "models/ovdet"))
+RA_EMBED = os.environ.get("RA_EMBED_WORK", os.path.join(RA_ROOT, "data/embed_work"))
+RA_BENCH = os.path.join(RA_ROOT, "data/clip_bench")
+RA_BUILD = os.environ.get("RA_BUILD", os.path.join(RA_ROOT, "build"))
 sys.argv = _a
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--lib", default=os.path.expanduser("~/sgclip_build/libsgclip_c.so"))
-ap.add_argument("--labels", default=os.path.expanduser("~/embed_work/labels/objects-v1"))
-ap.add_argument("--queries", default=os.path.expanduser("~/ovdet_models/x86_sm120/siglip2_b32/queries_f32.bin"))
-ap.add_argument("--index", default=os.path.expanduser("~/sgclip_build/test_index"))
-ap.add_argument("--sample", default=os.path.expanduser("~/ovdet_models/x86_sm120/siglip2_b32/img_sample_lvis10k.f16"))
+ap.add_argument("--lib", default=os.path.join(RA_BUILD, "sgclip/libsgclip_c.so"))
+ap.add_argument("--labels", default=os.path.join(RA_EMBED, "labels/objects-v1"))
+ap.add_argument("--queries", default=os.path.join(RA_MODELS, "x86_sm120/siglip2_b32/queries_f32.bin"))
+ap.add_argument("--index", default=os.path.join(RA_BUILD, "sgclip/test_index"))
+ap.add_argument("--sample", default=os.path.join(RA_MODELS, "x86_sm120/siglip2_b32/img_sample_lvis10k.f16"))
 a = ap.parse_args()
 
 

@@ -10,7 +10,7 @@
 //                              한 지도에 이을 때 — 판 사이 재위치 추정이 없으므로). slam·odom 에서도 정답은 진단(sm_get_pose_diag)에만 넣는다
 //     --det fastsam|yolo|none  검출(기본 fastsam = 이름 없는 분할 엔진 + SigLIP 2 이름(dom_bench_det --classify 와 같은 길). 분할 엔진 기본은
 //                              ObjectSAM(YOLO26n 학생, yolo26n-seg-obj-416.plan — objprob_front.hpp kDefaultEngine), 원래 FastSAM-s 는
-//                              --engine ~/ovdet_models/x86_sm120/FastSAM-s-416.plan(버린 FastSAM-s 재학습은 보관 ~/ovdet_models/archive/x86_sm120/FastSAM-s-416-obj.plan).
+//                              --engine models/ovdet/x86_sm120/FastSAM-s-416.plan(버린 FastSAM-s 재학습은 보관 models/ovdet/archive/x86_sm120/FastSAM-s-416-obj.plan).
 //     --det yolo               닫힌 어휘 YOLO 분할(기본 yolo26s-seg-416, COCO 80) — 엔진 어휘 전부
 //     --namer siglip|engine    이름 붙이기(기본 fastsam = siglip, yolo = engine 클래스). siglip = 검출기 마스크마다 SigLIP 2 조각 임베딩을
 //                              아래 낱말 글 임베딩과 맞춤(세 검출기를 같은 이름 표로 비교할 때)

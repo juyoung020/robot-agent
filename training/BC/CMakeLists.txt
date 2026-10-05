@@ -61,7 +61,7 @@ target_link_libraries(bcnetref PUBLIC OpenMP::OpenMP_CXX CUDA::cudart)
 add_executable(bc_verify tools/bc_verify.cu)
 target_link_libraries(bc_verify bc bcnetref)
 
-# 224² 렌더 속도(계획서 4.5·10.3 의 6): 팀 RenderBatch(src/behavior-2026, 읽기만)를 include 로 쓴다. 팀 렌더 빌드 규칙(-ftz=true 등)을 이 대상에만.
+# 224² 렌더 속도(계획서 4.5·10.3 의 6): 팀 RenderBatch(training/render_engine, 읽기만)를 include 로 쓴다. 팀 렌더 빌드 규칙(-ftz=true 등)을 이 대상에만.
 if(EXISTS ${ENGINE_DIR}/cuda/render/render_batch.cuh AND EXISTS ${CMAKE_CURRENT_LIST_DIR}/tools/render_bench.cu)
   add_executable(render_bench tools/render_bench.cu)
   target_include_directories(render_bench PRIVATE ${ENGINE_DIR} ${INC})

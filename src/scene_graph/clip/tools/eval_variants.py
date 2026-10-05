@@ -1,9 +1,9 @@
-"""Accuracy of SigLIP 2 mask-embedding variants on the CLIP study eval set (~/clip_bench/evalset.json, 567 crops).
+"""Accuracy of SigLIP 2 mask-embedding variants on the CLIP study eval set (data/clip_bench/evalset.json, 567 crops).
 
 For each variant: naming top-1 (demo / clean / mem, 360-word vocabulary of the study), text->object retrieval R@1
 (English / Korean through the SigLIP 2 text tower), cosine to the FP32 PyTorch baseline (min / mean).
 
-    ~/clip_venv/bin/python eval_variants.py torch:base  trt:/path/a.plan  torch:res=224  torch:layers=10 ...
+    python eval_variants.py torch:base  trt:/path/a.plan  torch:res=224  torch:layers=10 ...
     (prints one row per variant, appends JSON rows to --out)
 
 Preprocessing = the runtime kernel's (src/crop_kernel.cu): square box + 10 % context from the original RGB, bilinear
@@ -24,11 +24,16 @@ from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-BENCH = os.path.expanduser("~/clip_bench")
+BENCH = RA_BENCH
 _argv = sys.argv
 sys.argv = ["x"]
 sys.path.insert(0, BENCH)
 import score as SC  # noqa: E402  (study scoring: VOCAB, Q, ok(), retrieval())
+RA_ROOT = os.environ.get("RA_ROOT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../.."))
+RA_MODELS = os.environ.get("OVDET_MODELS", os.path.join(RA_ROOT, "models/ovdet"))
+RA_EMBED = os.environ.get("RA_EMBED_WORK", os.path.join(RA_ROOT, "data/embed_work"))
+RA_BENCH = os.path.join(RA_ROOT, "data/clip_bench")
+RA_BUILD = os.environ.get("RA_BUILD", os.path.join(RA_ROOT, "build"))
 sys.argv = _argv
 ITEMS = SC.items
 
@@ -100,7 +105,7 @@ def inputs(S, bicubic=False):
     return _cache[k]
 
 
-TEXT = os.path.expanduser("~/clip_bench/emb/siglip2_b32_text.npz")   # v (vocab), qe (English queries), qk (Korean)
+TEXT = os.path.join(RA_BENCH, "emb/siglip2_b32_text.npz")   # v (vocab), qe (English queries), qk (Korean)
 
 
 def score_emb(E, ref=None):
@@ -153,8 +158,8 @@ def run_trt(plan, bicubic=False):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("variants", nargs="+")
-    ap.add_argument("--out", default=os.path.expanduser("~/clip_bench/variants.jsonl"))
-    ap.add_argument("--ref", default=os.path.expanduser("~/clip_bench/emb/siglip2_b32_mask_fp32.npy"))
+    ap.add_argument("--out", default=os.path.join(RA_BENCH, "variants.jsonl"))
+    ap.add_argument("--ref", default=os.path.join(RA_BENCH, "emb/siglip2_b32_mask_fp32.npy"))
     ap.add_argument("--bicubic", action="store_true")
     a = ap.parse_args()
     ref = np.load(a.ref) if os.path.exists(a.ref) else None

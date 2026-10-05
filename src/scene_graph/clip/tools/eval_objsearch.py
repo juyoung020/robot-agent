@@ -5,7 +5,7 @@ Queries are what a user would say for each GT category present in the map (e.g. 
 "refrigerator"); relevant objects = map objects matched to those categories. Absent queries name household objects that
 are NOT in the scene; any hit there is a false positive.
 
-    ~/clip_venv/bin/python eval_objsearch.py RUN_DIR [--mem COPY_OF_MEMORY] [--lib ~/sgclip_search_build/libsgclip_c.so]
+    python eval_objsearch.py RUN_DIR [--mem COPY_OF_MEMORY] [--lib build/sgclip/libsgclip_c.so]
             [--sweep] [--json OUT]
 
 Reports, for name-only search (step 2 disabled) and name + appearance re-search (default config):
@@ -22,6 +22,11 @@ import json
 import os
 import statistics
 import time
+RA_ROOT = os.environ.get("RA_ROOT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../.."))
+RA_MODELS = os.environ.get("OVDET_MODELS", os.path.join(RA_ROOT, "models/ovdet"))
+RA_EMBED = os.environ.get("RA_EMBED_WORK", os.path.join(RA_ROOT, "data/embed_work"))
+RA_BENCH = os.path.join(RA_ROOT, "data/clip_bench")
+RA_BUILD = os.environ.get("RA_BUILD", os.path.join(RA_ROOT, "build"))
 
 # what a user would say -> GT categories it should find
 CATEGORY_QUERIES = {
@@ -205,8 +210,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("run")
     ap.add_argument("--mem")
-    ap.add_argument("--lib", default="~/sgclip_search_build/libsgclip_c.so")
-    ap.add_argument("--labels", default=os.path.expanduser("~/embed_work/labels/objects-v1"))
+    ap.add_argument("--lib", default=os.path.join(RA_BUILD, "sgclip/libsgclip_c.so"))
+    ap.add_argument("--labels", default=os.path.join(RA_EMBED, "labels/objects-v1"))
     ap.add_argument("--sweep", action="store_true")
     ap.add_argument("--json")
     ap.add_argument("--verbose", action="store_true")
