@@ -79,6 +79,19 @@
 살펴본 정도(closest half, n_views u8, 고리 8 × 4 B, top 비트 u16 + 칸 상자 4 half), 놓침·움직임 값. **물체당 약 180 B, 판당 256 칸 46 KB(가정: 칸 수)**,
 N = 4,096 이면 189 MB. keyframe 블록은 이번 시야 근처 물체(상자가 카메라 3.5 m 원과 겹침)만 공유 메모리로 옮겨 다룬다(목록 ≤ 48, 넘치면 가까운 순).
 
+### 1.1 P1 상태(2026-10-06, 잰 값) — 물체 칸 16 그대로, 검출원 = 과제 물체 prim + 유령
+
+- 코드: `training/RL/map/include/percept.h`(흉내 층), `objprob_gpu.h`(합치기), `map.h`(Slot 에 objprob·살펴본 정도 값, 옛 이름 규칙 뺌 → `archive/training/RL/map/include/map_objmap_rules.h`).
+  목표 칸·완성도의 "참 물체 짝" 은 이름 대신 **주 출처 꼬리표**(앱·에이전트가 물체 id 를 준 것과 같은 뜻 — 이름 혼동과 무관). 토큰 이름 = objprob 이름 사후(모름 −1), 이름 확신도 2 = 고른 이름 사후·1위 − 2위.
+- `map_verify`(CPU == GPU 비트 동일, 모든 스텝): 상자 방 512 × 300 OK, BEHAVIOR `--stage 3 --curr 0.34,0.33` 512 × 300 OK, `--arm` OK. 음성 대조 모두 실패(정상):
+  `--negative`(확정 규칙) 30,248, `--negative-name`(같은 것 판정에서 생김새 cos 끔) 19,215, `--negative-merge`(병합에서 생김새 cos 끔) 16,317 낱말 다름(256 × 200, BEHAVIOR).
+- objprob 품질(정답 쪽, BEHAVIOR 섞음 판 끝 확정 칸 2,604): 유령 0.003, 같은 참 물체 중복 0.025, 섞임(w2 > 0.2) 0.003, 이름 맞음 0.930·상위어 0.010·모름 0.036·틀림 0.021,
+  가까이 본 거리 평균 0.40 m(C0 미리 채운 칸 포함), 시점 0.93. 상자 방: 유령 0.018, 중복 0.061, 이름 맞음 0.775·모름 0.140·틀림 0.068.
+- 속도(같은 GPU 에서 OmniGibson 비교가 도는 중 — 잡음 큼, nsys 표는 P8): BEHAVIOR N 4,096 자연 지도 단계 0.89–0.93 → 1.02–1.06 ms(약 +15 %), 환경+정책+지도 3.09–3.26e6 → 2.66–2.72e6 env-step/s.
+  keyframe 블록 공유 메모리 11.3 → 약 16 KB(Slot 172 → 316 B × 16). 늘어난 몫(`map_prof` 상자 방): 병합 판정 11k 사이클(바뀐 쌍만 다시 셈 — 결과 같음을 확인), 짝짓기·갱신 7k → 16k, 흉내 8k → 14k.
+  **+10 % 예산을 아직 넘는다** — P1b(물체를 전역 저장소로, keyframe 블록은 근처 물체만)에서 다시 줄이고 P8 에서 nsys 로 잰다.
+- 아직 안 한 것(P1b): 물체 저장소 256(전역) + 가구 전부 검출(깊이 광선 맞은 상자 번호), top_seen, 구조물 유령(R2), 문 줄(R4). `sm_tok_test` 의 "teacher grid sees the wall ahead" 1 실패는 바꾸기 전 판에도 있음(교사 격자는 P2 에서 뺌).
+
 ## 2. 인지 잡음 모형(ObjectSAM + SigLIP 2) — 맞출 값
 
 | 잡음 | 모형 | 처음 값(출처) | 맞출 것(BASELINE) |
@@ -132,6 +145,11 @@ N = 4,096 이면 189 MB. keyframe 블록은 이번 시야 근처 물체(상자�
   scenemap 에 물체별 이름 사후 상위 둘을 꺼내는 C ABI 가 필요(behavior-2026 별도 클론에서 `sm_snap_objprob`(id, name_p, second_p, K, n_whole) 더함 → 포인터 올림 → `sync_scene_graph.sh`).
 - **생김새의 한 정의**: 투영(μ). 실제 = `O<id>_emb.f16` 의 μ, GPU = R7 모형의 μ(같은 투영). 출처 원형 a(src) = 그 종류의 SigLIP 2 영상 원형:
   (1) og_replay 진짜 파이프라인이 낸 μ 를 정답 종류로 묶은 평균(BEHAVIOR 물체, OmniGibson 렌더 — 다른 에이전트 도구 결과를 읽기만), (2) 없으면 글 벡터 + 영상–글 평균 차(모달리티 차) **(가정)**.
+- **실제 런타임도 같이 바꿈**(코디네이터 10-06): 지금 실제 이름도 PE-L 길이다(`src/scene_graph/runtime/src/sgrt_clip.cpp`·`sgrt.cpp` 가 `embed_work/labels/objects-v1`(P 공간 라벨) + 머리 `h` 를 읽음).
+  P5 는 두 쪽을 함께: 라벨 표 = SigLIP 2 글 탑 + 레포의 고정 PCA(자료는 `config/paths.env` 변수 아래), 실제 이름 = SigLIP 2 영상 대 SigLIP 2 글, 학습 표(`vla_vocab.h`·`vec_tab.h`·`net.h`·BC `app_head.h`).
+  순서: ① 바꾼 뒤 실제 이름 품질 확인(OpenLORIS office1-5 `realbag_run` + `objprob_eval`: 찾음·중복·이름 정확도를 지금 값과) ② 그 뒤에만 PE-L 길을 `archive/`(training/embed 머리·P·한국어 학생 스크립트, 런타임 머리 `h` 코드). 가중치·작업 파일은 data/embed_work 에 둠(지우지 않음).
+- **objprob 계산 하나**(사용자 결정 10-06): scenemap `objprob.cpp` 와 `objprob_gpu.h` 가 같은 헤더 `src/scene_graph/scenemap/include/scenemap/objprob_math.h`(`__host__ __device__`, STL 없음)의
+  같은 것 로지스틱·이름 사후·상위어·κ·칼만·이름 분포 겹침을 부른다(자료 배치·묶음만 다름). 확인: realbag_run OpenLORIS office1-5 출력 바이트 같음(바꾸기 전후), 합성 검출 열로 CPU 대 GPU 맞춤 시험.
 - **이름 표**: `kVocab`·`kApLabels`(진짜 64 라벨) + BEHAVIOR 과제 synset 이름 → 표 행 하나로(빠진 24 개 포함). 레포 밖 `~/embed_work/labels/objects-v1` 의존은 표를 레포(`training/data/names_v2`)로 옮기고 만드는 스크립트를 레포 안에서 돌게.
 
 ## 6. 고정 창 → 집 전체(P6) — 점검 6

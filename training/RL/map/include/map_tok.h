@@ -398,7 +398,7 @@ DEV void tv_goal_slots(const MapCore& m, const BCtx* bxp, int& g0, int& g1) {
     if (!((m.conf_mask >> b) & 1)) continue;
     const Slot& S = m.slot[b];
     const float tx = S.pos[0] - tcx, ty = S.pos[1] - tcy, d2 = tx * tx + ty * ty;
-    if ((!beh || (bxp->bm->goal & 1)) && S.cls == (beh ? P.cls : (int)C_CUP) && d2 < thr * thr) {
+    if ((!beh || (bxp->bm->goal & 1)) && S.src == 0 && d2 < thr * thr) {
       if (S.state != S_GONE) { if (t0 < 0 || d2 < k0) { t0 = b; k0 = d2; } }
       else if (l0 < 0 || d2 < kl0) { l0 = b; kl0 = d2; }
     }
@@ -412,7 +412,7 @@ DEV void tv_goal_slots(const MapCore& m, const BCtx* bxp, int& g0, int& g1) {
       if (!((m.conf_mask >> b) & 1)) continue;
       const Slot& S = m.slot[b];
       const float ux = S.pos[0] - 0.5f * (P1.lo[0] + P1.hi[0]), uy = S.pos[1] - 0.5f * (P1.lo[1] + P1.hi[1]), u2 = ux * ux + uy * uy;
-      if (!(S.cls == P1.cls && u2 < th1 * th1)) continue;
+      if (!(S.src == 1 && u2 < th1 * th1)) continue;
       if (S.state != S_GONE) { if (b != t0 && (t1 < 0 || u2 < k1)) { t1 = b; k1 = u2; } }
       else if (b != l0 && (l1 < 0 || u2 < kl1)) { l1 = b; kl1 = u2; }
     }
@@ -521,7 +521,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
       ts.sk[b] = sqrtf(dx * dx + dy * dy);
       const float tx = S.pos[0] - tcx, ty = S.pos[1] - tcy, d2 = tx * tx + ty * ty;
       // 목표 물체(prim 0) 짝: BEHAVIOR 는 goal 비트 0 일 때만(점으로 가기면 물체 목표 없음). 사라진 칸은 따로(목표 칸의 마지막 자리)
-      const bool m0 = (!beh || (bxp->bm->goal & 1)) && S.cls == (beh ? P.cls : (int)C_CUP) && d2 < thr * thr;
+      const bool m0 = (!beh || (bxp->bm->goal & 1)) && S.src == 0 && d2 < thr * thr;
       ts.tk[b] = (m0 && S.state != S_GONE) ? d2 : -1.f;
       ts.tg[b] = (m0 && S.state == S_GONE) ? d2 : -1.f;
       ts.tk2[b] = -1.f;
@@ -532,7 +532,7 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
         for (int a = 0; a < 3; ++a) e1[a] = P1.hi[a] - P1.lo[a];
         const float th1 = maxf(MP::da_min, MP::da_k * max3(e1));
         const float ux = S.pos[0] - 0.5f * (P1.lo[0] + P1.hi[0]), uy = S.pos[1] - 0.5f * (P1.lo[1] + P1.hi[1]), u2 = ux * ux + uy * uy;
-        const bool m1 = S.cls == P1.cls && u2 < th1 * th1;
+        const bool m1 = S.src == 1 && u2 < th1 * th1;
         ts.tk2[b] = (m1 && S.state != S_GONE) ? u2 : -1.f;
         ts.tg2[b] = (m1 && S.state == S_GONE) ? u2 : -1.f;
       }
@@ -663,25 +663,12 @@ DEV void make_tokens_n(const MapCore& m, const uint32_t* occ, const uint32_t* se
       const int ok = beh ? broom_local(*bxp, S.pos[0], S.pos[1]) : room_of(m, S.pos[0], S.pos[1]);
       v[T_SAMEROOM] = (rrk >= 0 && ok == rrk) ? (uint16_t)0x3c00u : (uint16_t)0u;
       v[T_TARGET] = (b == tgt || b == tgt2) ? (uint16_t)0x3c00u : (uint16_t)0u;   // BEHAVIOR 집기·놓기: 집을 물체 + 놓을 곳
-      // 이름: 라벨 표 1위(지도 이름 = 틀린 이름 그대로)의 확신도 = 생김새(출처 참 물체 종류, 유령 = NCLS)와 이름 벡터의 코사인·1위 − 2위(vla_vocab.h).
-      // 1위 − 2위가 낮으면 상위어 행(VLA_INPUT 3절 "확신 낮으면 상위어")
-      if (beh) {   // BEHAVIOR: 종류 = 이름 표 행. 생김새 = 우리 렌더의 상자(행 1, 가정 — 종류별 생김새 행은 아직 없음), 유령 = NCLS
-        const bsc::SceneSet& ss = *bxp->ss;
-        const int app = S.src >= 0 ? (int)C_ITEM : NCLS;
-        const float cf1 = ss.conf1[app * ss.nname + S.cls], cf2 = ss.conf2[app * ss.nname + S.cls];
-        v[T_CONF1] = f2h(cf1);
-        v[T_CONF2] = f2h(cf2);
-        const int hy = ss.hyper[S.cls];
-        o.name_id[rank] = (int16_t)((cf2 < vlav::kConfLow && hy >= 0) ? hy : S.cls);
-        o.app_id[rank] = (int16_t)app;
-      } else {
-      const int app = S.src >= 0 ? m.prim[S.src].cls : NCLS;
-      const float cf1 = vlav::conf1(app, S.cls), cf2 = vlav::conf2(app, S.cls);
-      v[T_CONF1] = f2h(cf1);
-      v[T_CONF2] = f2h(cf2);
-      o.name_id[rank] = cf2 < vlav::kConfLow ? vlav::sim_hyper(S.cls) : vlav::sim_name(S.cls);
-      o.app_id[rank] = (int16_t)app;
-      }
+      // 이름 = objprob 이름 사후(Slot::cls — 문턱 넘은 라벨 행·상위어 행, 모름 −1 = 이름 벡터 0), 이름 확신도 2 = 고른 이름 사후·1위 − 2위 사후(GPU_MAP_PORT 5절 —
+      // 실제 쪽 sm_tok.h 도 같은 정의로 바꿈). 생김새 행: BEHAVIOR = 상자 한 행(C_ITEM, P5 에서 SigLIP 2 원형으로), 상자 방 = 주 출처 종류, 유령 = NCLS
+      v[T_CONF1] = f2h(S.name_p);
+      v[T_CONF2] = f2h(S.name_p - S.name_p2);
+      o.name_id[rank] = (int16_t)S.cls;
+      o.app_id[rank] = (int16_t)(S.src >= 0 ? (beh ? (int)C_ITEM : m.prim[S.src].cls) : NCLS);
     }
     if (write) tprev[b] = TPrev{{S.pos[0], S.pos[1], S.pos[2]}, (S.id << 16) | tag_now};
   }

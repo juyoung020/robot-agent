@@ -31,7 +31,7 @@ struct Rig {
     S.valid = 1; S.confirmed = 1; S.cls = cls; S.state = S_SEEN; S.held = 0; S.id = b + 1;
     for (int a = 0; a < 3; ++a) S.pos[a] = m.gp_m[a];
     S.ext[0] = wx; S.ext[1] = wy; S.ext[2] = wz;
-    vote_init(S, cls, 0.9f);
+    ap_init(S);
   }
   void step(float grip, int n) {
     for (int k = 0; k < n; ++k) { m.t += 1; e.q[5] = grip; hands_step(m, e); }

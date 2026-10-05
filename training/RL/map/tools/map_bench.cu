@@ -108,7 +108,7 @@ int main(int argc, char** argv) {
         gmap::prof_read(pr);
         static const char* nm[gmap::P_NSEC] = {"load core", "begin(odo/kf gate)", "reset clear", "ray cast+prefilter", "pose corr+detect(t0)",
                                                "association+update", "absence+prune", "obj vis points", "grid mark+complete", "grid apply",
-                                               "finish+metrics", "store core", "walls: group", "walls: rects+occ", "walls: clear", "walls: transpose", "walls: run count", "walls: prefix", "walls: runs", "tok: loads+keys", "tok: rays", "tok: target", "tok: segs+slots", "tok: room+out"};
+                                               "finish+metrics", "store core", "walls: group", "walls: rects+occ", "walls: clear", "walls: transpose", "walls: run count", "walls: prefix", "walls: runs", "tok: loads+keys", "tok: rays", "tok: target", "tok: segs+slots", "tok: room+out", "objprob merge pass"};
         const double nb = (double)(pr[gmap::P_NSEC] + pr[gmap::P_NSEC + 1]);
         double tot = 0;
         for (int k = 0; k < gmap::P_NSEC; ++k) tot += (double)pr[k];

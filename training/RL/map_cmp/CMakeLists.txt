@@ -27,7 +27,7 @@ target_compile_definitions(gmap_noiseoff PUBLIC MAP_NOISE_V=0)
 target_link_libraries(gmap_noiseoff PUBLIC cmp_env CUDA::cudart OpenMP::OpenMP_CXX)
 
 # 진짜 scenemap(읽기 전용 서브모듈 소스를 이 빌드 폴더에 빌드)
-set(SCENEMAP_DIR ${RL_DIR}/../../src/behavior-2026/src/scene_graph/scenemap CACHE PATH "scenemap source (LIMO 지원판)")
+set(SCENEMAP_DIR ${RL_DIR}/../../src/scene_graph/scenemap CACHE PATH "scenemap source (LIMO 지원판)")
 add_subdirectory(${SCENEMAP_DIR} ${CMAKE_BINARY_DIR}/scenemap EXCLUDE_FROM_ALL)
 
 add_executable(map_cmp tools/map_cmp.cpp)
