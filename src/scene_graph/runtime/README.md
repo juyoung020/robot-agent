@@ -53,7 +53,7 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 
 - 머리 RGB 는 GPU 텐서 그대로 넘긴다. 깊이는 keyframe(과 지도 스텝)에만 고정 메모리 버퍼로 내려받는다.
 - 관측에 머리 RGB-D 가 없으면 한 번 경고한다(`RGBDFullResWrapper` 를 쓸 것).
-- 쓰는 곳: `src/sim/move_robot/run_eval_move.py`, `src/sim/explore/run_explore.py`, `src/vla/pi05_native/glue/run_eval_native.py`.
+- 쓰는 곳: `src/sim/move_robot/run_eval_move.py`, `src/sim/explore/run_explore.py`.
 
 ## 로봇 고르기(R1 Pro · LIMO + OMX-F)
 

@@ -8,6 +8,8 @@
 물체 기억 C ABI `scenemap.h`·`sgrt.h`, 2025 2위 `refs/openpi-comet`, 팀 벤치마크 `refs/code/dynamic-object-mapping-benchmark`.
 추정은 "(추정)", 사용자가 정할 것은 "(결정 필요)"로 적었다.
 
+> **10-06**: π0.5 는 지웠다(behavior-2026 의 네이티브 엔진·가중치까지). VLA = RecallVLA (`training/vla`). 아래 π0.5 이야기는 그때 기록이다.
+
 ---
 
 ## 0. 한 줄 결론

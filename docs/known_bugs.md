@@ -29,11 +29,8 @@
 | `src/sim/engine/eval/` | `run_ported_engine.sh` |
 | `src/sim/engine/scripts/` | `build_replay.sh`, `gen_aos.py`, `gen_aos_test.py`, `gpu_lock.sh`, `linux_env.sh`, `setup_linux_official.sh` |
 | `src/sim/engine/tests/` | `articulation/` (`build.sh`, `l1_all.sh`, `ptxinfo.sh`, `run_gpu.sh`, `run_gpu_all.sh`, `run_gpu_regs.sh`, `snap.sh`, `snapneg.sh`, `sweep.sh`), `common/` (`run_sleef_trigf.sh`, `test_sleef_trigf.py`), `joints/` (`build.sh`, `run_cpu.sh`, `run_gpu.sh`, `run_gpu_sq.sh`), `omni/` (`build_omni.sh`, `gen_bddl_ref.py`, `run_gfmat.sh`, `run_obs.sh`, `test_gfmat.py`, `test_obs.py`), `particles/` (`build_particles.sh`, `capture_*.py`, `harvest_spawn.py`, `probe_load_order.py`, `run_*.sh`), `render/` (`build_render.sh`, `compare/build.sh`, `gpu_tests.sh`) |
-| `src/sim/fasteval/` | `pi05_chunk_server.py`, `verify_chunk_equivalence.py`, `replaysrv/verify.sh`, `replaysrv/verify_vs_python.py`, `tracecmp/verify_vs_python.sh` |
+| `src/sim/fasteval/` | `replaysrv/verify.sh`, `replaysrv/verify_vs_python.py`, `tracecmp/verify_vs_python.sh` |
 | `src/sim/integ/` | `build_simlink.sh`, `fk/fit_cam_fk.py` |
-| `src/vla/pi05_native/tools/` | `dump_reference.py`, `dump_reference_pb.py`, `export_pb_all.sh`, `export_weights.py`, `gemm_run.sh`, `make_inputs.py`, `make_pb_host_cases.py`, `pb_host_check.sh`, `run_dumps.sh`, `server_check.sh`, `server_client_test.py`, `server_protocol_test.py`, `session_verify.sh`, `tok_check.sh` |
-| `src/vla/pi05_train/tools/` | `aug_ref.py`, `make_state.py`, `session.sh`, `train_ref.py` |
-| `tools/` | `check_agent_hook.py`, `ft_gpu_suite.sh`, `ft_nvdec_util.sh`, `ft_run.sh`, `run_pi05_chunk_server.sh`, `run_pi05_server.sh`, `run_pi05_server_agent.sh`, `run_verify_chunk.sh`, `serve_b1k_agent.py` |
 | `src/agent/planner/src/` | `main.rs` (5 번) |
 
 다시 뽑기(서브모듈 안에서):

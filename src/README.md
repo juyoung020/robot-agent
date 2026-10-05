@@ -12,7 +12,7 @@
 | `agent/prompts/` | 스킬이 같이 쓰는 공통 프롬프트. [agent/prompts/README.md](agent/prompts/README.md) |
 | `vla/` | 우리 VLA(π0.5 아님, 10-04 버림): 지시 + 카메라 영상 + 지도 토큰 → 작은 계획·행동, 눈앞의 실패 복구. 지금은 README 만, 학습은 `training/BC` |
 | `app/` | 휴대폰 앱 (iOS·Android 네이티브). 카카오톡식 채팅으로 로봇에게 명령, 지금은 로봇1 만 |
-| `behavior-2026/` | 서브모듈 [juyoung020/behavior-2026](https://github.com/juyoung020/behavior-2026): BEHAVIOR Challenge 2026 작업(시뮬레이터 평가·π0.5 네이티브 엔진(그 저장소 것, 우리는 안 씀)·물체 기억). 받기: `git submodule update --init src/behavior-2026` |
+| `behavior-2026/` | 서브모듈 [juyoung020/behavior-2026](https://github.com/juyoung020/behavior-2026): BEHAVIOR Challenge 2026 작업(시뮬레이터 평가·물체 기억. 그 저장소의 π0.5 엔진은 10-06 지움). 받기: `git submodule update --init src/behavior-2026` |
 
 ## 물체 기억 (`scene_graph/`)
 

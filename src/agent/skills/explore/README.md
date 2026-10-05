@@ -49,9 +49,9 @@
 
 `decisions.jsonl` 의 `target_space`(known/unknown)와 `label.tags`(`goto_into_unknown`, `wasted_probe`, …)로 모델의 아는/모르는 판단이 맞았는지 센다.
 
-## VLA(π0.5) ↔ move_robot
+## VLA ↔ move_robot
 
-탐사는 베이스만이라 `move_robot` 만 쓴다. 전환 접점(`{"executor":"vla","skill":…}` → 평가기가 π0.5 엔진으로 `act()` 를 넘김)과 지금 상태(`unavailable`),
+탐사는 베이스만이라 `move_robot` 만 쓴다. 전환 접점(`{"executor":"vla","skill":…}` → LIMO 는 libmove_robot VLA 실행기, R1 은 `unavailable` — π0.5 엔진 길은 10-06 지움),
 쓰려면 필요한 것은 [`../../decision_log.md`](../../decision_log.md) 끝.
 
 ## 결과 (2026-10-03)
@@ -116,7 +116,7 @@ LLM go_to 의 timeout 대부분은 v2 판의 R5 되풀이(15 번)와 지도가 �
 
 ## 남은 것
 
-- 닫힌 문 뒤 방(1 층 집 정답의 24 %)은 베이스만으로는 못 간다 — 문 열기는 π0.5(VLA) 실행기 몫(`decision_log.md` 전환 접점).
+- 닫힌 문 뒤 방(1 층 집 정답의 24 %)은 베이스만으로는 못 간다 — 문 열기는 VLA 실행기 몫(`decision_log.md` 전환 접점).
 - 맨 끝에 못 가는 방에 두 번은 시도한다(방 목표가 좁은 곳에 잡힘). 방 목표도 프런티어처럼 넓은 칸으로 잡거나 "path through doorway too narrow" 를 미리 알려 줄 것.
 - 1 층 집 복도로 들어가는 길이 판마다 열리기도 안 열리기도 한다(문틀 너비 ≈ 몸통 + 여유, 지도 잡음) — PLACES 층(병목 여유가 변 무게, `sm_snap_place_path`)으로 계획하면 판단이 쉬워질 것.
 - 시뮬은 `SGRT_POSE=gt` 로 쟀다. `slam` 자세(실제 로봇 기본)에서 같은 지표를 다시 재야 한다(시뮬 odom wz 가 약 40 % 크다는 보고).
