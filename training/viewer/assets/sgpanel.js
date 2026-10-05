@@ -30,7 +30,7 @@ export class SgPanel {
     // 같은 페이지를 다시 쓰면 sgview 가 상태를 이어 붙이므로 새로 띄움(옮김은 SSE reset 으로).
     // 사람이 맞춘 시점·켜고 끔은 같은 실행의 다른 판으로 옮겨도 이어 감(저장 → 새 iframe 에 되돌림)
     this.saveView(run);
-    this.host.innerHTML = "";
+    this.host.innerHTML = ""; this.$("rp_cams").innerHTML = "";
     const f = document.createElement("iframe");
     f.src = "/sg/?k=" + Math.random().toString(36).slice(2);
     f.style.cssText = "width:100%;height:100%;border:0;display:block";
@@ -70,18 +70,31 @@ export class SgPanel {
     this.$("rp_hud").textContent = `${m.skill || "?"} · ${m.task || ""} · ${ul.scene || m.home || ""}\n` +
       `${m.skill === "layout" ? "BEHAVIOR house layout (RASC v3) — no episode, robot at the task start pose" : i.has_policy_map ? "GPU env episode → real scenemap (" + (m.driver || "") + ")" + (this.pmOn ? " · orange = policy map (G2)" : "") : i.kind === "sg" ? "OmniGibson LIMO explore (real sim record → scenemap replay)" : "GPU env episode (G2 map, " + (m.driver || "") + ")"}\n` +
       `t ${st.t.toFixed(1)} s / ${st.duration.toFixed(1)} s` + (m.gt_cov != null ? `   final coverage ${fmt(m.gt_cov, 1)}` : "") + (m.path_m != null ? `   path ${fmt(m.path_m)} m` : "") +
-      (m.skill === "layout" ? "" : `\nGT path green · SLAM path blue (sgview)`);
+      (m.skill === "layout" ? "" : `\nGT path green · SLAM path blue (sgview)`) + (this.$("rp_hud").dataset.pipe ? `\n${this.$("rp_hud").dataset.pipe}` : "");
     this.drawGt(st.t);
     if (this.pmOn) this.drawPolicyMap(st.t);
     if (this.onTime) this.onTime(st.t);
-    // 카메라 그림(몸통 카메라, 2 Hz)
-    const cams = i.cams || [];
-    if (cams.length) {
-      let best = cams[0]; for (const c of cams) { if (c.t <= st.t) best = c; else break; }
+    // 카메라 그림 두 장(RecallVLA 입력 RGB 둘): LIMO 몸통(eyes) · 손목(wrist_eye) — 2 Hz 기록, 시간 막대와 같은 시각. 끄고 켜기·크기 조절(오른쪽 아래 모서리 끌기)
+    this.updatePips(st.t);
+  }
+  pipOn(k) { const el = this.$("rp_cam_" + k); return !el || el.checked; }
+  setPip(k, on) { this.pipShow = this.pipShow || {}; this.pipShow[k] = on; this.updatePips(this.state ? this.state.t : 0); }
+  updatePips(t) {
+    const i = this.info || {}, host = this.$("rp_cams");
+    for (const [k, title, list] of [["body", "LIMO RGB", i.cams || []], ["wrist", "wrist RGB", i.wcams || []]]) {
+      let el = host.querySelector(`.pip[data-k="${k}"]`);
+      if (!list.length || !this.pipOn(k)) { if (el) el.remove(); continue; }
+      if (!el) {
+        el = document.createElement("div"); el.className = "pip"; el.dataset.k = k;
+        el.innerHTML = `<div class="pt">${title} <span class="pts"></span></div><img>`;
+        host.appendChild(el);
+      }
+      let best = list[0]; for (const c of list) { if (c.t <= t) best = c; else break; }
       const url = `/api/sg/cam?run=${encodeURIComponent(this.run)}&stream=${encodeURIComponent(this.stream)}&id=${encodeURIComponent(this.id)}&file=${encodeURIComponent(best.file)}`;
-      const h = `<img src="${url}" title="body camera t ${best.t.toFixed(1)} s">`;
-      if (this.$("rp_cams")._h !== h) { this.$("rp_cams").innerHTML = h; this.$("rp_cams")._h = h; }
-    } else if (this.$("rp_cams")._h) { this.$("rp_cams").innerHTML = ""; this.$("rp_cams")._h = ""; }
+      const img = el.querySelector("img");
+      if (img.dataset.f !== best.file) { img.dataset.f = best.file; img.src = url; }
+      el.querySelector(".pts").textContent = `t ${best.t.toFixed(1)} s`;
+    }
   }
 
   // ---------------------------------------------------------------- iframe 안 덧그림

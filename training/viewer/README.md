@@ -3,7 +3,7 @@
 설계는 [docs/map_vla/TRAIN_VIEWER.md](../../docs/map_vla/TRAIN_VIEWER.md). 학습이 도는 동안 브라우저로 본다. 탭 셋: **Training**(카드·건강 검사·곡선·표), **Replay**(판 하나를 sgview 화면으로), **Compare**(실행 여럿, 씨앗 묶음 띠).
 
 - 서버는 Rust(std `TcpListener` + 연결마다 스레드, `serde_json`·`flate2` — sgview 틀). **읽기 전용**: 실행 폴더의 파일만 읽는다.
-- 화면은 순수 JS(ES 모듈, 빌드 단계 없음). 곡선은 캔버스에 직접. Replay 는 sgview 페이지(`src/scene_graph/sgview/assets/index.html`)를 **고치지 않고** iframe 으로 띄운다. three.js·로봇 GLB·sgview 페이지·벽 계산 C++ 는 `build.rs` 가 읽기만 해서 바이너리에 넣는다.
+- 화면은 순수 JS(ES 모듈, 빌드 단계 없음). 곡선은 캔버스에 직접. Replay 는 **진짜 sgview**(`src/scene_graph/sgview`, 실시간에 쓰는 같은 바이너리)를 세션마다 프로세스로 띄우고 iframe 으로 보여 준다(서버가 같은 출처로 역프록시). 화면은 sgview 그대로 — 재생 조종·판 목록·덧그림·입력 패널은 그 바깥(이 폴더)에서 더한다. 흉내 코드 없음.
 - 쓰는 쪽(학습기)과 읽는 쪽이 같이 쓰는 형식은 `trainfmt/` 크레이트 한 곳(실행 폴더·progress 키·`.trp`·재생 자동 기록 hook).
 
 ## 빌드·실행
@@ -61,7 +61,7 @@ target/release/trainview --root ~/trainview_work/smoke_v2 --root ~/trainview_wor
 | OmniGibson LIMO 탐사 | `tools/og2sg` (C++) | sgrt 기록 `rec.bin` → scenemap 재실행 → 스트림·메모리·몸통 카메라 JPEG·GT 궤적. `tools/run_explore_live.sh` 를 `TRAINVIEW_OG=1` 로 돌리면 판 끝에 자동(→ `~/trainview_work/behavior_og/<판>`) |
 | BEHAVIOR 집 배치 | `og2sg --layout --rasc <장면>.rasc` | 다닐 곳 격자(집만)·방 노드·과제 첫 인스턴스 시작 자세·바탕 층(RASC v3) |
 
-- 재생 화면 서버(`src/sg.rs`)가 sgview 의 실시간 경로(`/api/mode`·`/stream`·`/file/`·`/api/robot`)를 판 재생으로 흉내(세션 쿠키 `sgsess`, 옮기면 `reset` + 그 시각 스냅숏). `.trp` 만 있는 옛 판도 같은 화면(점구름 없는 물체는 상자).
+- 재생 서버(`src/sg.rs`): 세션(쿠키 `sgsess`)마다 `sgview <memory> --ingest` 한 개 + `sgs_play --ctl`(보내는 쪽, behavior-2026 `tools/realbag`) 한 개를 띄우고, 시간 조종(seek·재생·속도)은 sgs_play 표준입력으로(seek = 새 ingest 연결 → sgview 가 reset + 기록 앞부분을 다시 받음). 동시 2 세션, 90 s 안 쓰면 끔, 서버 시작 때 남은 프로세스는 `~/trainview_work/run/sgview_pids` 로 정리. `.trp` 만 있는 GPU 환경 판은 같은 스트림 형식(SGS1)으로 바꿔 같은 길로 재생(점구름 없는 물체는 상자).
 - 짝(과제 → 장면): turning_on_radio = house_double_floor_lower, bringing_water = house_single_floor.
 
 ## BEHAVIOR 집기·놓기 판 (2026-10-05)
@@ -153,7 +153,8 @@ cmake -S training/viewer/tools/og2sg -B ~/ra_og2sg && cmake --build ~/ra_og2sg -
 | `/api/meta`, `/api/progress`, `/api/episodes`, `/api/table`, `/api/evals`, `/api/events` | run.json, 열(키 목록·고른 키·`max_points` 솎기, 옛 키는 새 이름으로), 판 줄, 성공 표, 평가 표, events.txt |
 | `/api/replays`, `/api/replay` | 재생 판 목록(`.sg`·`.trp` 머리 meta), `.trp` 바이트(3D classic) |
 | `/api/live` | SSE: progress·reset·episodes·replay·runs·**status** |
-| `/sg/`, `/stream`, `/file/`, `/api/mode`, `/api/robot` | Replay 의 sgview 화면(sgview 페이지 그대로)과 그 실시간 경로 |
+| `/sg/`, `/stream`, `/file/`, `/api/map`·`view`·`walls`·`depth`·`mode`·`robot` | 세션의 진짜 sgview 로 역프록시(쿠키 `sgsess`) |
+| `/api/sg/ctl`, `/api/sg/info`, `/api/sg/pipeline`, `/api/sg/rerun` | 재생 조종(sgs_play), 부모 화면 정보, 지금 인지 소스 해시, "stale pipeline" 다시 돌리기(og_queue 맨 앞) |
 | `/api/sg/ctl`, `/api/sg/info`, `/api/sg/cam`, `/api/sg/policymap` | 재생 세션(판·시각·재생·속도), 판 정보(GT 궤적·바탕 층·카메라·관절 순서), 카메라 그림, 정책 지도(시각 t) |
 
 ## 확인한 것 (2026-10-04)
@@ -181,3 +182,12 @@ cmake -S training/viewer/tools/og2sg -B ~/ra_og2sg && cmake --build ~/ra_og2sg -
 - GPU 판 RGB 는 면 음영(물체 종류 색) — 팀 RenderBatch 에 id 버퍼가 생기면 그 RGB 로.
 - 원래 BEHAVIOR 레이아웃 PNG 바닥 텍스처는 안 씀(RASC 방 격자 색칠).
 - og2sg: 원래 실행 프롬프트 표가 기록에 없어 짝 못 지은 검출은 `cls<k>`.
+
+## 장면 그래프 소스를 따라가는 규칙 (build_deps.sh)
+
+인지(scenemap·objprob·ObjectSAM·SigLIP 2·libsgrt)와 sgview 는 **behavior-2026 `src/scene_graph` 가 원본**이고, 학습 뷰어·OG 다시 돌리기는 그걸 그대로 쓴다 — 복사·갈래·옛 빌드 없음.
+
+- 진입점: **`training/viewer/build_deps.sh`** — libsgrt·sgview·sgs_play·og2sg·trainview 를 robot-agent 소스에서 `-j4` 로 빌드해 `$TRAINVIEW_DEPS`(기본 `~/trainview_work/deps`)에 링크한다. `og_replay.py`/`og_replay.sh`/trainview 는 거기서만 찾는다(개인 빌드 경로 박지 않음). 엔진·objprob 기본값은 `runtime`(`objprob_front.hpp` kDefaultEngine · `sgrt_glue.py` ENGINE)에서 읽고 여기서 정하지 않는다.
+- 소스를 고친 뒤: behavior-2026 에서 고침 → 서브모듈 포인터 올림 → `tools/sync_scene_graph.sh` → `build_deps.sh` → trainview 다시 띄움. 그 뒤 재생 화면은 새 sgview 로, 새로 도는 OG 판은 새 인지로 나온다.
+- 각 `_og.sg/meta.json` 의 `pipeline` 에 만든 소스(git 해시, scenemap·runtime·ovdet·clip·da 트리 해시), 엔진, objprob 매개변수 파일·해시, libsgrt 시각을 적는다. 재생 화면 HUD 에 표시하고, 지금 소스와 트리 해시가 다르거나 기록이 없으면 **"stale pipeline — re-run"** 단추: 눌러 og_queue 맨 앞에 다시 넣는다(옛 판은 `*.sg.prev` 로 비켜 둠).
+- 손목 카메라: `og_replay.py` 가 LIMO RGB(`cam/NNNNNN.jpg`, `meta.cams`)와 OMX-F 손목 RGB(`cam/wNNNNNN.jpg`, `meta.wcams`, 로봇 모델의 `wrist_eye` 센서 = URDF `wrist_cam_link`, 화각은 모델 기본값)를 2 Hz 로 함께 기록한다. Replay 에서 `LIMO RGB`·`wrist RGB` 그림 위 그림(켜고 끔, 모서리 끌어 크기 조절).

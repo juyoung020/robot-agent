@@ -100,6 +100,8 @@
         <select id="rp_camsel" title="camera (keys 1–4)"><option value="1">1 top-down</option><option value="2">2 follow</option><option value="3">3 wrist</option><option value="4" selected>4 free orbit</option></select>
         <label><input type="checkbox" id="rp_ee" checked> end-effector path</label>
         <label><input type="checkbox" id="rp_slam" checked> SLAM pose path</label>
+        <label title="LIMO 몸통 카메라 RGB(지도를 만드는 입력, RecallVLA 입력 1) — 화면 왼쪽 아래, 모서리를 끌어 크기 조절"><input type="checkbox" id="rp_cam_body" checked> LIMO RGB</label>
+        <label title="OMX-F 손목 카메라 RGB(RecallVLA 입력 2) — 화면 왼쪽 아래, 모서리를 끌어 크기 조절"><input type="checkbox" id="rp_cam_wrist" checked> wrist RGB</label>
         <label title="BEHAVIOR 집 배치(방 바닥·벽·가구·놓을 곳·집을 것) 바탕 층"><input type="checkbox" id="rp_ul" checked> house layout</label>
         <label title="정책이 본 지도(GPU 근사판 G2) — sgview 의 진짜 scenemap 지도 위에 반투명 주황으로 겹침"><input type="checkbox" id="rp_pmap"> policy map</label>
         <label title="정책 입력 패널(오른쪽): 목표 칸·몸 상태·지도 물체 칸·방향 구역·행동 대 교사 라벨·특권 상태·과제 조건"><input type="checkbox" id="rp_inon" checked> inputs</label>

@@ -74,6 +74,7 @@ export class Replay {
     for (const [id, k] of [["rp_envbox", "env"], ["rp_cond", "cond"], ["rp_feas", "feas"]]) $(id).onchange = e => { this.sg.setOv(k, e.target.checked); if (this.ov && this.ov[k]) { this.ov[k].visible = e.target.checked; this.dirty = true; } };
     $("rp_mode").onchange = e => { this.mode = e.target.value; const f = this.file; if (f) this.open(f); };
     $("rp_ul").onchange = e => this.sg.setUnderlay(e.target.checked);
+    for (const k of ["body", "wrist"]) $("rp_cam_" + k).onchange = e => this.sg.setPip(k, e.target.checked);
     $("rp_pmap").onchange = e => this.sg.setPolicyMap(e.target.checked);
     $("rp_ckpt").onchange = () => { const i = this.ckList.indexOf($("rp_ckpt").value); if (i >= 0) $("rp_ckslide").value = i; this.renderList(); };
     $("rp_ckslide").oninput = e => { $("rp_ckpt").value = this.ckList[+e.target.value] || ""; this.renderList(); };
@@ -235,7 +236,7 @@ export class Replay {
       this.gEp.clear();
       this.robot.visible = false;
     }
-    this.$("rp_hud").textContent = ""; this.$("rp_cams").innerHTML = ""; this.$("rp_empty").hidden = false;
+    delete this.$("rp_hud").dataset.pipe; this.$("rp_hud").textContent = ""; this.$("rp_cams").innerHTML = ""; this.$("rp_empty").hidden = false;
     this.inputs.clear(); this.$("rp_badge").hidden = true; this.ov = null;
     this.$("rp_time").max = 0; this.$("rp_tlabel").textContent = ""; this.$("rp_play").textContent = "▶";
     const cv = this.$("rp_strip"); cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
@@ -250,7 +251,7 @@ export class Replay {
     for (const id of ["rp_strip", "rp_legend"]) this.$(id).style.display = on ? "none" : "";
     // 3D classic 전용 조작은 sgview 화면에서 숨김(sgview 자체 패널에 시점·궤적 켜고 끔이 있음)
     for (const id of ["rp_camsel", "rp_ee", "rp_slam"]) { const el = this.$(id); (el.closest("label") || el).style.display = on ? "none" : ""; }
-    for (const id of ["rp_ul", "rp_pmap", "rp_mesh"]) { const el = this.$(id); el.closest("label").style.display = on ? "" : "none"; }
+    for (const id of ["rp_ul", "rp_pmap", "rp_mesh", "rp_cam_body", "rp_cam_wrist"]) { const el = this.$(id); el.closest("label").style.display = on ? "" : "none"; }
     if (!on) this.sg.close();
   }
   async open(file) {
@@ -300,6 +301,22 @@ export class Replay {
     else if (m.pipeline === "raycast_approx") txt = "APPROXIMATE: ray-cast scene meshes + perfect detection (OmniGibson replay pending)";
     else if (head && head.scene && head.scene.world) txt = "NOT our perception — house mesh / boxes / names = GT scene, object#N boxes = GPU env policy map (GT-derived); real-pipeline OmniGibson replay: see REAL episodes";
     b.hidden = !txt; b.textContent = txt; b.classList.toggle("real", real);
+    if (real && info) this.pipelineBadge(b, info.pipeline);
+  }
+  // 이 판을 만든 인지 소스(meta.pipeline: scene_graph 트리 해시·엔진·objprob 매개변수)를 지금 소스와 견줘 "stale pipeline" 표시 + 한 번에 다시 돌리기(og_queue 맨 앞)
+  async pipelineBadge(b, pl) {
+    let now = {}; try { now = await (await fetch("/api/sg/pipeline")).json(); } catch (e) {}
+    const trees = (pl && pl.trees) || {}, nt = now.trees || {};
+    const diff = !pl || Object.keys(nt).some(k => trees[k] !== nt[k]);
+    const desc = pl ? `pipeline ${String(pl.git || "?").slice(0, 7)} · ${pl.engine || "?"} · ${pl.objprob_params || "no params"} ${pl.objprob_params_sha || ""}` : "pipeline unknown (older episode)";
+    this.$("rp_hud").dataset.pipe = desc;
+    const sp = document.createElement("span"); sp.textContent = " · " + desc; sp.style.fontWeight = "400"; b.appendChild(sp);
+    if (diff) {
+      const a = document.createElement("button"); a.textContent = "stale pipeline — re-run"; a.style.cssText = "margin-left:8px;background:#ffd6d6;border:1px solid #d33;border-radius:10px;font-size:12px;cursor:pointer";
+      a.title = "scene_graph source changed since this episode was made (or it has no pipeline record). Queues a re-run through og_queue (front of the queue); the old episode is kept as *.sg.prev until the new one is ready.";
+      a.onclick = async () => { const r = await (await fetch(`/api/sg/rerun?run=${encodeURIComponent(this.run)}&stream=${encodeURIComponent(this.$("rp_stream").value || "main")}&id=${encodeURIComponent(this.file)}`)).json(); a.textContent = r.ok ? "queued (see og_queue)" : (r.error || "failed"); a.disabled = true; };
+      b.appendChild(a);
+    }
   }
   build() {
     const tr = this.tr, H = tr.head, G = this.gEp, v = tr.v;

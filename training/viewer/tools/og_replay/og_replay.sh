@@ -48,7 +48,7 @@ rc=$?
 kill $WD 2>/dev/null
 if [ -f "$OUT/meta.json" ]; then
   read -r RASC TASK <<<"$SCENE"
-  "${OG2SG:-$HOME/ra_og2sg/og2sg}" --underlay "$OUT/underlay.json" --rasc "$RASC" --task "$TASK" || true
+  "${OG2SG:-${TRAINVIEW_DEPS:-$HOME/trainview_work/deps}/og2sg}" --underlay "$OUT/underlay.json" --rasc "$RASC" --task "$TASK" || true
   echo "[og_replay] done rc=$rc -> $OUT"
   exit 0
 fi

@@ -137,12 +137,8 @@ fn handle(mut s: TcpStream, app: Arc<App>) {
     let Some(req) = http::read_request(&s) else { return };
     let gz = req.gzip;
     let p = req.path.as_str();
-    // 재생 탭의 sgview(iframe): sgview 페이지를 그대로, 그 실시간 경로를 판 재생으로
-    if p == "/stream" {
-        let sess = sg::cookie_sess(&req);
-        return sg::serve_stream(s, app.sg.clone(), sess);
-    }
-    if sg::handle_sgview(&mut s, &req, &app.sg, asset("sgview_index.html").unwrap_or(b"no sgview page")) {
+    // 재생 탭의 sgview(iframe): 이 세션의 진짜 sgview 프로세스로 그대로 넘김(src/sg.rs)
+    if sg::proxy(&mut s, &req, &app.sg) {
         return;
     }
     match p {
@@ -289,10 +285,21 @@ fn handle(mut s: TcpStream, app: Arc<App>) {
             });
             http::json(&mut s, &body, gz);
         }
+        "/api/sg/pipeline" => http::json(&mut s, &sg::pipeline_now().to_string(), gz),
+        "/api/sg/rerun" => {
+            let Some(r) = run_of(&app, &mut s, &req) else { return };
+            let Some(st) = stream_of(&mut s, &req) else { return };
+            let id = req.get("id");
+            if !trainfmt::safe_name(id) {
+                return http::bad(&mut s, "bad id");
+            }
+            let body = sg::rerun(&runs::stream_dir(&r.dir, &st).join("replays"), id);
+            http::json(&mut s, &body.to_string(), false);
+        }
         "/api/sg/info" => {
             // 부모 화면용: 참 궤적, 바탕 층(BEHAVIOR 집), 카메라 그림 목록, 관절 순서
             let sess = req.get("sess").to_string();
-            let info = app.sg.lock().unwrap().sess.get(&sess).map(|x| json!({"info": x.ep.info, "duration": x.ep.duration, "frames": x.ep.frames.len()}));
+            let info = app.sg.lock().unwrap().sess.get(&sess).map(|x| json!({"info": x.ep.info, "duration": x.ep.duration, "frames": x.ep.n_frames}));
             http::json(&mut s, &info.unwrap_or(json!({"error": "no session"})).to_string(), gz);
         }
         "/api/sg/policymap" => {
@@ -370,6 +377,7 @@ fn main() {
         }
         rs.push(Root { label, path: p });
     }
+    sg::kill_leftovers();
     let app = Arc::new(App {
         roots: rs,
         runs: Mutex::new((Instant::now(), Arc::new(vec![]))),
@@ -381,6 +389,7 @@ fn main() {
         sg: Arc::new(Mutex::new(sg::SgState::default())),
         archive: Mutex::new(runs::Archive::new(PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")), archive_before)),
     });
+    { let st = app.sg.clone(); std::thread::spawn(move || loop { std::thread::sleep(std::time::Duration::from_secs(15)); sg::gc(&st); }); };
     let l = TcpListener::bind((bind.as_str(), port)).unwrap_or_else(|e| {
         eprintln!("cannot listen on {}:{}: {}", bind, port, e);
         std::process::exit(1);

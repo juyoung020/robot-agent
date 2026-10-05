@@ -31,7 +31,7 @@ REPO = os.path.abspath(os.path.join(HERE, "../../../.."))
 B26 = os.path.join(REPO, "src/behavior-2026")
 B1K = os.environ.get("B1K_ROOT", os.path.join(B26, "BEHAVIOR-1K"))
 TI = os.path.join(B1K, "datasets/2026-challenge-task-instances")
-OG2SG = os.environ.get("OG2SG", os.path.expanduser("~/ra_og2sg/og2sg"))
+DEPS = os.environ.get("TRAINVIEW_DEPS", os.path.expanduser("~/trainview_work/deps"))   # build_deps.sh 가 robot-agent 소스에서 만들어 링크해 둔 곳
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--trp", required=True)
@@ -155,7 +155,7 @@ os.environ.setdefault("SGRT_ROBOT", "limo_omx")
 os.environ.setdefault("SGRT_POSE", "slam")
 os.environ.setdefault("SGRT_IMAGE_LAG", "0")   # 이 스텝 자세에서 바로 렌더한 그림
 os.environ.setdefault("SGRT_INSPECT", "1")
-os.environ.setdefault("SGRT_LIB", os.path.expanduser("~/sgrt_build_explore/libsgrt.so"))
+os.environ.setdefault("SGRT_LIB", os.path.join(DEPS, "libsgrt.so"))
 os.environ.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -247,6 +247,13 @@ for n, s in r.sensors.items():
         s.horizontal_aperture = 2.0 * float(s.focal_length) * math.tan(math.radians(67.9) / 2.0)
         eyes = s
 assert eyes is not None, list(r.sensors)
+# 손목 카메라(OMX-F link5 안 카메라 = limo_omx_source_config.yaml 의 wrist_eye, URDF wrist_cam_link): 화각은 모델 기본값(실제 내부 변수는 알려지지 않음 — map_vla.urdf.xacro)
+wrist = None
+for n, s in r.sensors.items():
+    if ":wrist_eye:" in n:
+        wrist = s
+if wrist is None:
+    print(f"[og_replay] WARNING no wrist_eye sensor ({list(r.sensors)}) — wrist frames skipped", flush=True)
 JN = {n: jt for n, jt in r.joints.items()}
 ARMJ = [JN[f"omx_joint{k}"] for k in range(1, 6)]
 GJ = [JN["omx_gripper_joint_1"], JN["omx_gripper_joint_2"]]
@@ -314,7 +321,7 @@ mem = SceneMemory(W["task"] or "pick", out + "/memory", kf_every=a.kf, robot_mod
 mem.robot = r
 L, H = mem.L, mem.h
 prop = np.zeros(12, np.float32)
-gt, camj = [], []
+gt, camj, wcamj = [], [], []
 last_cam = -1e9
 n_kf = 0
 dt = float(head.get("dt", 0.1))
@@ -347,6 +354,11 @@ for si, f in enumerate(steps):
             fn = f"cam/{len(camj):06d}.jpg"
             im.save(os.path.join(out, fn), quality=80)
             camj.append({"t": round(stamp, 3), "file": fn})
+            if wrist is not None:   # 손목 RGB 도 같은 시각에(cam/w000000.jpg)
+                wo = wrist.get_obs()[0]["rgb"][..., :3].cpu().numpy().astype(np.uint8)
+                wfn = f"cam/w{len(wcamj):06d}.jpg"
+                Image.fromarray(wo).resize((256, 256 * wo.shape[0] // wo.shape[1])).save(os.path.join(out, wfn), quality=80)
+                wcamj.append({"t": round(stamp, 3), "file": wfn})
             last_cam = stamp
     if want:
         rgb_np = np.ascontiguousarray(rgb.cpu().numpy(), np.uint8)
@@ -366,6 +378,28 @@ print(f"[og_replay] perception: {st}; stream frames {cap.frames} {cap.by_type}",
 
 # ---------------------------------------------------------------------------------------------------------------------
 # 판 폴더 마무리: meta.json · underlay.json · episode.trp(정책 지도 창 → 세계)
+import hashlib  # noqa: E402
+import sgrt_glue as _sg  # noqa: E402
+
+
+def pipeline_info():
+    """이 판을 만든 인지 파이프라인(장면 그래프 소스의 어느 판인가) — 뷰어가 지금 소스와 견줘 "stale pipeline" 을 표시. 소스·엔진 기본값은 거기서 읽는다(여기서 정하지 않음)."""
+    sg26 = os.path.join(B26, "src/scene_graph")
+    def git(*x):
+        try:
+            return subprocess.check_output(["git", "-C", B26, *x], stderr=subprocess.DEVNULL, text=True).strip()
+        except Exception:
+            return ""
+    trees = {d: git("rev-parse", f"HEAD:src/scene_graph/{d}") for d in ("scenemap", "runtime", "ovdet", "clip", "da")}
+    eng = str(getattr(_sg, "ENGINE", ""))
+    stem = os.path.basename(eng).replace(".plan", "")
+    pf = os.path.join(sg26, "tools/realbag/objprob_params", stem + ".json")
+    psha = hashlib.sha256(open(pf, "rb").read()).hexdigest()[:12] if os.path.exists(pf) else ""
+    lib = os.environ.get("SGRT_LIB", "")
+    return dict(git=git("rev-parse", "HEAD"), trees=trees, engine=os.path.basename(eng), objprob_params=os.path.basename(pf) if psha else "", objprob_params_sha=psha,
+                libsgrt_mtime=int(os.path.getmtime(os.path.realpath(lib))) if lib and os.path.exists(lib) else 0)
+
+
 meta = dict(head.get("meta", {}))
 base = os.path.basename(out)
 meta.update(replay=base, pipeline="og_real", source_trp=os.path.basename(a.trp), perception="ObjectSAM yolo26n-seg-obj-416 + SigLIP 2 + scenemap objprob",
@@ -388,7 +422,7 @@ th = -gt[0][3]
 cth, sth = math.cos(th), math.sin(th)
 mtx, mty = -(cth * gt[0][1] - sth * gt[0][2]), -(sth * gt[0][1] + cth * gt[0][2])
 gt = [[g[0], cth * g[1] - sth * g[2] + mtx, sth * g[1] + cth * g[2] + mty, g[3] + th] for g in gt]
-mj = dict(format="SGS1", meta=meta, robot="limo_omx", map_from_world=[cth, sth, mtx, mty], gt_path=gt, labels={}, cams=camj, duration=dur,
+mj = dict(format="SGS1", pipeline=pipeline_info(), meta=meta, robot="limo_omx", map_from_world=[cth, sth, mtx, mty], gt_path=gt, labels={}, cams=camj, wcams=wcamj, duration=dur,
           policy_trp="episode.trp", window_origin=[wx, wy], world=W,
           joint_order=["", "", "", "", "", "", "omx_joint1", "omx_joint2", "omx_joint3", "omx_joint4", "omx_joint5", "omx_gripper_joint_1"],
           n_objects=st.get("objects"), stream=dict(frames=cap.frames, pose=cap.by_type[1], map=cap.by_type[2], view=cap.by_type[3], joints=cap.by_type[4]),

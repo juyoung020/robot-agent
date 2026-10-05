@@ -10,6 +10,7 @@ pub struct Req {
     pub q: HashMap<String, String>,
     pub gzip: bool,
     pub cookie: String,
+    pub target: String,   // 요청 줄의 경로+질의 원문(sgview 로 넘길 때)
 }
 
 impl Req {
@@ -50,7 +51,7 @@ pub fn read_request(s: &TcpStream) -> Option<Req> {
         Some(i) => (&target[..i], &target[i + 1..]),
         None => (target, ""),
     };
-    Some(Req { path: percent_decode(path), q: parse_query(query), gzip, cookie })
+    Some(Req { path: percent_decode(path), q: parse_query(query), gzip, cookie, target: target.to_string() })
 }
 
 pub fn respond(s: &mut TcpStream, code: u16, ctype: &str, body: &[u8], gzip_ok: bool) {

@@ -1,24 +1,21 @@
-// 재생 탭의 sgview 화면 — sgview(장면 그래프 실시간 뷰어, src/scene_graph/sgview)의 index.html 을 고치지 않고 그대로 iframe 에 띄우고,
-// 이 서버가 sgview 의 실시간 경로(/api/mode → live, /stream SSE, /file/, /api/robot)를 판 하나의 시각에 맞춰 흉내 낸다.
+// 재생 탭의 sgview 화면 — **진짜 sgview**(src/scene_graph/sgview, 실시간에 쓰는 같은 바이너리·같은 서버 코드)를 쓴다. 흉내 내지 않는다.
 //
-//   판 = OmniGibson 기록에서 og2sg 가 만든 <이름>.sg/ (scenemap 이 보낸 sgview 스트림 프레임 + 시뮬 시각) 또는
-//        GPU 환경 판 .trp (지도 MAP_RECT · 자세 · 관절 · 물체 칸 → 같은 프레임으로 바꿈 — 점구름 없는 물체는 상자, sgview 와 같음).
-//   재생 = 브라우저마다 세션(쿠키 sgsess): 시각 t·속도·재생 중. 부모 화면(app.js)이 /api/sg/ctl 로 옮기면 SSE 가 reset + 그 시각 스냅숏을 보낸다.
-// SSE 이벤트 모양·벽 계산(scenemap walls.cpp 를 sgview walls_ffi.cpp 로)은 sgview main.rs 와 같게(옮김).
+//   판 = OmniGibson 기록에서 만든 <이름>.sg/ (stream.sgs = scenemap 이 보낸 sgview 스트림 + 시뮬 시각) 또는 GPU 환경 판 .trp(→ 같은 스트림 형식으로 한 번 바꿈).
+//   세션(브라우저 쿠키 sgsess)마다: sgview 프로세스 하나(--ingest) + sgs_play 하나(--ctl: 시간 조종은 보내는 쪽이 한다 — seek·pause·rate, behavior-2026 tools/realbag/sgs_play.cpp).
+//   iframe 이 부르는 sgview 경로(/sg/ → /, /stream·/api/*·/file/*)는 그 프로세스로 그대로 넘긴다(역프록시). 이 파일에 sgview 화면 코드는 없다.
+//   .trp 처럼 읽는 쪽 일(정책 지도 격자, 부모 화면 정보)만 여기서 한다. 동시에 sgview 는 MAX_PROCS 개, 오래 안 쓰면 끔.
 use crate::http::{self, Req};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::io::Write;
-use std::net::TcpStream;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-extern "C" {
-    fn sgv_wall_segments(cells: *const i8, w: i32, h: i32, res: f64, ox: f64, oy: f64, ignore: *const f64, n_ignore: i32, out: *mut f64, cap: i32, angle_out: *mut f64) -> i32;
-    fn sgv_wall_state(cells: *const i8, w: i32, h: i32, res: f64, ox: f64, oy: f64, segs: *const f64, n: i32, pose: *const f64, out: *mut f32);
-}
-const WALL_STATE_LEN: usize = 56;
+const MAX_PROCS: usize = 2;
+const IDLE_S: u64 = 90;
 
 pub struct Frame {
     pub t: f64,
@@ -27,13 +24,26 @@ pub struct Frame {
 }
 
 pub struct Episode {
-    pub dir: PathBuf,        // 파일(/file/) 뿌리: .sg 면 memory/, .trp 면 없음
-    pub frames: Vec<Frame>,
+    pub dir: PathBuf,        // sgview 메모리 폴더(/file/ 뿌리): .sg 면 memory/, .trp 면 빈 폴더(세션에서 만듦)
+    pub sgs: PathBuf,        // 틀어 줄 스트림 파일(.sg 의 stream.sgs). 아래 sgs_bytes 가 있으면 그걸 쓴다
+    pub sgs_bytes: Option<Vec<u8>>,   // 바꾼 스트림(점구름·RGB 조각 경로를 앞 프레임에 넣음 / .trp 에서 만듦)
+    pub n_frames: usize,
     pub duration: f64,
     pub robot: String,
     pub info: Value,         // 부모 화면용: gt_path, underlay, cams, joint_order, map_from_world …
     /// 정책이 본 지도(GPU 근사판 G2, .trp 의 MAP_RECT): (시각, 48 B 머리 + 칸) — 진짜 scenemap 과 겹쳐 보기
     pub policy: Vec<(f64, Vec<u8>)>,
+}
+
+pub fn to_sgs(frames: &[Frame]) -> Vec<u8> {
+    let mut o = b"SGS1".to_vec();
+    for f in frames {
+        o.extend_from_slice(&f.t.to_le_bytes());
+        o.extend_from_slice(&(f.pl.len() as u32).to_le_bytes());
+        o.push(f.ty);
+        o.extend_from_slice(&f.pl);
+    }
+    o
 }
 
 // ---------------------------------------------------------------- 읽기
@@ -51,6 +61,7 @@ pub fn load_sg(dir: &Path) -> Option<Episode> {
         .and_then(|v| v["objects"].as_array().cloned()).unwrap_or_default().into_iter()
         .filter_map(|o| Some((o["id"].as_i64()?, (o["rgbd"].clone(), o["points"].clone())))).collect();
     let mut frames = vec![];
+    let mut changed = false;
     let mut p = 4usize;
     while p + 13 <= b.len() {
         let t = f64::from_le_bytes(b[p..p + 8].try_into().unwrap());
@@ -66,6 +77,7 @@ pub fn load_sg(dir: &Path) -> Option<Episode> {
             for (k, v) in &labels {
                 if !v.is_empty() {
                     s = s.replace(&format!("\"{}\"", k), &format!("\"{}\"", v));
+                    changed = true;
                 }
             }
             pl = s.into_bytes();
@@ -81,15 +93,18 @@ pub fn load_sg(dir: &Path) -> Option<Episode> {
                     }
                 }
                 pl = v.to_string().into_bytes();
+                changed = true;
             }
         }
         frames.push(Frame { t, ty, pl });
         p += 13 + len;
     }
+    let n_frames = frames.len();
+    let sgs_bytes = if changed { Some(to_sgs(&frames)) } else { None };
     let duration = meta["duration"].as_f64().unwrap_or_else(|| frames.last().map(|f| f.t).unwrap_or(0.0));
     let underlay: Value = std::fs::read_to_string(dir.join("underlay.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
     let info = json!({
-        "kind": "sg", "meta": meta["meta"], "gt_path": meta["gt_path"], "map_from_world": meta["map_from_world"], "cams": meta["cams"],
+        "kind": "sg", "pipeline": meta["pipeline"], "meta": meta["meta"], "gt_path": meta["gt_path"], "map_from_world": meta["map_from_world"], "cams": meta["cams"], "wcams": meta["wcams"],
         "joint_order": meta["joint_order"], "underlay": underlay, "stream": meta["stream"], "og_run": meta["og_run"], "n_objects": meta["n_objects"],
         "window_origin": meta["window_origin"], "world": meta["world"], "policy_trp": meta["policy_trp"], "source": meta["source"],
     });
@@ -114,7 +129,7 @@ pub fn load_sg(dir: &Path) -> Option<Episode> {
     }
     let mut info = info;
     info["has_policy_map"] = json!(!policy.is_empty());
-    Some(Episode { dir: dir.join("memory"), frames, duration, robot: meta["robot"].as_str().unwrap_or("limo_omx").to_string(), info, policy })
+    Some(Episode { dir: dir.join("memory"), sgs: dir.join("stream.sgs"), sgs_bytes, n_frames, duration, robot: meta["robot"].as_str().unwrap_or("limo_omx").to_string(), info, policy })
 }
 
 /// GPU 환경 판(.trp) → sgview 프레임. 좌표는 G2 지도 = 세계(map 프레임 같음).
@@ -239,24 +254,56 @@ pub fn load_trp(path: &Path) -> Option<Episode> {
     let info = json!({"kind": "trp", "meta": h["meta"], "gt_path": gt, "map_from_world": [1, 0, 0, 0], "cams": [],
         "joint_order": ["", "", "", "", "", "", "omx_joint1", "omx_joint2", "omx_joint3", "omx_joint4", "omx_joint5", "omx_gripper_joint_1", "front_left_wheel", "front_right_wheel", "rear_left_wheel", "rear_right_wheel"],
         "underlay": {"scene": h["scene"]["name"], "boxes": boxes, "rooms": h["scene"]["rooms"], "places": [], "picks": [], "task_objects": []}});
-    Some(Episode { dir: PathBuf::new(), frames, duration, robot: "limo_omx".into(), info, policy: vec![] })
+    let n_frames = frames.len();
+    Some(Episode { dir: PathBuf::new(), sgs: PathBuf::new(), sgs_bytes: Some(to_sgs(&frames)), n_frames, duration, robot: "limo_omx".into(), info, policy: vec![] })
 }
 
-// ---------------------------------------------------------------- 세션·상태
+// ---------------------------------------------------------------- 세션·프로세스
+
+struct PState {
+    t: f64,
+    playing: bool,
+    speed: f64,
+    got: Instant,
+    t0: f64,   // 자료 시작 시각(sgs_play 의 I 줄)
+}
 
 pub struct Sess {
     pub ep: Arc<Episode>,
     pub key: String,
-    pub t0: f64,
-    pub wall0: Instant,
-    pub speed: f64,
-    pub playing: bool,
-    pub epoch: u64,
+    port: u16,
+    sgview: Child,
+    play: Child,
+    stdin: ChildStdin,
+    ps: Arc<Mutex<PState>>,
+    last: Instant,
+    tmp: Vec<PathBuf>,
 }
 impl Sess {
-    pub fn t(&self) -> f64 {
-        let t = if self.playing { self.t0 + self.wall0.elapsed().as_secs_f64() * self.speed } else { self.t0 };
+    fn send(&mut self, cmd: &str) {
+        let _ = writeln!(self.stdin, "{}", cmd);
+        let _ = self.stdin.flush();
+    }
+    fn kill(&mut self) {
+        let _ = self.play.kill();
+        let _ = self.sgview.kill();
+        let _ = self.play.wait();
+        let _ = self.sgview.wait();
+        for p in &self.tmp {
+            if p.is_dir() { let _ = std::fs::remove_dir_all(p); } else { let _ = std::fs::remove_file(p); }
+        }
+        pids_forget(&[self.play.id(), self.sgview.id()]);
+    }
+    /// 지금 자료 시각(상태 줄 0.1 s 마다 + 그 뒤 벽시계로 이어 셈)
+    fn t(&self) -> f64 {
+        let p = self.ps.lock().unwrap();
+        let t = if p.playing { p.t + p.got.elapsed().as_secs_f64() * p.speed } else { p.t };
         t.clamp(0.0, self.ep.duration)
+    }
+}
+impl Drop for Sess {
+    fn drop(&mut self) {
+        self.kill();
     }
 }
 
@@ -270,31 +317,269 @@ pub fn cookie_sess(req: &Req) -> String {
     req.cookie.split(';').filter_map(|kv| kv.trim().strip_prefix("sgsess=")).next().unwrap_or("").to_string()
 }
 
-struct Live {
-    w: i32,
-    h: i32,
-    res: f64,
-    ox: f64,
-    oy: f64,
-    cells: Vec<i8>,
-    view: Option<String>,
-    pose: Option<[f64; 4]>,
-    joints: Option<String>,
-    ig: Vec<f64>,
-    segs: Vec<f64>,
-    theta: f64,
-    dirty: bool,
-    seg_ver: u64,
-    seg_sent: u64,
+fn home() -> PathBuf {
+    PathBuf::from(std::env::var("HOME").unwrap_or_default())
+}
+fn work_dir() -> PathBuf {
+    let d = home().join("trainview_work/sgplay");
+    let _ = std::fs::create_dir_all(&d);
+    d
+}
+// 바이너리는 build_deps.sh 가 robot-agent 소스에서 만들어 $TRAINVIEW_DEPS(기본 ~/trainview_work/deps)에 링크해 둔 것만 쓴다
+fn deps() -> PathBuf {
+    std::env::var("TRAINVIEW_DEPS").map(PathBuf::from).unwrap_or_else(|_| home().join("trainview_work/deps"))
+}
+fn sgview_bin() -> PathBuf {
+    deps().join("sgview")
+}
+fn sgs_play_bin() -> PathBuf {
+    deps().join("sgs_play")
+}
+fn free_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0").ok().and_then(|l| l.local_addr().ok()).map(|a| a.port()).unwrap_or(0)
 }
 
-fn sse(ev: &str, data: &str) -> String {
-    format!("event: {}\ndata: {}\n\n", ev, data)
+// 내가 띄운 프로세스 번호(다음 시작 때 남은 것을 끄려고). 번호만 — 이름 검사로 남의 프로세스는 건드리지 않음
+fn pids_file() -> PathBuf {
+    home().join("trainview_work/run/sgview_pids")
 }
-fn cell_grey(v: i8) -> u8 {
-    let v = v as i32;
-    if v < 0 { 205 } else if v >= 65 { 0 } else if v <= 25 { 254 } else { (254 - (v * 254) / 100) as u8 }
+fn pids_add(p: &[u32]) {
+    let mut t = std::fs::read_to_string(pids_file()).unwrap_or_default();
+    for x in p { t.push_str(&format!("{}\n", x)); }
+    let _ = std::fs::write(pids_file(), t);
 }
+fn pids_forget(p: &[u32]) {
+    let t = std::fs::read_to_string(pids_file()).unwrap_or_default();
+    let keep: Vec<&str> = t.lines().filter(|l| !p.iter().any(|x| l.trim() == x.to_string())).collect();
+    let _ = std::fs::write(pids_file(), keep.join("\n") + "\n");
+}
+/// 서버 시작 때: 지난번에 남은 sgview·sgs_play 끄기(cmdline 에 그 이름이 있는 번호만)
+pub fn kill_leftovers() {
+    for l in std::fs::read_to_string(pids_file()).unwrap_or_default().lines() {
+        let Ok(pid) = l.trim().parse::<u32>() else { continue };
+        let cmd = std::fs::read(format!("/proc/{}/cmdline", pid)).unwrap_or_default();
+        let c = String::from_utf8_lossy(&cmd);
+        if c.contains("sgview") || c.contains("sgs_play") {
+            let _ = Command::new("kill").arg(pid.to_string()).status();
+        }
+    }
+    let _ = std::fs::write(pids_file(), "");
+}
+
+fn start(sess: &str, key: &str, ep: Arc<Episode>) -> Result<Sess, String> {
+    let wd = work_dir();
+    let mut tmp = vec![];
+    let sgs = match &ep.sgs_bytes {
+        Some(b) => {
+            let p = wd.join(format!("{}.sgs", sess));
+            std::fs::write(&p, b).map_err(|e| e.to_string())?;
+            tmp.push(p.clone());
+            p
+        }
+        None => ep.sgs.clone(),
+    };
+    let mem = if ep.dir.as_os_str().is_empty() || !ep.dir.is_dir() {
+        let d = wd.join(format!("{}_mem", sess));
+        let _ = std::fs::create_dir_all(&d);
+        tmp.push(d.clone());
+        d
+    } else {
+        ep.dir.clone()
+    };
+    let (port, ing) = (free_port(), free_port());
+    if port == 0 || ing == 0 {
+        return Err("no free port".into());
+    }
+    let sgv = Command::new(sgview_bin()).arg(&mem).args(["--port", &port.to_string(), "--ingest", &format!("127.0.0.1:{}", ing)])
+        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| format!("sgview: {}", e))?;
+    let mut sgview = sgv;
+    // 포트가 열릴 때까지
+    let t0 = Instant::now();
+    while TcpStream::connect(("127.0.0.1", ing)).is_err() {
+        if t0.elapsed() > Duration::from_secs(8) {
+            let _ = sgview.kill();
+            return Err("sgview did not start".into());
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    let mut play = Command::new(sgs_play_bin()).arg(&sgs).arg(format!("127.0.0.1:{}", ing)).args(["--ctl", "--rate", "1", "--pose-hz", "60"])
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e| { let _ = sgview.kill(); format!("sgs_play: {}", e) })?;
+    pids_add(&[sgview.id(), play.id()]);
+    let stdin = play.stdin.take().unwrap();
+    let out = play.stdout.take().unwrap();
+    let ps = Arc::new(Mutex::new(PState { t: 0.0, playing: true, speed: 1.0, got: Instant::now(), t0: 0.0 }));
+    let ps2 = ps.clone();
+    std::thread::spawn(move || {
+        for l in BufReader::new(out).lines().flatten() {
+            let v: Vec<&str> = l.split_whitespace().collect();
+            let mut p = ps2.lock().unwrap();
+            if v.len() == 3 && v[0] == "I" {
+                p.t0 = v[1].parse().unwrap_or(0.0);
+            } else if v.len() == 4 && v[0] == "T" {
+                p.t = v[1].parse().unwrap_or(p.t);
+                p.playing = v[2] == "1";
+                p.speed = v[3].parse().unwrap_or(1.0);
+                p.got = Instant::now();
+            }
+        }
+    });
+    Ok(Sess { ep, key: key.to_string(), port, sgview, play, stdin, ps, last: Instant::now(), tmp })
+}
+
+/// 오래 안 쓴 세션 끄기(서버 스레드가 가끔 부름)
+pub fn gc(st: &Arc<Mutex<SgState>>) {
+    let mut g = st.lock().unwrap();
+    let dead: Vec<String> = g.sess.iter().filter(|(_, s)| s.last.elapsed() > Duration::from_secs(IDLE_S)).map(|(k, _)| k.clone()).collect();
+    for k in dead {
+        g.sess.remove(&k);
+    }
+}
+
+/// /api/sg/ctl?sess=&run=&stream=&id=&t=&speed=&playing= — 판 고르기·옮기기·재생. 시간 조종은 sgs_play(--ctl)로 보낸다. 답: 지금 시각·길이
+pub fn ctl(st: &Arc<Mutex<SgState>>, req: &Req, ep_of: impl Fn(&str) -> Option<Arc<Episode>>) -> String {
+    let sess = req.get("sess").to_string();
+    if sess.is_empty() || !sess.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return json!({"error": "sess must be alphanumeric"}).to_string();
+    }
+    let key = format!("{}|{}|{}", req.get("run"), req.get("stream"), req.get("id"));
+    let need_new = !req.get("id").is_empty() && st.lock().unwrap().sess.get(&sess).map(|x| x.key != key).unwrap_or(true);
+    if need_new {
+        let cached = st.lock().unwrap().eps.get(&key).cloned();
+        let ep = match cached {
+            Some(e) => Some(e),
+            None => {
+                let e = ep_of(&key);
+                let mut g = st.lock().unwrap();
+                if let Some(e) = &e {
+                    if g.eps.len() > 4 {
+                        g.eps.clear();
+                    }
+                    g.eps.insert(key.clone(), e.clone());
+                }
+                e
+            }
+        };
+        let Some(ep) = ep else { return json!({"error": "cannot load episode"}).to_string() };
+        let mut g = st.lock().unwrap();
+        g.sess.remove(&sess);   // 판을 바꾸면 이전 sgview·sgs_play 끔
+        while g.sess.len() >= MAX_PROCS {
+            let old = g.sess.iter().min_by_key(|(_, s)| s.last).map(|(k, _)| k.clone()).unwrap();
+            g.sess.remove(&old);
+        }
+        match start(&sess, &key, ep) {
+            Ok(s) => { g.sess.insert(sess.clone(), s); }
+            Err(e) => return json!({"error": e}).to_string(),
+        }
+    }
+    let mut g = st.lock().unwrap();
+    let Some(x) = g.sess.get_mut(&sess) else { return json!({"error": "no session — pick an episode"}).to_string() };
+    x.last = Instant::now();
+    let dur = x.ep.duration;
+    let now_t = x.t();
+    if let Some(sp) = req.num("speed") {
+        let sp = sp.clamp(0.05, 64.0);
+        x.send(&format!("rate {}", sp));
+        let mut p = x.ps.lock().unwrap();
+        p.t = now_t; p.got = Instant::now(); p.speed = sp;
+    }
+    if let Some(pl) = req.q.get("playing") {
+        let on = pl == "1";
+        if on && now_t >= dur - 1e-3 {
+            x.send("seek 0");
+            let mut p = x.ps.lock().unwrap();
+            p.t = 0.0; p.got = Instant::now();
+        }
+        x.send(if on { "play" } else { "pause" });
+        let mut p = x.ps.lock().unwrap();
+        if !on { p.t = now_t; }
+        p.playing = on; p.got = Instant::now();
+    }
+    if let Some(t) = req.num("t") {
+        let t = t.clamp(0.0, dur);
+        x.send(&format!("seek {:.4}", t));
+        let mut p = x.ps.lock().unwrap();
+        p.t = t; p.got = Instant::now();
+    }
+    let t = x.t();
+    let (playing, speed) = { let p = x.ps.lock().unwrap(); (p.playing && t < dur - 1e-3, p.speed) };
+    json!({"t": t, "duration": dur, "playing": playing, "speed": speed, "frames": x.ep.n_frames}).to_string()
+}
+
+/// iframe 이 부르는 sgview 경로를 그 세션의 sgview 로 그대로 넘긴다(역프록시). 처리했으면 true
+pub fn proxy(s: &mut TcpStream, req: &Req, st: &Arc<Mutex<SgState>>) -> bool {
+    let p = req.path.as_str();
+    let to = if p == "/sg/" || p == "/sg/index.html" { Some("/".to_string()) }
+        else if matches!(p, "/stream" | "/api/mode" | "/api/robot" | "/api/view" | "/api/map" | "/api/walls" | "/api/depth") || p.starts_with("/file/") { Some(req.target.clone()) }
+        else { None };
+    let Some(to) = to else { return false };
+    let sess = cookie_sess(req);
+    let port = {
+        let mut g = st.lock().unwrap();
+        match g.sess.get_mut(&sess) {
+            Some(x) => { x.last = Instant::now(); x.port }
+            None => return false,
+        }
+    };
+    let to = if p == "/sg/" || p == "/sg/index.html" { to } else { to };
+    let Ok(mut up) = TcpStream::connect(("127.0.0.1", port)) else { http::not_found(s, "sgview not running"); return true };
+    let _ = up.set_nodelay(true);
+    if up.write_all(format!("GET {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", to, port).as_bytes()).is_err() {
+        return true;
+    }
+    let _ = s.set_nodelay(true);
+    let mut buf = [0u8; 65536];
+    loop {
+        match up.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                if s.write_all(&buf[..n]).is_err() {
+                    break;
+                }
+                let _ = s.flush();
+            }
+        }
+    }
+    true
+}
+
+/// 정책이 본 지도(G2 근사판)의 시각 t 까지 쌓은 격자 — 회색(sgview cell_grey 와 같은 색) base64 + 자리(세계 좌표)
+pub fn policy_grid(ep: &Episode, t: f64) -> Value {
+    let (mut w, mut h, mut res, mut ox, mut oy) = (0i32, 0i32, 0.05f64, 0f64, 0f64);
+    let mut cells: Vec<i8> = vec![];
+    for (ft, pl) in &ep.policy {
+        if *ft > t + 1e-6 {
+            break;
+        }
+        if pl.len() < 48 {
+            continue;
+        }
+        let i32at = |o: usize| i32::from_le_bytes(pl[o..o + 4].try_into().unwrap());
+        let f64at = |o: usize| f64::from_le_bytes(pl[o..o + 8].try_into().unwrap());
+        let (nw, nh, nres, nox, noy) = (i32at(0), i32at(4), f64at(8), f64at(16), f64at(24));
+        let (x0, y0, x1, y1) = (i32at(32), i32at(36), i32at(40), i32at(44));
+        if nw <= 0 || nh <= 0 || x0 < 0 || y0 < 0 || x1 >= nw || y1 >= nh || x1 < x0 || y1 < y0 || (x1 - x0 + 1) as usize * (y1 - y0 + 1) as usize + 48 != pl.len() {
+            continue;
+        }
+        if nw != w || nh != h || nres != res || nox != ox || noy != oy {
+            w = nw; h = nh; res = nres; ox = nox; oy = noy;
+            cells = vec![-1i8; (w * h) as usize];
+        }
+        let rw = (x1 - x0 + 1) as usize;
+        for y in y0..=y1 {
+            let d = (y * w + x0) as usize;
+            let s = 48 + (y - y0) as usize * rw;
+            for k in 0..rw {
+                cells[d + k] = pl[s + k] as i8;
+            }
+        }
+    }
+    if w <= 0 {
+        return json!({"why": "no policy map"});
+    }
+    let g: Vec<u8> = cells.iter().map(|&v| { let v = v as i32; if v < 0 { 205 } else if v >= 65 { 0 } else if v <= 25 { 254 } else { (254 - (v * 254) / 100) as u8 } }).collect();
+    json!({"w": w, "h": h, "res": res, "ox": ox, "oy": oy, "b64": b64(&g)})
+}
+
 fn b64(data: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut o = String::with_capacity((data.len() + 2) / 3 * 4);
@@ -307,327 +592,53 @@ fn b64(data: &[u8]) -> String {
     }
     o
 }
-fn map_event(l: &Live, x0: i32, y0: i32, x1: i32, y1: i32) -> String {
-    let mut g = Vec::with_capacity(((x1 - x0 + 1) * (y1 - y0 + 1)) as usize);
-    for y in y0..=y1 {
-        let r = &l.cells[(y * l.w) as usize..((y + 1) * l.w) as usize];
-        g.extend(r[x0 as usize..=x1 as usize].iter().map(|&v| cell_grey(v)));
-    }
-    sse("map", &format!("{{\"w\":{},\"h\":{},\"res\":{},\"ox\":{},\"oy\":{},\"x0\":{},\"y0\":{},\"x1\":{},\"y1\":{},\"b64\":\"{}\"}}", l.w, l.h, l.res, l.ox, l.oy, x0, y0, x1, y1, b64(&g)))
+
+// ---------------------------------------------------------------- 파이프라인 최신 여부 · 다시 돌리기
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
-fn pose_event(p: &[f64; 4]) -> String {
-    sse("pose", &format!("{{\"t\":{:.3},\"x\":{:.4},\"y\":{:.4},\"yaw\":{:.4}}}", p[0], p[1], p[2], p[3]))
-}
-fn furniture_rects_of(text: &str) -> Vec<f64> {
-    // sgview main.rs furniture_rects_of 와 같음: 바닥에 놓인 가구(아래 0.4 m 밑, 변 ≤ 5 m)는 벽으로 치지 않는다
-    let v: Value = match serde_json::from_str(text) {
-        Ok(v) => v,
-        Err(_) => return vec![],
-    };
-    let mut out = vec![];
-    for o in v["objects"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
-        if o["state"] == "gone" {
-            continue;
+/// 지금 인지 소스(behavior-2026 서브모듈 src/scene_graph 의 scenemap·runtime·ovdet·clip·da 트리 해시) — og_replay.py pipeline_info 와 같은 식. 60 s 캐시
+pub fn pipeline_now() -> Value {
+    static C: Mutex<Option<(Instant, Value)>> = Mutex::new(None);
+    let mut g = C.lock().unwrap();
+    if let Some((t, v)) = g.as_ref() {
+        if t.elapsed() < Duration::from_secs(60) {
+            return v.clone();
         }
-        let (p, e) = (&o["pos"], &o["extent"]);
-        let g = |a: &Value, i: usize| a[i].as_f64().unwrap_or(0.0);
-        let (hx, hy, hz) = (g(e, 0) / 2.0, g(e, 1) / 2.0, g(e, 2) / 2.0);
-        if g(p, 2) - hz > 0.4 || hx * 2.0 > 5.0 || hy * 2.0 > 5.0 {
-            continue;
-        }
-        out.extend_from_slice(&[g(p, 0) - hx - 0.1, g(p, 1) - hy - 0.1, g(p, 0) + hx + 0.1, g(p, 1) + hy + 0.1]);
     }
-    out
+    let b26 = repo_root().join("src/behavior-2026");
+    let git = |a: &str| Command::new("git").arg("-C").arg(&b26).args(["rev-parse", a]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let mut trees = serde_json::Map::new();
+    for d in ["scenemap", "runtime", "ovdet", "clip", "da"] {
+        trees.insert(d.into(), json!(git(&format!("HEAD:src/scene_graph/{}", d))));
+    }
+    let v = json!({"git": git("HEAD"), "trees": trees});
+    *g = Some((Instant::now(), v.clone()));
+    v
 }
 
-impl Live {
-    fn new() -> Live {
-        Live { w: 0, h: 0, res: 0.05, ox: 0.0, oy: 0.0, cells: vec![], view: None, pose: None, joints: None, ig: vec![], segs: vec![], theta: 0.0, dirty: false, seg_ver: 0, seg_sent: u64::MAX }
+/// 이 판을 og_queue 맨 앞에 다시 넣는다(옛 판 폴더는 .prev 로 비켜 둠 — 새 판이 되면 지워도 됨). 답: {ok|error}
+pub fn rerun(dir: &Path, id: &str) -> Value {
+    let Some(base) = id.strip_suffix("_og.sg") else { return json!({"error": "only *_og.sg episodes can be re-run"}) };
+    let trp = dir.join(format!("{}.trp", base));
+    if !trp.is_file() {
+        return json!({"error": "source .trp is gone"});
     }
-    /// 프레임 하나 적용. 내보낼 SSE 를 돌려준다(emit false 면 상태만)
-    fn apply(&mut self, f: &Frame, emit: bool) -> Option<String> {
-        let pl = &f.pl;
-        match f.ty {
-            1 if pl.len() == 32 => {
-                let g = |i: usize| f64::from_le_bytes(pl[i * 8..i * 8 + 8].try_into().unwrap());
-                let p = [g(0), g(1), g(2), g(3)];
-                self.pose = Some(p);
-                if emit { Some(pose_event(&p)) } else { None }
-            }
-            2 if pl.len() >= 48 => {
-                let i32at = |o: usize| i32::from_le_bytes(pl[o..o + 4].try_into().unwrap());
-                let f64at = |o: usize| f64::from_le_bytes(pl[o..o + 8].try_into().unwrap());
-                let (w, h, res, ox, oy) = (i32at(0), i32at(4), f64at(8), f64at(16), f64at(24));
-                let (x0, y0, x1, y1) = (i32at(32), i32at(36), i32at(40), i32at(44));
-                if w <= 0 || h <= 0 || x0 < 0 || y0 < 0 || x1 >= w || y1 >= h || x1 < x0 || y1 < y0 || (x1 - x0 + 1) as usize * (y1 - y0 + 1) as usize + 48 != pl.len() {
-                    return None;
-                }
-                if w != self.w || h != self.h || res != self.res || ox != self.ox || oy != self.oy {
-                    self.w = w; self.h = h; self.res = res; self.ox = ox; self.oy = oy;
-                    self.cells = vec![-1i8; (w * h) as usize];
-                }
-                let rw = (x1 - x0 + 1) as usize;
-                for y in y0..=y1 {
-                    let d = (y * w + x0) as usize;
-                    let s = 48 + (y - y0) as usize * rw;
-                    for k in 0..rw {
-                        self.cells[d + k] = pl[s + k] as i8;
-                    }
-                }
-                self.dirty = true;
-                if emit { Some(map_event(self, x0, y0, x1, y1)) } else { None }
-            }
-            3 => {
-                let line = String::from_utf8_lossy(pl).replace('\n', "");
-                let ig = furniture_rects_of(&line);
-                if ig != self.ig {
-                    self.ig = ig;
-                    self.dirty = true;
-                }
-                let e = sse("view", &line);
-                self.view = Some(line);
-                if emit { Some(e) } else { None }
-            }
-            4 if pl.len() >= 12 => {
-                let t = f64::from_le_bytes(pl[0..8].try_into().unwrap());
-                let n = i32::from_le_bytes(pl[8..12].try_into().unwrap()) as usize;
-                if n == 0 || pl.len() != 12 + n * 4 {
-                    return None;
-                }
-                let q: Vec<String> = (0..n).map(|i| format!("{:.4}", f32::from_le_bytes(pl[12 + i * 4..16 + i * 4].try_into().unwrap()))).collect();
-                let e = sse("joints", &format!("{{\"t\":{:.3},\"q\":[{}]}}", t, q.join(",")));
-                self.joints = Some(e.clone());
-                if emit { Some(e) } else { None }
-            }
-            _ => None,
+    let q = home().join("trainview_work/og_queue");
+    let sg = dir.join(id);
+    let prev = dir.join(format!("{}.prev", id));
+    if sg.is_dir() {
+        let _ = std::fs::remove_dir_all(&prev);
+        if std::fs::rename(&sg, &prev).is_err() {
+            return json!({"error": "cannot move the old episode aside"});
         }
     }
-    fn walls(&mut self, force_segs: bool) -> Option<String> {
-        if self.w <= 0 {
-            return None;
-        }
-        if self.dirty {
-            self.dirty = false;
-            let mut buf = vec![0f64; 4 * 512];
-            let mut th = 0f64;
-            let mut n = unsafe { sgv_wall_segments(self.cells.as_ptr(), self.w, self.h, self.res, self.ox, self.oy, self.ig.as_ptr(), (self.ig.len() / 4) as i32, buf.as_mut_ptr(), 512, &mut th) } as usize;
-            if n > 512 {
-                buf = vec![0f64; 4 * n];
-                n = unsafe { sgv_wall_segments(self.cells.as_ptr(), self.w, self.h, self.res, self.ox, self.oy, self.ig.as_ptr(), (self.ig.len() / 4) as i32, buf.as_mut_ptr(), n as i32, &mut th) } as usize;
-            }
-            buf.truncate(4 * n);
-            if buf != self.segs || th != self.theta {
-                self.segs = buf;
-                self.theta = th;
-                self.seg_ver += 1;
-            }
-        }
-        let p = self.pose?;
-        let pose = [p[1], p[2], p[3]];
-        let mut out = [0f32; WALL_STATE_LEN];
-        unsafe { sgv_wall_state(self.cells.as_ptr(), self.w, self.h, self.res, self.ox, self.oy, self.segs.as_ptr(), (self.segs.len() / 4) as i32, pose.as_ptr(), out.as_mut_ptr()) };
-        let with = force_segs || self.seg_ver != self.seg_sent;
-        self.seg_sent = self.seg_ver;
-        let segs = if with {
-            let v: Vec<String> = self.segs.chunks(4).map(|c| format!("[{:.4},{:.4},{:.4},{:.4}]", c[0], c[1], c[2], c[3])).collect();
-            format!("[{}],\"theta\":{:.6}", v.join(","), self.theta)
-        } else {
-            "null".to_string()
-        };
-        let st: Vec<String> = out.iter().map(|x| format!("{:.5}", x)).collect();
-        Some(sse("walls", &format!("{{\"segments\":{},\"state\":[{}],\"pose\":[{:.4},{:.4},{:.4}],\"max_range\":4.0}}", segs, st.join(","), pose[0], pose[1], pose[2])))
+    let name = format!("000000{:04}_rerun_{}.job", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() % 10000).unwrap_or(0), base.chars().filter(|c| c.is_ascii_alphanumeric()).take(24).collect::<String>());
+    if std::fs::write(q.join(&name), json!({"trp": trp.to_string_lossy(), "force": true}).to_string() + "\n").is_err() {
+        return json!({"error": "cannot write the queue job"});
     }
-    fn snapshot(&mut self) -> String {
-        let mut s = String::new();
-        if self.w > 0 {
-            s.push_str(&map_event(self, 0, 0, self.w - 1, self.h - 1));
-        }
-        if let Some(v) = &self.view {
-            s.push_str(&sse("view", v));
-        }
-        if let Some(p) = &self.pose {
-            s.push_str(&pose_event(p));
-        }
-        if let Some(j) = &self.joints {
-            s.push_str(j);
-        }
-        if let Some(w) = self.walls(true) {
-            s.push_str(&w);
-        }
-        s
-    }
-}
-
-/// sgview /stream: 세션의 판을 시각대로 보낸다. 시각이 바뀌면(옮김) reset + 그 시각까지의 스냅숏
-pub fn serve_stream(mut s: TcpStream, st: Arc<Mutex<SgState>>, sess: String) {
-    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nConnection: keep-alive\r\nX-Accel-Buffering: no\r\n\r\n";
-    if s.write_all(head.as_bytes()).is_err() {
-        return;
-    }
-    let _ = s.set_nodelay(true);
-    let mut cur_epoch = u64::MAX;
-    let mut ep: Option<Arc<Episode>> = None;
-    let mut live = Live::new();
-    let mut idx = 0usize;
-    let mut last_walls = Instant::now();
-    let mut last_send = Instant::now();
-    loop {
-        let (e, t, epoch) = {
-            let g = st.lock().unwrap();
-            match g.sess.get(&sess) {
-                Some(x) => (Some(x.ep.clone()), x.t(), x.epoch),
-                None => (None, 0.0, 0),
-            }
-        };
-        let mut out = String::new();
-        match e {
-            None => {}
-            Some(e) => {
-                if epoch != cur_epoch || ep.as_ref().map(|p| !Arc::ptr_eq(p, &e)).unwrap_or(true) {
-                    // 옮김: 화면을 비우고 t 까지 다시 쌓음
-                    cur_epoch = epoch;
-                    ep = Some(e.clone());
-                    live = Live::new();
-                    idx = 0;
-                    while idx < e.frames.len() && e.frames[idx].t <= t {
-                        live.apply(&e.frames[idx], false);
-                        idx += 1;
-                    }
-                    out.push_str(&sse("reset", "{}"));
-                    out.push_str(&live.snapshot());
-                } else {
-                    // 같은 시각 안의 프레임: 자세는 마지막 것만(대역폭), 나머지는 차례대로
-                    let mut last_pose: Option<String> = None;
-                    while idx < e.frames.len() && e.frames[idx].t <= t {
-                        let f = &e.frames[idx];
-                        if let Some(ev) = live.apply(f, true) {
-                            if f.ty == 1 { last_pose = Some(ev) } else { out.push_str(&ev) }
-                        }
-                        idx += 1;
-                    }
-                    if let Some(p) = last_pose {
-                        out.push_str(&p);
-                    }
-                    if last_walls.elapsed() > Duration::from_millis(150) && (live.dirty || !out.is_empty()) {
-                        last_walls = Instant::now();
-                        if let Some(w) = live.walls(false) {
-                            out.push_str(&w);
-                        }
-                    }
-                }
-            }
-        }
-        if out.is_empty() && last_send.elapsed() > Duration::from_secs(10) {
-            out.push_str(": keepalive\n\n");
-        }
-        if !out.is_empty() {
-            if s.write_all(out.as_bytes()).is_err() {
-                return;
-            }
-            last_send = Instant::now();
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-/// /api/sg/ctl?sess=&run=&stream=&id=&t=&speed=&playing= — 판 고르기·옮기기·재생. 답: 지금 시각·길이·세대
-pub fn ctl(st: &Arc<Mutex<SgState>>, req: &Req, ep_of: impl Fn(&str) -> Option<Arc<Episode>>) -> String {
-    let sess = req.get("sess").to_string();
-    if sess.is_empty() || !sess.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return json!({"error": "sess must be alphanumeric"}).to_string();
-    }
-    let key = format!("{}|{}|{}", req.get("run"), req.get("stream"), req.get("id"));
-    let mut g = st.lock().unwrap();
-    let need_new = !req.get("id").is_empty() && g.sess.get(&sess).map(|x| x.key != key).unwrap_or(true);
-    if need_new {
-        let ep = match g.eps.get(&key) {
-            Some(e) => Some(e.clone()),
-            None => {
-                drop(g);
-                let e = ep_of(&key);
-                g = st.lock().unwrap();
-                if let Some(e) = &e {
-                    if g.eps.len() > 6 {
-                        g.eps.clear();   // 판 몇 개만 메모리에(한 판 수십 MB)
-                    }
-                    g.eps.insert(key.clone(), e.clone());
-                }
-                e
-            }
-        };
-        let Some(ep) = ep else { return json!({"error": "cannot load episode"}).to_string() };
-        let epoch = g.sess.get(&sess).map(|x| x.epoch + 1).unwrap_or(1);
-        g.sess.insert(sess.clone(), Sess { ep, key: key.clone(), t0: 0.0, wall0: Instant::now(), speed: 1.0, playing: false, epoch });
-    }
-    let Some(x) = g.sess.get_mut(&sess) else { return json!({"error": "no session — pick an episode"}).to_string() };
-    let now_t = x.t();
-    if let Some(sp) = req.num("speed") {
-        x.t0 = now_t;
-        x.wall0 = Instant::now();
-        x.speed = sp.clamp(0.05, 64.0);
-    }
-    if let Some(p) = req.q.get("playing") {
-        let t = x.t();
-        x.t0 = if t >= x.ep.duration && p == "1" { 0.0 } else { t };
-        x.wall0 = Instant::now();
-        if t >= x.ep.duration && p == "1" {
-            x.epoch += 1;
-        }
-        x.playing = p == "1";
-    }
-    if let Some(t) = req.num("t") {
-        x.t0 = t.clamp(0.0, x.ep.duration);
-        x.wall0 = Instant::now();
-        x.epoch += 1;
-    }
-    let t = x.t();
-    if t >= x.ep.duration && x.playing {
-        x.playing = false;
-        x.t0 = x.ep.duration;
-    }
-    json!({"t": t, "duration": x.ep.duration, "playing": x.playing, "speed": x.speed, "epoch": x.epoch, "frames": x.ep.frames.len()}).to_string()
-}
-
-/// 정책이 본 지도(G2 근사판)의 시각 t 까지 쌓은 격자 — 회색(sgview cell_grey 와 같은 색) base64 + 자리(세계 좌표)
-pub fn policy_grid(ep: &Episode, t: f64) -> Value {
-    let mut l = Live::new();
-    for (ft, pl) in &ep.policy {
-        if *ft > t + 1e-6 {
-            break;
-        }
-        l.apply(&Frame { t: *ft, ty: 2, pl: pl.clone() }, false);
-    }
-    if l.w <= 0 {
-        return json!({"why": "no policy map"});
-    }
-    let g: Vec<u8> = l.cells.iter().map(|&v| cell_grey(v)).collect();
-    json!({"w": l.w, "h": l.h, "res": l.res, "ox": l.ox, "oy": l.oy, "b64": b64(&g)})
-}
-
-/// iframe 의 sgview 가 부르는 경로(쿠키 sgsess 로 세션). 처리했으면 true
-pub fn handle_sgview(s: &mut TcpStream, req: &Req, st: &Arc<Mutex<SgState>>, sgview_html: &[u8]) -> bool {
-    let sess = cookie_sess(req);
-    let p = req.path.as_str();
-    match p {
-        "/sg/" | "/sg/index.html" => http::respond(s, 200, "text/html; charset=utf-8", sgview_html, req.gzip),
-        "/api/mode" => http::json(s, "{\"live\":true}", false),
-        "/api/robot" => {
-            let r = st.lock().unwrap().sess.get(&sess).map(|x| x.ep.robot.clone()).unwrap_or_default();
-            http::json(s, &json!({"robot": if r.is_empty() { Value::Null } else { json!(r) }}).to_string(), false)
-        }
-        "/api/view" => http::json(s, "{\"waiting\":true}", false),
-        "/api/walls" => http::respond(s, 404, "text/plain", b"live only", false),
-        "/api/map" => http::respond(s, 404, "text/plain", b"live only", false),
-        _ if p.starts_with("/file/") => {
-            let dir = st.lock().unwrap().sess.get(&sess).map(|x| x.ep.dir.clone());
-            let rel = &p["/file/".len()..];
-            let ok = !rel.split('/').any(|c| c == ".." || c.is_empty());
-            match dir.filter(|d| !d.as_os_str().is_empty() && ok).and_then(|d| std::fs::read(d.join(rel)).ok()) {
-                Some(b) => http::respond(s, 200, http::content_type(rel), &b, req.gzip),
-                None => http::not_found(s, "no such file in the episode memory dir"),
-            }
-        }
-        _ => return false,
-    }
-    true
+    let w = repo_root().join("training/viewer/tools/og_replay/og_queue.sh");
+    let _ = Command::new("setsid").arg("-f").arg(&w).arg(&q).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+    json!({"ok": true, "job": name})
 }

@@ -151,7 +151,11 @@ pre.small { white-space: pre-wrap; max-height: 300px; overflow: auto; margin: 0;
 #rp_view .hud, #rp_view .cams { z-index: 2; }
 #rp_view .hud { left: auto; right: 330px; top: auto; bottom: 8px; }
 #rp_view.sgmode .cams { right: auto; left: 8px; top: auto; bottom: 8px; }
-#rp_view.sgmode .cams img { width: 180px; height: auto; }
+#rp_view.sgmode .cams { align-items: flex-end; }
+.pip { position: relative; resize: both; overflow: hidden; width: 200px; height: 170px; min-width: 100px; min-height: 80px; max-width: 70vw; background: #000; border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; }
+.pip .pt { flex: none; font-size: 11px; padding: 1px 6px; background: color-mix(in srgb, var(--surface) 90%, transparent); color: var(--ink2); cursor: default; }
+.pip img { flex: 1; min-height: 0; width: 100%; object-fit: contain; border: 0; border-radius: 0; height: auto; }
+#rp_view.sgmode .cams img { height: auto; }
 
 .chips.pipes { max-height: 120px; }
 .pipe { display: inline-flex; align-items: stretch; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); font-size: 12px; }
@@ -192,7 +196,7 @@ pre.small { white-space: pre-wrap; max-height: 300px; overflow: auto; margin: 0;
 .in_bars .in_bar + .in_bar { top: 3px; height: 4px; opacity: 1; }
 .in_ok { color: #1baf7a; font-weight: 700; } .in_no { color: #d03b3b; font-weight: 700; }
 .in_x0 div { word-break: break-all; }
-.rp_badge { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 3; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; background: #fff3cd; color: #6b4e00; border: 1px solid #e0c060; }
+.rp_badge { pointer-events: auto; max-width: 70%; position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 3; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; background: #fff3cd; color: #6b4e00; border: 1px solid #e0c060; }
 .rp_badge.real { background: #dff5e6; color: #145a2e; border-color: #7bd389; }
 @media (max-width: 1100px) { .rp_row { flex-direction: column; } .rp_in { flex: none; height: 360px; } }
 .srcb { display: inline-block; font-size: 10px; padding: 0 5px; margin-right: 5px; border-radius: 8px; background: #fff3cd; color: #6b4e00; border: 1px solid #e0c060; }
