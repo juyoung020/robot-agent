@@ -12,7 +12,7 @@
 
 using namespace env;
 #ifdef ENV_PROF
-namespace env { void env_prof_read(unsigned long long out[8]); void env_prof_reset(); void tprof_read(unsigned long long out[64][3]); }
+namespace env { void env_prof_read(unsigned long long out[8]); void env_prof_reset(); void tprof_read(unsigned long long out[64][3]); void tseg_read(unsigned long long out[16][2]); void tcause_read(unsigned long long out[2][16]); void tbin_read(unsigned long long out[3][8]); void tact_read(unsigned long long out[16][3]); void tdbg_read(unsigned long long out[32]); void tkc_read(unsigned long long out[3][5]); }
 #endif
 
 int main(int argc, char** argv) {
@@ -103,6 +103,41 @@ int main(int argc, char** argv) {
       cudaDeviceGetAttribute(&clk, cudaDevAttrClockRate, 0);
       for (int k = 0; k < 64; ++k)
         if (tp[k][0]) std::printf("   plan need %2d: %llu plans, mean %.3f ms, max %.3f ms (warp clock)\n", k, tp[k][0], (double)tp[k][1] / tp[k][0] / clk, (double)tp[k][2] / clk);
+      static unsigned long long sg[16][2];
+      tseg_read(sg);
+      const char* nm[16] = {"arm at stance (grasp)", "arm at stance (place)", "occupancy + BFS", "stance search (grasp)", "stance search (place)", "table-stance arm plan",
+                            "path extract", "", "  occupancy paint", "  BFS x2", "new grasp searches", "new place searches", "searches found", "searches failed", "nopath (lev in slice)", "nopath (after cont)"};
+      for (int k = 0; k < 16; ++k)
+        if (sg[k][0]) {
+          if (k == 12 || k == 13) std::printf("   seg %-24s: %llu, mean slices %.1f\n", nm[k], sg[k][0], (double)sg[k][1] / sg[k][0]);
+          else std::printf("   seg %-24s: %llu, mean %.3f ms, total %.1f ms\n", nm[k], sg[k][0], (double)sg[k][1] / sg[k][0] / clk, (double)sg[k][1] / clk);
+        }
+      static unsigned long long tk[3][5];
+      tkc_read(tk);
+      for (int r = 0; r < 3; ++r) std::printf("   place slices %s by center: %llu %llu %llu %llu %llu\n", r == 0 ? "none" : r == 1 ? "found" : "cont", tk[r][0], tk[r][1], tk[r][2], tk[r][3], tk[r][4]);
+      static unsigned long long td[32];
+      tdbg_read(td);
+      std::printf("   reject counters:");
+      for (int k = 0; k < 32; ++k) if (td[k]) std::printf(" %d=%llu", k, td[k]);
+      std::printf("\n");
+      static unsigned long long ta[16][3];
+      tact_read(ta);
+      for (int k = 0; k < 16; ++k)
+        if (ta[k][0]) std::printf("   act phase %2d: %llu, mean %.4f ms, max %.3f ms\n", k, ta[k][0], (double)ta[k][1] / ta[k][0] / clk, (double)ta[k][2] / clk);
+      static unsigned long long tbn[3][8];
+      tbin_read(tbn);
+      for (int g = 0; g < 3; ++g) {
+        std::printf("   found stance grade %d by cost bin (0..6, direct):", g);
+        for (int k = 0; k < 8; ++k) std::printf(" %llu", tbn[g][k]);
+        std::printf("\n");
+      }
+      static unsigned long long tc[2][16];
+      tcause_read(tc);
+      for (int a = 0; a < 2; ++a) {
+        std::printf("   new %s searches by last fail:", a ? "place" : "grasp");
+        for (int k = 0; k < 16; ++k) if (tc[a][k]) std::printf(" r%d=%llu", k, tc[a][k]);
+        std::printf("\n");
+      }
     }
 #endif
     cudaFree(act); cudaFree(obs); cudaFree(rew); cudaFree(done);

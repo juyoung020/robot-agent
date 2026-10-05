@@ -1,4 +1,5 @@
 // 환경 커널: 스레드 하나 = 판 하나. 호스트 쪽은 장치 메모리와 실행만(상태는 제자리 갱신 — CUDA 그래프로 잡을 수 있게).
+#include <cstdlib>
 #include <cstddef>
 #include <cstdio>
 #include <vector>
@@ -122,7 +123,7 @@ __global__ void __launch_bounds__(128) step_kernel_beh(Soa s, const float* act, 
 #ifdef ENV_PROF
 __device__ unsigned long long g_tprof[64][3];   // 계획 요청 비트마다 [수, 사이클 합, 최대]
 #endif
-constexpr int kTeachSlots = 256;   // 계획 커널 워프 수 = 작업 메모리 칸 수(T_SCR 42 KB × 256 = 11 MB). 판 하나 = 워프 하나(레인이 후보·BFS 행을 나눔)
+constexpr int kTeachSlots = 256;   // 계획 커널 블록 수 = 작업 메모리 칸 수(T_SCR 42 KB × 256 = 11 MB). 판 하나 = 블록 하나(T_CHUNK 레인이 후보·BFS 행을 나눔)
 __global__ void __launch_bounds__(128) teacher_pre_k(Soa s, TBuf tb, const bsc::SceneSet* ss, bsc::NavFb fb) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < s.N && teacher_pre(s, tb, i, *ss, fb)) {
@@ -130,9 +131,10 @@ __global__ void __launch_bounds__(128) teacher_pre_k(Soa s, TBuf tb, const bsc::
     tb.list[1 + k] = i;
   }
 }
-__global__ void __launch_bounds__(128) teacher_plan_k(Soa s, TBuf tb, const bsc::SceneSet* ss) {
-  const int warp = (blockIdx.x * blockDim.x + threadIdx.x) >> 5, nwarp = (gridDim.x * blockDim.x) >> 5;
-  const WCtx w{(int)(threadIdx.x & 31), 32};
+__global__ void __launch_bounds__(T_CHUNK) teacher_plan_k(Soa s, TBuf tb, const bsc::SceneSet* ss) {
+  __shared__ int sh[16];
+  const WCtx w{(int)threadIdx.x, (int)blockDim.x, sh};
+  const int warp = blockIdx.x, nwarp = gridDim.x;   // 블록 = 작업 메모리 칸
   const int n = tb.list[0];
   for (int k = warp; k < n; k += nwarp) {
 #ifdef ENV_PROF
@@ -140,6 +142,7 @@ __global__ void __launch_bounds__(128) teacher_plan_k(Soa s, TBuf tb, const bsc:
     const long long c0 = clock64();
 #endif
     teacher_plan(s, tb, tb.list[1 + k], *ss, tb.scr + (size_t)warp * T_SCR, w);
+    __syncthreads();   // 작업 메모리를 다음 판이 다시 씀
 #ifdef ENV_PROF
     if (w.lane == 0) { const unsigned long long dc = (unsigned long long)(clock64() - c0); atomicAdd(&g_tprof[need][0], 1ull); atomicAdd(&g_tprof[need][1], dc); atomicMax(&g_tprof[need][2], dc); }
 #endif
@@ -151,7 +154,7 @@ __global__ void __launch_bounds__(128) teacher_act_k(Soa s, TBuf tb, const bsc::
   if (i == 0) tb.list[0] = 0;   // 다음 스텝 목록(계획 커널은 끝남)
 }
 void DeviceEnv::teacher_pre(const bsc::NavFb& fb) const { teacher_pre_k<<<(N_ + 127) / 128, 128>>>(Soa{f_, iv_, rng_, N_}, tb_, ss_, fb); }
-void DeviceEnv::teacher_plan() const { teacher_plan_k<<<(tb_.nslot * 32 + 127) / 128, 128>>>(Soa{f_, iv_, rng_, N_}, tb_, ss_); }
+void DeviceEnv::teacher_plan() const { teacher_plan_k<<<tb_.nslot, T_CHUNK>>>(Soa{f_, iv_, rng_, N_}, tb_, ss_); }
 void DeviceEnv::teacher_act(float* act) const { teacher_act_k<<<(N_ + 127) / 128, 128>>>(Soa{f_, iv_, rng_, N_}, tb_, ss_, act); }
 void DeviceEnv::teacher(float* act) const {
   if (!ss_ || !tb_.f) return;
@@ -163,11 +166,22 @@ void DeviceEnv::teacher(float* act) const {
 // 잡기 가능 표(짝마다 스레드 하나)
 __global__ void __launch_bounds__(128) feas_k(const bsc::SceneSet* ss, const int* idx, int n, FeasOut* out) {   // 짝 하나 = 워프 하나
   const int k = (blockIdx.x * blockDim.x + threadIdx.x) >> 5;
-  const WCtx w{(int)(threadIdx.x & 31), 32};
+  const WCtx w{(int)(threadIdx.x & 31), 32, nullptr};
   if (k >= n) return;   // 워프 전체가 같은 값
   FeasOut o;
   feas_entry(*ss, idx[k], o, w);
   if (w.lane == 0) out[k] = o;
+}
+
+// 교사 정적 점유 표(짝 하나 = 워프 하나): 칸 성분·과제 물체·정적 상자를 미리 칠함(teacher.h tch_occ_static)
+__global__ void __launch_bounds__(128) tocc_k(const bsc::SceneSet* ss, const int* idx, int n, uint64_t* out) {
+  const int k = (blockIdx.x * blockDim.x + threadIdx.x) >> 5;
+  const WCtx w{(int)(threadIdx.x & 31), 32, nullptr};
+  if (k >= n) return;
+  TR* o = reinterpret_cast<TR*>(out + (size_t)k * 4 * bsc::WIN);   // 표 번호 = 물체 짝 차례 k
+  for (int r = w.lane; r < 2 * bsc::WIN; r += 32) o[r] = TR{0ull, 0ull};
+  __syncwarp();
+  tch_occ_static(*ss, idx[k], o, w);
 }
 
 // 잡기 물리 판(B4–B6, E6) 커널: 예전 판 커널 뒤에 띄움(위 SEL 규칙)
@@ -198,9 +212,25 @@ __global__ void env_commit_k(EnvCtl* ctl) {
 }
 
 #ifdef ENV_PROF
+void tseg_read(unsigned long long out[16][2]) { cudaMemcpyFromSymbol(out, g_tseg, sizeof(unsigned long long) * 32); }
+void tact_read(unsigned long long out[16][3]) { cudaMemcpyFromSymbol(out, g_tact, sizeof(unsigned long long) * 48); }
+void tdbg_read(unsigned long long out[32]) { cudaMemcpyFromSymbol(out, g_tdbgd, sizeof(unsigned long long) * 32); }
+void tkc_read(unsigned long long out[3][5]) { cudaMemcpyFromSymbol(out, g_tkc, sizeof(unsigned long long) * 15); }
+void tbin_read(unsigned long long out[3][8]) { cudaMemcpyFromSymbol(out, g_tbin, sizeof(unsigned long long) * 24); }
+void tcause_read(unsigned long long out[2][16]) { cudaMemcpyFromSymbol(out, g_tcause, sizeof(unsigned long long) * 32); }
 void tprof_read(unsigned long long out[64][3]) { cudaMemcpyFromSymbol(out, g_tprof, sizeof(unsigned long long) * 64 * 3); }
 void env_prof_read(unsigned long long out[8]) { cudaMemcpyFromSymbol(out, g_env_prof, sizeof(unsigned long long) * 8); }
-void env_prof_reset() { const unsigned long long z[8] = {}; cudaMemcpyToSymbol(g_env_prof, z, sizeof z); }
+void env_prof_reset() {
+  static const unsigned long long z[64 * 3] = {};
+  cudaMemcpyToSymbol(g_env_prof, z, sizeof(unsigned long long) * 8);
+  cudaMemcpyToSymbol(g_tprof, z, sizeof(unsigned long long) * 64 * 3);
+  cudaMemcpyToSymbol(g_tseg, z, sizeof(unsigned long long) * 32);
+  cudaMemcpyToSymbol(g_tcause, z, sizeof(unsigned long long) * 32);
+  cudaMemcpyToSymbol(g_tbin, z, sizeof(unsigned long long) * 24);
+  cudaMemcpyToSymbol(g_tact, z, sizeof(unsigned long long) * 48);
+  cudaMemcpyToSymbol(g_tdbgd, z, sizeof(unsigned long long) * 32);
+  cudaMemcpyToSymbol(g_tkc, z, sizeof(unsigned long long) * 15);
+}
 #endif
 
 #define CK(x) do { cudaError_t e = (x); if (e != cudaSuccess) { std::fprintf(stderr, "CUDA error %s at %s:%d\n", cudaGetErrorString(e), __FILE__, __LINE__); std::abort(); } } while (0)
@@ -222,7 +252,7 @@ DeviceEnv::DeviceEnv(int N, int stage, uint64_t seed, bool arm_free, const bsc::
   CK(cudaMemset(iv_, 0, sizeof(int) * NUM_I * (size_t)N));
   if (ss_dev) {   // 대본 교사 버퍼(장면 묶음이 있을 때 — 그래프 잡기 전에 잡아 둠)
     tb_.N = N;
-    tb_.nslot = ((N < kTeachSlots ? N : kTeachSlots) + 3) / 4 * 4;   // 워프 수(블록 128 = 워프 4 의 배수)
+    tb_.nslot = N < kTeachSlots ? N : kTeachSlots;   // 블록 수
     CK(cudaMalloc(&tb_.f, sizeof(float) * NTF * (size_t)N));
     CK(cudaMalloc(&tb_.iv, sizeof(int) * NTI * (size_t)N));
     CK(cudaMalloc(&tb_.list, sizeof(int) * ((size_t)N + 1)));
@@ -230,6 +260,8 @@ DeviceEnv::DeviceEnv(int N, int stage, uint64_t seed, bool arm_free, const bsc::
     CK(cudaMemset(tb_.f, 0, sizeof(float) * NTF * (size_t)N));
     CK(cudaMemset(tb_.iv, 0, sizeof(int) * NTI * (size_t)N));
     CK(cudaMemset(tb_.list, 0, sizeof(int) * ((size_t)N + 1)));
+    CK(cudaMalloc(&tb_.rb, sizeof(uint32_t) * T_RBW * (size_t)N));
+    CK(cudaMemset(tb_.rb, 0, sizeof(uint32_t) * T_RBW * (size_t)N));
   }
   Soa s{f_, iv_, rng_, N};
   if (stage >= kStageBeh) init_kernel_beh<<<(N + 127) / 128, 128>>>(s, seed, ss_dev, bcurr_);
@@ -239,7 +271,7 @@ DeviceEnv::DeviceEnv(int N, int stage, uint64_t seed, bool arm_free, const bsc::
 }
 DeviceEnv::~DeviceEnv() {
   cudaFree(f_); cudaFree(iv_); cudaFree(rng_); cudaFree(bcurr_); cudaFree(ctl_);
-  if (tb_.f) { cudaFree(tb_.f); cudaFree(tb_.iv); cudaFree(tb_.list); cudaFree(tb_.scr); }
+  if (tb_.f) { cudaFree(tb_.f); cudaFree(tb_.iv); cudaFree(tb_.list); cudaFree(tb_.scr); cudaFree(tb_.rb); }
   if (ctl_h_) {
     for (void* e : ctl_ev_) if (e) cudaEventDestroy(static_cast<cudaEvent_t>(e));
     cudaFreeHost(ctl_h_);
@@ -325,10 +357,37 @@ double pnp_feasibility(bsc::SceneBuild& b, bool quiet) {
     for (int a = 0; a < 4; ++a) { e.gst4[a] = out[k].gst4[a]; e.gst[a] = out[k].gst[a]; e.pst5[a] = out[k].pst5[a]; e.pst6[a] = out[k].pst6[a]; e.grel[a] = out[k].grel[a]; }
   }
   b.host.has_feas = 1;
+  // 교사 정적 점유 표(짝마다 4 KB — 계획마다 칠하던 것): 장치에서 만들고 호스트에도(CPU 참조판)
+  uint64_t* d_tocc = nullptr;
+  int* d_toccix = nullptr;
+  const size_t tocc_n = (size_t)n * 4 * bsc::WIN;
+  if (!b.host.tocc) {
+    CK(cudaMalloc(&d_tocc, sizeof(uint64_t) * (tocc_n ? tocc_n : 1)));
+    b.toccix.assign(b.ent.size(), -1);
+    for (int k = 0; k < n; ++k) b.toccix[idx[k]] = k;
+    CK(cudaMalloc(&d_toccix, sizeof(int) * (b.ent.empty() ? 1 : b.ent.size())));
+    if (!b.ent.empty()) CK(cudaMemcpy(d_toccix, b.toccix.data(), sizeof(int) * b.ent.size(), cudaMemcpyHostToDevice));
+    if (n) {
+      int* d_idx2 = nullptr;
+      CK(cudaMalloc(&d_idx2, sizeof(int) * n));
+      CK(cudaMemcpy(d_idx2, idx.data(), sizeof(int) * n, cudaMemcpyHostToDevice));
+      tocc_k<<<(n * 32 + 127) / 128, 128>>>(b.dev, d_idx2, n, d_tocc);
+      CK(cudaGetLastError());
+      cudaFree(d_idx2);
+    }
+    b.tocc.resize(tocc_n);
+    if (tocc_n) CK(cudaMemcpy(b.tocc.data(), d_tocc, sizeof(uint64_t) * tocc_n, cudaMemcpyDeviceToHost));
+    b.dbuf.push_back(d_tocc);
+    b.dbuf.push_back(d_toccix);
+    b.dev_bytes += sizeof(uint64_t) * tocc_n + sizeof(int) * b.ent.size();
+    b.host.tocc = b.tocc.data();
+    b.host.toccix = b.toccix.data();
+  }
   bsc::SceneSet D;
   CK(cudaMemcpy(&D, b.dev, sizeof D, cudaMemcpyDeviceToHost));
   CK(cudaMemcpy(const_cast<bsc::Entry*>(D.ent), b.ent.data(), sizeof(bsc::Entry) * b.ent.size(), cudaMemcpyHostToDevice));
   D.has_feas = 1;
+  if (d_tocc && !std::getenv("TEACH_NO_TOCC")) { D.tocc = d_tocc; D.toccix = d_toccix; }   // TEACH_NO_TOCC: 장치는 예전처럼 칠함(같은 비트 확인용)
   CK(cudaMemcpy(b.dev, &D, sizeof D, cudaMemcpyHostToDevice));
   const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
   if (!quiet) {

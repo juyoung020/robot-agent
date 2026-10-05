@@ -13,6 +13,7 @@ CpuEnv::CpuEnv(int N_, int stage_, uint64_t seed, bool arm_free_, const bsc::Sce
     tiv.assign((size_t)NTI * N, 0);
     tlist.assign((size_t)N + 1, 0);
     tscr.assign((size_t)T_SCR, 0);
+    trb.assign((size_t)T_RBW * N, 0u);
   }
   for (int i = 0; i < N; ++i) {
     if (stage >= kStageBeh) init_env_beh(s, i, seed, *ss, curr);

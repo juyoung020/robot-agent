@@ -84,7 +84,7 @@ class DeviceEnv {
   int ctl_slot_ = 0;
   bool dyn_ = false;
   uint32_t fam_ = 0;
-  TBuf tb_{nullptr, nullptr, nullptr, nullptr, 0, 0};
+  TBuf tb_{nullptr, nullptr, nullptr, nullptr, 0, 0, nullptr};
 };
 
 // CPU 참조판: 같은 step_env 를 순서대로 돌린다(비교의 정답)
@@ -104,7 +104,8 @@ struct CpuEnv {
   std::vector<int> tiv, tlist;
   std::vector<uint8_t> tscr;
   long n_plan = 0;                          // 교사 계획 수(잰 값)
-  TBuf tbuf() { return TBuf{tf.data(), tiv.data(), tscr.data(), tlist.data(), N, 1}; }
+  std::vector<uint32_t> trb;                // 서는 자리 찾기 닿는 칸 비트(TBuf::rb)
+  TBuf tbuf() { return TBuf{tf.data(), tiv.data(), tscr.data(), tlist.data(), N, 1, trb.data()}; }
 };
 
 // 잡기 가능 표(Entry::feas·gst·pst5·pst6·grel, SceneSet::has_feas)를 장치에서 계산해 호스트·장치 표에 씀(teacher.h feas_entry — 잡기 모형·교사 계획과 같은 코드).

@@ -5,6 +5,9 @@
 // 비싼 계획은 필요할 때만(판 시작·단계 바뀜·다시 계획 신호: 막힘·떨어뜨림·물체 움직임·팔 계획 실패) 하고, 그 밖의 스텝은 저장한 계획을 따르기만 한다:
 //   teacher_pre (판마다, 가벼움: 판 시작·사건 처리, 계획 요청 비트) → 요청한 판만 모은 목록 → teacher_plan (목록의 판만, 무거움) → teacher_act (판마다, 가벼움: 행동)
 // GPU 는 셋을 따로 커널로(목록 = 장치 원자 더하기, 호스트 동기 없음 — 그래프에 넣을 수 있음), CPU 참조판은 판마다 차례로 같은 셋. 판끼리 서로 안 봄 → 비트 같음.
+// 2026-10-06 빠르게(결과 성공률 그대로, CURRICULUM 5.7): 계획 = 판 하나에 블록 하나(T_CHUNK 128 레인), 정적 점유는 짝마다 미리 칠한 표(SceneSet::tocc),
+// 서는 자리 찾기 이어 하는 조각은 BFS 없이 첫 조각의 닿는 칸 비트(TBuf::rb), 등급 1·2 를 찾은 조각에서 끝냄, 들고 다닐 때 팔 검사 캐시(CarryCache)·
+// 지역 계획 비용 차례 검사. tch_extract 의 (+1, +1) 이웃 버그 고침(헛 NOPATH → 다시 찾기).
 //
 // 계획(모두 이 파일):
 //   서는 자리 찾기(stance_search): 목표(물체 또는 놓을 가운데) 둘레 원호 — 방향 α 36(10°), 팔 방향 β 7(0, ±0.45, ±0.9, ±1.3 rad),
@@ -24,15 +27,42 @@
 //   다시 하기: 막힘(40 스텝에 남은 길 5 cm 안 줄면 길 다시, 3 번이면 자리 다시), 떨어뜨림(물체 참 자리로 다시 잡기), 닫아도 안 잡힘(팔 다시), 시도 > max_try 면 포기(까닭 적음).
 //   B6 이고 지도가 붙었는데 목표가 지도에 아직 확정 안 됨: 탐사(창 1.6 m 격자점 중 안 가 본 가장 가까운 곳으로, 가서 한 바퀴) — 물체 자리를 쓰지 않음.
 #pragma once
+#include <cstdlib>
+#include <cstdio>
 #include "env_soa.h"
 
 namespace env {
 
+#if defined(ENV_PROF) && defined(__CUDACC__)
+__device__ unsigned long long g_tdbgd[32];   // 측정 빌드(장치): 계획 거절 까닭 수(TDBG)
+#endif
 #if defined(TEACH_DBG) && !defined(__CUDA_ARCH__)
 extern long g_tdbg[32];   // 진단 빌드만(호스트): 계획 거절 까닭 수
 #define TDBG(k) (++g_tdbg[k])
+#elif defined(ENV_PROF) && defined(__CUDA_ARCH__)
+#define TDBG(k) atomicAdd(&g_tdbgd[k], 1ull)
 #else
 #define TDBG(k) ((void)0)
+#endif
+// 계획 구간 시간(측정 빌드 -DENV_PROF 만, 장치 레인 0): g_tseg[구간][수, 사이클]
+#if defined(ENV_PROF) && defined(__CUDACC__)
+__device__ unsigned long long g_tseg[16][2];
+__device__ unsigned long long g_tcause[2][16];   // 새 서는 자리 찾기의 까닭(t.fail) — [잡기/놓기][까닭]
+__device__ unsigned long long g_tbin[3][8];      // 찾은 서는 자리: [등급][비용 구간 0..6, 7 = 바로 가는 자리]
+__device__ unsigned long long g_tact[16][3];     // 행동 커널: 단계마다 [수, 사이클 합, 최대]
+__device__ unsigned long long g_tkc[3][5];       // 놓기 서는 자리 조각 결과: [없음·찾음·이어서][놓을 가운데 후보]
+#endif
+#if defined(ENV_PROF) && defined(__CUDA_ARCH__)
+#define TBIN(g, k) do { if (w.lane == 0) atomicAdd(&g_tbin[g][k], 1ull); } while (0)
+#else
+#define TBIN(g, k) ((void)0)
+#endif
+#if defined(ENV_PROF) && defined(__CUDA_ARCH__)
+#define TSEG_INIT long long ts_ = clock64();
+#define TSEG(k) do { const long long tn_ = clock64(); if (w.lane == 0) { atomicAdd(&g_tseg[k][0], 1ull); atomicAdd(&g_tseg[k][1], (unsigned long long)(tn_ - ts_)); } ts_ = tn_; } while (0)
+#else
+#define TSEG_INIT
+#define TSEG(k) ((void)0)
 #endif
 #if defined(__CUDACC__)
 #define TDEV static __host__ __device__ __noinline__
@@ -65,7 +95,7 @@ constexpr int T_NAQ = 5;    // 팔 웨이포인트 수(잡기: 잡기 전·가�
 // 교사 기억(환경 상태 밖 — 장치 버퍼, 판 N 개 열 배치 f[k*N + i]). 환경 상태의 I_T_EP·PH·TM·TRY·SOK, F_T_SX·SY·SYAW·D 도 씀
 enum TFl { TF_CPHI, TF_PX, TF_PY, TF_DPRE, TF_OX, TF_OY, TF_OZ, TF_OPEN, TF_W, TF_TCX, TF_TCY, TF_TCZ, TF_AX, TF_AY, TF_AYAW, TF_EXY,
            TF_WP0, TF_Q0 = TF_WP0 + 2 * T_NWP, NTF = TF_Q0 + 5 * T_NAQ };
-enum TIn { TI_SKC, TI_SPOS, TI_SG1, TI_SG2, TI_CFG, TI_NEED, TI_NWP, TI_KWP, TI_NAQ, TI_KAQ, TI_FAIL, TI_STK, TI_PART, TI_EXP0, TI_EXP1, TI_HELD0, TI_PH0, TI_NPLAN, NTI };
+enum TIn { TI_SKC, TI_SPOS, TI_SG1, TI_SG2, TI_CFG, TI_NEED, TI_NWP, TI_KWP, TI_NAQ, TI_KAQ, TI_FAIL, TI_STK, TI_PART, TI_EXP0, TI_EXP1, TI_HELD0, TI_PH0, TI_NPLAN, TI_SNP, NTI };
 enum TNeed { TN_SG = 1, TN_SP = 2, TN_AG = 4, TN_AP = 8, TN_PATH = 16, TN_EXPL = 32, TN_CONT = 64 };   // CONT: 서는 자리 찾기를 이어서(진행 SPos 그대로)
 constexpr int T_SCR = 2 * bsc::WIN * bsc::WIN + 5 * bsc::WIN * 16;   // 계획 한 판의 작업 메모리(바이트): 단계 칸 둘(넓은·좁은 판) + 128 비트 행 5 묶음
 struct TBuf {
@@ -74,20 +104,26 @@ struct TBuf {
   uint8_t* scr;      // nslot * T_SCR
   int* list;         // [N + 1]: [0] = 수, [1..] = 계획할 판(GPU 원자 더하기 — 차례는 결과와 무관)
   int N, nslot;
+  uint32_t* rb;      // [N][T_RBW] 서는 자리 찾기 첫 조각의 닿는 칸 비트(3 × 3 이웃 넓힘 = lev_near) — 이어 하는 조각은 BFS 없이 이것(로봇은 멈춰 기다림)
 };
+constexpr int T_RBW = bsc::WIN * bsc::WIN / 32;
 
-// 워프 나눠 하기(계획 커널 = 판 하나에 워프 하나): 레인마다 후보를 하나씩 보고, "처음 되는 후보" 는 레인들 중 가장 작은 번호(= CPU 차례대로 처음 되는 것과 같음).
-// CPU 참조판·후보 평가 안쪽은 레인 하나(nl 1) — 같은 함수, 같은 결과
-struct WCtx { int lane, nl; };
-DEV WCtx wseq() { return WCtx{0, 1}; }
+// 나눠 하기(계획 커널 = 판 하나에 블록 하나, 2026-10-06 — 예전 워프 하나): 레인마다 후보를 하나씩 보고, "처음 되는 후보" 는 레인들 중 가장 작은 번호
+// (= CPU 차례대로 처음 되는 것과 같음). nl == 32 는 워프(잡기 가능 표 feas_k — 블록에 짝 넷), nl > 32 는 블록(sh = 블록 공유 int ≥ 16).
+// CPU 참조판·후보 평가 안쪽은 레인 하나(nl 1) — 같은 함수, 같은 결과. 서는 자리 예산은 T_CHUNK 묶음마다 셈(CPU·GPU 같은 곳에서 끊김)
+struct WCtx { int lane, nl; int* sh; };
+constexpr int T_CHUNK = 128;   // 계획 커널 블록 크기 = 예산 묶음
+DEV WCtx wseq() { return WCtx{0, 1, nullptr}; }
 DEV void w_sync(const WCtx& w) {
 #ifdef __CUDA_ARCH__
-  if (w.nl > 1) __syncwarp();
+  if (w.nl > 32) __syncthreads();
+  else if (w.nl > 1) __syncwarp();
 #endif
   (void)w;
 }
 DEV bool w_any(const WCtx& w, bool v) {
 #ifdef __CUDA_ARCH__
+  if (w.nl > 32) return __syncthreads_or(v ? 1 : 0) != 0;
   if (w.nl > 1) return __any_sync(0xffffffffu, v);
 #endif
   (void)w;
@@ -96,6 +132,20 @@ DEV bool w_any(const WCtx& w, bool v) {
 template <class F>
 DEV int w_first(const WCtx& w, int n, const F& f) {
 #ifdef __CUDA_ARCH__
+  if (w.nl > 32) {
+    for (int base = 0; base < n; base += w.nl) {
+      const int k = base + w.lane;
+      const bool ok = k < n && f(k);
+      __syncthreads();
+      if (w.lane == 0) w.sh[0] = 0x7fffffff;
+      __syncthreads();
+      if (ok) atomicMin(&w.sh[0], k);
+      __syncthreads();
+      const int m = w.sh[0];
+      if (m != 0x7fffffff) return m;
+    }
+    return -1;
+  }
   if (w.nl > 1) {
     for (int base = 0; base < n; base += 32) {
       const int k = base + w.lane;
@@ -126,6 +176,22 @@ DEV int w_argmin(const WCtx& w, int n, const F& f) {
       const int oi = __shfl_xor_sync(0xffffffffu, bi, off);
       if (ob < best || (ob == best && oi >= 0 && (bi < 0 || oi < bi))) { best = ob; bi = oi; }
     }
+  if (w.nl > 32) {   // 워프마다 (값, 번호) → 레인 0 이 워프 차례로 합침
+    __syncthreads();
+    if ((w.lane & 31) == 0) { w.sh[2 * (w.lane >> 5)] = __float_as_int(best); w.sh[2 * (w.lane >> 5) + 1] = bi; }
+    __syncthreads();
+    if (w.lane == 0) {
+      for (int q = 1; q < (w.nl >> 5); ++q) {
+        const float ob = __int_as_float(w.sh[2 * q]);
+        const int oi = w.sh[2 * q + 1];
+        if (ob < best || (ob == best && oi >= 0 && (bi < 0 || oi < bi))) { best = ob; bi = oi; }
+      }
+      w.sh[0] = __float_as_int(best); w.sh[1] = bi;
+    }
+    __syncthreads();
+    best = __int_as_float(w.sh[0]); bi = w.sh[1];
+    __syncthreads();
+  }
 #endif
   return best < 1e30f ? bi : -1;
 }
@@ -133,7 +199,7 @@ DEV int w_argmin(const WCtx& w, int n, const F& f) {
 struct TState {
   int ep, ph, tm, tr, sok;
   float sx, sy, syaw, sd;
-  int skc, spos, sg1, sg2, cfg, need, nwp, kwp, naq, kaq, fail, stk, part, exp0, exp1, held0, ph0, nplan;
+  int skc, spos, sg1, sg2, cfg, need, nwp, kwp, naq, kaq, fail, stk, part, exp0, exp1, held0, ph0, nplan, snp;   // snp: 이 서는 자리 찾기의 조각 수
   float cphi, px, py, dpre, ox, oy, oz, open, w, tcx, tcy, tcz, ax, ay, ayaw, exy;
   float wp[2 * T_NWP], q[5 * T_NAQ];
 };
@@ -146,7 +212,7 @@ DEV void load_t(const Soa& s, const TBuf& tb, int i, TState& t) {
   t.cfg = iv[TI_CFG * N + i]; t.cphi = tb.f[TF_CPHI * N + i];
   t.need = iv[TI_NEED * N + i]; t.nwp = iv[TI_NWP * N + i]; t.kwp = iv[TI_KWP * N + i]; t.naq = iv[TI_NAQ * N + i]; t.kaq = iv[TI_KAQ * N + i];
   t.fail = iv[TI_FAIL * N + i]; t.stk = iv[TI_STK * N + i]; t.part = iv[TI_PART * N + i]; t.exp0 = iv[TI_EXP0 * N + i]; t.exp1 = iv[TI_EXP1 * N + i];
-  t.held0 = iv[TI_HELD0 * N + i]; t.ph0 = iv[TI_PH0 * N + i]; t.nplan = iv[TI_NPLAN * N + i];
+  t.held0 = iv[TI_HELD0 * N + i]; t.ph0 = iv[TI_PH0 * N + i]; t.nplan = iv[TI_NPLAN * N + i]; t.snp = iv[TI_SNP * N + i];
   const float* f = tb.f;
   t.px = f[TF_PX * N + i]; t.py = f[TF_PY * N + i]; t.dpre = f[TF_DPRE * N + i]; t.ox = f[TF_OX * N + i]; t.oy = f[TF_OY * N + i]; t.oz = f[TF_OZ * N + i];
   t.open = f[TF_OPEN * N + i]; t.w = f[TF_W * N + i]; t.tcx = f[TF_TCX * N + i]; t.tcy = f[TF_TCY * N + i]; t.tcz = f[TF_TCZ * N + i];
@@ -163,7 +229,7 @@ DEV void store_t(const Soa& s, const TBuf& tb, int i, const TState& t) {
   iv[TI_CFG * N + i] = t.cfg; tb.f[TF_CPHI * N + i] = t.cphi;
   iv[TI_NEED * N + i] = t.need; iv[TI_NWP * N + i] = t.nwp; iv[TI_KWP * N + i] = t.kwp; iv[TI_NAQ * N + i] = t.naq; iv[TI_KAQ * N + i] = t.kaq;
   iv[TI_FAIL * N + i] = t.fail; iv[TI_STK * N + i] = t.stk; iv[TI_PART * N + i] = t.part; iv[TI_EXP0 * N + i] = t.exp0; iv[TI_EXP1 * N + i] = t.exp1;
-  iv[TI_HELD0 * N + i] = t.held0; iv[TI_PH0 * N + i] = t.ph0; iv[TI_NPLAN * N + i] = t.nplan;
+  iv[TI_HELD0 * N + i] = t.held0; iv[TI_PH0 * N + i] = t.ph0; iv[TI_NPLAN * N + i] = t.nplan; iv[TI_SNP * N + i] = t.snp;
   float* f = tb.f;
   f[TF_PX * N + i] = t.px; f[TF_PY * N + i] = t.py; f[TF_DPRE * N + i] = t.dpre; f[TF_OX * N + i] = t.ox; f[TF_OY * N + i] = t.oy; f[TF_OZ * N + i] = t.oz;
   f[TF_OPEN * N + i] = t.open; f[TF_W * N + i] = t.w; f[TF_TCX * N + i] = t.tcx; f[TF_TCY * N + i] = t.tcy; f[TF_TCZ * N + i] = t.tcz;
@@ -407,7 +473,7 @@ TDEV bool arm_try_place(const Core& c, const BState& b, const bsc::SceneSet& ss,
   for (int it = 0; it < 2; ++it) {   // 손 축은 계획한 자세에서: 잡는 점 = 가운데 − rel·축
     float gb[3];
     base_of(c, gw, gb);
-    if (!ik_grasp(gb, phi, 0.f, el, q)) return false;
+    if (!ik_grasp(gb, phi, 0.f, el, q)) { TDBG(17); return false; }
     Fk f;
     Hand h;
     hand_of(c, q, 0.f, f, h);
@@ -415,27 +481,27 @@ TDEV bool arm_try_place(const Core& c, const BState& b, const bsc::SceneSet& ss,
   }
   float gb[3];
   base_of(c, gw, gb);
-  if (!ik_grasp(gb, phi, 0.f, el, q)) return false;
+  if (!ik_grasp(gb, phi, 0.f, el, q)) { TDBG(18); return false; }
   {
     const float rx = gb[0] - KIK::j1x, ry = gb[1];
     float sp, cp;
     sincosf_d(phi, &sp, &cp);
-    if (mass_of(E.mass) > payload_max(sqrtf(rx * rx + ry * ry), sp)) return false;
+    if (mass_of(E.mass) > payload_max(sqrtf(rx * rx + ry * ry), sp)) { TDBG(19); return false; }
   }
   PState pp;
   held_at(c, q, p, pp);
   const float gh = grip_angle_of(p.w);
-  if (arm_hits(c, b, ss, E, pp, ac, q, gh)) return false;
+  if (arm_hits(c, b, ss, E, pp, ac, q, gh)) { TDBG(20); return false; }
   // 놓은 뒤: 수직으로 내려앉힌 자리에서 판정이 참, 떨어진 높이 ≤ 5 cm(용기 넣기는 빼고)
   PState pr = pp;
   pr.st = OS_REST;
   const float dh = settle(ss, b, E, pr, e);
-  if (!(dh <= KG::drop_pen_h || E.dkind == bsc::DK_INSIDE)) return false;
-  if (!at_goal(ss, b, E, pr, e)) return false;
+  if (!(dh <= KG::drop_pen_h || E.dkind == bsc::DK_INSIDE)) { TDBG(21); return false; }
+  if (!at_goal(ss, b, E, pr, e)) { TDBG(22); return false; }
   float qa[2][5];
   for (int k = 0; k < 2; ++k) {   // 놓기 전(6 cm 위)·가운데(3 cm 위)
     const float tb2[3] = {gb[0], gb[1], gb[2] + (k == 0 ? KT::pre_d : 0.5f * KT::pre_d)};
-    if (!ik_near(tb2, phi, 0.f, el, 0.3f, qa[k])) return false;
+    if (!ik_near(tb2, phi, 0.f, el, 0.3f, qa[k])) { TDBG(23); return false; }
     PState pk;
     held_at(c, qa[k], p, pk);
     Fk f2;
@@ -445,7 +511,7 @@ TDEV bool arm_try_place(const Core& c, const BState& b, const bsc::SceneSet& ss,
     grasp_point_base(f2, g2);
     const float rx = g2[0] - KIK::j1x, ry = g2[1];
     if (mass_of(E.mass) > payload_max(sqrtf(rx * rx + ry * ry), h2.a[2])) return false;
-    if (arm_hits(c, b, ss, E, pk, ac, qa[k], gh)) return false;
+    if (arm_hits(c, b, ss, E, pk, ac, qa[k], gh)) { TDBG(24); return false; }
   }
   // 물러나기: 열고 다가가는 축 뒤로 6 cm(안 되면 9 cm) + 3 cm 위, 손 ≥ retreat + 5 mm(놓인 물체는 그 자리)
   const float open = minf(p.w + KT::open_extra, grip_gap_of(0.6f)), go = grip_angle_of(open);
@@ -468,7 +534,8 @@ TDEV bool arm_try_place(const Core& c, const BState& b, const bsc::SceneSet& ss,
     if (!(pt_box_dist(lo, hi, h3.p) >= KG::retreat + 0.005f)) continue;
     okr = !arm_hits(c, b, ss, E, pr, ac, qr, go);
   }
-  if (!okr) return false;
+  if (!okr) { TDBG(25); return false; }
+  TDBG(26);
   for (int k = 0; k < 5; ++k) { ap.q[0][k] = qa[0][k]; ap.q[1][k] = qa[1][k]; ap.q[2][k] = q[k]; ap.q[3][k] = qr[k]; ap.q[4][k] = qr[k]; }
   ap.n = 4; ap.open = open; ap.w = p.w; ap.cfg = el; ap.cphi = phi;
   return true;
@@ -534,7 +601,7 @@ DEV void tr_paint(TR* m, float x0, float y0, float x1, float y1, float r, const 
 }
 // 특권 점유(창): 좁은 판 blk0 = 설 칸 성분이 이 짝의 잡는 자세 칸 성분과 다름 + 과제 물체(바닥 H_COLL 아래)·놓인 집을 물체·막는 물체를 r_nav0 부풀림.
 // 넓은 판 blk1 = blk0 + 정적 충돌 상자·과제 물체를 r_nav1 부풀림
-TDEV void tch_occ(const bsc::SceneSet& ss, const BState& b, const bsc::Entry& E, const PState& p, TR* blk0, TR* blk1, const WCtx& w) {
+TDEV void tch_occ_full(const bsc::SceneSet& ss, const BState& b, const bsc::Entry& E, const PState& p, TR* blk0, TR* blk1, const WCtx& w) {
   const bsc::SceneDev& d = ss.sc[b.scene];
   const int c0 = (int)floorf((E.wx - bsc::WIN_HALF - d.ox) * bsc::INV_CELL + 0.5f), r0 = (int)floorf((E.wy - bsc::WIN_HALF - d.oy) * bsc::INV_CELL + 0.5f);
   for (int r = w.lane; r < bsc::WIN; r += w.nl) {   // 행을 레인이 나눔
@@ -603,6 +670,48 @@ TDEV void tch_occ(const bsc::SceneSet& ss, const BState& b, const bsc::Entry& E,
     }
     w_sync(w);
   }
+}
+// 움직이는 부분만(집을 물체 — 들지 않았으면, 막는 물체)을 반경 rr 로 칠함(tch_occ_full 의 그 부분과 같은 식)
+DEV void tch_occ_dyn(const bsc::Entry& E, const PState& p, TR* m, float rr, const WCtx& w) {
+  if (p.st != OS_HELD && w.lane == 0) {
+    float lo[3], hi[3];
+    obj_box(p, E.odim, lo, hi);
+    if (lo[2] < bsc::H_COLL) {
+      const bsc::SBox ob = obj_sbox(p, E.odim, 0.f, 0.f);
+      tr_paint(m, lo[0], lo[1], hi[0], hi[1], rr, [&](float x, float y) { return bsc::dist_pt_obb2(ob, x, y); });
+    }
+  }
+  if (p.oc[2] > 0.f && w.lane == (w.nl > 1 ? 1 : 0)) {
+    float lo[3], hi[3];
+    occ_box(p, lo, hi);
+    tr_paint(m, lo[0], lo[1], hi[0], hi[1], rr, [&](float x, float y) {
+      const float dx = maxf(maxf(lo[0] - x, x - hi[0]), 0.f), dy = maxf(maxf(lo[1] - y, y - hi[1]), 0.f);
+      return sqrtf(dx * dx + dy * dy);
+    });
+  }
+}
+// 특권 점유: 정적 표(tocc — 짝마다 칸 성분·과제 물체·정적 상자를 미리 칠함)가 있으면 그것 + 움직이는 부분, 없으면 다 칠함. 칠하기는 켜기(OR)만이라 같은 비트
+// (넓은 판 = 정적 넓은 판 ∪ 움직이는 것 r_nav0 ∪ r_nav1 = 정적 넓은 판 ∪ 움직이는 것 r_nav1 — 반경이 큰 칸 집합이 작은 것을 품음)
+TDEV void tch_occ(const bsc::SceneSet& ss, const BState& b, const bsc::Entry& E, const PState& p, TR* blk0, TR* blk1, const WCtx& w) {
+  if (!ss.tocc) { tch_occ_full(ss, b, E, p, blk0, blk1, w); return; }
+  const int ix = ss.toccix[b.ent];
+  if (ix < 0) { tch_occ_full(ss, b, E, p, blk0, blk1, w); return; }
+  const TR* T = reinterpret_cast<const TR*>(ss.tocc + (size_t)ix * 4 * bsc::WIN);
+  for (int r = w.lane; r < bsc::WIN; r += w.nl) { blk0[r] = T[r]; blk1[r] = T[bsc::WIN + r]; }
+  w_sync(w);
+  tch_occ_dyn(E, p, blk0, KT::r_nav0, w);
+  tch_occ_dyn(E, p, blk1, KT::r_nav1, w);
+  w_sync(w);
+}
+// 정적 표 한 짝(pnp_feasibility): 물체를 든 것으로·막는 물체 없음으로 두고 다 칠함 → [좁은 판 WIN 행][넓은 판 WIN 행]
+TDEV void tch_occ_static(const bsc::SceneSet& ss, int ent, TR* out, const WCtx& w) {
+  const bsc::Entry& E = ss.ent[ent];
+  BState b{};
+  b.scene = E.scene; b.ent = ent; b.wx = E.wx; b.wy = E.wy;
+  PState p;
+  clear_p(p);
+  p.st = OS_HELD;
+  tch_occ_full(ss, b, E, p, out, out + bsc::WIN, w);
 }
 // BFS(로봇 칸에서, 8·4 이웃 번갈아 = 팔각 거리 ≈ 단계 × 0.1 m). lev[WIN²] 단계(255 = 못 감)
 // 목표 칸(gc, gr ≥ 0)을 주면 그 칸 또는 3 × 3 이웃이 닿은 단계에서 멈춤(길 뽑기에는 그것으로 충분 — 결과 같음)
@@ -675,8 +784,9 @@ TDEV int tch_extract(const uint8_t* lev, const TR* blk, float rx, float ry, floa
   part = 0;
   int gc = wcell(gx), gr = wcell(gy);
   int best = -1, bl = 255;
-  for (int k = 0; k < 9; ++k) {   // 목표 칸, 아니면 3 × 3 이웃 중 가장 낮은 단계(같으면 앞 차례)
-    const int c = gc + (k == 0 ? 0 : (k - 1) % 3 - 1), r = gr + (k == 0 ? 0 : (k - 1) / 3 - 1);
+  for (int k = 0; k < 9; ++k) {   // 목표 칸, 아니면 3 × 3 이웃 중 가장 낮은 단계(같으면 앞 차례). (2026-10-06 고침: 예전엔 (+1, +1) 이웃을 안 봄 —
+    const int kk = k == 0 ? 4 : k <= 4 ? k - 1 : k;   //  lev_near 는 닿았다는데 길 뽑기가 실패(NOPATH)할 수 있었음)
+    const int c = gc + kk % 3 - 1, r = gr + kk / 3 - 1;
     if (c < 0 || r < 0 || c >= bsc::WIN || r >= bsc::WIN) continue;
     const int L = lev[r * bsc::WIN + c];
     if (L < bl) { bl = L; best = r * bsc::WIN + c; }
@@ -732,7 +842,9 @@ DEV TScr scr_of(uint8_t* s) {
 }
 // 로봇에서 BFS 둘(넓은 판·좁은 판). 로봇 칸은 늘 열고, 로봇 둘레 r_esc 안은 넓은 판도 좁은 판 값으로(가구 옆에서 빠져나오기)
 TDEV void tch_reach(const Core& c, const BState& b, const bsc::SceneSet& ss, const bsc::Entry& E, const PState& p, const TScr& S, const WCtx& w, float gx = 1e9f, float gy = 1e9f) {
+  TSEG_INIT
   tch_occ(ss, b, E, p, S.blk0, S.blk1, w);
+  TSEG(8);
   const int rc = wcell(c.x), rr = wcell(c.y);
   if (w.lane == 0) {
     const int re = (int)ceilf(KT::r_esc * bsc::INV_CELL);
@@ -748,6 +860,7 @@ TDEV void tch_reach(const Core& c, const BState& b, const bsc::SceneSet& ss, con
   const int gc = gx < 1e8f ? wcell(gx) : -1, gr = gx < 1e8f ? wcell(gy) : -1;
   tch_bfs(S.blk1, rc, rr, S.lev1, S.fr, S.vis, S.nw, w, gc, gr);
   tch_bfs(S.blk0, rc, rr, S.lev0, S.fr, S.vis, S.nw, w, gc, gr);
+  TSEG(9);
 }
 DEV bool lev_near(const uint8_t* lev, float x, float y) {   // 칸 또는 3 × 3 이웃이 닿음
   const int c = wcell(x), r = wcell(y);
@@ -882,14 +995,37 @@ DEV int stance_grade(const Core& t, const BState& b, const bsc::SceneSet& ss, co
 template <class Ev>
 DEV int pick_graded(const WCtx& w, int k0, int n, const Ev& ev, int& g1, int& g2, int& budget, int& next) {
 #ifdef __CUDA_ARCH__
-  if (w.nl > 1) {
+  if (w.nl > 32) {   // 블록: 묶음 = 레인 수(T_CHUNK)
+    int base = k0;
+    for (; base < n && budget > 0; base += w.nl) {
+      const int k = base + w.lane;
+      StanceOut t2;
+      const int q = k < n ? ev(k, t2) : 4;
+      __syncthreads();
+      if (w.lane == 0) { w.sh[0] = 0x7fffffff; w.sh[1] = 0x7fffffff; w.sh[2] = 0x7fffffff; w.sh[3] = 0; }
+      __syncthreads();
+      if (q == 0) atomicMin(&w.sh[0], k);
+      if (q == 1) atomicMin(&w.sh[1], k);
+      if (q == 2) atomicMin(&w.sh[2], k);
+      if (q < 4) atomicAdd(&w.sh[3], 1);
+      __syncthreads();
+      const int m0 = w.sh[0], m1 = w.sh[1], m2 = w.sh[2], cnt = w.sh[3];
+      budget -= cnt;   // 비싼 검사까지 간 후보만 셈
+      if (m0 != 0x7fffffff) { next = n; return m0; }
+      if (g1 < 0 && m1 != 0x7fffffff) g1 = m1;
+      if (g2 < 0 && m2 != 0x7fffffff) g2 = m2;
+    }
+    next = base < n ? base : n;
+    return -1;
+  }
+  if (w.nl > 1) {   // 워프(잡기 가능 표: 예산 무한 — 묶음 크기와 무관한 답)
     int base = k0;
     for (; base < n && budget > 0; base += 32) {
       const int k = base + w.lane;
       StanceOut t2;
       const int q = k < n ? ev(k, t2) : 4;
       const unsigned m0 = __ballot_sync(0xffffffffu, q == 0), m1 = __ballot_sync(0xffffffffu, q == 1), m2 = __ballot_sync(0xffffffffu, q == 2);
-      budget -= __popc(__ballot_sync(0xffffffffu, q < 4));   // 비싼 검사까지 간 후보만 셈
+      budget -= __popc(__ballot_sync(0xffffffffu, q < 4));
       if (m0) { next = n; return base + __ffs((int)m0) - 1; }
       if (g1 < 0 && m1) g1 = base + __ffs((int)m1) - 1;
       if (g2 < 0 && m2) g2 = base + __ffs((int)m2) - 1;
@@ -899,11 +1035,11 @@ DEV int pick_graded(const WCtx& w, int k0, int n, const Ev& ev, int& g1, int& g2
   }
 #endif
   (void)w;
-  // CPU: 같은 32 개 묶음 단위로 예산을 씀(GPU 와 같은 곳에서 끊김)
+  // CPU: 블록과 같은 T_CHUNK 묶음 단위로 예산을 씀(GPU 계획 커널과 같은 곳에서 끊김)
   int base = k0;
-  for (; base < n && budget > 0; base += 32) {
+  for (; base < n && budget > 0; base += T_CHUNK) {
     int c1 = -1, c2 = -1;   // 이 묶음의 등급 1·2(등급 0 이 없을 때만 씀 — GPU 와 같게)
-    for (int k = base; k < base + 32 && k < n; ++k) {
+    for (int k = base; k < base + T_CHUNK && k < n; ++k) {
       StanceOut t2;
       const int q = ev(k, t2);
       budget -= q < 4 ? 1 : 0;
@@ -962,17 +1098,17 @@ DEV int stance_loop(const Core& c, const BState& b, const bsc::SceneSet& ss, con
     return q;
   };
   const int nd = slack_ok ? 31 * 5 : 0;
+  const int ncand = 36 * 7 * T_NR;
   if (sp.pos < nd) {
     int next = nd;
     const int k0 = pick_graded(w, sp.pos, nd, direct_k, sp.g1, sp.g2, budget, next);
-    if (k0 >= 0) return direct_k(k0, o) < 3 ? 1 : 0;
-    if (next < nd) { sp.pos = next; return 2; }
+    if (k0 >= 0) { TBIN(0, 7); return direct_k(k0, o) < 3 ? 1 : 0; }
+    if (next < nd && sp.g1 < 0 && sp.g2 < 0) { sp.pos = next; return 2; }
     const int ks = sp.g1 >= 0 ? sp.g1 : sp.g2;
-    if (ks >= 0) return direct_k(ks, o) < 3 ? 1 : 0;
+    if (ks >= 0) { TBIN(sp.g1 >= 0 ? 1 : 2, 7); return direct_k(ks, o) < 3 ? 1 : 0; }
     sp.pos = nd; sp.g1 = -1; sp.g2 = -1;
   }
   // 둘레 원호: 후보 번호 = (비용 구간, 방향 k, 팔 방향 ib, r) 차례 — 구간 밖이면 그 구간에서 건너뜀
-  const int ncand = 36 * 7 * T_NR;
   auto gen_k = [&](int gidx, StanceOut& out) -> int {
     const int pass = gidx / ncand, idx = gidx % ncand;
     const float clo = pass ? bins[pass - 1] : -1.f, chi = bins[pass];
@@ -1013,12 +1149,21 @@ DEV int stance_loop(const Core& c, const BState& b, const bsc::SceneSet& ss, con
     if (q < 3) { out.x = x; out.y = y; out.yaw = yaw; out.px = px; out.py = py; out.dp = dp; }
     return q;
   };
-  int next = 7 * ncand;
-  const int k0 = pick_graded(w, sp.pos - nd, 7 * ncand, gen_k, sp.g1, sp.g2, budget, next);
-  if (k0 >= 0) return gen_k(k0, o) < 3 ? 1 : 0;
-  if (next < 7 * ncand) { sp.pos = nd + next; return 2; }
+  // 비용 구간 하나씩. 등급 0 은 바로 고름. 등급 1·2 를 찾았으면 그 조각(스텝 예산)·그 구간이 끝날 때 고름(2026-10-06: 예전엔 등급 0 을 바라고
+  // 끝까지 훑음 — 런타임 찾기는 거의 늘 등급 2 로 끝나(잰 값: B4 745 중 0·B5 795 중 3) 후보 수천 개를 헛되이 봄)
+  for (int pos = sp.pos - nd; pos < 7 * ncand;) {
+    const int bend = (pos / ncand + 1) * ncand;
+    int next = bend;
+    const int k0 = pick_graded(w, pos, bend, gen_k, sp.g1, sp.g2, budget, next);
+    if (k0 >= 0) { TBIN(0, k0 / ncand); return gen_k(k0, o) < 3 ? 1 : 0; }
+    if (sp.g1 >= 0 || sp.g2 >= 0) break;
+    if (next < bend) { sp.pos = nd + next; return 2; }
+    pos = bend;
+    if (budget <= 0 && pos < 7 * ncand) { sp.pos = nd + pos; return 2; }
+  }
   const int ks = sp.g1 >= 0 ? sp.g1 : sp.g2;
   if (ks < 0) return 0;
+  TBIN(sp.g1 >= 0 ? 1 : 2, ks / ncand);
   return gen_k(ks, o) < 3 ? 1 : 0;
 }
 // r 띠(joint1 축에서 잡는 점까지 수평 거리)를 훑음: 잡는 점 창 높이 zg, 기울기 phi, 팔꿈치 el 로 역기구학이 되는 r 비트
@@ -1144,6 +1289,9 @@ TDEV int stance_place(const Core& c, const BState& b, const bsc::SceneSet& ss, c
       return true;
     };
     const int r = stance_loop(c, b, ss, E, p, nc, tc[0], tc[1], rmask, avx, avy, avyaw, direct, slack, full, rob, o, w, sp, budget);
+#if defined(ENV_PROF) && defined(__CUDA_ARCH__)
+    if (w.nl > 32 && w.lane == 0) atomicAdd(&g_tkc[r][kc], 1ull);
+#endif
     if (r != 0) return r;
     if (budget <= 0) { ++sp.kc; sp.pos = 0; sp.g1 = -1; sp.g2 = -1; return sp.kc < 5 ? 2 : 0; }
   }
@@ -1322,6 +1470,10 @@ TDEV void teacher_plan(const Soa& s, const TBuf& tb, int i, const bsc::SceneSet&
   int need = t.need;
   t.need = 0;
   ++t.nplan;
+  TSEG_INIT
+#if defined(ENV_PROF) && defined(__CUDA_ARCH__)
+  if (w.lane == 0 && (need & (TN_SG | TN_SP)) && !(need & TN_CONT)) atomicAdd(&g_tseg[10 + ((need & TN_SP) ? 1 : 0)][0], 1ull), atomicAdd(&g_tcause[(need & TN_SP) ? 1 : 0][t.fail & 15], 1ull);
+#endif
   auto put_arm = [&](const ArmPlan& ap) {
     for (int k = 0; k < T_NAQ; ++k) for (int j = 0; j < 5; ++j) t.q[5 * k + j] = ap.q[k][j];
     t.naq = ap.n; t.open = ap.open; t.w = ap.w; t.cfg = ap.cfg; t.cphi = ap.cphi;
@@ -1344,6 +1496,7 @@ TDEV void teacher_plan(const Soa& s, const TBuf& tb, int i, const bsc::SceneSet&
     }
     if (quick || arm_grasp_here(c, b, ss, E, p, ap, rel, true, w)) { put_arm(ap); t.ph = TP_PRE; t.kaq = 0; t.ox = p.o[0]; t.oy = p.o[1]; t.oz = p.o[2]; }
     else { ++t.tr; t.fail = FR_ARM; fail_stance(); t.ph = TP_NAV; t.sok = 0; t.nwp = 0; need |= TN_SG; }
+    TSEG(0);
   }
   if (need & TN_AP) {   // 같은 자세(같은 놓을 가운데 후보) 먼저
     ArmPlan ap;
@@ -1358,32 +1511,61 @@ TDEV void teacher_plan(const Soa& s, const TBuf& tb, int i, const bsc::SceneSet&
     }
     if (quick || arm_place_here(c, b, ss, E, p, ap, tc, w)) { put_arm(ap); t.ph = TP_PREPL; t.kaq = 0; t.tcx = tc[0]; t.tcy = tc[1]; t.tcz = tc[2]; }
     else { ++t.tr; t.fail = FR_ARM; fail_stance(); t.ph = TP_NAV2; t.sok = 0; t.nwp = 0; need |= TN_SP; }
+    TSEG(1);
   }
   if (t.tr > KT::max_try && !(p.st == OS_HELD)) { t.ph = TP_DONE; if (w.lane == 0) store_t(s, tb, i, t); return; }
   if (!(need & (TN_SG | TN_SP | TN_PATH | TN_EXPL))) { if (w.lane == 0) store_t(s, tb, i, t); return; }
   const TScr S = scr_of(scr);
   // 길만 필요하고 P 가 로봇 자리(5 cm 안 — 표의 "바로 가는 자리")면 BFS 없이
   const bool trivial = !(need & (TN_SG | TN_SP | TN_EXPL)) && (t.px - c.x) * (t.px - c.x) + (t.py - c.y) * (t.py - c.y) < 0.05f * 0.05f;
+  // 서는 자리 찾기를 이어 하는 조각: 첫 조각이 적어 둔 닿는 칸 비트(tb.rb)를 씀 — BFS 없음
+  const bool scont = (need & (TN_SG | TN_SP)) && (need & TN_CONT) && tb.rb;
+  uint32_t* rbi = tb.rb ? tb.rb + (size_t)i * T_RBW : nullptr;
   // 길만이면 목표 칸에 닿으면 BFS 를 멈춤(서는 자리 찾기는 창 전체 단계가 필요)
-  if (!trivial) {
+  bool have_lev = false;
+  if (!trivial && !scont) {
     if (need & (TN_SG | TN_SP | TN_EXPL)) tch_reach(c, b, ss, E, p, S, w);
     else tch_reach(c, b, ss, E, p, S, w, t.px, t.py);
+    have_lev = true;
+    if ((need & (TN_SG | TN_SP)) && rbi) {   // 닿는 칸(3 × 3 이웃 넓힘) 비트를 적어 둠 — 이어 하는 조각용
+      for (int k = w.lane; k < T_RBW; k += w.nl) {
+        uint32_t m = 0u;
+        for (int j = 0; j < 32; ++j) {
+          const int wc = 32 * k + j, cc = wc % bsc::WIN, rr = wc / bsc::WIN;
+          bool any = false;
+          for (int dr = -1; dr <= 1; ++dr)
+            for (int dc = -1; dc <= 1; ++dc) {
+              const int c2 = cc + dc, r2 = rr + dr;
+              any = any || (c2 >= 0 && r2 >= 0 && c2 < bsc::WIN && r2 < bsc::WIN && S.lev0[r2 * bsc::WIN + c2] < 255);
+            }
+          if (any) m |= 1u << j;
+        }
+        rbi[k] = m;
+      }
+      w_sync(w);
+    }
   }
-  const NavCtx nc{S.lev0, nullptr};
+  TSEG(2);
+  const NavCtx nc = scont ? NavCtx{nullptr, rbi} : NavCtx{S.lev0, nullptr};
   if (need & (TN_SG | TN_SP)) {
     StanceOut so;
     const bool pl = (need & TN_SP) != 0;
-    if (!(need & TN_CONT)) { t.skc = 0; t.spos = 0; t.sg1 = -1; t.sg2 = -1; }   // 새 찾기
+    if (!(need & TN_CONT)) { t.skc = 0; t.spos = 0; t.sg1 = -1; t.sg2 = -1; t.snp = 0; }   // 새 찾기
+    ++t.snp;
     SPos sp{t.skc, t.spos, t.sg1, t.sg2};
     const int r = pl ? stance_place(c, b, ss, E, p, nc, t.ax, t.ay, t.ayaw, true, 0.f, so, w, sp, KT::plan_budget)
                      : stance_grasp(c, b, ss, E, p, nc, t.ax, t.ay, t.ayaw, true, 0.f, so, w, sp, KT::plan_budget);
     t.skc = sp.kc; t.spos = sp.pos; t.sg1 = sp.g1; t.sg2 = sp.g2;
+    TSEG(pl ? 4 : 3);
     if (r == 2) {   // 다음 스텝에 이어서(멈춰 기다림)
       t.need = (pl ? TN_SP : TN_SG) | TN_CONT;
       if (w.lane == 0) store_t(s, tb, i, t);
       return;
     }
     const bool ok = r == 1;
+#if defined(ENV_PROF) && defined(__CUDA_ARCH__)
+    if (w.lane == 0) { atomicAdd(&g_tseg[12 + (ok ? 0 : 1)][0], 1ull); atomicAdd(&g_tseg[12 + (ok ? 0 : 1)][1], (unsigned long long)t.snp); }
+#endif
     if (ok) {
       const float st4[4] = {so.x, so.y, so.yaw, so.dp};
       set_stance(t, st4);
@@ -1404,9 +1586,11 @@ TDEV void teacher_plan(const Soa& s, const TBuf& tb, int i, const bsc::SceneSet&
     ArmPlan ap;
     float tmp[4];
     const bool ok = t.sok == 2 ? arm_place_here(u, b, ss, E, p, ap, tmp, w) : arm_grasp_here(u, b, ss, E, p, ap, tmp, false, w);
+    TSEG(5);
     if (ok) put_arm(ap);
     else { ++t.tr; t.fail = FR_ARM; fail_stance(); t.nwp = 0; t.need = t.sok == 2 ? TN_SP : TN_SG; t.sok = 0; if (w.lane == 0) store_t(s, tb, i, t); return; }
   }
+  if ((need & TN_PATH) && !trivial && !have_lev) tch_reach(c, b, ss, E, p, S, w, t.px, t.py);   // 이어 한 찾기가 끝남: 길 BFS(목표에서 멈춤)
   if ((need & TN_PATH) && trivial) {
     t.nwp = 1; t.kwp = 0; t.part = 0; t.sd = 1e9f; t.stk = 0; t.wp[0] = t.px; t.wp[1] = t.py;
     t.ph = t.sok == 2 ? TP_NAV2 : TP_NAV;
@@ -1420,8 +1604,12 @@ TDEV void teacher_plan(const Soa& s, const TBuf& tb, int i, const bsc::SceneSet&
     } else {
       ++t.tr; t.fail = FR_NOPATH; fail_stance(); t.nwp = 0;
       t.need = t.sok == 2 ? TN_SP : TN_SG;
+#if defined(ENV_PROF) && defined(__CUDA_ARCH__)
+      if (w.lane == 0) atomicAdd(&g_tseg[14 + (have_lev ? 0 : 1)][0], 1ull);
+#endif
       t.sok = 0;
     }
+    TSEG(6);
   }
   if (need & TN_EXPL) {   // 탐사: 창 격자점(1.6 m) 중 안 가 본 것 중 가장 가까운(길) 곳 — 물체 자리는 안 씀
     int best = -1, bl = 255;
@@ -1494,18 +1682,115 @@ DEV void teacher_guard(const Core& c, const BState& b, const PState& p, const bs
     if ((cand[k][0] != 0.f || cand[k][1] != 0.f) && free_at(cand[k][0], cand[k][1])) { v = cand[k][0]; w = cand[k][1]; return; }
   v = 0.f; w = 0.f;
 }
-// 베이스 자세 (x, y, yaw) 에서 몸통이 안 닿고, 들고 있으면(ac != nullptr) 지금 팔 자세 + 든 물체도 안 닿나
-DEV bool nav_free(const Core& c, const BState& b, const PState& p, const bsc::SceneSet& ss, const bsc::Entry& E, const ArmCand* ac, float x, float y, float yaw) {
+// 들고 다닐 때 팔 검사 캐시(2026-10-06): 팔 자세(c.q)는 이 스텝 동안 그대로라 순기구학 둘(손 축 g = 0 — held_at, 팔 점 g = c.q[5] — arm_hits)을 한 번만,
+// 후보 상자는 팔 점·든 물체 높이 띠와 겹치는 것만(높이는 베이스 자세와 무관 — 빠진 상자는 어떤 자세에서도 닿을 수 없음 → 같은 답)
+struct CarryCache { Fk f0, fa; ArmCand ac; float R; };   // R: 베이스 가운데에서 팔 점(반경 × √2)·든 물체 바닥 자국이 닿는 평면 거리 상한 + 1 cm
+DEV void carry_cache(const Core& c, const BState& b, const PState& p, const bsc::Entry& E, const bsc::SceneSet& ss, const ArmCand& ac, CarryCache& cc) {
+  float qq[N_Q], qd[N_Q];
+  for (int k = 0; k < N_Q; ++k) { qq[k] = k < 5 ? c.q[k] : 0.f; qd[k] = 0.f; }
+  fk(qq, qd, cc.f0);
+  fk(c.q, qd, cc.fa);
+  cc.ac = ac;
+  if (ac.overflow) return;
+  // 높이 띠: 팔 점(arm_collides 와 같은 여덟 점) + 든 물체 상자(지금 자세에서 — 세계 높이는 평면 이동과 무관)
+  float zl = 1e9f, zh = -1e9f;
+  {
+    const Fk& f = cc.fa;
+    float gp[3];
+    grasp_point_base(f, gp);
+    const float hg = 0.5f * grip_gap_of(c.q[5]);
+    const float tip = gp[2] + (KG::tip_front - KG::tip_in) * f.ee_R[6];
+    const float zz[8] = {0.5f * (f.p[1][2] + f.p[2][2]), f.p[2][2], 0.5f * (f.p[2][2] + f.p[3][2]), f.p[3][2], f.p[4][2], f.p[4][2] + KG::palm_d * f.ee_R[6],
+                         tip + hg * f.ee_R[7], tip - hg * f.ee_R[7]};
+    for (int k = 0; k < 8; ++k) { zl = minf(zl, zz[k] + 0.15f); zh = maxf(zh, zz[k] + 0.15f); }
+  }
+  {
+    Hand h;
+    hand_world(cc.f0, c.x, c.y, 0.f, 1.f, h);
+    PState ph = p;
+    for (int a = 0; a < 3; ++a) ph.o[a] = h.p[a] + p.rel[0] * h.a[a] + p.rel[1] * h.n[a] + p.rel[2] * h.b[a];
+    zl = minf(zl, ph.o[2] - 0.5f * E.odim[2]); zh = maxf(zh, ph.o[2] + 0.5f * E.odim[2]);
+  }
+  zl = zl - KG::r_link - 0.03f; zh = zh + KG::r_link + 0.03f;   // 반경 + 3 cm 여유(넣는 쪽으로만 틀림 — 같은 답)
+  {   // 평면 반경(베이스 틀): 점 |xy| + r·√2(pt_in_obb 는 네모로 넓힘), 든 물체 가운데 |xy| + 바닥 자국 반 대각
+    const Fk& f = cc.fa;
+    float gp[3];
+    grasp_point_base(f, gp);
+    const float hg = 0.5f * grip_gap_of(c.q[5]);
+    float R = 0.f;
+    auto pr = [&](float x, float y, float r) { R = maxf(R, sqrtf(x * x + y * y) + 1.4143f * r); };
+    for (int k = 1; k <= 4; ++k) pr(f.p[k][0], f.p[k][1], KG::r_link);
+    pr(f.p[4][0] + KG::palm_d * f.ee_R[0], f.p[4][1] + KG::palm_d * f.ee_R[3], KG::r_link);
+    const float tx = gp[0] + (KG::tip_front - KG::tip_in) * f.ee_R[0], ty = gp[1] + (KG::tip_front - KG::tip_in) * f.ee_R[3];
+    pr(tx + hg * f.ee_R[1], ty + hg * f.ee_R[4], KG::r_tip);
+    pr(tx - hg * f.ee_R[1], ty - hg * f.ee_R[4], KG::r_tip);
+    Hand h;
+    hand_world(cc.f0, 0.f, 0.f, 0.f, 1.f, h);
+    const float ox = h.p[0] + p.rel[0] * h.a[0] + p.rel[1] * h.n[0] + p.rel[2] * h.b[0], oy = h.p[1] + p.rel[0] * h.a[1] + p.rel[1] * h.n[1] + p.rel[2] * h.b[1];
+    R = maxf(R, sqrtf(ox * ox + oy * oy) + 0.5f * sqrtf(E.odim[0] * E.odim[0] + E.odim[1] * E.odim[1]));
+    cc.R = R + 0.01f;
+  }
+  const bsc::SceneDev& d = ss.sc[b.scene];
+  int n = 0;
+  for (int q = 0; q < ac.n; ++q) {
+    const bsc::SBox& B = d.box[ac.idx[q]];
+    if (B.z1 > zl && B.z0 < zh) cc.ac.idx[n++] = ac.idx[q];
+  }
+  cc.ac.n = n;
+  int np = 0;
+  for (int q = 0; q < ac.np; ++q) {
+    const bsc::BPrim& P = E.prim[ac.pidx[q]];
+    if (P.hi[2] > zl && P.lo[2] < zh) cc.ac.pidx[np++] = ac.pidx[q];
+  }
+  cc.ac.np = np;
+}
+// 베이스 자세 (x, y, yaw) 에서 몸통이 안 닿고, 들고 있으면(cc != nullptr) 지금 팔 자세 + 든 물체도 안 닿나(held_at·arm_hits 와 같은 식, 순기구학은 캐시)
+DEV bool nav_free(const Core& c, const BState& b, const PState& p, const bsc::SceneSet& ss, const bsc::Entry& E, const CarryCache* cc, float x, float y, float yaw) {
   if (!body_free_pnp(ss, b, E, p, x, y, yaw)) return false;
-  if (!ac) return true;
+  if (!cc) return true;
   Core u = c;
   u.x = x; u.y = y; u.yaw = yaw;
-  PState ph;
-  held_at(u, c.q, p, ph);
-  return !arm_hits(u, b, ss, E, ph, *ac, c.q, c.q[5]);
+  float sn, cs;
+  sincosf_d(yaw, &sn, &cs);
+  Hand h;
+  hand_world(cc->f0, x, y, sn, cs, h);
+  PState ph = p;
+  for (int a = 0; a < 3; ++a) ph.o[a] = h.p[a] + p.rel[0] * h.a[a] + p.rel[1] * h.n[a] + p.rel[2] * h.b[a];
+  set_yaw(ph, yaw + c.q[0] + p.ryaw);
+  // 이 자세에서 반경 R 안에 드는 후보만(밖의 상자에는 어떤 팔 점·든 물체도 닿을 수 없음 → 같은 답)
+  ArmCand an;
+  an.overflow = cc->ac.overflow;
+  if (an.overflow) an = cc->ac;
+  else {
+    an.n = 0; an.np = 0;
+    const bsc::SceneDev& d = ss.sc[b.scene];
+    for (int q = 0; q < cc->ac.n; ++q)
+      if (bsc::dist_pt_obb2(d.box[cc->ac.idx[q]], x + b.wx, y + b.wy) < cc->R) an.idx[an.n++] = cc->ac.idx[q];
+    for (int q = 0; q < cc->ac.np; ++q) {
+      const bsc::BPrim& P = E.prim[cc->ac.pidx[q]];
+      const float dx = maxf(maxf(P.lo[0] - x, x - P.hi[0]), 0.f), dy = maxf(maxf(P.lo[1] - y, y - P.hi[1]), 0.f);
+      if (dx * dx + dy * dy < cc->R * cc->R) an.pidx[an.np++] = cc->ac.pidx[q];
+    }
+  }
+  const bool hit = arm_collides(u, b, ss, E, ph, E.odim, cc->fa, an, sn, cs);
+#if !defined(__CUDA_ARCH__)
+  static const bool dbg_nf = std::getenv("TDBG_NAVFREE") != nullptr;
+  if (dbg_nf) {   // 확인(CPU): 예전 식(held_at + arm_hits, 모은 후보 전부)과 같은 답
+    ArmCand a0;
+    arm_gather(ss.sc[b.scene], E, b.wx, b.wy, c.x, c.y, a0);
+    PState p0;
+    held_at(u, c.q, p, p0);
+    const bool h0 = arm_hits(u, b, ss, E, p0, a0, c.q, c.q[5]);
+    static long nchk = 0, nbad = 0;
+    ++nchk;
+    if (h0 != hit) { ++nbad; std::printf("NAVFREE MISMATCH %ld/%ld\n", nbad, nchk); }
+    if ((nchk & ((1 << 14) - 1)) == 0) std::printf("navfree checks %ld mismatches %ld\n", nchk, nbad);
+  }
+#endif
+  return !hit;
 }
 // 명령 (v, w) 를 0.2 s 따른 뒤 멈추는 동안(가속 한도 그대로 굴림, 0.05 s 표본) 안 닿나 — 지금 속도·관성까지 봄
-DEV bool cmd_safe(const Core& c, const BState& b, const PState& p, const bsc::SceneSet& ss, const bsc::Entry& E, const ArmCand* ac, float v_cmd, float w_cmd) {
+DEV bool cmd_safe(const Core& c, const BState& b, const PState& p, const bsc::SceneSet& ss, const bsc::Entry& E, const CarryCache* ac, float v_cmd, float w_cmd) {
   float x = c.x, y = c.y, yaw = c.yaw, v = c.v, w = c.w;
   const float dt = 0.05f;
   for (int k = 0; k < 16; ++k) {
@@ -1520,8 +1805,18 @@ DEV bool cmd_safe(const Core& c, const BState& b, const PState& p, const bsc::Sc
   }
   return true;
 }
+// 지금에서 (v, w) 로 0.6 s(0.2 s 셋) 간 끝 자리(arc_free 와 같은 식, 검사 없음)
+DEV void arc_end(const Core& c, float v, float w, float& ex, float& ey) {
+  float x = c.x, y = c.y, yaw = c.yaw;
+  for (int k = 0; k < 3; ++k) {
+    float sn, cs;
+    sincosf_d(yaw + 0.1f * w, &sn, &cs);
+    x = x + 0.2f * v * cs; y = y + 0.2f * v * sn; yaw = yaw + 0.2f * w;
+  }
+  ex = x; ey = y;
+}
 // 지금에서 (v, w) 로 0.6 s(0.2 s 셋) 가는 동안 안 닿나
-DEV bool arc_free(const Core& c, const BState& b, const PState& p, const bsc::SceneSet& ss, const bsc::Entry& E, const ArmCand* ac, float v, float w, float& ex, float& ey) {
+DEV bool arc_free(const Core& c, const BState& b, const PState& p, const bsc::SceneSet& ss, const bsc::Entry& E, const CarryCache* ac, float v, float w, float& ex, float& ey) {
   float x = c.x, y = c.y, yaw = c.yaw;
   for (int k = 0; k < 3; ++k) {
     float sn, cs;
@@ -1534,7 +1829,7 @@ DEV bool arc_free(const Core& c, const BState& b, const PState& p, const bsc::Sc
 }
 // 막힌 곳 둘레 지역 계획(작은 DWA): 순수 추종 명령이 0.3 s 안에 닿으면 — (1) 제자리 돌기가 막혔으면 곧게 앞·뒤로 빠져(0.6 s 뒤 그 방향 0.3 rad 돌기가 되는 쪽)
 // (2) 아니면 속도 5 × 회전 5 묶음을 0.6 s 굴려 안 닿는 것 중 (목표 거리 + 0.05·목표 방향 어긋남)이 가장 작은 것
-DEV void local_cmd(const Core& c, const BState& b, const PState& p, const bsc::SceneSet& ss, const bsc::Entry& E, const ArmCand* ac, float gx, float gy, float& v, float& w) {
+DEV void local_cmd(const Core& c, const BState& b, const PState& p, const bsc::SceneSet& ss, const bsc::Entry& E, const CarryCache* ac, float gx, float gy, float& v, float& w) {
   {
     float ex, ey;
     float s2, c2;
@@ -1555,17 +1850,50 @@ DEV void local_cmd(const Core& c, const BState& b, const PState& p, const bsc::S
     if (bd < 1e30f && cmd_safe(c, b, p, ss, E, ac, bv, 0.f)) { v = bv; w = 0.f; return; }
   }
   const float vs[5] = {0.25f, 0.12f, 0.f, -0.1f, -0.2f}, ws[5] = {0.f, 0.5f, -0.5f, 1.f, -1.f};
-  float best = 1e30f, bv = 0.f, bw = 0.f;
+  // 비용이 가장 작은, 굴림(arc_free)·멈춤(cmd_safe) 둘 다 안 닿는 묶음. 굴림 끝 자리·비용을 먼저 모두 재고(검사 없이), 비용 차례(같으면 앞 번호)로
+  // 두 검사를 처음 되는 것까지만(2026-10-06 — 예전엔 25 개 모두 검사: 비용은 검사와 무관해 고른 답은 같음)
+  float cost[25];
   for (int a = 0; a < 5; ++a)
     for (int k = 0; k < 5; ++k) {
+      float& co = cost[a * 5 + k];
+      co = 1e30f;
       if (vs[a] == 0.f && ws[k] == 0.f) continue;
       float ex, ey;
-      if (!arc_free(c, b, p, ss, E, ac, vs[a], ws[k] * K::w_max, ex, ey) || !cmd_safe(c, b, p, ss, E, ac, vs[a], ws[k] * K::w_max)) continue;
+      arc_end(c, vs[a], ws[k] * K::w_max, ex, ey);   // 굴림 끝 자리(검사 없이 — arc_free 와 같은 식)
       const float yaw2 = c.yaw + 0.6f * ws[k] * K::w_max;
       const float he = absf(wrap_pi(atan2f_d(gy - ey, gx - ex) - yaw2));
-      const float cost = sqrtf((ex - gx) * (ex - gx) + (ey - gy) * (ey - gy)) + 0.05f * minf(he, kPi - he) + (vs[a] < 0.f ? 0.01f : 0.f);
-      if (cost < best) { best = cost; bv = vs[a]; bw = ws[k] * K::w_max; }
+      co = sqrtf((ex - gx) * (ex - gx) + (ey - gy) * (ey - gy)) + 0.05f * minf(he, kPi - he) + (vs[a] < 0.f ? 0.01f : 0.f);
     }
+  float bv = 0.f, bw = 0.f;
+  for (int it = 0; it < 25; ++it) {
+    int bi = -1;
+    for (int j = 0; j < 25; ++j) if (cost[j] < 1e30f && (bi < 0 || cost[j] < cost[bi])) bi = j;
+    if (bi < 0) break;
+    const float vv = vs[bi / 5], ww = ws[bi % 5] * K::w_max;
+    float ex, ey;
+    if (arc_free(c, b, p, ss, E, ac, vv, ww, ex, ey) && cmd_safe(c, b, p, ss, E, ac, vv, ww)) { bv = vv; bw = ww; break; }
+    cost[bi] = 1e30f;
+  }
+#if !defined(__CUDA_ARCH__)
+  static const bool dbg_dwa = std::getenv("TDBG_DWA") != nullptr;
+  if (dbg_dwa) {   // 확인(CPU): 예전 고리(25 개 모두 검사)와 같은 답
+    float best = 1e30f, ov = 0.f, ow = 0.f;
+    for (int a = 0; a < 5; ++a)
+      for (int k = 0; k < 5; ++k) {
+        if (vs[a] == 0.f && ws[k] == 0.f) continue;
+        float ex, ey;
+        if (!arc_free(c, b, p, ss, E, ac, vs[a], ws[k] * K::w_max, ex, ey) || !cmd_safe(c, b, p, ss, E, ac, vs[a], ws[k] * K::w_max)) continue;
+        const float yaw2 = c.yaw + 0.6f * ws[k] * K::w_max;
+        const float he = absf(wrap_pi(atan2f_d(gy - ey, gx - ex) - yaw2));
+        const float co = sqrtf((ex - gx) * (ex - gx) + (ey - gy) * (ey - gy)) + 0.05f * minf(he, kPi - he) + (vs[a] < 0.f ? 0.01f : 0.f);
+        if (co < best) { best = co; ov = vs[a]; ow = ws[k] * K::w_max; }
+      }
+    static long nd = 0, nb = 0;
+    ++nd;
+    if (ov != bv || ow != bw) { ++nb; std::printf("DWA MISMATCH %ld/%ld\n", nb, nd); }
+    if ((nd & 4095) == 0) std::printf("dwa checks %ld mismatches %ld\n", nd, nb);
+  }
+#endif
   v = bv; w = bw;
 }
 DEV float qerr(const Core& c, const float* q) {
@@ -1575,6 +1903,10 @@ DEV float qerr(const Core& c, const float* q) {
 }
 DEV void teacher_act(const Soa& s, const TBuf& tb, int i, const bsc::SceneSet& ss, float* act) {
   const int N = s.N;
+#if defined(ENV_PROF) && defined(__CUDA_ARCH__)
+  const long long ta0 = clock64();
+  int ph_in = -1;
+#endif
   Core c;
   load<false>(s, i, c);
   BState b;
@@ -1597,13 +1929,17 @@ DEV void teacher_act(const Soa& s, const TBuf& tb, int i, const bsc::SceneSet& s
   float v = 0.f, w = 0.f;
   const float* Q = t.q;
   bool guard = false;
-  ArmCand acn;   // 들고 다닐 때 지역 계획이 팔·든 물체 충돌도 봄
-  const ArmCand* acp = nullptr;
+  CarryCache ccn;   // 들고 다닐 때 지역 계획이 팔·든 물체 충돌도 봄
+  const CarryCache* acp = nullptr;
   if (held && (t.ph == TP_NAV2 || t.ph == TP_APP2 || t.ph == TP_NAV)) {   // 둘레(0.65 m)에 아무 상자도 없으면 팔 검사 생략(바닥은 나르는 높이라 안 닿음)
+    ArmCand acn;
     arm_gather(ss.sc[b.scene], E, b.wx, b.wy, c.x, c.y, acn);
-    if (acn.n > 0 || acn.np > 0 || acn.overflow || p.oc[2] > 0.f) acp = &acn;
+    if (acn.n > 0 || acn.np > 0 || acn.overflow || p.oc[2] > 0.f) { carry_cache(c, b, p, E, ss, acn, ccn); acp = &ccn; }
   }
   if (t.ph != t.ph0) { t.tm = 0; t.ph0 = t.ph; }   // 앞·계획에서 단계가 바뀜: 단계 안 스텝 0 부터
+#if defined(ENV_PROF) && defined(__CUDA_ARCH__)
+  ph_in = t.ph;
+#endif
   switch (t.ph) {
     case TP_NAV: case TP_NAV2: case TP_EXPLORE: {
       if (t.need || t.nwp <= 0) {
@@ -1629,7 +1965,7 @@ DEV void teacher_act(const Soa& s, const TBuf& tb, int i, const bsc::SceneSet& s
         } else if (rem > t.sd - KT::stuck_dd) {
           ++t.stk; t.sd = rem;
           if (t.stk > KT::max_stk) {
-            ++t.tr; t.fail = FR_STUCK; t.stk = 0; t.ax = t.sx; t.ay = t.sy; t.ayaw = t.syaw;
+            ++t.tr; t.fail = FR_STUCK; t.stk = 0; t.ax = t.sx; t.ay = t.sy; t.ayaw = t.syaw; TDBG(27);
             t.need = t.ph == TP_EXPLORE ? TN_EXPL : t.ph == TP_NAV2 ? TN_SP : TN_SG;
           } else t.need = t.ph == TP_EXPLORE ? TN_EXPL : TN_PATH;
         } else t.sd = rem;
@@ -1639,7 +1975,7 @@ DEV void teacher_act(const Soa& s, const TBuf& tb, int i, const bsc::SceneSet& s
     }
     case TP_APP: case TP_APP2: {   // P 에서 자리 yaw 로 돌기 → 팔을 잡기(놓기) 전 자세로 → 자리까지 곧게 → yaw 맞춤 → 그 자리 팔 계획
       const bool pl = t.ph == TP_APP2;
-      if (t.tm > KT::t_app) { ++t.tr; t.fail = FR_STUCK; t.ax = t.sx; t.ay = t.sy; t.ayaw = t.syaw; t.need = pl ? TN_SP : TN_SG; t.sok = 0; t.nwp = 0; t.ph = pl ? TP_NAV2 : TP_NAV; break; }
+      if (t.tm > KT::t_app) { TDBG(28); ++t.tr; t.fail = FR_STUCK; t.ax = t.sx; t.ay = t.sy; t.ayaw = t.syaw; t.need = pl ? TN_SP : TN_SG; t.sok = 0; t.nwp = 0; t.ph = pl ? TP_NAV2 : TP_NAV; break; }
       float sn, cs;
       sincosf_d(t.syaw, &sn, &cs);
       const float ex = t.sx - c.x, ey = t.sy - c.y;
@@ -1656,7 +1992,7 @@ DEV void teacher_act(const Soa& s, const TBuf& tb, int i, const bsc::SceneSet& s
       } else if (t.kaq == 5) {   // 제자리 돌기(막히면 곧게 빠져 돌 자리 만들기 — P 에서 12 cm 넘게 벗어나면 다시 P 로)
         w = clampf(2.5f * eyaw, -1.f, 1.f) * K::w_max;
         if (absf(eyaw) < 0.03f) t.kaq = 1;
-        else if (t.tm > 70) { ++t.tr; t.fail = FR_STUCK; t.ax = t.sx; t.ay = t.sy; t.ayaw = t.syaw; t.need = pl ? TN_SP : TN_SG; t.sok = 0; t.nwp = 0; t.ph = pl ? TP_NAV2 : TP_NAV; }
+        else if (t.tm > 70) { TDBG(29); ++t.tr; t.fail = FR_STUCK; t.ax = t.sx; t.ay = t.sy; t.ayaw = t.syaw; t.need = pl ? TN_SP : TN_SG; t.sok = 0; t.nwp = 0; t.ph = pl ? TP_NAV2 : TP_NAV; }
         else if (pd2 > 0.12f * 0.12f) t.kaq = 0;
         else local_cmd(c, b, p, ss, E, acp, t.px, t.py, v, w);
       } else if (t.kaq == 1) {
@@ -1790,6 +2126,10 @@ DEV void teacher_act(const Soa& s, const TBuf& tb, int i, const bsc::SceneSet& s
   a[7] = act_of_q(5, g);
   for (int k = 0; k < N_ACT; ++k) act[k * N + i] = a[k];
   store_t(s, tb, i, t);
+#if defined(ENV_PROF) && defined(__CUDA_ARCH__)
+  const unsigned long long dc = (unsigned long long)(clock64() - ta0);
+  atomicAdd(&g_tact[ph_in & 15][0], 1ull); atomicAdd(&g_tact[ph_in & 15][1], dc); atomicMax(&g_tact[ph_in & 15][2], dc);
+#endif
 }
 
 // 한 판 전체(CPU 참조판·확인 도구): 앞 → (필요하면) 계획 → 행동. scr = T_SCR 바이트

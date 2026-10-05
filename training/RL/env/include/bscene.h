@@ -121,6 +121,9 @@ struct SceneSet {         // 장치 메모리에 하나(커널은 포인터로 �
   const int16_t* hyper;   // [nname]
   int nname;
   int has_feas;           // 1 = Entry::feas 표를 채움(env pnp_feasibility) — 0 이면 PF_FEAS 고르기는 예전처럼(표 없음)
+  const uint64_t* tocc;   // 교사 정적 점유 표(env pnp_feasibility, 2026-10-06): 물체 짝마다 [좁은·넓은 판][WIN 행][낱말 2] = 칸 성분·과제 물체·정적 상자(물체·막는 물체 빼고).
+                          // nullptr 이면 교사가 계획 때마다 칠함(같은 비트)
+  const int* toccix;      // [nent] → tocc 안 짝 번호(물체 짝만, 나머지 −1)
 };
 
 // 커리큘럼(장치 값, 판 리셋 때 읽음 — 바꿔도 다시 컴파일·그래프 다시 잡기 없음)
