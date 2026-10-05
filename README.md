@@ -140,6 +140,16 @@ bash refs/download.sh   # 참고 논문 PDF·코드를 refs/ 에 받기 (깃에�
 python3 -m pytest tests/  # 테스트 실행
 ```
 
+### 빌드·실행
+
+```bash
+tools/check_env.sh              # 외부 경로·도구 점검(경로는 config/paths.env, 내 PC 값은 config/paths.local.env)
+tools/build_all.sh              # 전부 build/ 한 곳에 빌드(-j4, 증분). 골라서: tools/build_all.sh sgrt sgview
+tools/run_sgview.sh <memory 폴더> [--live]
+```
+
+배치·외부 경로 설명: [docs/LAYOUT.md](docs/LAYOUT.md)
+
 ## 라이선스
 
 우리 코드는 [Apache-2.0](LICENSE) 이다. 제3자 구성 요소는 각자 라이선스를 따른다.
