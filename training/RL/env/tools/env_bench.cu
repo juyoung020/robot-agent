@@ -18,12 +18,13 @@ namespace env { void env_prof_read(unsigned long long out[8]); void env_prof_res
 int main(int argc, char** argv) {
   const int T = argc > 1 ? std::atoi(argv[1]) : 300, stage = argc > 2 ? std::atoi(argv[2]) : 1, maxN = argc > 3 ? std::atoi(argv[3]) : 1048576;
   bsc::BCurr cu = bsc::kBCurrDefault;
-  bool teach = false, feas = false;
+  bool teach = false, feas = false, tsl = false;
   for (int a = 4; a < argc; ++a) {
     if (!std::strcmp(argv[a], "--pnp") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f,%f", &cu.p4, &cu.p5, &cu.p6);
     else if (!std::strcmp(argv[a], "--mix") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &cu.p1, &cu.p2);
     else if (!std::strcmp(argv[a], "--phys") && a + 1 < argc) cu.phys = std::atoi(argv[++a]);
     else if (!std::strcmp(argv[a], "--teacher")) teach = true;
+    else if (!std::strcmp(argv[a], "--teacher-sl")) { teach = true; tsl = true; }   // 상태 없는 교사(teacher_sl.h): 교사 시간 = 앞 + 계획 + 행동 합
     else if (!std::strcmp(argv[a], "--feas")) feas = true;
   }
   bsc::SceneBuild sb;
@@ -49,7 +50,8 @@ int main(int argc, char** argv) {
     uint64_t s = 5;
     for (auto& x : a) x = dm::rand_range(s, -1.f, 1.f);
     cudaMemcpy(act, a.data(), sizeof(float) * a.size(), cudaMemcpyHostToDevice);
-    for (int i = 0; i < 20; ++i) { if (teach) e.teacher(act); e.step(act, obs, rew, done); }
+    if (tsl) e.enable_teacher_sl();
+    for (int i = 0; i < 20; ++i) { if (tsl) e.teacher_sl(act); else if (teach) e.teacher(act); e.step(act, obs, rew, done); }
 #ifdef ENV_PROF
     env_prof_reset();
 #endif
@@ -59,7 +61,18 @@ int main(int argc, char** argv) {
     float tms = 0.f;
     float tpre = 0.f, tplan_on = 0.f, tplan_off = 0.f, tact = 0.f, tenv = 0.f;
     long n_on = 0, n_plans = 0;
-    if (teach) {   // 교사 커널 셋을 따로 재고, 스텝은 그 행동으로. 계획 목록 수를 읽음(재기용 동기)
+    if (tsl) {
+      cudaEvent_t a0, a1, a2;
+      cudaEventCreate(&a0); cudaEventCreate(&a1); cudaEventCreate(&a2);
+      cudaEventRecord(t0);
+      for (int i = 0; i < T; ++i) {
+        cudaEventRecord(a0); e.teacher_sl(act); cudaEventRecord(a1); e.step(act, obs, rew, done); cudaEventRecord(a2);
+        cudaEventSynchronize(a2);
+        float x0, x1;
+        cudaEventElapsedTime(&x0, a0, a1); cudaEventElapsedTime(&x1, a1, a2);
+        tms += x0; tenv += x1;
+      }
+    } else if (teach) {   // 교사 커널 셋을 따로 재고, 스텝은 그 행동으로. 계획 목록 수를 읽음(재기용 동기)
       cudaEvent_t a0, a1, a2, a3, a4;
       cudaEventCreate(&a0); cudaEventCreate(&a1); cudaEventCreate(&a2); cudaEventCreate(&a3); cudaEventCreate(&a4);
       cudaEventRecord(t0);
@@ -84,7 +97,8 @@ int main(int argc, char** argv) {
     cudaEventElapsedTime(&ms, t0, t1);
     const double sps = (double)N * T / (ms * 1e-3);
     std::printf("N=%8d: %7.3f ms/step  %10.3e env-steps/s  (%.2f us per 1000 envs)%s", N, ms / T, sps, ms / T * 1e3 / (N / 1000.0), teach ? "" : "\n");
-    if (teach)
+    if (tsl) std::printf("  stateless teacher %.3f ms/step | env step %.3f ms\n", tms / T, tenv / T);
+    else if (teach)
       std::printf("  teacher %.3f ms/step (pre %.3f + act %.3f per step; plan kernel %.3f ms on the %ld steps with planning (%.1f envs planned per such step), %.3f ms on the %ld steps without) | env step %.3f ms\n",
                   tms / T, tpre / T, tact / T, n_on ? tplan_on / n_on : 0.f, n_on, n_on ? (double)n_plans / n_on : 0.0, (T - n_on) ? tplan_off / (T - n_on) : 0.f, (long)(T - n_on), tenv / T);
 #ifdef ENV_PROF

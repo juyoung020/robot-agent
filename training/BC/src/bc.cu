@@ -778,6 +778,7 @@ void Bc::make_env(uint64_t env_seed) {
   env->set_dynamic(env::stage_family(cfg.stage));   // 씨앗 바꾸기는 장치 값(reseed)
   map = std::make_unique<gmap::DeviceMap>(N, env_seed * 7919ull + 3ull + (uint64_t)cfg.stage, ss);
   if (ss) env->set_nav(map->nav_fb());   // BEHAVIOR 다가가기 거리 = 지도 거리장(정책이 아는 지도)
+  if (ss && cfg.teacher_script == 2) env->enable_teacher_sl();   // 상태 없는 대본 교사(DAgger 라벨이 학생 상태의 함수)
   tok = std::make_unique<gmap::TokenRecorder>(N, 2);
   BCK(cudaMemset(obs_col, 0, sizeof(float) * 2 * env::N_OBS * N));
   BCK(cudaMemset(tok->at(0), 0, sizeof(gmap::MapTok) * N));
@@ -1076,7 +1077,7 @@ void Bc::rollout_step(int t, bool student) {
   assemble_k<<<ab, AS_L * AS_E>>>(obs_t, tok->at(t), N, cfg.teacher_use_map, 0, 0, nt.x0, nt.sin, nt.mask, vt.dev(), nullptr, data_d, t);
   forward_teacher(nt, N);
   if (cfg.teacher_script && scenes) {   // E6: B4–B6 판은 대본 특권 교사 행동을 라벨로(같은 행 배치 [N][8])
-    env->teacher(sact);
+    if (cfg.teacher_script == 2) env->teacher_sl(sact); else env->teacher(sact);
     script_label_k<<<(N + 127) / 128, 128>>>(sact, env->soa().iv + (size_t)env::I_B_KIND * N, N, nt.mean);
   }
   const float* meanS = nt.mean;
@@ -1223,7 +1224,22 @@ int bc_set_lr(void* h, float lr) {
   b->set_dev(reinterpret_cast<uint8_t*>(b->ts) + offsetof(net::TrainState, lr), &lr, sizeof lr);
   return 0;
 }
-int bc_rollout(void* h) { return static_cast<Bc*>(h)->launch(0); }
+int bc_rollout(void* h) {
+  auto* b = static_cast<Bc*>(h);
+  const int r = b->launch(0);
+  static const bool hist = std::getenv("BC_SLHIST") != nullptr;   // 진단: 롤아웃 끝 상태 없는 교사 단계 분포(동기 — 재기 판만)
+  if (hist && b->env && b->env->slbuf().rec) {
+    BCK(cudaDeviceSynchronize());
+    std::vector<env::SlRec> rr(b->N);
+    BCK(cudaMemcpy(rr.data(), b->env->slbuf().rec, sizeof(env::SlRec) * b->N, cudaMemcpyDeviceToHost));
+    int hcount[env::SLD_N] = {};
+    for (auto& x : rr) ++hcount[x.mode >= 0 && x.mode < env::SLD_N ? x.mode : 0];
+    std::fprintf(stderr, "slhist actor %d:", b->host_actor);
+    for (int k = 0; k < env::SLD_N; ++k) if (hcount[k]) std::fprintf(stderr, " %d:%d", k, hcount[k]);
+    std::fprintf(stderr, "\n");
+  }
+  return r;
+}
 int bc_update(void* h) { return static_cast<Bc*>(h)->launch(1); }
 int bc_poll(void* h, BcLog* out) { return static_cast<Bc*>(h)->poll(out); }
 int bc_inflight(void* h) { auto* b = static_cast<Bc*>(h); return (int)(b->issued - b->polled); }

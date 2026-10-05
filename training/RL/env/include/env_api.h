@@ -6,6 +6,7 @@
 #include "env.h"
 #include "env_soa.h"
 #include "teacher.h"
+#include "teacher_sl.h"
 
 namespace bsc { struct SceneBuild; }
 
@@ -54,6 +55,11 @@ class DeviceEnv {
   void teacher_pre(const bsc::NavFb& fb) const;
   void teacher_plan() const;
   void teacher_act(float* act) const;
+  // 상태 없는 교사(teacher_sl.h, DAgger 라벨): 행동 = 지금 상태의 함수(캐시만 — 열쇠가 같으면 같은 값). enable_teacher_sl() 로 버퍼를 먼저 잡음(그래프 잡기 전).
+  // 상태 있는 교사(teacher)와 버퍼·상태를 나누지 않음 — 같은 스텝에 둘 다 불러도 서로 안 바꿈
+  void enable_teacher_sl();
+  void teacher_sl(float* act) const;
+  const SlBuf& slbuf() const { return sl_; }
 
   // ---- 장치 단계·씨앗(다시 만들기 없이) ----
   // set_dynamic(무리 비트 = stage_family 의 합): 그 뒤 step 은 단계를 장치 값에서 읽고 무리마다 커널을 띄운다(맞지 않는 무리는 바로 끝남 — 결과 같음).
@@ -85,6 +91,7 @@ class DeviceEnv {
   bool dyn_ = false;
   uint32_t fam_ = 0;
   TBuf tb_{nullptr, nullptr, nullptr, nullptr, 0, 0, nullptr};
+  SlBuf sl_{nullptr, nullptr, nullptr, nullptr, 0, 0};
 };
 
 // CPU 참조판: 같은 step_env 를 순서대로 돌린다(비교의 정답)
@@ -106,6 +113,12 @@ struct CpuEnv {
   long n_plan = 0;                          // 교사 계획 수(잰 값)
   std::vector<uint32_t> trb;                // 서는 자리 찾기 닿는 칸 비트(TBuf::rb)
   TBuf tbuf() { return TBuf{tf.data(), tiv.data(), tscr.data(), tlist.data(), N, 1, trb.data()}; }
+  // 상태 없는 교사(CPU 참조판, DeviceEnv::teacher_sl 과 같은 것)
+  std::vector<SlRec> slrec;
+  std::vector<uint8_t> slfld;
+  long n_slplan = 0;
+  void teacher_sl(std::vector<float>& act);
+  SlBuf slbuf() { return SlBuf{slrec.data(), slfld.data(), tscr.data(), tlist.data(), N, 1}; }
 };
 
 // 잡기 가능 표(Entry::feas·gst·pst5·pst6·grel, SceneSet::has_feas)를 장치에서 계산해 호스트·장치 표에 씀(teacher.h feas_entry — 잡기 모형·교사 계획과 같은 코드).

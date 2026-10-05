@@ -45,6 +45,18 @@ void CpuEnv::teacher(std::vector<float>& act) {
   }
 }
 
+void CpuEnv::teacher_sl(std::vector<float>& act) {
+  act.assign((size_t)N_ACT * N, 0.f);
+  if (!ss) return;
+  if (slrec.empty()) { slrec.assign(N, SlRec{}); slfld.assign((size_t)SL_FLD * N, 0); }
+  Soa s{f.data(), iv.data(), rng.data(), N};
+  const SlBuf sb = slbuf();
+  for (int i = 0; i < N; ++i) {
+    if (sl_pre(s, sb, i, *ss, nav)) { sl_plan(s, sb, i, *ss, nav, tscr.data(), wseq()); ++n_slplan; }
+    sl_act(s, sb, i, *ss, nav, act.data());
+  }
+}
+
 void pnp_feasibility_cpu(const bsc::SceneSet& host, int ent, FeasOut& o) { feas_entry(host, ent, o, wseq()); }
 
 }  // namespace env

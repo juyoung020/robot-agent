@@ -10,6 +10,8 @@
 #include "env_api.h"
 #include "env_soa.h"
 
+#define CK(x) do { cudaError_t e = (x); if (e != cudaSuccess) { std::fprintf(stderr, "CUDA error %s at %s:%d\n", cudaGetErrorString(e), __FILE__, __LINE__); std::abort(); } } while (0)
+
 namespace env {
 
 // FURN: A2(가구) 판. A0/A1 은 가구 코드가 없는 판(FURN = false)을 띄운다 — 결과는 같고 레지스터·넘침이 예전과 같음
@@ -163,6 +165,48 @@ void DeviceEnv::teacher(float* act) const {
   teacher_act(act);
 }
 
+// 상태 없는 교사(teacher_sl.h): 앞(빠진 캐시 → 목록) → 계획(판 하나 = 블록 하나, 빠진 캐시를 다 채움) → 행동(판마다)
+__global__ void __launch_bounds__(128) sl_pre_k(Soa s, SlBuf sb, const bsc::SceneSet* ss, bsc::NavFb fb) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < s.N && sl_pre(s, sb, i, *ss, fb)) {
+    const int k = atomicAdd(sb.list, 1);
+    sb.list[1 + k] = i;
+  }
+}
+__global__ void __launch_bounds__(T_CHUNK) sl_plan_k(Soa s, SlBuf sb, const bsc::SceneSet* ss, bsc::NavFb fb) {
+  __shared__ int sh[16];
+  const WCtx w{(int)threadIdx.x, (int)blockDim.x, sh};
+  const int n = sb.list[0];
+  for (int k = blockIdx.x; k < n; k += gridDim.x) {
+    sl_plan(s, sb, sb.list[1 + k], *ss, fb, sb.scr + (size_t)blockIdx.x * T_SCR, w);
+    __syncthreads();
+  }
+}
+__global__ void __launch_bounds__(128) sl_act_k(Soa s, SlBuf sb, const bsc::SceneSet* ss, bsc::NavFb fb, float* act) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < s.N) sl_act(s, sb, i, *ss, fb, act);
+  if (i == 0) sb.list[0] = 0;
+}
+void DeviceEnv::enable_teacher_sl() {
+  if (sl_.rec || !ss_) return;
+  sl_.N = N_;
+  sl_.nslot = N_ < kTeachSlots ? N_ : kTeachSlots;
+  CK(cudaMalloc(&sl_.rec, sizeof(SlRec) * (size_t)N_));
+  CK(cudaMemset(sl_.rec, 0, sizeof(SlRec) * (size_t)N_));
+  CK(cudaMalloc(&sl_.fld, (size_t)SL_FLD * N_));
+  CK(cudaMemset(sl_.fld, 0, (size_t)SL_FLD * N_));
+  CK(cudaMalloc(&sl_.scr, (size_t)T_SCR * sl_.nslot));
+  CK(cudaMalloc(&sl_.list, sizeof(int) * ((size_t)N_ + 1)));
+  CK(cudaMemset(sl_.list, 0, sizeof(int) * ((size_t)N_ + 1)));
+}
+void DeviceEnv::teacher_sl(float* act) const {
+  if (!ss_ || !sl_.rec) return;
+  Soa s{f_, iv_, rng_, N_};
+  sl_pre_k<<<(N_ + 127) / 128, 128>>>(s, sl_, ss_, nav_);
+  sl_plan_k<<<sl_.nslot, T_CHUNK>>>(s, sl_, ss_, nav_);
+  sl_act_k<<<(N_ + 127) / 128, 128>>>(s, sl_, ss_, nav_, act);
+}
+
 // 잡기 가능 표(짝마다 스레드 하나)
 __global__ void __launch_bounds__(128) feas_k(const bsc::SceneSet* ss, const int* idx, int n, FeasOut* out) {   // 짝 하나 = 워프 하나
   const int k = (blockIdx.x * blockDim.x + threadIdx.x) >> 5;
@@ -233,7 +277,6 @@ void env_prof_reset() {
 }
 #endif
 
-#define CK(x) do { cudaError_t e = (x); if (e != cudaSuccess) { std::fprintf(stderr, "CUDA error %s at %s:%d\n", cudaGetErrorString(e), __FILE__, __LINE__); std::abort(); } } while (0)
 
 DeviceEnv::DeviceEnv(int N, int stage, uint64_t seed, bool arm_free, const bsc::SceneSet* ss_dev, const bsc::BCurr& cu0)
     : N_(N), stage_(stage), arm_free_(arm_free), ss_(ss_dev) {
@@ -272,6 +315,7 @@ DeviceEnv::DeviceEnv(int N, int stage, uint64_t seed, bool arm_free, const bsc::
 DeviceEnv::~DeviceEnv() {
   cudaFree(f_); cudaFree(iv_); cudaFree(rng_); cudaFree(bcurr_); cudaFree(ctl_);
   if (tb_.f) { cudaFree(tb_.f); cudaFree(tb_.iv); cudaFree(tb_.list); cudaFree(tb_.scr); cudaFree(tb_.rb); }
+  if (sl_.rec) { cudaFree(sl_.rec); cudaFree(sl_.fld); cudaFree(sl_.scr); cudaFree(sl_.list); }
   if (ctl_h_) {
     for (void* e : ctl_ev_) if (e) cudaEventDestroy(static_cast<cudaEvent_t>(e));
     cudaFreeHost(ctl_h_);

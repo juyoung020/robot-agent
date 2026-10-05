@@ -10,6 +10,7 @@
 // --arm: GPU·CPU 모두 팔을 풀고(arm_free) 행동 8 을 모두 무작위로(팔·그리퍼 경로, VLA_INPUT 5절).
 // --arm-zero: GPU 는 팔을 풀고 팔·그리퍼 행동 0(학습기의 커리큘럼 가림 = 0 고정), CPU 는 예전처럼 팔 묶음 — 둘이 비트로 같아야 한다(학습기가 늘 팔을 풀어 둬도 예전 결과 그대로)
 // --negative: GPU 쪽에 일부러 버그(회전 부호)를 넣는다. 이 판은 반드시 실패해야 한다(검증이 이빨이 있는지) — 실패해야 종료 코드 0.
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -41,7 +42,7 @@ static const char* field_name(int k) {
 
 int main(int argc, char** argv) {
   int N = 2048, T = 400, stage = 1;
-  bool negative = false, arm = false, arm_zero = false, follow = false, teach = false, feas = false, neg_teach = false;
+  bool negative = false, arm = false, arm_zero = false, follow = false, teach = false, feas = false, neg_teach = false, tsl = false, sl_fresh = false;
   int pos = 0, nbug = 1;
   bsc::BuildOpt bo;
   bsc::BCurr cu = bsc::kBCurrDefault;
@@ -54,6 +55,9 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--fail") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &cu.p_slip, &cu.p_occ);
     else if (!std::strcmp(argv[a], "--phys") && a + 1 < argc) cu.phys = std::atoi(argv[++a]);
     else if (!std::strcmp(argv[a], "--teacher")) teach = true;
+    else if (!std::strcmp(argv[a], "--teacher-sl")) { teach = true; tsl = true; }
+    else if (!std::strcmp(argv[a], "--sl-fresh")) { teach = true; tsl = true; sl_fresh = true; }   // CPU 는 스텝마다 캐시를 비우고 물음 → 라벨이 상태만의 함수인지(GPU 는 캐시 그대로)
+    else if (!std::strcmp(argv[a], "--negative-teacher-sl")) { negative = true; neg_teach = true; teach = true; tsl = true; nbug = 0; }
     else if (!std::strcmp(argv[a], "--feas")) feas = true;
     else if (!std::strcmp(argv[a], "--negative-teacher")) { negative = true; neg_teach = true; teach = true; nbug = 0; }
     else if (!std::strcmp(argv[a], "--scenes") && a + 1 < argc) bo.dir = argv[++a];
@@ -152,7 +156,36 @@ int main(int argc, char** argv) {
       }
     }
     if (!arm) for (int k = 2; k < N_ACT; ++k) for (int i = 0; i < N; ++i) act[(size_t)k * N + i] = 0.f;   // 팔 묶음·0 고정 판: 팔 행동 0(묶인 판은 어차피 안 씀)
-    if (teach && stage >= kStageBeh) {   // 교사: GPU·CPU 가 각자 계산(기억도 각자 상태에), 행동 비트 비교 후 홀수 판에 씀
+    if (teach && tsl && stage >= kStageBeh) {   // 상태 없는 교사(--teacher-sl): GPU·CPU 각자, 행동·캐시(SlRec·BFS 칸) 비트 비교 후 홀수 판에 씀
+      gpu.enable_teacher_sl();
+      if (neg_teach && t == T / 2) {   // 음성 대조: GPU 캐시의 서는 자리 하나를 1 mm 옮김
+        const SlBuf sbf = gpu.slbuf();
+        std::vector<SlRec> rr(N);
+        cudaMemcpy(rr.data(), sbf.rec, sizeof(SlRec) * N, cudaMemcpyDeviceToHost);
+        for (int i = 1; i < N; i += 2) rr[i].st.sx += 0.001f;
+        cudaMemcpy(sbf.rec, rr.data(), sizeof(SlRec) * N, cudaMemcpyHostToDevice);
+      }
+      gpu.teacher_sl(d_tact);
+      if (sl_fresh && !cpu.slrec.empty()) { std::fill(cpu.slrec.begin(), cpu.slrec.end(), SlRec{}); std::fill(cpu.slfld.begin(), cpu.slfld.end(), (uint8_t)0); }
+      cpu.teacher_sl(tact_c);
+      cudaMemcpy(tact_g.data(), d_tact, sizeof(float) * tact_g.size(), cudaMemcpyDeviceToHost);
+      for (size_t k = 0; k < tact_c.size(); ++k) if (std::memcmp(&tact_c[k], &tact_g[k], 4)) ++teach_mis;
+      {
+        const SlBuf sbf = gpu.slbuf();
+        std::vector<SlRec> rr(N);
+        std::vector<uint8_t> ff((size_t)SL_FLD * N);
+        cudaMemcpy(rr.data(), sbf.rec, sizeof(SlRec) * N, cudaMemcpyDeviceToHost);
+        cudaMemcpy(ff.data(), sbf.fld, ff.size(), cudaMemcpyDeviceToHost);
+        if (!sl_fresh) {
+          for (int i = 0; i < N; ++i) if (std::memcmp(&rr[i], &cpu.slrec[i], sizeof(SlRec))) ++teach_buf_mis;
+          if (std::memcmp(ff.data(), cpu.slfld.data(), ff.size())) ++teach_buf_mis;
+        }
+        teach_plans += cpu.n_slplan - teach_plans0;
+        teach_plans0 = cpu.n_slplan;
+      }
+      for (int i = 1; i < N; i += 2)
+        if (cpu.iv[(size_t)I_B_KIND * N + i] >= bsc::EK_B4) for (int k = 0; k < N_ACT; ++k) act[(size_t)k * N + i] = tact_c[(size_t)k * N + i];
+    } else if (teach && stage >= kStageBeh) {   // 교사: GPU·CPU 가 각자 계산(기억도 각자 상태에), 행동 비트 비교 후 홀수 판에 씀
       if (neg_teach && t == T / 2) {   // 음성 대조: GPU 교사 기억의 웨이포인트 하나를 1 mm 옮김(계획 결과가 다르면 행동·상태가 갈라져야)
         const TBuf tb = gpu.tbuf();
         std::vector<float> w((size_t)NTF * N);

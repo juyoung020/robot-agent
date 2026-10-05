@@ -18,7 +18,7 @@ using namespace env;
 int main(int argc, char** argv) {
   int N = 2048, T = 900, kind = 0, pos = 0;
   uint64_t seed = 20261005;
-  bool all_eps = false;
+  bool all_eps = false, sl = false, agree = false;
   bsc::BCurr cu = bsc::kBCurrDefault;
   gmap::MapCurr mc = gmap::kCurrEmpty;
   mc.p0 = 1.f; mc.p1 = 0.f;
@@ -30,6 +30,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--split") && a + 1 < argc) cu.split = std::atoi(argv[++a]);
     else if (!std::strcmp(argv[a], "--seed") && a + 1 < argc) seed = std::strtoull(argv[++a], nullptr, 10);
     else if (!std::strcmp(argv[a], "--all")) all_eps = true;
+    else if (!std::strcmp(argv[a], "--sl")) sl = true;   // 상태 없는 교사(teacher_sl.h)
+    else if (!std::strcmp(argv[a], "--agree")) agree = true;   // 상태 있는 교사가 몰고, 같은 상태에서 상태 없는 교사 라벨을 견줌
     else if (pos == 0) { N = std::atoi(argv[a]); ++pos; }
     else if (pos == 1) { T = std::atoi(argv[a]); ++pos; }
   }
@@ -47,6 +49,15 @@ int main(int argc, char** argv) {
   cudaMemcpy(map.curr_dev(), &mc, sizeof mc, cudaMemcpyHostToDevice);
   map.set_tokens(false);
   env.set_nav(map.nav_fb());
+  if (sl || agree) env.enable_teacher_sl();
+  float* act2 = nullptr;
+  if (agree) cudaMalloc(&act2, sizeof(float) * N_ACT * N);
+  std::vector<float> ha((size_t)N_ACT * N), hb((size_t)N_ACT * N);
+  std::vector<SlRec> slag(agree ? N : 0);
+  long ag_n[16] = {}, ag_exact[16] = {}, ag_tol[16] = {}, ag_base[16] = {}, ag_arm[16] = {};   // 상태 있는 교사 단계별: 표본, 비트 같음, |Δ| ≤ 0.05, 베이스만 맞음, 팔만 맞음
+  long ag_conf[16][SLD_N] = {};   // [상태 있는 단계][상태 없는 단계] — 다를 때
+  std::vector<SlRec> slr(sl ? N : 0), slrb(sl ? N : 0);
+  long slwhy[bsc::N_EK][SLD_N] = {};
   float *act, *obs, *rew; int* done;
   cudaMalloc(&act, sizeof(float) * N_ACT * N); cudaMalloc(&obs, sizeof(float) * N_OBS * N); cudaMalloc(&rew, sizeof(float) * N); cudaMalloc(&done, sizeof(int) * N);
   std::vector<int> dn(N), ivk(N), ivent(N), ivtry(N), ivfl(N);
@@ -65,7 +76,29 @@ int main(int argc, char** argv) {
   float ms = 0.f;
   for (int t = 0; t < T; ++t) {
     cudaEventRecord(e0);
-    env.teacher(act);
+    if (sl) env.teacher_sl(act); else env.teacher(act);
+    if (agree) {
+      env.teacher_sl(act2);
+      cudaMemcpy(ha.data(), act, sizeof(float) * ha.size(), cudaMemcpyDeviceToHost);
+      cudaMemcpy(hb.data(), act2, sizeof(float) * hb.size(), cudaMemcpyDeviceToHost);
+      cudaMemcpy(slag.data(), env.slbuf().rec, sizeof(SlRec) * N, cudaMemcpyDeviceToHost);
+      std::vector<int> ivn((size_t)NUM_I * N), tvn((size_t)NTI * N);
+      cudaMemcpy(ivn.data(), env.soa().iv, sizeof(int) * ivn.size(), cudaMemcpyDeviceToHost);
+      for (int i = 0; i < N; ++i) {
+        if (ivn[(size_t)I_B_KIND * N + i] < bsc::EK_B4) continue;
+        const int ph = ivn[(size_t)I_T_PH * N + i] & 15;
+        bool ex = true, tl = true, tb = true, ta = true;
+        for (int k = 0; k < N_ACT; ++k) {
+          const float x = ha[(size_t)k * N + i], y = hb[(size_t)k * N + i];
+          ex = ex && x == y;
+          const bool ok = std::fabs(x - y) <= 0.05f;
+          tl = tl && ok;
+          if (k < 2) tb = tb && ok; else ta = ta && ok;
+        }
+        ++ag_n[ph]; ag_exact[ph] += ex; ag_tol[ph] += tl; ag_base[ph] += tb; ag_arm[ph] += ta;
+        if (!tl) { const int md = slag[i].mode; ++ag_conf[ph][md >= 0 && md < SLD_N ? md : 0]; }
+      }
+    }
     env.step(act, obs, rew, done);
     map.step(env.soa());
     cudaEventRecord(e1);
@@ -78,6 +111,7 @@ int main(int argc, char** argv) {
     cudaMemcpy(dn.data(), done, sizeof(int) * N, cudaMemcpyDeviceToHost);
     cudaMemcpy(iv.data(), env.soa().iv, sizeof(int) * iv.size(), cudaMemcpyDeviceToHost);
     cudaMemcpy(tiv.data(), tbd.iv, sizeof(int) * tiv.size(), cudaMemcpyDeviceToHost);
+    if (sl) { slrb.swap(slr); cudaMemcpy(slr.data(), env.slbuf().rec, sizeof(SlRec) * N, cudaMemcpyDeviceToHost); }
     {
       long np = 0;
       for (int i = 0; i < N; ++i) np += tiv[(size_t)TI_NPLAN * N + i] != tivb[(size_t)TI_NPLAN * N + i];
@@ -98,7 +132,8 @@ int main(int argc, char** argv) {
       long* q = tab[k][cl][hi];
       ++q[0]; q[1] += dn[i] == kSuccess; q[2] += dn[i] == kCollision; q[3] += ivb[(size_t)I_T_TRY * N + i] > KT::max_try;
       ++house[E.scene][k][0]; house[E.scene][k][1] += dn[i] == kSuccess;
-      if (dn[i] != kSuccess) { const int f = tivb[(size_t)TI_FAIL * N + i]; ++why[k][f >= 0 && f < 16 ? f : 15]; }
+      if (dn[i] != kSuccess && !sl) { const int f = tivb[(size_t)TI_FAIL * N + i]; ++why[k][f >= 0 && f < 16 ? f : 15]; }
+      if (dn[i] != kSuccess && sl) { const int md = slr[i].mode; ++slwhy[k][md >= 0 && md < SLD_N ? md : 0]; }
       steps_sum += len[i];
       len[i] = 0;
     }
@@ -139,6 +174,32 @@ int main(int argc, char** argv) {
     std::printf("  B%d failures by teacher reason:", k);
     for (int f = 0; f < 12; ++f) if (why[k][f]) std::printf(" %s %ld", rn[f], why[k][f]);
     std::printf("\n");
+  }
+  if (sl) {
+    const char* mn[SLD_N] = {"none", "fail", "nav", "app0", "rot", "armq0", "drive", "fine", "wait", "armg", "close", "reopen", "lift", "fold", "back", "armp", "open", "retreat", "done", "explore", "failarm", "backup"};
+    for (int k = bsc::EK_B4; k < bsc::N_EK; ++k) {
+      long tot = 0;
+      for (int f = 0; f < SLD_N; ++f) tot += slwhy[k][f];
+      if (!tot) continue;
+      std::printf("  B%d failures by stateless-teacher mode at the end:", k);
+      for (int f = 0; f < SLD_N; ++f) if (slwhy[k][f]) std::printf(" %s %ld", mn[f], slwhy[k][f]);
+      std::printf("\n");
+    }
+  }
+  if (agree) {
+    const char* pn[15] = {"NAV", "APP", "PRE", "DOWN", "CLOSE", "LIFT", "BACK", "FOLD", "NAV2", "APP2", "PREPL", "OPEN", "RETREAT", "DONE", "EXPLORE"};
+    const char* mn[SLD_N] = {"none", "fail", "nav", "app0", "rot", "armq0", "drive", "fine", "wait", "armg", "close", "reopen", "lift", "fold", "back", "armp", "open", "retreat", "done", "explore", "failarm", "backup"};
+    long n = 0, e = 0, l = 0;
+    std::printf("  agreement (stateless label vs stateful action on stateful-teacher states; tol = |da| <= 0.05 on every normalized action):\n");
+    for (int ph = 0; ph < 15; ++ph) {
+      if (!ag_n[ph]) continue;
+      n += ag_n[ph]; e += ag_exact[ph]; l += ag_tol[ph];
+      std::printf("    %-8s %8ld samples  exact %.3f  tol %.3f  base-tol %.3f  arm-tol %.3f |", pn[ph], ag_n[ph], (double)ag_exact[ph] / ag_n[ph], (double)ag_tol[ph] / ag_n[ph],
+                  (double)ag_base[ph] / ag_n[ph], (double)ag_arm[ph] / ag_n[ph]);
+      for (int m = 0; m < SLD_N; ++m) if (ag_conf[ph][m] * 50 > ag_n[ph]) std::printf(" %s %ld", mn[m], ag_conf[ph][m]);
+      std::printf("\n");
+    }
+    if (n) std::printf("    all      %8ld samples  exact %.3f  tol %.3f\n", n, (double)e / n, (double)l / n);
   }
   for (int sc = 0; sc < sb.host.nsc; ++sc) {
     std::printf("  %-26s", sb.sc[sc].name.c_str());
