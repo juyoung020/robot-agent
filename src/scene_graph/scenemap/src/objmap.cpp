@@ -139,8 +139,7 @@ void ObjectMap::envOverrides(ObjParams* p) {
 int ObjectMap::applyParams(ObjParams* p, const char* e, bool log) {
   if (!e || !*e) return 0;
   struct K { const char* n; double* d; int* i; bool* b; };
-  const K keys[] = {{"floor_h", &p->floor_h, nullptr, nullptr},          {"name_vote", nullptr, nullptr, &p->name_vote},
-                    {"name_switch", &p->name_switch, nullptr, nullptr},
+  const K keys[] = {{"floor_h", &p->floor_h, nullptr, nullptr},          
                     {"absent_samples", nullptr, &p->absent_samples, nullptr}, {"absent_vis", &p->absent_vis, nullptr, nullptr},
                     {"absent_min_px", &p->absent_min_px, nullptr, nullptr}, {"absent_det_k", &p->absent_det_k, nullptr, nullptr},
                     {"gone_misses", nullptr, &p->gone_misses, nullptr},  {"gone_min_s", &p->gone_min_s, nullptr, nullptr},
@@ -219,15 +218,6 @@ void ObjectMap::vote(MapObject& m, int cls, float w) const {
   for (auto& [c, v] : m.votes)
     if (c == cls) { v += w; found = true; break; }
   if (!found) m.votes.emplace_back(cls, w);
-  if (!p_.name_vote) return;
-  // 이름 = 표의 최댓값. 지금 이름보다 name_switch 배 넘게 많아야 바꿈(흔들림 막기)
-  float cur = 0, best = 0;
-  int bc = m.cls;
-  for (const auto& [c, v] : m.votes) {
-    if (c == m.cls) cur = v;
-    if (v > best) { best = v; bc = c; }
-  }
-  if (bc != m.cls && best > p_.name_switch * cur) m.cls = bc;
 }
 
 bool ObjectMap::isBig(const MapObject& m) const {

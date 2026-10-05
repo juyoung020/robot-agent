@@ -12,7 +12,7 @@
 
 namespace scenemap::da {
 
-// drop 을 keep 에 합친다(mergeDuplicates 와 같은 규칙: 위치·상자·관측 수·이름 표·점 구름). drop 은 호출자가 지운다
+// drop 을 keep 에 합친다(위치·상자·관측 수·이름 표·점 구름 — 이름은 objprob 이 다시 붙임). drop 은 호출자가 지운다
 void absorbObject(MapObject& keep, MapObject& drop, const ObjParams& op, double stamp, const std::vector<uint8_t>* kinds = nullptr);
 
 // 두 상자의 겹침 비율(0..1): 축마다 겹친 길이 / 둘 중 짧은 변 의 곱

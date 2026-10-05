@@ -26,7 +26,7 @@ int main() {
     da::absorbObject(a, b, op, 20.0);
     CHECK(a.n_obs == 10 && a.first_seen == 1, "n_obs %u first %.0f", a.n_obs, a.first_seen);
     CHECK(std::fabs(a.pos[0] - 1.01) < 1e-9, "weighted pos %.3f", a.pos[0]);
-    CHECK(a.cls == 4 && a.votes.size() == 2, "name table cls %d votes %zu", a.cls, a.votes.size());
+    CHECK(a.cls == 3 && a.votes.size() == 2, "name table merged, cls kept %d votes %zu", a.cls, a.votes.size());   // 이름은 objprob 이 다시 붙임
     CHECK(a.last_seen == 17, "last_seen %.1f", a.last_seen);
   }
   {  // 큰 가구(한 변 > big): 상자 합집합, 위치 = 상자 중심

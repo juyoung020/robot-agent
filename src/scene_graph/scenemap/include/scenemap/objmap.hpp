@@ -8,7 +8,7 @@
 //   거르기 : 로봇 팔 캡슐(ObjFrame.self_caps — 순기구학, LIMO) 안(반경 + self_pad) 깊이 점은 검출 마스크 안이어도 버림(팔이 카메라 앞을
 //            가릴 때 팔 화소가 물체 상자를 키우거나 옮기지 않게). 점 min_points 미만 버림. 점의 hand_frac 이상이 팔 끝 hand_r 안이면(손에 든 것) 버림. 점의 90 백분위 높이 < floor_h 면
 //            바닥 조각(바닥에 깔리는 이름 — 러그·카펫·매트 — 은 둠)
-//   이름   : 물체마다 이름 표(이름 번호별 점수 합). 이름 = 최댓값(지금 이름보다 name_switch 배 넘어야 바뀜)
+//   이름   : objprob 이름 사후(apRename). 검출 이름 표(votes)는 기록만
 //   같은 것: objprob 하나(objprob.hpp) — 이름 없이 관측마다 P(같은 물체)(SigLIP 2 임베딩 vMF + 위치·접촉 로지스틱)가 가장 큰 물체에 붙이고,
 //            물체끼리는 다음 keyframe 앞 apMergePass 가 합침. 작은 물체는 칼만 위치, 큰 가구(한 변 > big 또는 고정 종류)는 상자를
 //            합집합으로 키우고 위치 = 상자 중심 — 단 keyframe 마다 면마다 grow_max 까지만, 한 변 max_ext 넘게는 안 키움
@@ -85,9 +85,6 @@ struct ObjParams {
   // ---- 바뀜 판정(10-04, dynamic-object-mapping-benchmark 로 고침 — README "바뀜 규칙") ----
   // 바닥 조각: 관측 점의 90 백분위 높이가 이보다 낮으면(map z, 바닥 = 0) 물체가 아님
   double floor_h = 0.05;
-  // 이름 모으기: 물체마다 이름 번호별 점수 합(표). 이름 = 표의 최댓값(지금 이름보다 name_switch 배 넘어야 바꿈).
-  bool name_vote = true;
-  double name_switch = 1.25;
   // 사라짐(보임 근거): 물체 점(구름, 없으면 상자 격자) absent_samples 개를 투영해 시야 안·안 가림 비율이 absent_vis 이상,
   // 보이는 부분 화소 크기 ≥ absent_min_px, 카메라 거리 ≤ 이 물체를 검출했던 가장 먼 거리·absent_det_k + 0.2 일 때만 놓침 +1.
   // 큰 것(한 변 > big)·고정 종류도 판정하되 gone_misses_big 번·gone_min_s_big 초. 시간 대신 카메라가 gone_view_d 넘게 옮긴 시점의 놓침도 됨

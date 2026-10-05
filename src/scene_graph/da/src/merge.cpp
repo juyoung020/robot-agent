@@ -59,11 +59,6 @@ void absorb(MapObject& a, MapObject& b, const ObjParams& op, double stamp, const
       if (ac == c) { aw += w; f = true; break; }
     if (!f) a.votes.emplace_back(c, w);
   }
-  if (op.name_vote) {
-    float best = -1;
-    for (const auto& [c, w] : a.votes)
-      if (w > best) { best = w; a.cls = c; }
-  }
   a.max_det_z = std::max(a.max_det_z, b.max_det_z);
   a.moved = a.moved || b.moved;
   a.misses = std::min(a.misses, b.misses);
