@@ -2,6 +2,7 @@
   conda activate behavior; python open_in_isaac.py [flat.urdf]      (DISPLAY 필요)
 """
 import os
+import subprocess
 import sys
 
 from isaacsim import SimulationApp
@@ -15,11 +16,10 @@ from isaacsim.core.utils.extensions import enable_extension
 
 enable_extension("isaacsim.asset.importer.urdf")
 app.update()
-urdf = os.path.expanduser(sys.argv[1] if len(sys.argv) > 1 else "~/ra_ws/map_vla.urdf")
-# package:// 는 Isaac 임포터가 못 찾는다(OMX 메시 16개가 통째로 빠짐) → 절대 경로로 바꾼 사본을 연다
+HERE = os.path.dirname(os.path.abspath(__file__))
+# 인자가 없으면 저장소 xacro 에서 펼친다(tools/build_urdf.sh — 메시는 절대 경로). package:// 는 Isaac 임포터가 못 찾는다(OMX 메시 16개가 통째로 빠짐)
+urdf = os.path.expanduser(sys.argv[1]) if len(sys.argv) > 1 else subprocess.check_output([os.path.join(HERE, "build_urdf.sh"), "/tmp/map_vla_src.urdf"], text=True).strip()
 txt = open(urdf).read()
-for pkg in ("open_manipulator_description", "limo_description"):
-    txt = txt.replace("package://" + pkg, os.path.expanduser("~/ra_ws/install/%s/share/%s" % (pkg, pkg)))
 urdf = "/tmp/map_vla_isaac.urdf"
 open(urdf, "w").write(txt)
 _, cfg = omni.kit.commands.execute("URDFCreateImportConfig")

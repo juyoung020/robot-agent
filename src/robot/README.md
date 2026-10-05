@@ -26,7 +26,7 @@ ros2 launch map_vla_description view.launch.py    # RViz 에서 TF 확인
 
 ```bash
 # xacro 를 펼친 URDF + 메시 → GLB(색 그룹별 병합·정점 클러스터링 단순화) + 링크·관절 트리
-xacro map_vla_description/urdf/map_vla.urdf.xacro > map_vla.urdf
+src/robot/tools/build_urdf.sh map_vla.urdf   # 저장소 xacro → 펼친 URDF(메시는 src/robot 절대 경로, colcon·ra_ws 없이). OmniGibson 가져오기(og/import_to_omnigibson.sh)·og/e0/kin.py 도 같은 방법
 python3 src/robot/tools/build_viewer_assets.py map_vla.urdf src/robot src/scene_graph/sgview/assets/robot   # pip: trimesh numpy pycollada fast-simplification
 ```
 - LIMO 본체 75.6만 → 8.6만 면(1.5 MB), 바퀴 14만 → 1.2만 면, OMX 8개 링크는 STL 을 mm → m 로 굽고 2.5만 면 상한(0.05~0.45 MB).

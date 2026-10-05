@@ -17,7 +17,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 p = sys.argv[1]
-DAE_DIR = sys.argv[2] if len(sys.argv) > 2 else os.path.expanduser("~/ra_ws/install/limo_description/share/limo_description/meshes")
+DAE_DIR = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "limo_description", "meshes")
 ARM = (0.2, 0.2, 0.2)
 
 

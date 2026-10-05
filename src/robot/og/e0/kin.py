@@ -1,6 +1,8 @@
 """OMX-F 평면 순기구학(관절 1 = 0, URDF 값)과 LIMO 위 도달 범위 표본. 시뮬 없이 돈다(numpy).
 좌표: base_link 원점 기준 x 앞, z 위. 바닥은 z = -0.15(URDF base_joint). 잡는 점 = omx_link5 + (G, 0, 0)."""
 import json
+import os
+import subprocess
 import math
 import pathlib
 
@@ -13,7 +15,8 @@ SHOULDER = np.array([-0.04 - 0.01125, 0.034 + 0.0635])    # omx_link2 원점 (x,
 G_DEFAULT = 0.080                                         # 잡는 점(손끝 패드 사이), omx_link5 x
 FRONT_X = 0.165                                           # 앞 범퍼(limo_base 메시 x 최대 ≈ 0.163)
 J1_AXIS = np.array([-0.04 - 0.01125, 0.0])                # omx_joint1 축 (x, y), base_link 기준
-BASE_MESH = "/home/juyoung/ra_ws/install/limo_description/share/limo_description/meshes/limo_base.stl"
+_ROBOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")   # src/robot
+BASE_MESH = os.path.join(_ROBOT, "limo_description", "meshes", "limo_base.stl")
 _PROFILE = {}
 
 
@@ -188,7 +191,7 @@ if __name__ == "__main__":
 
 
 # ---------- 하중: 정적 관절 힘(URDF 링크 질량·무게 중심, 손가락은 닫힘 기준) ----------
-URDF = "/home/juyoung/ra_ws/map_vla.urdf"
+URDF = os.environ.get("MAP_VLA_URDF") or subprocess.check_output([os.path.join(_ROBOT, "tools", "build_urdf.sh"), "/tmp/map_vla_kin.urdf"], text=True).strip()   # 저장소 xacro 에서
 STALL = {"omx_joint2": 1.5, "omx_joint3": 1.5, "omx_joint4": 0.52}   # N·m: XL430-W250-T @12 V, XL330-M288-T @5 V(e-Manual)
 
 

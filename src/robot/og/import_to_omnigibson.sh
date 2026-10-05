@@ -1,11 +1,12 @@
 #!/bin/bash
 # LIMO+OMX URDF → OmniGibson 로봇(USD+정의). 결과: <gm.DATA_PATH>/omnigibson-robot-assets/objects/robot/limo_omx/
-#   conda 'behavior' 환경에서 실행. package:// 는 ra_ws 설치 경로로 바꿔 쓴다.
+#   conda 'behavior' 환경에서 실행. URDF 는 저장소 xacro 에서 tools/build_urdf.sh 로 펼쳐 쓴다(ra_ws 없음; 메시는 src/robot/ 안).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-URDF_IN=${1:-$HOME/ra_ws/map_vla.urdf}
 W=${W:-/tmp/limo_omx_import}; mkdir -p "$W"
-sed -e "s#<mimic[^>]*/>##g" -e "s#file://##g" -e "s#\(limo_[a-z]*\)\.dae\" scale=\"1 1 1\"#\1.stl\" scale=\"0.001 0.001 0.001\"#" -e "s#\(limo_[a-z]*\)\.dae\"/>#\1.stl\" scale=\"0.001 0.001 0.001\"/>#" -e "s#package://\([a-z_]*\)#$HOME/ra_ws/install/\1/share/\1#g" "$URDF_IN" > "$W/limo_omx_source.urdf"
+BH1K=${BEHAVIOR_1K:-$HERE/../../behavior-2026/BEHAVIOR-1K}   # 서브모듈 안(없으면 BEHAVIOR_1K=...)
+URDF_IN=${1:-$("$HERE/../tools/build_urdf.sh" "$W/map_vla.urdf")}   # 인자로 URDF 를 주면 그것
+sed -e "s#<mimic[^>]*/>##g" -e "s#file://##g" -e "s#\(limo_[a-z]*\)\.dae\" scale=\"1 1 1\"#\1.stl\" scale=\"0.001 0.001 0.001\"#" -e "s#\(limo_[a-z]*\)\.dae\"/>#\1.stl\" scale=\"0.001 0.001 0.001\"/>#" "$URDF_IN" > "$W/limo_omx_source.urdf"
 # STL 은 mm 이고 URDF 의 scale="0.001" 은 시각 메시에만 먹어 충돌 메시가 1000 배(321 m)로 만들어졌다(로봇이 공중에 뜨고 벽 판정이 틀어짐)
 # → 메시를 미터로 미리 변환해 넣고 scale 속성을 지운다.
 "$HOME/miniconda3/envs/behavior/bin/python" - "$W" <<'PY'
@@ -84,13 +85,13 @@ PY
 sed "s#__URDF__#$W/limo_omx_source.urdf#" "$HERE/limo_omx_source_config.yaml" > "$W/limo_omx_source_config.yaml"
 source ~/miniconda3/etc/profile.d/conda.sh; conda activate behavior
 export OMNI_KIT_ACCEPT_EULA=YES
-python "$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/OmniGibson/omnigibson/examples/robots/import_custom_robot.py" --config "$W/limo_omx_source_config.yaml"
+python "$BH1K/OmniGibson/omnigibson/examples/robots/import_custom_robot.py" --config "$W/limo_omx_source_config.yaml"
 
-python "$HERE/recolor_usd.py" "$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/datasets/omnigibson-robot-assets/objects/robot/limo_omx/usd/limo_omx.usda"
+python "$HERE/recolor_usd.py" "$BH1K/datasets/omnigibson-robot-assets/objects/robot/limo_omx/usd/limo_omx.usda" "$HERE/../limo_description/meshes"
 # 임포터가 URDF <mimic> 을 지우므로 그리퍼 joint_2 = -joint_1 미믹을 USD 에 다시 넣는다(1차원 smooth 그리퍼 행동으로 두 손가락이 대칭으로 움직임)
-python "$HERE/add_gripper_mimic.py" "$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/datasets/omnigibson-robot-assets/objects/robot/limo_omx/usd/limo_omx.usda"
-mkdir -p "$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/datasets/omnigibson-robot-assets/models/limo_omx"
-cp "$HERE/limo_omx.yaml" "$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/datasets/omnigibson-robot-assets/models/limo_omx/limo_omx.yaml"
-A=$HOME/robot-agent/src/behavior-2026/BEHAVIOR-1K/datasets/omnigibson-robot-assets
+python "$HERE/add_gripper_mimic.py" "$BH1K/datasets/omnigibson-robot-assets/objects/robot/limo_omx/usd/limo_omx.usda"
+mkdir -p "$BH1K/datasets/omnigibson-robot-assets/models/limo_omx"
+cp "$HERE/limo_omx.yaml" "$BH1K/datasets/omnigibson-robot-assets/models/limo_omx/limo_omx.yaml"
+A=$BH1K/datasets/omnigibson-robot-assets
 for k in usd misc curobo; do ln -sfn "$A/objects/robot/limo_omx/$k" "$A/models/limo_omx/$k"; done   # 정의는 models/ 아래 usd 를 찾는다
 echo "[import] 로봇 정의 설치 완료"

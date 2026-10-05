@@ -1,6 +1,7 @@
 """손가락 안쪽 틈(mm)을 그리퍼 각별·link5 x 구간별로 잰다(실제 메시, "hull" 인자면 시뮬 충돌 모양 = 볼록 껍질). E0."""
 import trimesh,numpy as np
-D='/home/juyoung/ra_ws/install/open_manipulator_description/share/open_manipulator_description/meshes/omx_f/'
+import os
+D=os.path.join(os.path.dirname(os.path.abspath(__file__)),'..','..','open_manipulator_description','meshes','omx_f')+'/'
 f6=trimesh.load(D+'follower_07_gripper_motorized.stl'); f6.apply_scale(0.001)
 import sys
 if "hull" in sys.argv: f6=f6.convex_hull
