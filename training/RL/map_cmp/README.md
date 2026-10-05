@@ -165,3 +165,57 @@ keyframe × 참 물체 관측: 근사 2,294, 진짜 2,544, 둘 다 2,283 이다(
 - 팔은 홈 자세로 고정이다(stage 1). 잡기 규칙, 손 거르기, 몸 가리기는 시험되지 않았다.
 - 벽 벡터 56 은 이 도구에서 비교하지 않는다. 같은 격자·자세에서 진짜 `wallSegments`·`wallStateVector` 와의 비교는 `../map/tools/map_realcheck.cpp` 가 한다(선분 목록 100 % 같음). 지도 토큰은 진짜 쪽에 대응이 없다.
 - scenemap 은 고치지 않았다(필요 없었음).
+
+## pick_cmp + og_cmp — 정책 입력 단위 비교(GPU 지도 대 진짜 파이프라인, 같은 판) (2026-10-06, CURRICULUM_BEHAVIOR2026 5.7.1, TRAINING_DESIGN 6.1)
+
+위 `map_cmp` 는 같은 상자 장면에서 **규칙**만 견준다(잡음 끔, 완벽한 검출). 아래 두 도구는 BEHAVIOR 판을 그대로 쓰고, 진짜 쪽은 OmniGibson 렌더 + 진짜 인지(ObjectSAM `yolo26n-seg-obj-416` + SigLIP 2 + scenemap objprob, libsgrt)다. 파이프라인이나 GPU 지도 판이 바뀌면 이것을 다시 돌린다.
+
+| 단계 | 도구 | 하는 일 |
+|---|---|---|
+| 1 | `tools/pick_cmp.cu`(GPU, 학습 그대로 잡음 켬) | B4–B6 판을 교사로 돌린다. keyframe 마다 목표(prim 0)가 지도 검출 규칙의 어디서 떨어졌는지 센다(`det_prefilter`·`vis_point` 를 같은 순서로 다시 부름). `--dump K --out DIR` 이면 판 K 개를 `ep_*.jsonl` 로 남긴다(궤적·물체 자세·지도 칸·원인·장면 world 정보) |
+| 2 | `training/viewer/tools/og_replay/og_cmp.py`(OG, og.lock) | 그 판을 OmniGibson + libsgrt 로 다시 돌린다. (장면, 과제)마다 장면을 한 번만 싣고, 판마다 `OgWorld.set_instance` 로 인스턴스 자세만 바꾼다. 묶음마다 자식 프로세스를 띄우는데, OG 는 한 프로세스에 장면 하나만 받기 때문이다. Isaac 그리기가 죽으면 다시 띄우고, 같은 판에서 두 번 죽으면 `.fail` 로 남기고 건너뛴다. keyframe 마다 정답 보임(eyes `seg_instance` 의 목표 화소 중 깊이 [0.15, 3] m 안 화소 수), 진짜 지도 스냅숏(내보내는 물체: 이름·점수·위치·크기·본 횟수·살펴본 정도), `sm_last_assoc` 검출 짝, 카메라 그림 몇 장을 남긴다. 판 끝에는 진짜 확정 물체를 OG AABB 와 짝지어 유령·중복을 센다 |
+| 3 | `og_cmp_report.py` | 두 쪽을 판 묶음(b4_/b6_ …)별로 견준다. 목표 확정(비율·처음 시각), 위치 오차, 이름(GPU 이름 확률, 진짜 이름 = 정답 종류인가·점수), 확정 물체 수, 유령·중복, 보임 혼동표, 진짜가 보인 keyframe 에서 목표를 검출한 비율, 크기·받침 높이별 진짜 등록 |
+
+```
+# 1) GPU 판 내보내기(빌드: cmake -S training/RL/map_cmp -B build/map_cmp && cmake --build build/map_cmp --target pick_cmp)
+pick_cmp 256 900 --kind 4 --slknown --dump 256 --out DIR          # 원인 수만 볼 때는 --dump 없이
+pick_cmp 128 120 --kind 4 --slknown --find --findstart --look 40 --dump 128 --out DIR   # 찾을 수 있는 자세에서 시작 + 처음 4 s 제자리 좌우 보기
+# 2) 고른 판(같은 (장면, 과제)끼리 묶임)을 OG 로 — og.lock, nice 19, 끝나면 OG 텍스처 캐시·/tmp/tmp* 지움
+flock /tmp/claude-1000/og.lock nice -n 19 python training/viewer/tools/og_replay/og_cmp.py --eps 'DIR/ep_*.jsonl' --out OUT [--max-steps 900]
+# 3) 보고
+python training/viewer/tools/og_replay/og_cmp_report.py OUT --gpu-dir DIR --json report.json
+```
+- 지도 칸을 읽는 곳은 `tools/slot_adapter.h` 한 곳뿐이다. 기본은 objprob 포트(P1b) 배치이고(`objs[N][NOBJ]`·`objv`·`name_p`), 포트 전 기준값을 다시 낼 때는 `git archive b90ca87 training/RL training/viewer/tools/record_replay` 로 내보낸 곳을 `-DRL_DIR=…/training/RL` 로 주고 `-DPICK_CMP_SLOT_VOTES=ON` 으로 빌드한다(그 RL_DIR 에 `training/data` 링크).
+- 걸린 시간(RTX 5070 Ti): pick_cmp 512 × 900 은 약 2 분(스텝마다 내려받음)이다. og_cmp 는 장면 싣기 house_single_floor 285 s, house_double_floor_lower 142 s, Rs_int 89 s 이고, 판마다 300 스텝에 10 s, 900 스텝에 20–30 s 걸린다. house_single_floor·Rs_int 에서는 판의 약 40 % 가 첫 그리기에서 segfault 를 냈다(같은 판이면 매번 — 원인은 모름. 운동학으로 놓은 LIMO 가 가구와 겹친 탓으로 추정).
+
+### 원인별 수 (포트 전 GPU 지도 b90ca87, C2 자라는 지도, 상태 없는 교사, 512 판 × 900 스텝, 2026-10-06)
+판 끝 분류(목표를 찾았나, 아니면 처음으로 걸린 규칙). (a) = 시야·기하 문제(진짜도 못 봄), (b) = 지도 검출·확정 규칙.
+
+| 설정 | 판 | 교사 성공 | 찾음 | (a) 시야에 한 번도 안 듦 | (a) 시야엔 들지만 늘 가려짐·깊이 범위 밖 | (b) 작음 | (b) 바닥 조각 | (b) p_miss | (b) < 2 keyframe |
+|---|---|---|---|---|---|---|---|---|---|
+| B4 `--slknown` | 1,603 | 0.004 | 0.005 | 0.620 | 0.351 | 0.005 | 0.019 | 0 | 0 |
+| B4 특권 교사(지도 확정과 무관) | 5,075 | 0.923 | 0.025 | 0.343 | 0.593 | 0.002 | 0.024 | 0.002 | 0.011 |
+| B6 `--slknown` | 231 | 0.177 | 0.329 | 0.160 | 0.485 | 0.004 | 0.022 | 0 | 0 |
+| **B4 `--slknown --find --findstart`** | 1,612 | **0.770** | **0.978** | 0 | 0 | 0 | 0 | 0.002 | 0.020 |
+
+- B4 keyframe 137,485 개의 원인: range 0.662, fov 0.186, occl 0.150(그중 89 % 는 목표 면이 0.15 m 보다 가까움), 규칙 (b) 모두 합쳐 0.002.
+- 까닭: B4 시작이 잡는 자세 칸(서는 자리 바로 앞)이다. 목표는 카메라 광축 앞 0.10 / 0.15 / 0.23 m(10/50/90 %)에 있고, 카메라보다 0.15 m 아래에 있다(세로 시야 ±22.8° — 바닥 물체는 카메라 앞 ≥ 0.36 m 라야 보임). 게다가 "제자리 돌기" 탐사는 첫 회전에서 가구에 막혀 멈춘다. 판당 돈 각은 중앙값 0.34 rad 이고 한 바퀴를 넘긴 판은 6 % 이며, 충돌로 끝난 판이 0.19 다.
+- 그래서 이 막힘은 잡음 맞추기로 풀 문제가 아니다. 찾을 수 있음 거르개와 그 자세에서 시작하기로 풀었다(`env/include/findable.h`, CURRICULUM 5.7.1).
+
+### 기준값: 진짜 파이프라인 대 GPU 지도 (OG 다시 돌리기, 34 판 중 24 판 — 10 판은 Isaac segfault, 2026-10-06)
+| 값 | B4 `--slknown` 15 판(GPU / 진짜) | B6 `--slknown` 9 판(GPU / 진짜) |
+|---|---|---|
+| 목표 확정(판 비율) | 0 / 0 (진짜 쪽 거리 문턱 안 짝 2 판은 받침 조각 bag·stool — 그 판의 목표 화소 0, 목표 아님) | 0.44 / 0.44 (같은 4 판: Rs_int 배터리) |
+| 처음 확정까지(중앙값) | — | 2.4 s / 7.1 s. 판별 스텝(GPU, 진짜): (1, 27) (46, 117) (100, 114) (1, 21) |
+| 확정할 때 카메라–목표 거리 | — | GPU 1.0–2.6 m / **진짜 0.61–0.87 m** |
+| 진짜 카메라에서 목표가 보인(깊이 범위 안 ≥ 20 화소) keyframe 중 검출(sm_last_assoc) | — | GPU 0.73(det/(det+miss)) / **진짜 0.29** |
+| 위치 오차 xy · z(판 끝, 중앙값) | — | 0.024 · 0.064 m / 0.044 · 0.065 m |
+| 이름 | — | GPU 이름 확률 1.0, 맞음 4/4 / 진짜 맞음 3/4(배터리 0.98·0.91·0.56, 한 판은 countertop → furniture: 받침과 합쳐짐) |
+| 판 끝 확정 물체 수(중앙값) | 1 / 5 | 6 / 15(포트 전 GPU 지도는 가구를 안 셈) |
+| 유령(정답 물체에 안 붙음) / 판 | 0.13 / 1.07 | 0.22 / 2.56 |
+| 중복·조각(한 정답에 둘 이상) / 판 | 0.53 / 3.07 | 0.78 / 4.89 |
+| 보임 일치(keyframe): GPU 규칙 대 OG 분할 | 1,500 개 모두 둘 다 안 보임 | 둘 다 보임 42, 둘 다 안 보임 2,396, OG 만 5, GPU 만 5 |
+
+- 진짜 파이프라인도 B4 시작 자리에서는 목표를 등록하지 못한다. 예: `b4_ep_0000` 은 분무기가 렌즈 앞 0.149 m, 화면 아래 끝에 23k 화소로 보이지만 깊이가 범위 밖이다(그림은 CURRICULUM 5.7.1). hsf 펜(17 × 1.5 × 1.5 cm, 바닥)은 B6 900 스텝 동안 한 번도 깊이 범위 안 화소가 생기지 않았다(GPU 도 안 봄).
+- 진짜 쪽 문제(인지 코드는 안 고침, 보고만): 과제 이름이 다른 물체 조각에 붙는다. `b4_ep_0024`(정원) 확정 38 개 중 "insectifuge" 가 정원등(garden_light ×4)·의자 조각·화분에 붙었다(objprob 낱말 표에 과제 이름을 더하기 때문으로 봄). 큰 물체(그릴·나무·의자)는 3–5 조각으로 나뉜다.
+- 포트에 대한 기준(받아들임 목표): 작은 물체(≤ 8 cm)는 진짜처럼 0.6–0.9 m 안에서 등록하고, 보인 keyframe 검출률은 ≈ 0.3(지금 GPU 0.73), 첫 확정은 보인 뒤 수 s, 이름 맞음 ≈ 0.75, 유령 ≈ 1–2.5/판, 조각 ≈ 3–5/판(가구 포함), 위치 오차 xy ≈ 0.04 m. 표본이 작다(진짜 확정 4 판, Rs_int 배터리 하나).

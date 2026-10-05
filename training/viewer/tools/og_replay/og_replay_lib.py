@@ -27,8 +27,10 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "../../../.."))
-B26 = os.path.join(REPO, "src/behavior-2026")
-B1K = os.environ.get("B1K_ROOT", os.path.join(B26, "BEHAVIOR-1K"))
+SG = os.path.join(REPO, "src/scene_graph")   # 인지 파이프라인 원본(scene_graph)
+sys.path.insert(0, os.path.join(REPO, "config"))
+from paths import paths as _paths  # noqa: E402
+B1K = os.environ.get("B1K_ROOT") or _paths().get("B1K_ROOT", os.path.join(REPO, "third_party/BEHAVIOR-1K"))   # config/paths.env
 TI = os.path.join(B1K, "datasets/2026-challenge-task-instances")
 DEPS = os.environ.get("TRAINVIEW_DEPS", os.path.expanduser("~/trainview_work/deps"))   # build_deps.sh 가 robot-agent 소스에서 만들어 링크해 둔 곳
 TMP = None
@@ -121,7 +123,7 @@ class OgWorld:
     def __init__(self, W, first_pose):
         import json
         sys.path.insert(0, os.path.join(REPO, "src/robot/og/e0"))
-        sys.path.insert(0, os.path.join(B26, "src/scene_graph/runtime/glue"))
+        sys.path.insert(0, os.path.join(SG, "runtime/glue"))
         import omnigibson as og
         from omnigibson.macros import gm
         import torch as th
@@ -174,27 +176,9 @@ class OgWorld:
         self.robot = r
         self.env.reset()
         log(f"scene loaded {time.time() - t0:.0f}s, objects {len(self.env.scene.objects)}")
-        # 인스턴스 자세(tro_state): 과제 물체 뿌리 자세·관절
-        ninst = 0
-        if os.path.exists(inst):
-            stt = json.load(open(inst))
-            for bddl, v in stt.items():
-                if bddl == "robot_poses" or not isinstance(v, dict) or "root_link" not in v:
-                    continue
-                o = self.reg(i2n.get(bddl, bddl))
-                if o is None:
-                    continue
-                rl = v["root_link"]
-                o.set_position_orientation(position=th.tensor(rl["pos"], dtype=th.float32), orientation=th.tensor(rl["ori"], dtype=th.float32))
-                if "joint_pos" in v and getattr(o, "n_joints", 0) == len(v["joint_pos"]):
-                    try:
-                        o.set_joint_positions(th.tensor(v["joint_pos"], dtype=th.float32))
-                    except Exception:
-                        pass
-                ninst += 1
-        else:
-            log(f"no instance file {inst} — template poses")
-        log(f"instance {iid}: {ninst} task object poses")
+        self.sc, self.task, self.jd, self.i2n = sc, task, jd, i2n
+        self.pick = None
+        self.set_instance(iid)
         # 몸통 카메라 H-FOV 67.9°(평가기 set_eyes_hfov 와 같음)
         self.eyes = self.wrist = None
         for n, s in r.sensors.items():
@@ -223,12 +207,45 @@ class OgWorld:
         robots = [type(x).__name__ + ":" + str(getattr(x, "model", getattr(x, "name", "?"))) for x in self.env.scene.robots]
         assert len(self.env.scene.robots) == 1 and getattr(r, "model", "limo_omx") == "limo_omx", robots
         log(f"robots in scene: {robots}; eyes z {float(self.eyes.get_position_orientation()[0][2]):.3f} m")
-        self.pick = self.reg(W["pick"]["og_name"]) if W.get("pick", {}).get("og_name") else None
+        self.set_pick_name(W.get("pick", {}).get("og_name"))
+        log(f"robot z {self.z0:.3f}; pick object {'found' if self.pick is not None else 'MISSING'} ({W.get('pick', {}).get('og_name')})")
+
+    def set_instance(self, iid):
+        """과제 인스턴스 자세(tro_state)를 다시 놓는다 — 같은 (장면, 과제) 판을 장면을 다시 싣지 않고 이어 돌릴 때(og_cmp.py·나중 DAgger).
+        물리 스텝은 하지 않는다(그리기만). 집을 물체가 있으면 그 처음 자세도 다시 읽는다"""
+        import json
+        th = self.th
+        inst = os.path.join(self.jd, f"{self.sc}_task_{self.task}_instances", f"{self.sc}_task_{self.task}_0_{int(iid)}_template-tro_state.json")
+        ninst = 0
+        if os.path.exists(inst):
+            stt = json.load(open(inst))
+            for bddl, v in stt.items():
+                if bddl == "robot_poses" or not isinstance(v, dict) or "root_link" not in v:
+                    continue
+                o = self.reg(self.i2n.get(bddl, bddl))
+                if o is None:
+                    continue
+                rl = v["root_link"]
+                o.set_position_orientation(position=th.tensor(rl["pos"], dtype=th.float32), orientation=th.tensor(rl["ori"], dtype=th.float32))
+                if "joint_pos" in v and getattr(o, "n_joints", 0) == len(v["joint_pos"]):
+                    try:
+                        o.set_joint_positions(th.tensor(v["joint_pos"], dtype=th.float32))
+                    except Exception:
+                        pass
+                ninst += 1
+        else:
+            log(f"no instance file {inst} — template poses")
+        log(f"instance {iid}: {ninst} task object poses")
+        if self.pick is not None:
+            self.set_pick_name(self.pick.name)
+
+    def set_pick_name(self, og_name):
+        """집을 물체(GPU 판의 목표)를 이름으로 고르고 그 처음 자세를 기억(place_pick 이 이 자세 대비로 옮김)"""
+        self.pick = self.reg(og_name) if og_name else None
         self.p0 = self.q0 = None
         if self.pick is not None:
             p, q = self.pick.get_position_orientation()
             self.p0, self.q0 = p.numpy().astype(np.float64), q.numpy().astype(np.float64)
-        log(f"robot z {self.z0:.3f}; pick object {'found' if self.pick is not None else 'MISSING'} ({W.get('pick', {}).get('og_name')})")
 
     def reg(self, name):
         return self.env.scene.object_registry("name", name)
@@ -288,8 +305,11 @@ class Perception:
     """libsgrt(sgrt_glue.SceneMemory) + 스트림 기록. stream_path = stream.sgs, mem_dir = 끝에 저장하는 memory/ 폴더."""
 
     def __init__(self, task, mem_dir, stream_path, robot, kf_every=3):
-        self.cap = Capture(stream_path)
-        os.environ["SGRT_STREAM"] = f"127.0.0.1:{self.cap.port}"
+        self.cap = Capture(stream_path) if stream_path else None   # None: sgview 스트림 없음(og_cmp.py 처럼 지도만 볼 때)
+        if self.cap:
+            os.environ["SGRT_STREAM"] = f"127.0.0.1:{self.cap.port}"
+        else:
+            os.environ.pop("SGRT_STREAM", None)
         os.environ.setdefault("SGRT_STREAM_HZ", "20")
         os.environ.setdefault("SGRT_ROBOT", "limo_omx")
         os.environ.setdefault("SGRT_POSE", "slam")   # 자세 = 오도메트리(궤적) + 스캔 맞추기, GT 는 비교용으로만
@@ -297,7 +317,7 @@ class Perception:
         os.environ.setdefault("SGRT_INSPECT", "1")
         os.environ.setdefault("SGRT_LIB", os.path.join(DEPS, "libsgrt.so"))
         os.environ.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
-        sys.path.insert(0, os.path.join(B26, "src/scene_graph/runtime/glue"))
+        sys.path.insert(0, os.path.join(SG, "runtime/glue"))
         from sgrt_glue import SceneMemory
         self.mem = SceneMemory(task or "pick", mem_dir, kf_every=kf_every, robot_model="limo_omx")
         self.mem.robot = robot
@@ -307,7 +327,8 @@ class Perception:
 
     def step(self, stamp, st, world, want_cam=False, last=False):
         """st: x, y, yaw, vx, wz, q(5), qg (세계 좌표). 이미 world.set_robot 한 뒤 부른다. 그림이 필요하면(keyframe 또는 want_cam) 그려서 돌려준다"""
-        self.cap.now = stamp
+        if self.cap:
+            self.cap.now = stamp
         p = self.prop
         p[0:3] = (st.x, st.y, st.yaw)   # 오도메트리 = 궤적(세계 좌표 — scenemap map 틀 = 세계)
         p[3:6] = (0.0, 0.0, 0.0) if last else (st.vx, 0.0, st.wz)
@@ -336,7 +357,7 @@ class Perception:
         self.mem.close()
         time.sleep(0.5)
         os.environ.pop("SGRT_STREAM", None)
-        log(f"perception: {st}; stream frames {self.cap.frames} {self.cap.by_type}")
+        log(f"perception: {st}" + (f"; stream frames {self.cap.frames} {self.cap.by_type}" if self.cap else ""))
         self.stats = st
         return st
 
@@ -344,11 +365,11 @@ class Perception:
 # ---------------------------------------------------------------------------------------------------------------------
 def pipeline_info():
     """이 판을 만든 인지 파이프라인(장면 그래프 소스의 어느 판인가) — 뷰어가 지금 소스와 견줘 "stale pipeline" 을 표시. 소스·엔진 기본값은 거기서 읽는다(여기서 정하지 않음)."""
-    sg26 = os.path.join(B26, "src/scene_graph")
+    sg26 = SG
 
     def git(*x):
         try:
-            return subprocess.check_output(["git", "-C", B26, *x], stderr=subprocess.DEVNULL, text=True).strip()
+            return subprocess.check_output(["git", "-C", REPO, *x], stderr=subprocess.DEVNULL, text=True).strip()
         except Exception:
             return ""
     trees = {d: git("rev-parse", f"HEAD:src/scene_graph/{d}") for d in ("scenemap", "runtime", "ovdet", "clip", "da")}

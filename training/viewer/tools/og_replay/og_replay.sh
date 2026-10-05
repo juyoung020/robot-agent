@@ -7,7 +7,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../../.." && pwd)
 TRP=$1; shift
 OG_LOCK=${OG_LOCK:-/tmp/claude-1000/og.lock}
-B1K=${B1K_ROOT:-$REPO/src/behavior-2026/BEHAVIOR-1K}
+. "$REPO/config/paths.env"
+B1K=$B1K_ROOT
 TEXCACHE=$B1K/OmniGibson/appdata/global/cache/texturecache
 TMPBASE=$HOME/trainview_work/og_tmp
 mkdir -p "$TMPBASE"
