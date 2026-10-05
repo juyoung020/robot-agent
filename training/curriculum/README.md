@@ -81,6 +81,8 @@
 
 ## 교사 기억 인코더 — 학생과 같은 틀 (결정 2026-10-06, 구현 할 일)
 
+쉬운 설명(처음 보는 사람용): [docs/map_vla/MEMORY_ENCODER.md](../../docs/map_vla/MEMORY_ENCODER.md).
+
 지금 교사는 GPU 지도의 물체 기억(판마다 ≤ 256, `map.h NOBJ`) 중 16 칸만 본다. 학생과 같은 기억을 보도록 교사 망에도 기억 요약 인코더를 넣는다(MAPVLA_SPEC 2.8 과 같은 틀, 폭만 작게).
 
 | 부분 | 학생(RecallVLA, 2.8) | 교사(PPO) |

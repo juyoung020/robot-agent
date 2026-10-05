@@ -15,3 +15,4 @@ Map_Vla 프로젝트에서 쓴 조사·설계 문서다. 작성 시점의 판단
 
 - 학습 구조(RL·대본 교사 → 시연 → 작은 학생 BC/DAgger, RecallVLA)는 [../../training/README.md](../../training/README.md) 의 `RL/`, `BC/`, `vla/`.
 - 로봇 설명: [../../src/robot/README.md](../../src/robot/README.md).
+- [MEMORY_ENCODER](MEMORY_ENCODER.md) — 기억 인코더 쉬운 설명(물체가 몇 개든 요약 32 개로, 상한·고르기, 교사·학생 같은 틀)
