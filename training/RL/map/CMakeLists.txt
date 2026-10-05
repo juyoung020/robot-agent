@@ -78,7 +78,7 @@ target_link_libraries(map_drift gmap)
 option(MAP_REALCHECK "build map_realcheck against the real scenemap sources" OFF)
 if(MAP_REALCHECK)
   set(SM_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../src/scene_graph/scenemap)
-  add_library(sm_real STATIC ${SM_DIR}/src/scan.cpp ${SM_DIR}/src/grid.cpp ${SM_DIR}/src/slam2d.cpp ${SM_DIR}/src/fk.cpp ${SM_DIR}/src/capi.cpp
+  add_library(sm_real STATIC ${SM_DIR}/src/scan.cpp ${SM_DIR}/src/grid.cpp ${SM_DIR}/src/mapper2d.cpp ${SM_DIR}/src/fk.cpp ${SM_DIR}/src/capi.cpp
               ${SM_DIR}/src/objmap.cpp ${SM_DIR}/src/bestview.cpp ${SM_DIR}/src/cloud.cpp ${SM_DIR}/src/png.cpp ${SM_DIR}/src/walls.cpp
               ${SM_DIR}/src/stream.cpp ${SM_DIR}/../da/src/merge.cpp ${SM_DIR}/src/dsg_save.cpp ${SM_DIR}/src/rooms.cpp ${SM_DIR}/src/sgraph.cpp
               ${SM_DIR}/src/objprob.cpp ${SM_DIR}/src/inspect.cpp)   # objprob·살펴본 정도(10-05)

@@ -7,7 +7,7 @@
 //   - 난수는 detmath.h 의 splitmix64(판마다 따로, 스레드 0 만 뽑음).
 //
 // 규칙·기본값의 출처(읽기 전용): src/scene_graph/scenemap
-//   grid.hpp GridParams / grid.cpp insert, scan.hpp ScanParams / scan.cpp makeScan, slam2d.hpp SlamParams(움직임 거르기),
+//   grid.hpp GridParams / grid.cpp insert, scan.hpp ScanParams / scan.cpp makeScan, mapper2d.hpp MapperParams(움직임 거르기),
 //   objmap.hpp ObjParams / objmap.cpp update(짝짓기·확정·옮겨짐·사라짐·버림), scenemap.h sm_object(SM_SEEN..).
 // (가정) 표시 값은 실제 기록·사양으로 맞출 값이다. 한 곳(MP)에만 둔다.
 #pragma once
@@ -115,9 +115,11 @@ struct MP {
   // 첫 화소 줄(v = scan_step 의 배수) (가정: sgrt 깊이 간격 4, 640 × 400 → 160 × 100 점)
   static constexpr int scan_step = 4;
   static constexpr float depth_hfov = env::K::cam_hfov;        // 깊이 가로 FOV 67.9° (Dabai 데이터시트) — 환경 K::cam_hfov 와 같은 값(시뮬 RGB·깊이 모두 67.9°)
-  // slam2d.hpp SlamParams (움직임 거르기 update_policy 0, 제자리 규칙) (scenemap)
+  // mapper2d.hpp MapperParams 넣기 정책 1(scenemap 기본, 사건 기반): 움직임(mf_xy·mf_yaw), 조금 움직임(1 cm·0.5°), 스캔 서명이 달라짐
+  // (방위 칸 change_bins 개 넘게 change_cells 칸 넘게 — 진짜 0.5° 칸 720 개, 여기 깊이 열 하나 ≈ ins_bpc 칸), 지난 넣기가 칸 값을 바꿈, still_every 번째
   static constexpr float mf_xy = 0.05f, mf_yaw = 0.034906585f /*2도*/, still_v = 0.01f, still_w = 0.01f;
-  static constexpr int mf_kf = 50;
+  static constexpr float nudge_xy = 0.01f, nudge_yaw = 0.0087266463f /*0.5도*/;
+  static constexpr int change_bins = 2, change_cells = 1, still_every = 50;
   // objmap.hpp ObjParams (scenemap). ozmax 만 Dabai 깊이 범위 3.0 m (Dabai 데이터시트; scenemap 기본 5)
   static constexpr int min_points = 20, min_px = 6, confirm = 2, gone_misses = 3;
   static constexpr float ozmin = 0.15f, ozmax = 3.0f, da_min = 0.30f, da_k = 0.5f, da_gap = 0.10f, big = 0.5f;
@@ -312,11 +314,14 @@ struct MapCore {
   int n_relink_total, n_merge_total;   // 옮겨짐 잇기·중복 병합 누적(리셋에 안 지움, 통계)
   uint32_t pe_miss;        // 인지 흉내 2 상태 마르코프: 지난 keyframe 에 후보였는데 놓친 prim 비트(percept.h)
   uint32_t pe_fmiss[16];   // 같은 것, 가구(정적 상자 j & 511 비트)
-  int det_t;               // 마지막 검출 keyframe 스텝(검출은 det_every 스텝에 한 번 — 진짜 검출 5 Hz)
+  int det_t;               // 마지막 영상 keyframe 스텝(영상·검출은 det_every 스텝에 한 번 — 진짜 sgrt kf_every 6 @ 30 Hz = 5 Hz)
+  int ins_flag;            // 이번 keyframe 에 격자에 넣었나(mapper2d 넣기 정책 1)
+  int lchg;                // 지난 넣기가 칸 값(로그 오즈)을 바꿨나(정책 1: 그러면 다음 keyframe 에도 넣음)
+  int16_t isig[NCOL];      // 지난번 넣은 스캔 서명(열마다: 맞음 +(거리/RES + 1), 바닥 −(…), 없음 0 — scan.cpp sig)
   int nlab;                // 이름 라벨 수(BEHAVIOR 이름 표 행 수, 상자 방 NCLS) — 판 리셋 때
   int16_t snm[NSRC];       // 출처(prim 0..N_PRIM−1, 유령 N_PRIM + g)의 이름 행 — 판 리셋 때(장면 이름 표를 전역에서 다시 읽지 않게)
   int16_t ssim[NSRC][3];   // 그 이름의 비슷한 이름 3(BEHAVIOR 장면 묶음 sim3, 상자 방 다음 종류들)
-  int pad_core[8];         // 16 B 배수(장치 복사)
+  int pad_core[6];         // 16 B 배수(장치 복사)
   float plen, prot;        // 믿는 오도메트리 누적 이동 m·회전 rad(판 안)
   // 벽 선분: 가로·세로 개수(선분은 따로 장치 배열), 넘침 누적
   int nseg_h, nseg_v, n_wall_ovf, n_wall_runs;   // n_wall_runs: 벽 선분을 다시 계산한 횟수(누적, 통계)
@@ -395,6 +400,7 @@ struct Scratch {
       float colt_t[NCOL];           // 맞음·빈 광선 끝의 광학 깊이 t
       float cold0[NCOL], cold1[NCOL];   // 수직면 맞추기 점(띠 아래 끝 ~ match_hi) 중 가장 가까운·먼 t, 없으면 0
       int8_t colt[NCOL];            // 0 없음, 1 맞음(띠 안), 2 빈 광선 끝(바닥)
+      int16_t colsig[NCOL];         // 스캔 서명(scan.cpp sig, 수평 거리 / RES — 넣기 정책 1)
     };
   };
   uint32_t vism[N_PRIM];            // 물체마다 보이는 점 비트(NPT 개)
@@ -408,6 +414,7 @@ struct Scratch {
   int nd, more;
   int flags;                        // phase_begin 결과(B_KF, B_RESET)
   int occ_chg;                      // 이번 keyframe 에 점유 비트가 바뀐 낱말이 있나(벽 선분 다시 할지)
+  int lchg;                         // 이번 넣기가 로그 오즈 칸을 하나라도 바꿨나(phase_apply)
   float ec, es;                     // 믿는 yaw 의 cos·sin
   int steady;                       // 이번 keyframe 카메라가 move_max_cam_w 보다 천천히 돎(움직임 근거로 씀)
 };
@@ -837,6 +844,8 @@ DEV void reset_core(MapCore& m, const EnvView& e, const bsc::SceneSet* ss = null
   m.rhx = e.rhx; m.rhy = e.rhy;
   for (int k = 0; k < NOBJW; ++k) m.objv[k] = 0u;   // 저장소 비움(칸 값은 새로 쓸 때 slot_alloc 이 0 으로)
   m.n_conf = 0; m.sweep = 0; m.det_t = -1000;
+  m.ins_flag = 0; m.lchg = 0;
+  for (int k = 0; k < NCOL; ++k) m.isig[k] = 0;
   m.pe_miss = 0u;
   for (int k = 0; k < 16; ++k) m.pe_fmiss[k] = 0u;
   if (beh) make_scene_beh(m, e, *ss, *bm); else make_scene(m, e);
@@ -1419,13 +1428,9 @@ DEV int phase_begin(MapCore& m, const EnvView& e, int force_kf, Slot* ob, const 
   m.px = e.x; m.py = e.y; m.pyaw = e.yaw;
   m.vmax = maxf(m.vmax, absf(e.v));
   m.wmax = maxf(m.wmax, absf(e.w));
-  // slam2d insertStage update_policy 0: 처음, 또는 mf_xy·mf_yaw 넘게 움직임, 또는 mf_kf 번째.
-  // 움직임은 **참 자세**로 잰다(lx·ly·lyaw = 지난 keyframe 의 참 자세). 믿는 자세로 재면 회전 중 yaw 잡음이 참 회전을 지워
-  // keyframe 이 빠지고 보정도 빠진다(map_calib README 2.3). 실제 slam 은 맞춘 자세로 거르므로 참 운동에 더 가깝다
-  m.since += 1;
-  const float dx = e.x - m.lx, dy = e.y - m.ly;
-  const bool moved = dx * dx + dy * dy >= MP::mf_xy * MP::mf_xy || absf(wrap_pi(e.yaw - m.lyaw)) >= MP::mf_yaw;
-  const int kf = (m.first || force_kf || moved || m.since >= MP::mf_kf) ? 1 : 0;
+  // 영상 keyframe = 진짜 sgrt 검출 주기(5 Hz = det_every 스텝마다). 격자에 넣을지는 그 안에서 mapper2d 넣기 정책 1 로(map_keyframe)
+  const int kf = (m.first || force_kf || m.t - m.det_t >= MP::det_every) ? 1 : 0;
+  if (kf) m.det_t = m.t;
   m.kf_flag = kf;
   return (kf ? B_KF : 0) | reset | wall;
 }
@@ -1671,6 +1676,7 @@ DEV void phase_cast(const MapCore& m, Scratch& sh, const EnvView& e, int tid, in
       }
     }
     sh.colt[col] = best < kInf ? 1 : floor_r > 0.f ? 2 : 0;
+    sh.colsig[col] = best < kInf ? (int16_t)minf(32000.f, sqrtf(best) * INV_RES + 1.f) : floor_r > 0.f ? (int16_t)(-minf(32000.f, sqrtf(floor_r) * INV_RES + 1.f)) : (int16_t)0;
     sh.colt_t[col] = best < kInf ? hit_t : floor_r > 0.f ? floor_t : 0.f;
     sh.cold0[col] = dv0;
     sh.cold1[col] = dv1;
@@ -2140,6 +2146,7 @@ DEV void phase_apply(const MapCore& m, Scratch& sh, int16_t* L, uint32_t* seen, 
         if (aa[j] & bit) {
           Lv = (hh[j] & bit) ? (Lv + MP::q_hit < MP::q_max ? Lv + MP::q_hit : MP::q_max) : (Lv + MP::q_miss > MP::q_min ? Lv + MP::q_miss : MP::q_min);
           L[(size_t)w * 32 + lane] = (int16_t)Lv;
+          if (Lv != lv[j]) sh.lchg = 1;   // 같은 값(1)만 씀 — 경합 무해
           if (!(oo[j] & bit)) count_new_seen(m, w * 32 + lane, cnt, cnt2, bx);   // 새로 본 칸 중 방 안
         }
         const uint32_t ob = __ballot_sync(0xffffffffu, (aa[j] & bit) && Lv >= MP::q_occ);
@@ -2168,8 +2175,10 @@ DEV void phase_apply(const MapCore& m, Scratch& sh, int16_t* L, uint32_t* seen, 
       if (!(any & bit)) continue;
       const int idx = w * 32 + b;
       int Lv = L[idx];
+      const int L0 = Lv;
       Lv = (h & bit) ? (Lv + MP::q_hit < MP::q_max ? Lv + MP::q_hit : MP::q_max) : (Lv + MP::q_miss > MP::q_min ? Lv + MP::q_miss : MP::q_min);
       L[idx] = (int16_t)Lv;
+      if (Lv != L0) sh.lchg = 1;
       if (Lv >= MP::q_occ) ob |= bit;
       if (nw & bit) count_new_seen(m, idx, cnt, cnt2, bx);   // 새로 본 칸 중 방 안
     }
@@ -2207,9 +2216,7 @@ DEV void phase_finish(MapCore& m, const Scratch& sh, const EnvView& e, int nt, c
   m.n_conf = sh.nconf;
   m.n_kf += 1;
   m.n_kf_total += 1;
-  m.first = 0;
-  m.since = 0;
-  m.lx = e.x; m.ly = e.y; m.lyaw = e.yaw;   // 움직임 거르기는 참 자세로
+  m.first = 0;   // since·lx(지난 넣기)는 넣을 때만(map_keyframe)
   m.vmax = 0.f; m.wmax = 0.f;
 }
 
@@ -2586,8 +2593,7 @@ DEV void map_keyframe(MapCore& m, Slot* ob, Scratch& sh, const EnvView& e, int16
   phase_cast(m, sh, e, tid, nt, bx);
   sync();
   PROF_MARK(P_CAST);
-  // 검출 keyframe 인가(진짜 검출 5 Hz): 지난 검출에서 det_every 스텝 넘게 지났거나 판 첫 keyframe. 아니면 격자·자세만(물체 단계 건너뜀)
-  const bool det = m.first || m.t - m.det_t >= MP::det_every;
+  const bool det = true;   // keyframe = 영상(5 Hz) — 검출·objprob 는 keyframe 마다(capi sm_push_image_rgb), 격자 넣기만 정책 1 로 거름
   if (det) near_build(m, ob, sh, tid, nt, sync);
   obj_pre(m, sh, tid, nt, bx, det);
   sync();
@@ -2598,7 +2604,27 @@ DEV void map_keyframe(MapCore& m, Slot* ob, Scratch& sh, const EnvView& e, int16
     if (det) ap_merge_apply(m, ob, sh, bx);
     PROF_MARK(P_MERGE);
     slam_kf_correct(m, sh, e, nt);
-    if (det) m.det_t = m.t;
+    // mapper2d 넣기 정책 1(믿는 자세 = SLAM 자세로 잼, 진짜와 같음)
+    m.since += 1;
+    const float dx = m.ex - m.lx, dy = m.ey - m.ly, dyaw = absf(wrap_pi(m.eyaw - m.lyaw));
+    const float d2 = dx * dx + dy * dy;
+    const bool moved = d2 >= MP::mf_xy * MP::mf_xy || dyaw >= MP::mf_yaw;
+    const bool nudged = d2 >= MP::nudge_xy * MP::nudge_xy || dyaw >= MP::nudge_yaw;
+    int nd = 0;
+    for (int col = 0; col < NCOL; ++col) {
+      const int a = m.isig[col], b = sh.colsig[col], dl = a - b;
+      nd += (dl > MP::change_cells || dl < -MP::change_cells || ((a > 0) != (b > 0))) ? 1 : 0;
+    }
+    constexpr float bpc = (MP::depth_hfov / (float)NCOL) / (6.2831853f / 720.f);   // 깊이 열 하나 ≈ 진짜 방위 칸 수
+    const bool scan_changed = (float)nd * bpc > (float)MP::change_bins;
+    const int ins = (m.first || moved || nudged || scan_changed || m.lchg || m.since >= MP::still_every) ? 1 : 0;
+    m.ins_flag = ins;
+    if (ins) {
+      m.since = 0;
+      m.lx = m.ex; m.ly = m.ey; m.lyaw = m.eyaw;
+      for (int col = 0; col < NCOL; ++col) m.isig[col] = sh.colsig[col];
+    }
+    sh.lchg = 0;
   }
   sync();
   if (det) {
@@ -2633,13 +2659,22 @@ DEV void map_keyframe(MapCore& m, Slot* ob, Scratch& sh, const EnvView& e, int16
   sync();
   PROF_MARK(P_BEGIN);
   obj_complete(m, ob, sh, tid, nt);
-  phase_mark(m, sh, L, seen, occ, tid, nt, sync);
-  sync();
-  PROF_MARK(P_MARK);
-  phase_apply(m, sh, L, seen, occ, tid, nt, bx);
+  if (m.ins_flag) {   // 격자 넣기(정책 1 이 고른 keyframe 만)
+    phase_mark(m, sh, L, seen, occ, tid, nt, sync);
+    sync();
+    PROF_MARK(P_MARK);
+    phase_apply(m, sh, L, seen, occ, tid, nt, bx);
+  } else {
+    put_part(sh, tid, 0);
+    put_part2(sh, tid, 0);
+    if (tid == 0) sh.occ_chg = 0;
+  }
   sync();
   PROF_MARK(P_APPLY);
-  if (tid == 0) phase_finish(m, sh, e, nt, bx);
+  if (tid == 0) {
+    if (m.ins_flag) m.lchg = sh.lchg;
+    phase_finish(m, sh, e, nt, bx);
+  }
 }
 
 // ---- 7. 커리큘럼 처음 지도(계획서 5.5, 판 리셋 때만) ---------------------------------------------------------------------------
@@ -2856,7 +2891,7 @@ DEV void map_rest(MapCore& m, KfShared& u, const EnvView& e, const MapGrid& g, f
   if (flags & (B_KF | B_WALL)) {
     const int chg = (flags & B_KF) ? u.sh.occ_chg : 0;   // ws 가 sh 를 덮기 전에 읽음
     sync();
-    phase_walls(m, g.obj, u.ws, g.occ, g.segs, chg, flags & B_KF, tid, nt, sync);
+    phase_walls(m, g.obj, u.ws, g.occ, g.segs, chg, (flags & B_KF) && m.ins_flag, tid, nt, sync);   // 공유 점유 사본은 phase_mark(넣을 때만)
     PROF_MARK(P_WALLS);
   }
   if (tid == 0) write_metrics(m, e, met, N, i, bx.on ? bx.bm->nprim : N_PRIM);

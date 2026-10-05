@@ -122,6 +122,14 @@ N = 4,096 이면 189 MB. keyframe 블록은 이번 시야 근처 물체(상자�
   `map_bench` 지도 단계 0.75 → 1.18 ms(같은 때 번갈아). **예산(+10 %)을 넘는다.** 늘어난 곳: keyframe 블록 공유 메모리 11.3 → 13.5 KB(SM 당 블록 수), 근처 물체를 전역에서 읽음(Slot 316 B),
   토큰 커널의 저장소 고르기. 토큰 커널(MapTok)은 P3 에서 입력 만들기로 바뀌므로 그때 다시 잼. 남은 줄이기(P8): Slot 뜨거운 값 따로(근처 목록 공유 메모리), 근처 상자 SoA, 짝 열쇠 근처 칸마다 스레드.
 
+### 1.4 영상 keyframe 5 Hz·격자 넣기 정책 1(10-06, 잰 값)
+- 포트 전·P1b 의 GPU keyframe 은 mapper2d **넣기 정책 0**(움직임 거르기: 5 cm·2°·50 번째)이었고 검출도 그 keyframe 에서만 했다. 진짜는 다르다:
+  sgrt 는 영상(5 Hz, kf_every 6 @ 30 Hz)마다 `sm_push_image_rgb` 로 검출·objprob 를 하고(`SGRT_MAP_EVERY` 기본 0 — 격자도 영상 때만), 격자 넣기만
+  mapper2d **정책 1**(기본, 사건 기반)이 고른다. 그래서 GPU 는 서 있을 때 50 스텝에 한 번만 검출했다(진짜는 0.2 s 마다).
+- 지금: keyframe = 영상 = `det_every` 2 스텝마다(움직임과 무관), 물체 단계는 keyframe 마다, 격자 표시·적용은 정책 1(믿는 자세 = SLAM 자세로 움직임 5 cm·2°, 조금 움직임 1 cm·0.5°,
+  스캔 서명 바뀜 — 깊이 열 하나 ≈ 진짜 0.5° 칸 2.1 개라 열 하나만 바뀌어도, 지난 넣기가 로그 오즈를 바꿈, 50 번째)일 때만. keyframe 50.3 % 스텝(전 74 %).
+- 검증: map_verify 비트 동일(상자 방·BEHAVIOR), map_realcheck all ok(격자 로그 오즈 다름 44 / 3.2 억 칸).
+
 ### 0.3 SLAM = Cartographer(10-06 결정, 코디네이터 전달)
 - GPU 지도의 자세 오차 흉내는 slam2d(깊이 가상 스캔 맞추기)가 아니라 **Cartographer(2D 라이다 + 바퀴 오도메트리)** 의 오차를 흉내 낸다: keyframe 걸음 오차(앞·옆·yaw, 분산 = c0 + c_d·Δd + c_r·|Δθ| + 치우침),
   되돌아옴(전역 최적화)의 갑작스런 고침, yaw 오차. 맞춤 값 = `src/scene_graph/slam_carto/calib/carto_drift.json`(openloris·sim·all, `slam_carto/tools/carto_drift.py` 로 다시 만듦) → 헤더로 생성해 씀.
