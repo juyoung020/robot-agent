@@ -2,7 +2,7 @@
 // tests/gen_limo_fk_ref.py: xml.etree + numpy 4×4)과 맞는지 — 깊이 카메라·손목 카메라 광학, 잡는 점, 팔 끝. 위치 1e-5 m, 회전 원소 1e-6.
 // 잡는 점(T_eef)이 E0 OmniGibson get_eef_position(omx_link5 기준 (0.08003, −0.0016, 0), src/robot/og/e0/results/verify_eef_kp1e6.json)과
 // 1e-4 m 안인지도 본다(omx_link5 자세는 이 시험이 표에서 따로 걷는다).
-// 같은 것을 C ABI(sm_robot_fk)로도 확인하고, R1 의 sm_robot_fk 머리 카메라가 computeBodyFk 의 T_head 와 같은지도 본다.
+// 같은 것을 C ABI(sm_robot_fk)로도 확인한다.
 #include <cmath>
 #include <cstdio>
 #include <cstring>
