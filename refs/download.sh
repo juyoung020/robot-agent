@@ -53,3 +53,12 @@ for repo in \
   git clone -q --depth 1 "https://github.com/$repo.git" "$dir"
 done
 echo "코드 완료: $(ls -d code/*/ | wc -l)개"
+
+# 데이터시트(제조사 문서, 깃에 안 올림) → refs/datasheets/
+mkdir -p datasheets
+dl() { [ -s "datasheets/$2" ] || curl -sfL "$1" -o "datasheets/$2" && echo "받음: $2"; }
+LD=https://raw.githubusercontent.com/agilexrobotics/limo-doc/master
+dl "$LD/Limo%20user%20manual(EN).md"                         limo_user_manual_EN.md
+dl "$LD/Limo%20Quick%20Start%20Guide%20%EF%BC%88APP%20%26%20Operations%EF%BC%89.pdf" limo_quick_start_guide.pdf
+dl "https://docs.trossenrobotics.com/agilex_limo_docs/specifications/limo.html" limo_specifications_trossen.html
+dl "https://docs.trossenrobotics.com/agilex_limo_docs/operation/steering_modes.html" limo_steering_modes_trossen.html

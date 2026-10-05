@@ -65,3 +65,14 @@ BEHAVIOR-1K 가정용 장기 작업 대회. 1·2·3위 모두 π0.5 기반.
 | [WeGo-Robotics/limo_ros2_ws](https://github.com/WeGo-Robotics/limo_ros2_ws) | 한국 WeGo 로보틱스의 리모 ROS 2 작업 공간 (한국어 설명) | |
 | [Kazimbalti/limo_ros2](https://github.com/Kazimbalti/limo_ros2) | ROS 2 Humble: URDF, Gazebo 시뮬 등 | |
 | [MoraesWilliam/Limo-Ros2-Gazebo-Slam-Cartographer](https://github.com/MoraesWilliam/Limo-Ros2-Gazebo-Slam-Cartographer) | ROS 2 Humble + Gazebo + Cartographer SLAM | 우리 SLAM 결정과 같은 조합 |
+
+## 로봇 데이터시트 (`refs/datasheets/`, 깃에 안 올림 — `bash refs/download.sh`)
+
+| 파일 | 내용 |
+|---|---|
+| `limo_user_manual_EN.md` | AgileX LIMO 사용 설명서(공식, [agilexrobotics/limo-doc](https://github.com/agilexrobotics/limo-doc)): 사양 표·주행 방식 4가지·센서(EAI X2L 라이다, DaBai 깊이 카메라) |
+| `limo_quick_start_guide.pdf` | LIMO 빠른 시작(앱·조작) |
+| `limo_specifications_trossen.html` | LIMO 사양(Trossen 문서): 크기 322×220×251 mm, 4.2 kg, 하중 4륜 차동 1 kg |
+| `limo_steering_modes_trossen.html` | 주행 방식 바꾸기(4륜 차동·아커만·크롤러·메카넘) |
+
+깊이 카메라 Orbbec DaBai: 0.3–3 m, 1 m 에서 ±6 mm, 640×400 @ 30 fps, 화각 가로 67.9° 세로 45.3° — 우리 설정의 기준(3 m 한계).
