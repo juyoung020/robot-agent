@@ -14,7 +14,7 @@ import os, re, subprocess, sys, collections
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 KW = re.compile(r"behavior-2026|\bR1 ?Pro\b|\br1pro\b|R1Pro|\bslam2d\b|YOLOE|\byoloe|FastSAM-s-416-obj|sgviz|\bpi05\b|π0\.5|"
-                r"SGRT_OBJPROB(?!_)|--no-objprob|name_vote|mergeDuplicates|SM_POSE_SLAM|두 팔|torso")
+                r"SGRT_OBJPROB(?!_)|--no-objprob|name_vote|mergeDuplicates|SM_POSE_SLAM|(?<!모)두 팔|torso")
 OUT = re.compile(r"(?<![\w$])~/(?!\.cache|\.config)|\$HOME/(?!\.cache|\.config|miniconda3)|\$\{HOME\}|/home/[a-z][\w-]*/|Path\.home\(\)|expanduser\(['\"]~/")
 ALLOW = [  # (경로 정규식, 줄 정규식) — 확인한 예외
     (r"^tools/(check_paths\.sh|audit\.py|git-hooks/)", r"."),

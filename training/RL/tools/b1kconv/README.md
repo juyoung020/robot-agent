@@ -3,7 +3,7 @@
 > 범위(2026-10-04 확정): 대회는 안 한다. 목표는 리모 + OMX-F 집기·놓기(B3–B5)이고 BEHAVIOR 장면·물체는 학습 무대일 뿐이다. 그래서 이 도구의 중심은 장면 배치 + **집기·놓기 후보 표**이고, 문서 1.3·1.5절 숫자(q 상한)는 BDDL·템플릿을 제대로 읽는지 보는 확인용으로만 다시 낸다.
 
 [CURRICULUM_BEHAVIOR2026.md](../../../../docs/map_vla/CURRICULUM_BEHAVIOR2026.md) 5절 E1. BEHAVIOR 2026 의 장면 7 개·과제 100 개·인스턴스 32,000 개를 **장면마다 작은 파일 하나(RASC v3)** 로 바꾸는 오프라인 Rust 도구와, 그것을 읽는 C++ 참조 리더다.
-입력은 평문 JSON·PNG·BDDL 뿐이다(`src/behavior-2026` 서브모듈, 읽기만). **암호화 USD 는 읽지도 풀지도 않는다.** Python 은 쓰지 않는다.
+입력은 평문 JSON·PNG·BDDL 뿐이다(`third_party/BEHAVIOR-1K`, `B1K_ROOT`). **암호화 USD 는 읽지도 풀지도 않는다.** Python 은 쓰지 않는다.
 학습 환경(`training/RL/env`, `map`)은 건드리지 않는다 — 붙이는 것은 E2.
 
 ## 구성
