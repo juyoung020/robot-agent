@@ -1,5 +1,6 @@
 // 물체별 best view 자르기(include/scenemap/bestview.hpp). 장치 쪽 같은 계산은 runtime/src/crop.cu.
 #include "scenemap/bestview.hpp"
+#include "scenemap/objprob.hpp"   // OpmStd + objprob_math.h(viewKappa 식)
 
 #include <algorithm>
 #include <cmath>
@@ -74,13 +75,9 @@ void cropMask(const sm_detections* d, int k, const int32_t box[4], int ow, int o
 }
 
 double viewKappa(const ViewQuality& q, const KappaParams& p) {
-  const double s = std::max(0.f, q.size_px), d = std::max(0.f, q.depth_m);
-  double k = p.k0 * s / (s + p.s0);
-  if (q.trunc) k *= p.trunc;
-  k /= 1.0 + (d / p.d0) * (d / p.d0);
-  k *= std::pow(std::clamp(double(q.vis), 0.0, 1.0), p.occ);
-  if (p.blur_w > 0) k *= std::exp(-std::max(0.f, q.cam_w) / p.blur_w);
-  return std::max(k, 1e-3);
+  // objprob_math.h(GPU 학습 지도 인지 흉내와 같은 식)
+  return opm::view_kappa<OpmStd, double>(double(std::max(0.f, q.size_px)), q.trunc, double(std::max(0.f, q.depth_m)), double(q.vis), double(std::max(0.f, q.cam_w)),
+                                         p.k0, p.s0, p.trunc, p.d0, p.occ, p.blur_w);
 }
 
 void gatherRgbHost(const uint8_t* src, int64_t rs, int ps, int w, int h, const int32_t* xy, int n, uint8_t* rgb) {

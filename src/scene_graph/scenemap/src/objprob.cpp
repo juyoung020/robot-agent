@@ -289,7 +289,7 @@ double apAddView(ApState& s, const ApText* T, const ApParams& p, const float* z,
       if (std::fabs(c[6] - stamp) < 1e-6) continue;   // 같은 영상의 다른 조각
       const double dd = std::hypot(c[0] - cam[0], c[1] - cam[1], c[2] - cam[2]);
       const double ca = c[3] * cam[3] + c[4] * cam[4] + c[5] * cam[5];
-      if (dd < p.temper_d && ca > cmin) { k = kappa * p.temper; break; }
+      if (opm::similar_view(dd, ca, p.temper_d, cmin)) { k = kappa * p.temper; break; }
     }
     s.cams.push_back({cam[0], cam[1], cam[2], cam[3], cam[4], cam[5], stamp});
     if (s.cams.size() > 32) s.cams.erase(s.cams.begin());
@@ -305,8 +305,8 @@ double apAddView(ApState& s, const ApText* T, const ApParams& p, const float* z,
     apLabelLogLik(*T, z, &ll);
     std::vector<float>& L = whole ? s.L_whole : s.L_frag;
     if (L.size() != ll.size()) L.assign(ll.size(), 0.f);
-    const double w = k / std::max(1e-6, p.kappa_ref);
-    for (size_t l = 0; l < ll.size(); ++l) L[l] += float(w * std::max(ll[l], -60.f));
+    const double w = opm::label_weight(k, p.kappa_ref);
+    for (size_t l = 0; l < ll.size(); ++l) L[l] += float(opm::label_term(w, double(ll[l])));
     (whole ? s.lw_whole : s.lw_frag) += w;
   }
   // 상위 topk 모습(κ 순). 통째가 생기면 조각 모습은 밀려남(통째 κ 가 보통 큼 — 같으면 통째 먼저)
@@ -355,7 +355,7 @@ void apMerge(ApState& a, const ApState& b, const ApParams& p) {
   if (int(a.views.size()) > p.topk) a.views.resize(size_t(p.topk));
   for (const auto& c : b.cams) a.cams.push_back(c);
   while (a.cams.size() > 32) a.cams.erase(a.cams.begin());
-  for (int k = 0; k < 3; ++k) a.P[k] = 1.0 / (1.0 / std::max(a.P[k], 1e-9) + 1.0 / std::max(b.P[k], 1e-9));
+  for (int k = 0; k < 3; ++k) a.P[k] = opm::merge_var(a.P[k], b.P[k]);
   a.cidx_ver = ~0u;
   a.n_wall_obs += b.n_wall_obs;
   a.n_ap_obs += b.n_ap_obs;
@@ -374,10 +374,9 @@ void apName(ApState& s, const ApText& T, const ApParams& p, double size) {
   if (int(s.L_frag.size()) == C) { for (int c = 0; c < C; ++c) L[size_t(c)] += s.L_frag[size_t(c)]; lw += s.lw_frag; }
   if (int(s.L_whole.size()) == C) { for (int c = 0; c < C; ++c) L[size_t(c)] += float(p.whole_w * s.L_whole[size_t(c)]); lw += p.whole_w * s.lw_whole; }
   if (!(lw > 0)) return;   // 영상 모습이 하나는 있어야(바깥 관측만으로는 이름을 새로 만들지 않음)
-  const double lam = lw > p.name_wmax ? p.name_wmax / lw : 1.0;   // 과신 막기(이어진 모습은 독립이 아님)
+  const double lam = opm::name_lambda(lw, p.name_wmax);   // 과신 막기(이어진 모습은 독립이 아님)
   std::vector<double> lp(static_cast<size_t>(C));
   const double ls = std::log(std::max(size, 0.02));
-  double mx = -1e300;
   for (int c = 0; c < C; ++c) {
     double v = lam * L[size_t(c)];
     if (L[size_t(c)] < -1e29f || L[size_t(c)] <= -60.0 * lw) v = -1e300;   // 낱말 없는 라벨(상위어): 직접 이름 안 됨
@@ -389,19 +388,15 @@ void apName(ApState& s, const ApText& T, const ApParams& p, double size) {
       v += p.size_w * (-0.5 * zz * zz - std::log(T.ls_sd[size_t(c)]));
     }
     lp[size_t(c)] = v;
-    mx = std::max(mx, v);
   }
-  double se = 0;
-  for (double v : lp) if (v > -1e299) se += std::exp(v - mx);
+  std::vector<double> q(static_cast<size_t>(C));
+  const double H = opm::softmax_post<OpmStd>(lp.data(), C, 0.0, 0, -1e299, q.data(), static_cast<double*>(nullptr));
   s.post.assign(size_t(C), 0.f);
-  double H = 0;
   int best = -1;
   for (int c = 0; c < C; ++c) {
     if (lp[size_t(c)] <= -1e299) continue;
-    const double q = std::exp(lp[size_t(c)] - mx) / se;
-    s.post[size_t(c)] = float(q);
-    if (q > 1e-12) H -= q * std::log(q);
-    if (best < 0 || q > s.post[size_t(best)]) best = c;
+    s.post[size_t(c)] = float(q[size_t(c)]);
+    if (best < 0 || q[size_t(c)] > s.post[size_t(best)]) best = c;
   }
   s.name_H = float(H);
   s.top_lab = best;
@@ -422,7 +417,7 @@ void apName(ApState& s, const ApText& T, const ApParams& p, double size) {
   }
   int g = -1;
   for (int c = 0; c < C; ++c)
-    if (up[size_t(c)] >= p.name_tau && (g < 0 || depth[size_t(c)] > depth[size_t(g)] || (depth[size_t(c)] == depth[size_t(g)] && up[size_t(c)] > up[size_t(g)]))) g = c;
+    if (opm::better_hyper(up[size_t(c)], depth[size_t(c)], g >= 0 ? up[size_t(g)] : 0.0, g >= 0 ? depth[size_t(g)] : 0, g >= 0, p.name_tau)) g = c;
   if (g >= 0) { s.name_lab = g; s.name_p = float(up[size_t(g)]); s.rolled = true; return; }
   if (T.object_label >= 0) { s.name_lab = T.object_label; s.name_p = s.top_p; s.rolled = true; return; }
   s.name_lab = best;
@@ -468,11 +463,7 @@ double apContact(const float* xyz, int n, const std::vector<uint64_t>& keys, dou
 }
 
 double apLogit(const ApPair& q, const ApParams& p, bool merge) {
-  const double* w = merge ? p.wm : p.w;
-  double v = w[0];
-  for (int k = 0; k < 7; ++k) v += w[k + 1] * q.f[k];
-  if (q.f[5] > 0) v = -30;   // 받침(작은 것이 큰 것 윗면 위): 같은 물체가 아님(펜·탁자)
-  return v;
+  return opm::same_logit(merge ? p.wm : p.w, q.f);   // 받침이면 −30(작은 것이 큰 것 윗면 위 — 펜·탁자) — objprob_math.h
 }
 
 }  // namespace scenemap

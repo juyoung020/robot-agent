@@ -22,8 +22,19 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include <cmath>
+
+#include "scenemap/objprob_math.h"
 
 namespace scenemap {
+
+// objprob_math.h 의 수학(CPU double — std 함수). GPU 학습 지도는 결정적 다항식판을 넘긴다
+struct OpmStd {
+  static double exp(double x) { return std::exp(x); }
+  static double log(double x) { return std::log(x); }
+  static double sqrt(double x) { return std::sqrt(x); }
+  static double pow(double x, double y) { return std::pow(x, y); }
+};
 
 // 라벨 표 쪽 모델(호출자 sm_set_text_model·sm_set_label_stats)
 struct ApText {

@@ -124,17 +124,13 @@ DEV void ap_attach(MapCore& m, Scratch& sh, int tid, int nt, int bug, const BCtx
           if (hi - lo <= MP::max_ext) { mlo = lo; mhi = hi; }
           S.pos[q] = 0.5f * (mlo + mhi);
           S.ext[q] = mhi - mlo;
-          const float R = sdz * sdz + 0.0625f * S.ext[q] * S.ext[q];
-          S.P[q] = 1.f / (1.f / (S.P[q] + MP::ap_q_pos * (float)(dt_seen > 0 ? dt_seen : 0) * MP::tok_dt) + 1.f / R);
+          opm::kalman_big(S.P[q], MP::ap_q_pos, (float)dt_seen * MP::tok_dt, sdz, S.ext[q]);   // objprob_math.h
         } else {   // 칼만(축마다): P += q·dt, R = σ² (+ 잘렸으면 (반 폭)²), K = P/(P + R) — 자리·상자 같은 이득
-          float P = S.P[q] + MP::ap_q_pos * (float)(dt_seen > 0 ? dt_seen : 0) * MP::tok_dt;
-          const float R = sdz * sdz + (H.trunc ? 0.25f * H.ext[q] * H.ext[q] : 0.f);
-          const float K = P / (P + R);
+          const float K = opm::kalman_gain(S.P[q], MP::ap_q_pos, (float)dt_seen * MP::tok_dt, opm::kalman_R(MP::ap_r0, MP::ap_r1, H.zmed, H.trunc != 0, H.ext[q]));   // objprob_math.h
           S.pos[q] = S.pos[q] + K * (H.pos[q] - S.pos[q]);
           mlo = mlo + K * (hlo[q] - mlo);
           mhi = mhi + K * (hhi[q] - mhi);
           S.ext[q] = mhi - mlo;
-          S.P[q] = P * (1.f - K);
         }
       }
     }
@@ -230,7 +226,7 @@ DEV void ap_absorb(MapCore& m, int ka, int kb, const BCtx& bx) {
       A.pos[q] = (A.pos[q] * wa + B.pos[q] * wb) / (wa + wb);
       A.ext[q] = (A.ext[q] * wa + B.ext[q] * wb) / (wa + wb);
     }
-    A.P[q] = 1.f / (1.f / maxf(A.P[q], 1e-9f) + 1.f / maxf(B.P[q], 1e-9f));
+    A.P[q] = opm::merge_var(A.P[q], B.P[q]);
   }
   if (B.first_seen < A.first_seen) {
     A.first_seen = B.first_seen;

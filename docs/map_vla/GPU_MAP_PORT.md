@@ -92,6 +92,18 @@ N = 4,096 이면 189 MB. keyframe 블록은 이번 시야 근처 물체(상자�
   **+10 % 예산을 아직 넘는다** — P1b(물체를 전역 저장소로, keyframe 블록은 근처 물체만)에서 다시 줄이고 P8 에서 nsys 로 잰다.
 - 아직 안 한 것(P1b): 물체 저장소 256(전역) + 가구 전부 검출(깊이 광선 맞은 상자 번호), top_seen, 구조물 유령(R2), 문 줄(R4). `sm_tok_test` 의 "teacher grid sees the wall ahead" 1 실패는 바꾸기 전 판에도 있음(교사 격자는 P2 에서 뺌).
 
+### 1.2 objprob 계산 하나(10-06, 잰 값)
+
+- `src/scene_graph/scenemap/include/scenemap/objprob_math.h`: 같은 것 로지스틱(`same_logit`)·기하 특징(`pair_geo` — 틈·중심 거리·cos·겹침·받침)·`sigmoid`·κ(`view_kappa`)·
+  temper·이름 무게·λ·사후 정규화(`softmax_post`, 나머지 라벨 묶음 선택)·상위어 고르기(`better_hyper`)·이름 분포 겹침(`bhattacharyya`)·칼만(`kalman_gain`·`kalman_R`·`kalman_big`·`merge_var`).
+  scenemap `objprob.cpp`·`objmap.cpp`·`bestview.cpp` 가 double(`OpmStd`)로, GPU 지도가 float(`OpmDet` — 결정적 exp·ln)으로 부른다. 접촉(점 구름 대 상자)·라벨 공간(전부 대 상위 6)·생김새(벡터 대 출처 꼬리표)만 쪽마다 다름.
+- scenemap 그대로인지: `realbag_run` OpenLORIS office1-5(ObjectSAM yolo26n + SigLIP 2 + objprob + inspect, slam) 바꾸기 전후 — GPU 검출 판·`--load` 검출 캐시 판 모두
+  출력 파일 전부 바이트 같음(metrics.json 은 시간·경로 값만 다름 — 나머지 같음). scenemap ctest 15/15.
+- 맞춤 시험 `training/RL/map/tools/objprob_parity`(ctest `objprob_parity`, 음성 대조 `--negative` = GPU 쪽 cos 특징 빼면 실패): 합성 입력 20 만 — 같은 것 P 차 최대 1.0e-6·문턱 판정 0 다름,
+  κ 상대 차 2.1e-7, 이름 사후(라벨 ≤ 6, 상위어 포함) 고른 이름 0 다름·사후 차 2.7e-7, 칼만 20 번 자리 차 1.2e-7 m. 근사 오차(판정 아님): 이름 분포 겹침 상위 6 + 나머지 대 전체 10 라벨 평균 0.031·최대 0.23.
+  이 시험은 **규칙 단위**다(합성 관측 열을 진짜 ObjectMap 에 넣는 열 단위 비교는 깊이·마스크가 필요해 하지 않음 — 입력 단위 비교는 og_cmp 가 맡음).
+- GPU 쪽 상위어 고르기를 한 단계 → 사슬 전체(scenemap 과 같은 규칙)로 바꿈. `map_verify` 다시 비트 동일(상자 방·BEHAVIOR).
+
 ## 2. 인지 잡음 모형(ObjectSAM + SigLIP 2) — 맞출 값
 
 | 잡음 | 모형 | 처음 값(출처) | 맞출 것(BASELINE) |

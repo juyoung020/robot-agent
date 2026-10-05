@@ -43,9 +43,8 @@ DEV void put_det(Det& D, uint64_t& rng, const float med[3], const float bc[3], c
 }
 
 // 모습 신뢰도(bestview.cpp viewKappa): κ = k0·s/(s + s0)·1/(1 + (깊이/d0)²), s = √(마스크 넓이 화소). 잘림 배율 1(엔진 json kap_trunc 1)
-DEV float view_kappa(float npx, float depth) {
-  const float s = sqrtf(maxf(npx, 0.f)), d = maxf(depth, 0.f) / MP::kap_d0;
-  return maxf(MP::kap_k0 * s / (s + MP::kap_s0) / (1.f + d * d), 1e-3f);
+DEV float view_kappa(float npx, float depth) {   // objprob_math.h(scenemap bestview 과 같은 식) — 잘림 배율 1, 보임 1, 흐림 끔
+  return opm::view_kappa<OpmDet, float>(sqrtf(maxf(npx, 0.f)), false, depth, 1.f, 0.f, MP::kap_k0, MP::kap_s0, 1.f, MP::kap_d0, 1.f, 0.f);
 }
 DEV uint64_t pe_hash(uint64_t a, uint64_t b) { uint64_t s = a * 0x9E3779B97F4A7C15ull ^ (b + 0x632BE59BD9B4E019ull); return splitmix64(s); }
 

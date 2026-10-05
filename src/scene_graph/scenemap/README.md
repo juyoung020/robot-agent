@@ -21,6 +21,7 @@
 | `grid.*` | 2D 점유 격자(로그 오즈), 필요하면 넓어짐. 보이는 값(−1 모름, 0..100 %)을 늘 고쳐 두고, 바뀐 영역(dirty)을 추적 |
 | `slam2d.*` | `base_qvel` 적분 예측 + keyframe 가상 스캔 맞추기(`'A'` Cartographer 식 / `'B'` point-to-line, 기본 `'B'`) + 격자 넣기 |
 | `objmap.*` | 검출 마스크 + 깊이 + 자세 → 물체 3D 위치·크기 → 같은 물체 판단 → 갱신. 확정·옮겨짐·사라짐·들기·받침 따라가기. 이름 종류(옮길 수 있음 / 구조물 — 노드 안 됨 / 고정 가구). 끝에 `../da` 로 중복 병합 |
+| `objprob_math.h` | objprob 계산 한 곳(10-06): 같은 것 로지스틱·기하 특징·κ(viewKappa)·이름 사후 정규화·상위어 고르기·이름 분포 겹침·칼만 — `__host__ __device__` 인라인, STL 없음. scenemap(double, `OpmStd`)과 GPU 학습 지도(`training/RL/map`, float 결정적 수학)가 같이 부름. 규칙을 바꾸면 여기를 고침(두 쪽이 함께 바뀜). 맞춤 시험 `training/RL/map/tools/objprob_parity.cpp` |
 | `objprob.*` | 확률 물체 모델(아래 "scenemap 확률 모드"): vMF 임베딩 사후(r = Σκz)·상위 K 모습·이름 범주 사후(상위어로 올림·엔트로피·바깥 관측)·같은 것 로지스틱 특징·평면 맞춤(PCA)·접촉 칸. `ObjParams::objprob` 일 때만 쓰임 |
 | `inspect.*` | 살펴본 정도(아래 "살펴본 정도"): 물체마다 가장 가까이 본 거리·본 시점 수·윗면 본 비율. `ObjParams::insp.on` 일 때만, 판단에는 안 씀 |
 | `bestview.*` | 물체별 best view: 품질 = 유효 마스크 넓이 × 점수가 가장 큰(같으면 최근) 모습. 상자 + 변마다 10 % 여유, 긴 변 최대 256 px. RGB 자르기는 호출자 함수 또는 호스트 RGBA |

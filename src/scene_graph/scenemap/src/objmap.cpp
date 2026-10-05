@@ -94,29 +94,11 @@ ApPair pairFeatures(const double alo[3], const double ahi[3], const double apos[
                     const double bhi[3], const double bpos[3], const std::vector<uint64_t>& bidx, double cos, const ApParams& P,
                     bool merge = false) {
   ApPair q;
+  // 틈·중심 거리·cos·겹침·받침은 objprob_math.h(GPU 학습 지도와 같은 식), 접촉은 점 구름 색인으로 여기서
   q.f[0] = apContact(apts, na, bidx, P.contact_cell);
-  double g2 = 0;
-  for (int k = 0; k < 3; ++k) {
-    const double g = std::max({0.0, alo[k] - bhi[k], blo[k] - ahi[k]});
-    g2 += g * g;
-  }
-  q.f[1] = std::sqrt(g2);
-  const double ea = std::max({ahi[0] - alo[0], ahi[1] - alo[1], ahi[2] - alo[2]});
-  const double eb = std::max({bhi[0] - blo[0], bhi[1] - blo[1], bhi[2] - blo[2]});
-  q.f[2] = dist3(apos, bpos) / (0.5 * (ea + eb) + 0.05);
-  q.f[3] = cos > -1.5 ? cos - P.cos0 : 0.0;
-  q.f[4] = da::boxOverlap(alo, ahi, blo, bhi, 0.05);
-  // 받침: 작은 것이 큰 것 윗면에 놓임(컵·탁자) — 같은 물체가 아님
-  const bool a_small = ea < eb;
-  const double *slo = a_small ? alo : blo, *shi = a_small ? ahi : bhi, *llo = a_small ? blo : alo, *lhi = a_small ? bhi : ahi;
-  const double es = std::min(ea, eb), el = std::max(ea, eb);
-  if (es < 0.6 * el) {
-    const double cx = 0.5 * (slo[0] + shi[0]), cy = 0.5 * (slo[1] + shi[1]);
-    const bool inside = cx > llo[0] - 0.05 && cx < lhi[0] + 0.05 && cy > llo[1] - 0.05 && cy < lhi[1] + 0.05;
-    if (inside && std::fabs(slo[2] - lhi[2]) < 0.08) q.f[5] = 1.0;
-  }
+  opm::pair_geo<OpmStd>(alo, ahi, apos, blo, bhi, bpos, cos, P.cos0, q.f);
   q.logit = apLogit(q, P, merge);
-  q.p = 1.0 / (1.0 + std::exp(-q.logit));
+  q.p = opm::sigmoid<OpmStd>(q.logit);
   return q;
 }
 
@@ -1039,16 +1021,11 @@ void ObjectMap::update(const ObjFrame& f) {
           m.ext[k] = m.hi[k] - m.lo[k];
         } else if (ap && m.ap) {
           // 칼만(축마다): 예측 P += q·dt, 관측 잡음 R = (r0 + r1·깊이)² (+ 잘렸으면 (반 폭)²), 이득 K = P/(P+R)
-          double& P = m.ap->P[k];
-          P += p_.ap_q_pos * std::max(0.0, dt_seen);
-          double sd = p_.ap_r0 + p_.ap_r1 * o.zmed;
-          double R = sd * sd + (o.trunc ? 0.25 * o.ext[k] * o.ext[k] : 0.0);
-          const double K = P / (P + R);
+          const double K = opm::kalman_gain(m.ap->P[k], p_.ap_q_pos, dt_seen, opm::kalman_R(p_.ap_r0, p_.ap_r1, o.zmed, o.trunc, o.ext[k]));   // objprob_math.h
           m.pos[k] += K * (o.pos[k] - m.pos[k]);
           m.lo[k] += K * (o.lo[k] - m.lo[k]);
           m.hi[k] += K * (o.hi[k] - m.hi[k]);
           m.ext[k] = m.hi[k] - m.lo[k];
-          P *= 1.0 - K;
         } else {
           m.pos[k] = (m.pos[k] * (w - 1) + o.pos[k]) / w;
           m.ext[k] = (m.ext[k] * (w - 1) + o.ext[k]) / w;
@@ -1056,10 +1033,7 @@ void ObjectMap::update(const ObjFrame& f) {
           m.hi[k] = (m.hi[k] * (w - 1) + o.hi[k]) / w;
         }
         if (big && ap && m.ap) {   // 큰 것: 자리는 상자 합집합, 분산만 칼만(상자 폭의 1/4 을 관측 잡음에)
-          double& P = m.ap->P[k];
-          const double sd = p_.ap_r0 + p_.ap_r1 * o.zmed;
-          const double R = sd * sd + 0.0625 * m.ext[k] * m.ext[k];
-          P = 1.0 / (1.0 / (P + p_.ap_q_pos * std::max(0.0, dt_seen)) + 1.0 / R);
+          opm::kalman_big(m.ap->P[k], p_.ap_q_pos, dt_seen, p_.ap_r0 + p_.ap_r1 * o.zmed, m.ext[k]);   // objprob_math.h
         }
       }
       m.score = std::max(m.score, o.score);
@@ -1330,11 +1304,9 @@ ApPair ObjectMap::apPairObj(MapObject& a, MapObject& b) {
   if (apMu(*b.ap, &mu)) cs = std::max(cs, apCosMax(*a.ap, mu.data(), int(mu.size())));
   ApPair q = pairFeatures(sm.lo, sm.hi, sm.pos, sp.data(), int(sp.size() / 3), lg.lo, lg.hi, lg.pos, apContactIdx(lg), cs, p_.ap, true);
   if (!a.ap->post.empty() && a.ap->post.size() == b.ap->post.size()) {   // 이름 분포 겹침
-    double bc = 0;
-    for (size_t l = 0; l < a.ap->post.size(); ++l) bc += std::sqrt(double(a.ap->post[l]) * b.ap->post[l]);
-    q.f[6] = bc - 0.5;
+    q.f[6] = opm::bhattacharyya<OpmStd, double>(a.ap->post.data(), b.ap->post.data(), int(a.ap->post.size()), 0.0, 0.0, 0);   // objprob_math.h
     q.logit = apLogit(q, p_.ap, true);
-    q.p = 1.0 / (1.0 + std::exp(-q.logit));
+    q.p = opm::sigmoid<OpmStd>(q.logit);
   }
   return q;
 }

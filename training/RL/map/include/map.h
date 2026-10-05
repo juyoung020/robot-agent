@@ -14,6 +14,8 @@
 #include <cstring>
 #include "env.h"
 #include "env_soa.h"
+// objprob 계산 하나(scenemap 과 같은 헤더 — 같은 것 로지스틱·이름 사후·상위어·κ·칼만·이름 분포 겹침). 저장소 안 상대 경로(빌드마다 include 경로를 안 더하게)
+#include "../../../../src/scene_graph/scenemap/include/scenemap/objprob_math.h"
 // 잡음·맞춤 값의 기본(MP 가 씀). 기본은 LIMO 탐색 기록 보정(../map_calib/limo, calib_limo.json) + 이 모형에 다시 맞춘 값(README "LIMO 보정").
 // odo_t·kf_corr_xy 는 새 LIMO SLAM(behavior-2026 84b373c, 오도메트리 가중 맞추기)의 기록 넷(~/datasets/limo_rec r1–r3·r4live)에 다시 맞춤
 // (2026-10-04, map_drift kind 5 — ../map_calib/limo/README.md "새 SLAM"). 옛 값(옛 SLAM 둘째 판에 맞춤): odo_t 0.10, kf_corr_xy 0.001.
@@ -970,7 +972,14 @@ DEV float expf_d(float x) {
 #endif
   return p * sc;
 }
-DEV float sigm_d(float x) { return 1.f / (1.f + expf_d(-x)); }
+// objprob_math.h 의 수학(GPU·CPU 참조판 같은 비트): 결정적 다항식 exp·ln, 하드웨어 IEEE sqrt(--prec-sqrt), pow 는 지수 1 만(viewKappa occ 1)
+struct OpmDet {
+  DEV static float exp(float x) { return expf_d(x); }
+  DEV static float log(float x) { return lnf_d(x); }
+  DEV static float sqrt(float x) { return sqrtf(x); }
+  DEV static float pow(float x, float y) { return y == 1.f ? x : expf_d(y * lnf_d(x)); }
+};
+DEV float sigm_d(float x) { return opm::sigmoid<OpmDet>(x); }
 DEV int src_idx(int src) { return src >= 0 ? src : N_PRIM + (-1 - src); }   // 출처 → 캐시 자리(prim, 유령)
 DEV int lab_parent(const BCtx& bx, int c) { return (bx.on && c >= 0 && c < bx.ss->nname) ? (int)bx.ss->hyper[c] : -1; }
 // 비슷한 이름 k(0..2): BEHAVIOR = 이름 표의 비슷한 다른 이름 3(장면 묶음 sim3 — 이름 벡터가 가까운 것), 상자 방 = 다음 종류들 (가정)
@@ -1026,31 +1035,11 @@ DEV float ap_feat_logit(const float alo[3], const float ahi[3], const float apos
   f[0] = contact >= 0.f ? contact : ap_contact(alo, ahi, blo, bhi);
   float g2 = 0.f;
   for (int k = 0; k < 3; ++k) { const float g = maxf(0.f, maxf(alo[k] - bhi[k], blo[k] - ahi[k])); g2 = g2 + g * g; }
-  f[1] = sqrtf(g2);
-  const float ea = maxf(ahi[0] - alo[0], maxf(ahi[1] - alo[1], ahi[2] - alo[2])), eb = maxf(bhi[0] - blo[0], maxf(bhi[1] - blo[1], bhi[2] - blo[2]));
-  f[2] = dist3(apos, bpos) / (0.5f * (ea + eb) + 0.05f);
-  f[3] = cs > -1.5f ? cs - MP::ap_cos0 : 0.f;
-  {
-    float ac[3], ae[3], bc[3], be[3];
-    for (int k = 0; k < 3; ++k) { ac[k] = 0.5f * (alo[k] + ahi[k]); ae[k] = ahi[k] - alo[k]; bc[k] = 0.5f * (blo[k] + bhi[k]); be[k] = bhi[k] - blo[k]; }
-    f[4] = box_ov(ac, ae, bc, be, 0.05f);
-  }
-  f[5] = 0.f;
-  {
-    const bool a_small = ea < eb;
-    const float *slo = a_small ? alo : blo, *shi = a_small ? ahi : bhi, *llo = a_small ? blo : alo, *lhi = a_small ? bhi : ahi;
-    if (minf(ea, eb) < 0.6f * maxf(ea, eb)) {
-      const float cx = 0.5f * (slo[0] + shi[0]), cy = 0.5f * (slo[1] + shi[1]);
-      const bool inside = cx > llo[0] - 0.05f && cx < lhi[0] + 0.05f && cy > llo[1] - 0.05f && cy < lhi[1] + 0.05f;
-      if (inside && absf(slo[2] - lhi[2]) < 0.08f) f[5] = 1.f;
-    }
-  }
+  opm::pair_geo<OpmDet>(alo, ahi, apos, blo, bhi, bpos, cs, MP::ap_cos0, f);   // 틈·중심 거리·cos·겹침·받침(scenemap 과 같은 식)
   f[6] = f6;
-  float v;
-  if (merge) v = MP::ap_wm0 + MP::ap_wm1 * f[0] + MP::ap_wm2 * f[1] + MP::ap_wm3 * f[2] + MP::ap_wm4 * f[3] + MP::ap_wm5 * f[4] + MP::ap_wm6 * f[5] + MP::ap_wm7 * f[6];
-  else v = MP::ap_w0 + MP::ap_w1 * f[0] + MP::ap_w2 * f[1] + MP::ap_w3 * f[2] + MP::ap_w4 * f[3] + MP::ap_w5 * f[4] + MP::ap_w6 * f[5] + MP::ap_w7 * f[6];
-  if (f[5] > 0.f) v = -30.f;
-  return v;
+  const float w[8] = {MP::ap_w0, MP::ap_w1, MP::ap_w2, MP::ap_w3, MP::ap_w4, MP::ap_w5, MP::ap_w6, MP::ap_w7};
+  const float wm[8] = {MP::ap_wm0, MP::ap_wm1, MP::ap_wm2, MP::ap_wm3, MP::ap_wm4, MP::ap_wm5, MP::ap_wm6, MP::ap_wm7};
+  return opm::same_logit(merge ? wm : w, f);
 }
 DEV void slot_box(const Slot& S, float lo[3], float hi[3]) { for (int k = 0; k < 3; ++k) { lo[k] = S.pos[k] - 0.5f * S.ext[k]; hi[k] = S.pos[k] + 0.5f * S.ext[k]; } }
 DEV void det_box(const Det& D, float lo[3], float hi[3]) { for (int k = 0; k < 3; ++k) { lo[k] = D.bc[k] - 0.5f * D.ext[k]; hi[k] = D.bc[k] + 0.5f * D.ext[k]; } }
@@ -1061,7 +1050,7 @@ DEV void lab_add(Slot& S, const Det& D, float w) {
     if (S.lab[k] < 0) continue;
     float v = D.llrest;
     for (int j = 0; j < NLO; ++j) if (D.lab[j] == S.lab[k]) v = D.ll[j];
-    S.L[k] = S.L[k] + w * v;
+    S.L[k] = S.L[k] + opm::label_term(w, v);
   }
   const float rest0 = S.Lrest;
   for (int j = 0; j < NLO; ++j) {
@@ -1070,7 +1059,7 @@ DEV void lab_add(Slot& S, const Det& D, float w) {
     bool have = false;
     for (int k = 0; k < NLAB; ++k) have = have || S.lab[k] == c;
     if (have) continue;
-    const float val = rest0 + w * D.ll[j];
+    const float val = rest0 + opm::label_term(w, D.ll[j]);
     int e = -1, lo = -1;
     for (int k = 0; k < NLAB; ++k) {
       if (S.lab[k] < 0) { if (e < 0) e = k; }
@@ -1079,23 +1068,16 @@ DEV void lab_add(Slot& S, const Det& D, float w) {
     if (e >= 0) { S.lab[e] = (int16_t)c; S.L[e] = val; }
     else if (val > S.L[lo]) { S.lab[lo] = (int16_t)c; S.L[lo] = val; }
   }
-  S.Lrest = rest0 + w * D.llrest;
+  S.Lrest = rest0 + opm::label_term(w, D.llrest);
   S.lw = S.lw + w;
 }
 // 사후 확률(apName 앞부분, 사전 고름·크기 우도 없음 — 이름 표에 통계 없음): 든 라벨 + 나머지 라벨(C − 든 수 개, 같은 값)
 DEV void ap_post(const Slot& S, int nlab, float post[NLAB], float& prest) {
-  const float lam = S.lw > MP::ap_name_wmax ? MP::ap_name_wmax / S.lw : 1.f;
+  const float lam = opm::name_lambda(S.lw, MP::ap_name_wmax);
+  float lp[NLAB];
   int nt = 0;
-  float mx = -1e30f;
-  for (int k = 0; k < NLAB; ++k) if (S.lab[k] >= 0) { ++nt; mx = maxf(mx, lam * S.L[k]); }
-  const int nr = nlab - nt;
-  if (nr > 0) mx = maxf(mx, lam * S.Lrest);
-  float z = 0.f;
-  for (int k = 0; k < NLAB; ++k) { post[k] = S.lab[k] >= 0 ? expf_d(lam * S.L[k] - mx) : 0.f; z = z + post[k]; }
-  const float er = nr > 0 ? expf_d(lam * S.Lrest - mx) : 0.f;
-  z = z + (float)nr * er;
-  for (int k = 0; k < NLAB; ++k) post[k] = post[k] / z;
-  prest = er / z;
+  for (int k = 0; k < NLAB; ++k) { lp[k] = S.lab[k] >= 0 ? lam * S.L[k] : -1e31f; nt += S.lab[k] >= 0; }
+  opm::softmax_post<OpmDet>(lp, NLAB, lam * S.Lrest, nlab - nt, -1e30f, post, &prest);   // scenemap apName 과 같은 정규화(나머지 라벨 묶음 더함)
 }
 // 이름(apName 뒤: 최대 ≥ name_tau 면 그 라벨, 아니면 상위어 합 ≥ name_tau 인 것, 아니면 모름 −1). 이름 확신도 = 고른 이름 사후, 둘째 사후
 DEV void ap_name(Slot& S, const MapCore& m, const BCtx& bx) {
@@ -1112,14 +1094,26 @@ DEV void ap_name(Slot& S, const MapCore& m, const BCtx& bx) {
   }
   S.name_p2 = b2 >= 0 ? post[b2] : 0.f;
   if (b1 >= 0 && post[b1] >= MP::ap_name_tau) { S.cls = S.lab[b1]; S.name_p = post[b1]; return; }
-  int g = -1;
+  // 상위어 사슬(apName 과 같은 고르기 — objprob_math.h better_hyper): 든 라벨의 조상 a 마다 a 를 조상으로 둔 든 라벨 사후 합, 깊이(뿌리에서 거리)가 깊은 것, 같으면 합이 큰 것.
+  // 든 라벨만 셈(나머지 라벨 묶음은 어느 조상 밑인지 모름 — 근사)
+  auto depth_of = [&](int c) { int d = 0; for (int a = lab_parent(bx, c); a >= 0 && d < 8; a = lab_parent(bx, a)) ++d; return d; };
+  int g = -1, gd = 0;
   float gp = 0.f;
-  for (int k = 0; k < NLAB; ++k) {   // 상위어(한 단계): 같은 부모 라벨 사후 합
-    const int pa = S.lab[k] >= 0 ? lab_parent(bx, S.lab[k]) : -1;
-    if (pa < 0) continue;
-    float u = 0.f;
-    for (int j = 0; j < NLAB; ++j) if (S.lab[j] >= 0 && (S.lab[j] == pa || lab_parent(bx, S.lab[j]) == pa)) u = u + post[j];
-    if (u >= MP::ap_name_tau && u > gp) { gp = u; g = pa; }
+  for (int k = 0; k < NLAB; ++k) {
+    if (S.lab[k] < 0) continue;
+    int a = lab_parent(bx, S.lab[k]);
+    for (int lv = 0; a >= 0 && lv < 8; ++lv, a = lab_parent(bx, a)) {
+      float u = 0.f;
+      for (int j = 0; j < NLAB; ++j) {
+        if (S.lab[j] < 0) continue;
+        bool under = false;
+        int b = lab_parent(bx, S.lab[j]);
+        for (int l2 = 0; b >= 0 && l2 < 8 && !under; ++l2, b = lab_parent(bx, b)) under = b == a;
+        if (under) u = u + post[j];
+      }
+      const int da = depth_of(a);
+      if (opm::better_hyper(u, da, gp, gd, g >= 0, MP::ap_name_tau)) { g = a; gp = u; gd = da; }
+    }
   }
   if (g >= 0) { S.cls = (int16_t)g; S.name_p = gp; return; }
   S.cls = -1;
@@ -1129,26 +1123,23 @@ DEV void ap_name(Slot& S, const MapCore& m, const BCtx& bx) {
 DEV float ap_bhat(const Slot& A, const Slot& B, int nlab) {   // 사후는 ap_name 이 둔 값
   const float *pa = A.post, *pb = B.post;
   const float ra = A.prest, rb = B.prest;
-  float bc = 0.f;
-  int both = 0, only = 0;
+  // 두 쪽 라벨을 한 줄로 맞춤(A 의 라벨 다음 B 에만 있는 라벨, 없는 쪽은 나머지 값) → objprob_math.h bhattacharyya(나머지 라벨 묶음 포함)
+  float xa[2 * NLAB], xb[2 * NLAB];
+  int n = 0, only = 0;
   for (int k = 0; k < NLAB; ++k) {
     if (A.lab[k] < 0) continue;
     float q = rb;
-    for (int j = 0; j < NLAB; ++j) if (B.lab[j] == A.lab[k]) { q = pb[j]; ++both; }
-    bc = bc + sqrtf(pa[k] * q);
+    for (int j = 0; j < NLAB; ++j) if (B.lab[j] == A.lab[k]) q = pb[j];
+    xa[n] = pa[k]; xb[n] = q; ++n;
   }
+  const int na = n;
   for (int j = 0; j < NLAB; ++j) {
     if (B.lab[j] < 0) continue;
     bool in = false;
     for (int k = 0; k < NLAB; ++k) in = in || A.lab[k] == B.lab[j];
-    if (!in) { bc = bc + sqrtf(ra * pb[j]); ++only; }
+    if (!in) { xa[n] = ra; xb[n] = pb[j]; ++n; ++only; }
   }
-  int na = 0;
-  for (int k = 0; k < NLAB; ++k) na += A.lab[k] >= 0;
-  const int rest = nlab - (na + only);
-  if (rest > 0) bc = bc + (float)rest * sqrtf(ra * rb);
-  (void)both;
-  return bc - 0.5f;
+  return opm::bhattacharyya<OpmDet, float, float>(xa, xb, n, ra, rb, nlab - (na + only));
 }
 // 생김새 출처 섞임 갱신(apAddView 의 r += κz 를 출처 몫으로): 관측 몫 (1 − w2)·k → src, w2·k → src2. 두 출처까지 들고, 큰 쪽이 주 출처
 DEV void src_add(Slot& S, int src, float k) {

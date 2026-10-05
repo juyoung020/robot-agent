@@ -96,3 +96,11 @@ endif()
 add_executable(tok_stats ../observation/tools/tok_stats.cu)
 target_include_directories(tok_stats PRIVATE ../observation/include ../network/include)
 target_link_libraries(tok_stats gmap)
+
+# objprob 맞춤 시험(GPU_MAP_PORT 9절 V2, CPU): 진짜 scenemap 확률 모드(objprob.cpp·bestview.cpp — 같은 objprob_math.h)와 GPU 지도 쪽 규칙을 같은 합성 입력에
+set(SM_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../src/scene_graph/scenemap)
+add_executable(objprob_parity tools/objprob_parity.cpp ${SM_SRC}/src/objprob.cpp ${SM_SRC}/src/bestview.cpp)
+target_include_directories(objprob_parity PRIVATE include ${ENV_DIR}/include ${CUDAToolkit_INCLUDE_DIRS} ${SM_SRC}/include)
+set_target_properties(objprob_parity PROPERTIES CXX_STANDARD 20)
+add_test(NAME objprob_parity COMMAND objprob_parity 100000)
+add_test(NAME objprob_parity_negative COMMAND objprob_parity 20000 --negative)
