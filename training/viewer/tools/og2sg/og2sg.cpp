@@ -1,7 +1,7 @@
 // og2sg — OmniGibson LIMO 탐사 한 판(sgrt 기록 rec.bin + 실행 폴더) → 학습 뷰어 재생용 "sgview 판"(<이름>.sg/ 폴더).
 //
-// sgview(장면 그래프 실시간 뷰어)가 그리는 것과 똑같게 보이도록, 기록을 scenemap(C ABI, src/scene_graph)으로 다시 돌리면서
-// scenemap 자신의 sgview 스트림(sm_stream_start: POSE · MAP_RECT · VIEW · JOINTS 프레임)을 켜고, 그 스트림을 이 프로세스가 소켓으로 받아
+// 기록(관절·바퀴 오도메트리·RGB-D·라이다)을 실제 파이프라인 libsgrt(ObjectSAM + SigLIP 2 + objprob + Cartographer, src/scene_graph)로
+// 다시 돌리면서 그 안 scenemap 의 sgview 스트림(sm_stream_start: POSE · MAP_RECT · VIEW · JOINTS 프레임)을 켜고, 그 스트림을 이 프로세스가 소켓으로 받아
 // 시뮬 시각을 붙여 파일에 적는다. 재생(trainview /stream)은 이 프레임을 시각대로 다시 보낸다 — 그리기는 sgview 의 index.html 그대로.
 //
 //   og2sg --rec r4live.bin --run <OG 실행 폴더> --out <…/replays/ep_000000_explore.sg> [--robot limo_omx] [--view-hz 10] [--cam-hz 2] [--frames N]
@@ -146,6 +146,8 @@ struct Rec {
   std::vector<int32_t> cls;
   std::vector<float> score, box;
   std::vector<uint32_t> bits;
+  std::vector<float> scan;   // 'L'
+  double scan_h[5]{};
 };
 template <class T> static bool rd(FILE* f, T* v) { return std::fread(v, sizeof(T), 1, f) == 1; }
 static bool next(FILE* f, Rec& r) {
@@ -160,11 +162,11 @@ static bool next(FILE* f, Rec& r) {
     return std::fread(r.f.data(), 4, n, f) == size_t(n);
   }
   if (t == 'G') return std::fread(r.g, 8, 3, f) == 3;
-  if (t == 'L') {   // 2D 라이다 스캔(sgrt 'L', 10-06) — 여기서는 안 씀, 건너뜀
+  if (t == 'L') {   // 2D 라이다 스캔: i32 n, f64 angle_min, angle_inc, time_inc, range_min, range_max, f32[n]
     int32_t n;
-    double h5[5];
-    if (!rd(f, &n) || std::fread(h5, 8, 5, f) != 5) return false;
-    return std::fseek(f, long(n) * 4, SEEK_CUR) == 0;
+    if (!rd(f, &n) || std::fread(r.scan_h, 8, 5, f) != 5) return false;
+    r.scan.resize(n);
+    return std::fread(r.scan.data(), 4, n, f) == size_t(n);
   }
   if (t != 'I') return false;
   int32_t w, h;
@@ -191,6 +193,8 @@ static bool next(FILE* f, Rec& r) {
   return true;
 }
 
+#include "sgrt.h"
+#include "ra_paths.h"
 #include "sg_capture.h"   // Capture(스트림 받기)·sg_drain — record_replay 와 같이 씀
 
 
@@ -305,16 +309,24 @@ int main(int argc, char** argv) {
 
   Capture cap;
   if (!cap.start(out + "/stream.sgs")) { std::perror("capture"); return 1; }
-  const std::string cfg = "{\"robot\": \"" + robot + "\"}";
-  sm_ctx* c = sm_create(cfg.c_str());
-  if (!c) { std::fprintf(stderr, "sm_create rejected %s\n", cfg.c_str()); return 1; }
-  // 라벨: 기록에는 검출 번호(cls)만 있다 — 우선 cls<k>, 끝에 정답 실행의 view.json 물체와 위치로 짝지어 이름을 바꾼다
-  std::vector<std::string> names;
-  for (int k = 0; k < 512; ++k) names.push_back("cls" + std::to_string(k));
-  std::vector<const char*> np;
-  for (auto& n : names) np.push_back(n.c_str());
-  sm_set_labels(c, np.data(), int(np.size()));
-  sm_set_pose_mode(c, SM_POSE_SLAM);
+  // 실제 파이프라인 그대로: libsgrt(엔진·자세 원천·objprob 기본값은 거기서). 이 프로세스가 스트림을 받으므로 sgrt 자신의 스트림·기록은 끔
+  ::unsetenv("SGRT_STREAM");
+  ::unsetenv("SGRT_RECORD");
+  ::setenv("SGRT_ROBOT", robot.c_str(), 1);
+  const std::string memdir = out + "/memory";
+  sgrt_config scfg;
+  sgrt_default_config(&scfg);
+  scfg.out_dir = memdir.c_str();
+  scfg.save_s = 1e9;   // 저장은 끝에 한 번
+  const char* ee = std::getenv("SGRT_ENGINE");   // 분할 엔진: SGRT_ENGINE, 없으면 ObjectSAM(실제 파이프라인 기본)
+  const std::string engine = ee && *ee ? ee : ra::models() + "/x86_sm120/yolo26n-seg-obj-416.plan", names = engine + ".names.txt";
+  scfg.engine = engine.c_str();
+  scfg.names = names.c_str();
+  char err[512] = {0};
+  sgrt* sg = sgrt_create(&scfg, err, sizeof err);
+  if (!sg) { std::fprintf(stderr, "sgrt_create: %s\n", err); cap.stop(); return 1; }
+  if (sgrt_begin(sg, nullptr, 0, err, sizeof err) != 0) { std::fprintf(stderr, "sgrt_begin: %s\n", err); return 1; }
+  sm_ctx* c = sgrt_scenemap(sg);
   const std::string hp = "127.0.0.1:" + std::to_string(cap.port);
   if (sm_stream_start(c, hp.c_str())) { std::fprintf(stderr, "sm_stream_start failed\n"); return 1; }
   // 받는 쪽이 붙고 따라잡을 때까지 기다림(스트림은 링이 차면 프레임을 버린다 — 기록이므로 한 프레임도 버리지 않게 걸음을 맞춘다)
@@ -330,33 +342,45 @@ int main(int argc, char** argv) {
   std::vector<std::array<double, 4>> gt;   // t, x, y, yaw (world)
   Rec r;
   const auto w0 = std::chrono::steady_clock::now();
+  // sgrt 기록 순서: 스텝마다 'P'(관절·오도메트리), 영상이 있으면 같은 시각 'I' 가 바로 뒤. 'L'(라이다)·'G'(정답 자세)는 그 사이.
+  // 'P' 하나를 들고 있다가 다음 레코드가 같은 시각 'I' 면 영상과 함께, 아니면 관절만으로 sgrt_step.
+  std::vector<float> pend;
+  double pend_t = 0;
+  bool have_pend = false, warned_rgb = false;
+  auto step = [&](const Rec* im) {
+    cur = pend_t;
+    t_end = cur;
+    cap.now = cur;
+    if (im && !im->rgba.empty()) {
+      sgrt_step(sg, pend_t, pend.data(), int(pend.size()), im->rgba.data(), 0, int64_t(im->w) * 4, 4, im->w, im->h, im->f.data(), im->K[0], im->K[1], im->K[2], im->K[3]);
+      ++keyframes;
+    } else {
+      if (im && !warned_rgb) { warned_rgb = true; std::fprintf(stderr, "og2sg: record has no RGB — perception cannot re-run (record with RGB)\n"); }
+      sgrt_step(sg, pend_t, pend.data(), int(pend.size()), nullptr, 0, 0, 0, 0, 0, nullptr, 0, 0, 0, 0);
+    }
+    if (cur - last_view >= 1.0 / view_hz) { sm_stream_view(c); last_view = cur; }
+    drain();
+    ++steps;
+    have_pend = false;
+  };
+  auto flush = [&]() { if (have_pend) step(nullptr); };
   while (next(rf, r)) {
     if (r.tag == 'G') {
-      const sm_pose2 p{r.stamp, r.g[0], r.g[1], r.g[2]};
-      sm_push_pose(c, &p);
+      flush();
+      sgrt_push_pose(sg, r.stamp, r.g[0], r.g[1], r.g[2]);   // 정답 자세: 떠밀림 진단용(SGRT_POSE=gt 일 때만 지도 자세)
       gt.push_back({r.stamp, r.g[0], r.g[1], r.g[2]});
+    } else if (r.tag == 'L') {
+      flush();
+      sgrt_push_scan(sg, r.stamp, int(r.scan.size()), r.scan.data(), r.scan_h[0], r.scan_h[1], r.scan_h[2], r.scan_h[3], r.scan_h[4]);
     } else if (r.tag == 'P') {
+      flush();
       if (max_frames > 0 && steps >= max_frames) break;
-      cur = r.stamp;
-      t_end = cur;
-      cap.now = cur;
-      hist.push_back(cur);
-      if (hist.size() > 8) hist.erase(hist.begin());
-      sm_proprio p{r.stamp, r.f.data(), int(r.f.size())};
-      sm_push_proprio(c, &p);   // 자세·관절 프레임은 이 안에서 스트림으로
-      if (cur - last_view >= 1.0 / view_hz) { sm_stream_view(c); last_view = cur; }
-      drain();
-      ++steps;
+      pend = r.f;
+      pend_t = r.stamp;
+      have_pend = true;
     } else if (r.tag == 'I') {
-      const double st = hist.size() >= 2 ? hist[hist.size() - 2] : cur;   // 영상 stamp = 한 스텝 앞(sm_bench --lag 1 과 같음)
-      sm_image im{st, 0, r.w, r.h, r.rgba.empty() ? nullptr : r.rgba.data(), r.f.data(), r.K[0], r.K[1], r.K[2], r.K[3]};
-      sm_detections d{};
-      d.stamp = st; d.img_w = r.img_w; d.img_h = r.img_h; d.n = r.n;
-      d.cls = r.cls.data(); d.score = r.score.data(); d.box = r.box.data();
-      d.mask_w = r.mask_w; d.mask_h = r.mask_h; d.mask_sx = r.msx; d.mask_sy = r.msy; d.mask_ox = r.mox; d.mask_oy = r.moy; d.mask_bits = r.bits.data();
-      sm_push_image_rgb(c, &im, r.img_w > 0 ? &d : nullptr, nullptr);
-      drain();
-      ++keyframes;
+      if (!have_pend || r.stamp != pend_t) continue;   // 짝 없는 영상(기록 앞뒤 잘림)은 버림
+      step(&r);
       if (!r.rgba.empty() && cur - last_cam >= 1.0 / cam_hz) {   // 카메라 그림: 256 폭으로 줄여 JPEG
         const int W = 256, H = std::max(1, r.h * W / r.w);
         std::vector<uint8_t> rgb(size_t(W) * H * 3);
@@ -377,6 +401,7 @@ int main(int argc, char** argv) {
       }
     }
   }
+  flush();
   std::fclose(rf);
   sm_stream_view(c);
   drain();
@@ -390,48 +415,11 @@ int main(int argc, char** argv) {
   sm_snapshot(c, &snap);
   const sm_object* objs = nullptr;
   const int no = sm_snap_objects(snap, &objs);
-  // 라벨 이름 짝: 정답 실행(같은 기록으로 돈 원래 판)의 memory/view.json 물체와 map 좌표 거리로 — cls<k> 마다 가장 많이 맞은 이름
-  std::map<std::string, std::map<std::string, int>> votes;
-  {
-    const std::string vj = slurp(run + "/memory/view.json");
-    // 아주 작은 읽기: "name": "...", "state": ..., "pos": [x, y, z] 를 차례로
-    struct O { std::string name; double x, y, z; };
-    std::vector<O> ref;
-    size_t p = vj.find("\"objects\"");
-    const size_t pend = vj.find("\"events\"");
-    while (p != std::string::npos && p < pend) {
-      p = vj.find("\"name\"", p);
-      if (p == std::string::npos || p > pend) break;
-      const size_t a = vj.find('"', vj.find(':', p) + 1), b = vj.find('"', a + 1);
-      const std::string nm = vj.substr(a + 1, b - a - 1);
-      const size_t q = vj.find("\"pos\"", b);
-      const size_t lb = vj.find('[', q);
-      double x = 0, y = 0, z = 0;
-      std::sscanf(vj.c_str() + lb, "[%lf, %lf, %lf", &x, &y, &z);
-      ref.push_back({nm, x, y, z});
-      p = lb;
-    }
-    for (int k = 0; k < no; ++k) {
-      double best = 0.75, bd = 1e9;
-      std::string bn;
-      for (const O& o : ref) {
-        const double d = std::hypot(o.x - objs[k].pos[0], o.y - objs[k].pos[1], o.z - objs[k].pos[2]);
-        if (d < best && d < bd) { bd = d; bn = o.name; }
-      }
-      if (!bn.empty()) votes[objs[k].name][bn]++;
-    }
-  }
-  std::string labels = "{";
-  int nl = 0;
-  for (auto& [k, m] : votes) {
-    std::string bn;
-    int bv = 0;
-    for (auto& [n, v] : m) if (v > bv) { bv = v; bn = n; }
-    labels += std::string(nl++ ? "," : "") + jstr(k) + ":" + jstr(bn);
-  }
-  labels += "}";
+  // 이름은 실제 파이프라인(SigLIP 2 + objprob)이 붙인 것 그대로 — 따로 짝짓지 않음
+  const std::string labels = "{}";
+  const int nl = 0;
   sm_snapshot_release(snap);
-  sm_destroy(c);
+  sgrt_destroy(sg);
   cap.stop();
   // GT 궤적 → map 좌표(frame.json map_from_world = [cos, sin, tx, ty]: map = R·world + t)
   const std::string fj = slurp(run + "/frame.json");
@@ -480,7 +468,7 @@ int main(int argc, char** argv) {
                                .str("map_mode", "slam").str("replay", out.substr(out.rfind('/') + 1)).done();
     std::ofstream(run_out + "/episodes.jsonl") << ep << "\n";
     std::ofstream(run_out + "/run.json") << Obj().num("schema", 1).str("kind", "behavior").str("name", runname).str("group", "behavior_og_limo").str("trainer", "og2sg")
-                                                .str("note", "OmniGibson LIMO 탐사 한 판(진짜 시뮬 기록 rec.bin) — scenemap 으로 다시 돌린 sgview 스트림").str("og_run", run).str("rec", recp)
+                                                .str("note", "OmniGibson LIMO 탐사 한 판(진짜 시뮬 기록 rec.bin) — 실제 파이프라인 libsgrt 로 다시 돌린 sgview 스트림").str("og_run", run).str("rec", recp)
                                                 .raw("task", sget("task")).str("scene", scene_name).raw("skills", "[\"explore\"]").num("ended", 1)
                                                 .raw("logged", "{\"progress\": false, \"episodes\": true, \"replays\": true}").done();
   }
