@@ -349,7 +349,7 @@ export class Replay {
   async loadInputs(id, st, file) {
     const r = await fetch(`/api/replay?run=${encodeURIComponent(id)}&stream=${encodeURIComponent(st)}&id=${encodeURIComponent(file)}`);
     if (id !== this.run || this.file !== file) return;
-    if (!r.ok) { this.inputs.clear("no policy record for this episode"); this.setBadge(null, this.sg.info); return; }
+    if (!r.ok || r.status === 204) { this.inputs.clear("no policy record for this episode"); this.setBadge(null, this.sg.info); return; }
     const tr = this.inputs.load(await r.arrayBuffer());
     if (id !== this.run || this.file !== file || !tr) return;
     this.sg.setTrp(tr.head);

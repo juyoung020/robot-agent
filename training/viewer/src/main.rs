@@ -225,6 +225,10 @@ fn handle(mut s: TcpStream, app: Arc<App>) {
                     return http::bad(&mut s, "bad policy_trp");
                 }
                 p = p.join(pt);
+                if !p.exists() {
+                    // 정책 기록이 없는 판(OmniGibson 탐사 기록 등): 오류가 아니라 "없음" — 204
+                    return http::respond(&mut s, 204, "application/octet-stream", b"", false);
+                }
             }
             match std::fs::read(&p) {
                 Ok(b) => http::respond(&mut s, 200, "application/octet-stream", &b, gz),
@@ -237,7 +241,7 @@ fn handle(mut s: TcpStream, app: Arc<App>) {
             if !trainfmt::safe_name(sc) || sc.is_empty() {
                 return http::bad(&mut s, "scene must be a scene name");
             }
-            let dir = std::env::var("TRAINVIEW_SCENE_MESH").unwrap_or_else(|_| format!("{}/trainview_work/scene_mesh", std::env::var("HOME").unwrap_or_default()));
+            let dir = std::env::var("TRAINVIEW_SCENE_MESH").unwrap_or_else(|_| crate::sg::work_root().join("scene_mesh").to_string_lossy().into_owned());
             match std::fs::read(std::path::Path::new(&dir).join(format!("{}.smsh", sc))) {
                 Ok(b) => http::respond(&mut s, 200, "application/octet-stream", &b, gz),
                 Err(_) => http::not_found(&mut s, &format!("no mesh for {}", sc)),

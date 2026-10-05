@@ -317,17 +317,19 @@ pub fn cookie_sess(req: &Req) -> String {
     req.cookie.split(';').filter_map(|kv| kv.trim().strip_prefix("sgsess=")).next().unwrap_or("").to_string()
 }
 
-fn home() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_default())
+/// 학습 뷰어 작업 폴더: $RA_TRAINVIEW_WORK, 없으면 <robot-agent>/data/trainview_work (config/paths.env 와 같은 규칙)
+pub fn work_root() -> PathBuf {
+    if let Ok(d) = std::env::var("RA_TRAINVIEW_WORK") { if !d.is_empty() { return PathBuf::from(d); } }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/trainview_work")
 }
 fn work_dir() -> PathBuf {
-    let d = home().join("trainview_work/sgplay");
+    let d = work_root().join("sgplay");
     let _ = std::fs::create_dir_all(&d);
     d
 }
-// 바이너리는 build_deps.sh 가 robot-agent 소스에서 만들어 $TRAINVIEW_DEPS(기본 ~/trainview_work/deps)에 링크해 둔 것만 쓴다
+// 바이너리는 build_deps.sh 가 robot-agent 소스에서 만들어 $TRAINVIEW_DEPS(기본 data/trainview_work/deps)에 링크해 둔 것만 쓴다
 fn deps() -> PathBuf {
-    std::env::var("TRAINVIEW_DEPS").map(PathBuf::from).unwrap_or_else(|_| home().join("trainview_work/deps"))
+    std::env::var("TRAINVIEW_DEPS").map(PathBuf::from).unwrap_or_else(|_| work_root().join("deps"))
 }
 fn sgview_bin() -> PathBuf {
     deps().join("sgview")
@@ -341,7 +343,7 @@ fn free_port() -> u16 {
 
 // 내가 띄운 프로세스 번호(다음 시작 때 남은 것을 끄려고). 번호만 — 이름 검사로 남의 프로세스는 건드리지 않음
 fn pids_file() -> PathBuf {
-    home().join("trainview_work/run/sgview_pids")
+    work_root().join("run/sgview_pids")
 }
 fn pids_add(p: &[u32]) {
     let mut t = std::fs::read_to_string(pids_file()).unwrap_or_default();
@@ -625,7 +627,7 @@ pub fn rerun(dir: &Path, id: &str) -> Value {
     if !trp.is_file() {
         return json!({"error": "source .trp is gone"});
     }
-    let q = home().join("trainview_work/og_queue");
+    let q = work_root().join("og_queue");
     let sg = dir.join(id);
     let prev = dir.join(format!("{}.prev", id));
     if sg.is_dir() {
