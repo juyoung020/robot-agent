@@ -64,7 +64,6 @@ if b and abs(b[0]) < 1e6:
 #   python open_in_isaac.py [urdf] --memory <memory_dir>
 def load_memory(mem):
     import json
-    import struct
     import numpy as np
     meta = dict(l.split(":", 1) for l in open(os.path.join(mem, "map.yaml")) if ":" in l)
     res = float(meta["resolution"])

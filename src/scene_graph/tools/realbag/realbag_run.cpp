@@ -45,6 +45,10 @@ using rb::jnum;
 using rb::jstr;
 using rb::Obj;
 
+#ifdef RB_HAVE_CARTO
+#include <slam_carto.h>   // 익명 namespace 밖(C ABI 형이 다른 번역 단위와 같아야 함)
+#endif
+
 namespace {
 
 using objprob_front::ApLabel;
@@ -61,9 +65,6 @@ void putI(gzFile z, int32_t v) { gzwrite(z, &v, 4); }
 bool getI(gzFile z, int32_t* v) { return gzread(z, v, 4) == 4; }
 size_t maskWords(const sm_detections& D) { return (size_t(D.mask_w) * D.mask_h + 31) / 32; }
 
-#ifdef RB_HAVE_CARTO
-#include <slam_carto.h>
-#endif
 
 // ---------------- 스트림 폴더 ----------------
 struct FrameRow {

@@ -1,6 +1,6 @@
 """탐사 판 그림: memory/map.pgm(회색 모름, 흰 빈칸, 검 장애물) 위에 정답 바닥(파랑), 지나온 길(빨강), 접촉 자리(노랑 X).
     python render_run.py <run dir> [out.png]"""
-import json, math, pathlib, sys
+import json, pathlib, sys
 import numpy as np
 from PIL import Image, ImageDraw
 

@@ -15,7 +15,6 @@ import zipfile
 import numpy as np
 from PIL import Image
 
-import common as c
 from select_real import DWS_COCO, OUT, RAW, STRUCT_COCO
 
 HERE = os.path.dirname(os.path.abspath(__file__))

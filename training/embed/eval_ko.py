@@ -11,7 +11,7 @@ import os, sys, json, numpy as np, torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import WORK, Enc, l2
 from train_ko import held_out, CURATED
-from eval_head import ko_student, ret, EMB, Q
+from eval_head import ko_student, ret, EMB
 
 LAB = [json.loads(l) for l in open(f'{WORK}/labels/labels.jsonl')]
 cur = [r for r in LAB if set(r['src']) & CURATED]

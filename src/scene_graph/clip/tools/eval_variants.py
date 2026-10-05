@@ -24,15 +24,15 @@ from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+RA_ROOT = os.environ.get("RA_ROOT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../.."))
+RA_BENCH = os.path.join(RA_ROOT, "data/clip_bench")
 BENCH = RA_BENCH
 _argv = sys.argv
 sys.argv = ["x"]
 sys.path.insert(0, BENCH)
 import score as SC  # noqa: E402  (study scoring: VOCAB, Q, ok(), retrieval())
-RA_ROOT = os.environ.get("RA_ROOT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../.."))
 RA_MODELS = os.environ.get("OVDET_MODELS", os.path.join(RA_ROOT, "models/ovdet"))
 RA_EMBED = os.environ.get("RA_EMBED_WORK", os.path.join(RA_ROOT, "training/data/embed"))
-RA_BENCH = os.path.join(RA_ROOT, "data/clip_bench")
 RA_BUILD = os.environ.get("RA_BUILD", os.path.join(RA_ROOT, "build"))
 sys.argv = _argv
 ITEMS = SC.items

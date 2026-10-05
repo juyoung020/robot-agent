@@ -10,7 +10,6 @@ import argparse
 import collections
 import glob
 import json
-import math
 import os
 
 ap = argparse.ArgumentParser()

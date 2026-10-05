@@ -15,7 +15,7 @@ Vocabulary (rows sorted so every synonym group is contiguous):
       the whitelisted model categories of datasets/2026-challenge-task-instances/metadata/task_custom_lists.json as members
   hypernym rows (one per group) used for the low-confidence fallback (VLA_INPUT 3절 "확신 낮으면 상위어")
 """
-import os, sys, re, json, glob, hashlib, argparse, datetime
+import os, sys, re, json, hashlib, argparse, datetime
 os.environ.setdefault('HF_HUB_OFFLINE', '1'); os.environ.setdefault('TRANSFORMERS_OFFLINE', '1')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np, torch, torch.nn.functional as F

@@ -64,7 +64,6 @@ def main():
     files = ['table.jsonl', f'text_{a.model}.f16']
     if a.head:
         import torch
-        from train_head import DIMS
         ck = torch.load(f'{WORK}/runs/{a.head}/head.pt', map_location='cpu')
         np.load(f'{WORK}/runs/{a.head}/labels128.npy').astype(np.float16).tofile(f'{a.out}/text128_{a.head}.f16')
         files.append(f'text128_{a.head}.f16')

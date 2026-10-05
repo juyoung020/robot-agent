@@ -9,7 +9,7 @@ outside c's synonym group. Naming vocabulary = every vla_v1 name row except hype
 their training synonyms + all BEHAVIOR 2026 categories/synonyms — i.e. the labels a detector could output in our curriculum.
 Map tokens put the hypernym row instead of sim_name(c) when conf2 < kConfLow.
 """
-import os, json, struct, hashlib, argparse, datetime
+import os, json, hashlib, argparse, datetime
 import numpy as np
 
 KCONF_LOW = -0.08   # see choose_threshold() printout: all ghost (false-positive) table entries fall back, the best-separated correct ones keep

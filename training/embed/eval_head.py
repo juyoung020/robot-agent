@@ -9,8 +9,8 @@ Korean retrieval 'ko_lookup' = query matched to a Korean name in the label table
 """
 import os, sys, json, numpy as np, torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import WORK, l2, TPL
-from evalset import items, VOCAB, Q, EMB, TAG, name_acc, ret, S
+from common import WORK, l2
+from evalset import VOCAB, Q, EMB, TAG, name_acc, ret
 from train_head import Head, DIMS
 
 LAB = [json.loads(l) for l in open(f'{WORK}/labels/labels.jsonl')]

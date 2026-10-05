@@ -10,7 +10,7 @@ base(view) -> P t_img (cosine) + the same label KL + batch relational loss. P ge
 """
 import os, sys, json, argparse, time, numpy as np, torch, torch.nn as nn, torch.nn.functional as F
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import WORK, l2
+from common import WORK
 
 DIMS = (128, 64)
 

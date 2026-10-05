@@ -21,7 +21,7 @@ Slots come from the sim robot (controller_action_idx, _proprio_obs), not hard-co
 import json
 import os
 
-from move_robot_sim import ACTION_DIM, PROPRIO_DIM, MoveRobotPolicy
+from move_robot_sim import PROPRIO_DIM, MoveRobotPolicy
 
 LIMO_BASE_OUT = (0.5, 0.5, 0.8727)       # limo_omx_eval.yaml base command_output_limits (vx, vy, wz)
 LIMO_BASE_LINK_Z = 0.15                  # base_footprint -> base_link (limo_four_diff.xacro base_joint)

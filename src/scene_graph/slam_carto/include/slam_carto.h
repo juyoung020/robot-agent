@@ -6,7 +6,7 @@
  *   — t_s 는 t 이하 가장 최근 스캔 맞춤. 오도메트리가 없으면 맞춘 자세 그대로.
  * map 원점 = 첫 sc_push_odom 때 베이스(오도메트리가 없으면 첫 스캔 때 베이스). 시각은 초(double, 단조 증가). 한 스레드에서 부른다
  * (Cartographer 안의 전역 최적화는 자기 스레드에서 돈다).
- * 설정은 lua(config/*.lua). 찾는 순서: sc_create 의 config_dir → SLAM_CARTO_CONFIG_DIR → 빌드 때 박은 소스 config/ →
+ * 설정은 lua(config 폴더의 .lua). 찾는 순서: sc_create 의 config_dir → SLAM_CARTO_CONFIG_DIR → 빌드 때 박은 소스 config/ →
  * Cartographer 설치 configuration_files.
  */
 #pragma once

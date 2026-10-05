@@ -27,7 +27,7 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from detcmp_eval import OK_NAMES, STRUCT, FIXTURE  # noqa: E402
+from detcmp_eval import STRUCT, FIXTURE  # noqa: E402
 
 D = 768
 
