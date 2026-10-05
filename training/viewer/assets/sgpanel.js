@@ -19,7 +19,9 @@ export class SgPanel {
     this.$ = $;
   }
   async open(run, stream, id) {
-    const st = await (await fetch(`/api/sg/ctl?sess=${this.sess}&run=${encodeURIComponent(run)}&stream=${encodeURIComponent(stream)}&id=${encodeURIComponent(id)}&t=0&playing=0`)).json();
+    // 판을 고르면 처음부터 바로 재생(끝나면 startPoll 이 처음부터 다시 — 반복)
+    const st = await (await fetch(`/api/sg/ctl?sess=${this.sess}&run=${encodeURIComponent(run)}&stream=${encodeURIComponent(stream)}&id=${encodeURIComponent(id)}&t=0&playing=1`)).json();
+    this.userPaused = false;
     if (st.error) { this.$("rp_empty").textContent = st.error; this.$("rp_empty").hidden = false; return false; }
     this.state = st;
     this.info = (await (await fetch(`/api/sg/info?sess=${this.sess}`)).json()).info || {};
@@ -43,11 +45,17 @@ export class SgPanel {
     return st;
   }
   seek(t) { return this.ctl(`t=${Math.max(0, t).toFixed(3)}`); }
-  toggle() { return this.ctl(`playing=${this.state && this.state.playing ? 0 : 1}`); }
+  toggle() { this.userPaused = !!(this.state && this.state.playing); return this.ctl(`playing=${this.userPaused ? 0 : 1}`); }
   speed(v) { return this.ctl(`speed=${v}`); }
   startPoll() {
     clearInterval(this.timer);
-    this.timer = setInterval(async () => { if (!this.state) return; if (this.state.playing) await this.ctl(""); }, 200);
+    this.timer = setInterval(async () => {
+      if (!this.state) return;
+      if (this.state.playing) await this.ctl("");
+      // 끝까지 갔고 사람이 멈춘 게 아니면 처음부터 다시(서버는 끝에서 playing=1 을 받으면 0 초로 되감음)
+      const st = this.state;
+      if (st && !st.playing && !this.userPaused && st.t >= st.duration - 1e-3) await this.ctl("playing=1");
+    }, 200);
   }
   update() {
     const st = this.state, i = this.info || {}, m = i.meta || {};

@@ -267,6 +267,8 @@ export class Replay {
     this.$("rp_time").max = tr.nf - 1;
     this.t = 0; this.seek(0);
     this.setCam(+this.$("rp_camsel").value, true);
+    // 판을 고르면 바로 재생, 끝나면 처음부터 반복(tick)
+    this.playing = true; this.$("rp_play").textContent = "❚❚";
   }
   build() {
     const tr = this.tr, H = tr.head, G = this.gEp, v = tr.v;
@@ -536,7 +538,7 @@ export class Replay {
     if (this.playing && this.tr) {
       this.t += dt * +this.$("rp_speed").value;
       const f = Math.floor(this.t / (this.tr.head.dt || 0.1));
-      if (f >= this.tr.nf - 1) { this.playing = false; this.$("rp_play").textContent = "▶"; this.seek(this.tr.nf - 1); }
+      if (f >= this.tr.nf - 1) { this.seek(0); }   // 끝 → 처음부터 반복
       else if (f !== this.f) { this.f = f; const t = this.t; this.apply(); this.t = t; }
     }
     if (this.camMode === 2 || this.camMode === 3) { this.followCam(); this.dirty = true; }
