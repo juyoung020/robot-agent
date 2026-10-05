@@ -14,7 +14,7 @@ Map_Vla 프로젝트에서 쓴 조사·설계 문서다. 작성 시점의 판단
 | [POLICY.md](POLICY.md) | **정책 설계**: LLM → VLA·`move_robot` 역할 나누기, 교사 RL(스킬·보상·비대칭 actor-critic·자라는 지도·커리큘럼), 학생 VLA(몸통 두 안·행동 묶음·지연), 학습 순서(RL 교사 → BC + DAgger → VLA RL 다듬기 → 실제 리모), 안전·평가·정할 것 | 2026-10-03 설계. 실행기 접점·거르개 구현(1.4), 교사 PPO·대본 교사(4.8) |
 | [VLA_INPUT.md](VLA_INPUT.md) | **우리 VLA 입력·출력 설계**: RGB 그림 3장(카메라 2 + 위에서 본 지도, 10-05) + 몸 상태 56 + 물체 칸 ≤ 16 × 289(상대 좌표, 이름 뜻·생김새 벡터, 손과의 거리, 출처·불확실도) + 벽·방 토큰, 일반화·외우지 않기 규칙과 평가 | 2026-10-03 설계, 절마다 구현 상태 적음 |
 | [PI05_TRAINING.md](PI05_TRAINING.md) | π0.5 는 어떻게 학습됐나: 모델, 사전학습(28만 스텝, FAST 토큰, MM·ME·CE·HL·WD)·후학습(8만 스텝, flow matching 행동 전문가, VI), 제거 실험, 지식 격리, 우리 VLA 에 가져올 것 | 2026-10-03 조사. π0.5 자체는 버림(10-04) — 우리 VLA 는 RecallVLA |
-| [HUMAN_DEMOS.md](HUMAN_DEMOS.md) | 다른 로봇의 사람 원격조종 시연 + scenemap 재생: BEHAVIOR 2026 시연 20,000 판 메타데이터 거르기(E0 팔 한도, 태그 4 종), ep 0 재생, 작은 팔·DROID·OXE 조사, 채택 안 한 이유·재개 방법 | 2026-10-05 **보류(문서화만)** — 주 시연 출처는 GPU 시뮬 RL 교사 |
+| [HUMAN_DEMOS.md](../../archive/docs/map_vla/HUMAN_DEMOS.md) (보관, 10-06) | 다른 로봇의 사람 원격조종 시연 + scenemap 재생: BEHAVIOR 2026 시연 20,000 판 메타데이터 거르기(E0 팔 한도, 태그 4 종), ep 0 재생, 작은 팔·DROID·OXE 조사, 채택 안 한 이유·재개 방법 | 2026-10-05 **보류(문서화만)** — 주 시연 출처는 GPU 시뮬 RL 교사 |
 | [MAP_STATE_PLAN.md](MAP_STATE_PLAN.md) | 지도를 학습 state 수치로 넣는 계획(물체 슬롯 16 × 14, 벽 벡터 56) | 물체 간 전치사 관계는 쓰지 않음 — 물체 칸은 VLA_INPUT.md 가 바꿈 |
 | [SIM_PORTING.md](SIM_PORTING.md) | 리모 + OMX 시뮬을 GPU 에서 수천 개 돌리는 설계, 카메라 외부 파라미터 표 | 구현됨: G1 환경 커널 `training/RL/env`(`0eddb72`), 잡기 물리 E6. 렌더는 팀 RenderBatch |
 | [PORT_PLAN.md](PORT_PLAN.md) | MuJoCo Warp 전체 포팅 계획 | **대체됨**(10-04) — 자체 환경 커널(G1) + 팀 RenderBatch 로 감 |
