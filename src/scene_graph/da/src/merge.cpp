@@ -28,29 +28,6 @@ bool bigPair(const MapObject& a, const MapObject& b, const ObjParams& op, const 
   return stat || ext_max > op.big;
 }
 
-// 같은 이름 번호(= 같은 종류)끼리만. 합집합이 될 쌍은 한 변이 max_ext 를 넘으면 안 합침(objmap 상자 키우기와 같은 한도)
-// 이름이 다르면(이름 모으기 켬): 상자가 거의 같아야(두 상자의 IoU ≥ name_merge_iou) — 한 물체가 프레임마다 다른 이름으로 따로 생긴 것
-double boxIou(const MapObject& a, const MapObject& b, double min_ext) {
-  double ia = 1, va = 1, vb = 1;
-  for (int k = 0; k < 3; ++k) {
-    const double ea = std::max(a.hi[k] - a.lo[k], min_ext), eb = std::max(b.hi[k] - b.lo[k], min_ext);
-    const double ca = 0.5 * (a.lo[k] + a.hi[k]), cb = 0.5 * (b.lo[k] + b.hi[k]);
-    const double ov = std::min(ca + 0.5 * ea, cb + 0.5 * eb) - std::max(ca - 0.5 * ea, cb - 0.5 * eb);
-    if (ov <= 0) return 0.0;
-    ia *= ov; va *= ea; vb *= eb;
-  }
-  return ia / (va + vb - ia);
-}
-
-bool mergeable(const MapObject& a, const MapObject& b, const ObjParams& op, const std::vector<uint8_t>* kinds) {
-  if (!(a.confirmed && b.confirmed && a.held_by < 0 && b.held_by < 0 && a.state != SM_GONE && b.state != SM_GONE)) return false;
-  if (a.cls != b.cls && !(op.name_vote && boxIou(a, b, 0.05) >= op.name_merge_iou)) return false;
-  if (bigPair(a, b, op, kinds))
-    for (int k = 0; k < 3; ++k)
-      if (std::max(a.hi[k], b.hi[k]) - std::min(a.lo[k], b.lo[k]) > op.max_ext) return false;
-  return true;
-}
-
 // b 를 a 에 합친다(a 가 남음)
 void absorb(MapObject& a, MapObject& b, const ObjParams& op, double stamp, const std::vector<uint8_t>* kinds) {
   const bool big = bigPair(a, b, op, kinds);
@@ -113,31 +90,6 @@ void absorb(MapObject& a, MapObject& b, const ObjParams& op, double stamp, const
 
 void absorbObject(MapObject& keep, MapObject& drop, const ObjParams& op, double stamp, const std::vector<uint8_t>* kinds) {
   absorb(keep, drop, op, stamp, kinds);
-}
-
-std::vector<MergeResult> mergeDuplicates(std::vector<MapObject>& objs, const MergeParams& mp, const ObjParams& op, double stamp,
-                                         const std::vector<uint8_t>* kinds) {
-  std::vector<MergeResult> out;
-  if (!mp.enable) return out;
-  // 가장 많이 겹치는 쌍부터 하나씩 합치고 다시 센다(합치면 상자가 바뀌므로). 합칠 때마다 물체가 하나 줄어 반드시 끝난다.
-  while (objs.size() >= 2) {
-    double best = 0;
-    int bi = -1, bj = -1;
-    for (size_t i = 0; i < objs.size(); ++i)
-      for (size_t j = i + 1; j < objs.size(); ++j) {
-        if (!mergeable(objs[i], objs[j], op, kinds)) continue;
-        const double ov = boxOverlap(objs[i].lo, objs[i].hi, objs[j].lo, objs[j].hi, mp.min_ext);
-        if (ov >= mp.overlap_min && ov > best) { best = ov; bi = int(i); bj = int(j); }
-      }
-    if (bi < 0) break;
-    // 관측이 많은 쪽을 남김, 같으면 먼저 본 쪽(id 가 작은 쪽)
-    int keep = bi, drop = bj;
-    if (objs[bj].n_obs > objs[bi].n_obs || (objs[bj].n_obs == objs[bi].n_obs && objs[bj].id < objs[bi].id)) std::swap(keep, drop);
-    out.push_back({objs[keep].id, objs[drop].id, best});
-    absorb(objs[keep], objs[drop], op, stamp, kinds);
-    objs.erase(objs.begin() + drop);
-  }
-  return out;
 }
 
 }  // namespace scenemap::da

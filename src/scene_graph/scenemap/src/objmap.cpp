@@ -140,8 +140,7 @@ int ObjectMap::applyParams(ObjParams* p, const char* e, bool log) {
   if (!e || !*e) return 0;
   struct K { const char* n; double* d; int* i; bool* b; };
   const K keys[] = {{"floor_h", &p->floor_h, nullptr, nullptr},          {"name_vote", nullptr, nullptr, &p->name_vote},
-                    {"name_share", &p->name_share, nullptr, nullptr},    {"name_switch", &p->name_switch, nullptr, nullptr},
-                    {"name_merge_iou", &p->name_merge_iou, nullptr, nullptr}, {"frag_overlap", &p->frag_overlap, nullptr, nullptr},
+                    {"name_switch", &p->name_switch, nullptr, nullptr},
                     {"absent_samples", nullptr, &p->absent_samples, nullptr}, {"absent_vis", &p->absent_vis, nullptr, nullptr},
                     {"absent_min_px", &p->absent_min_px, nullptr, nullptr}, {"absent_det_k", &p->absent_det_k, nullptr, nullptr},
                     {"gone_misses", nullptr, &p->gone_misses, nullptr},  {"gone_min_s", &p->gone_min_s, nullptr, nullptr},
@@ -153,12 +152,9 @@ int ObjectMap::applyParams(ObjParams* p, const char* e, bool log) {
                     {"link_wait_s", &p->link_wait_s, nullptr, nullptr},  {"link_window_s", &p->link_window_s, nullptr, nullptr},  {"link_view_gap_s", &p->link_view_gap_s, nullptr, nullptr},
                     {"view_cell", &p->view_cell, nullptr, nullptr},      {"confirm", nullptr, &p->confirm, nullptr},  {"move_v", &p->move_v, nullptr, nullptr},
                     {"move_n", nullptr, &p->move_n, nullptr},  {"move_min_d", &p->move_min_d, nullptr, nullptr},  {"move_max_cam_w", &p->move_max_cam_w, nullptr, nullptr},
-                    {"da_min", &p->da_min, nullptr, nullptr},            {"da_k", &p->da_k, nullptr, nullptr},
-                    {"merge_overlap", &p->merge_overlap, nullptr, nullptr},
                     {"grasp_check", nullptr, nullptr, &p->grasp_check},  {"self_pad", &p->self_pad, nullptr, nullptr},
                     {"self_mask", nullptr, nullptr, &p->self_mask},  {"inspect", nullptr, nullptr, &p->insp.on},
                     // objprob(objprob.hpp ApParams — 앞에 ap_)
-                    {"ap_name_struct_skip", nullptr, nullptr, &p->ap_name_struct_skip},
                     {"ap_same_p", &p->ap.same_p, nullptr, nullptr},  {"ap_merge_p", &p->ap.merge_p, nullptr, nullptr},
                     {"ap_gate", &p->ap.gate, nullptr, nullptr},  {"ap_name_tau", &p->ap.name_tau, nullptr, nullptr},
                     {"ap_name_wmax", &p->ap.name_wmax, nullptr, nullptr},  {"ap_size_w", &p->ap.size_w, nullptr, nullptr},
@@ -217,15 +213,6 @@ int ObjectMap::applyParams(ObjParams* p, const char* e, bool log) {
   return n_bad;
 }
 
-double ObjectMap::nameShare(const MapObject& m, int cls) {
-  double tot = 0, mine = 0;
-  for (const auto& [c, w] : m.votes) {
-    tot += w;
-    if (c == cls) mine = w;
-  }
-  return tot > 0 ? mine / tot : (cls == m.cls ? 1.0 : 0.0);
-}
-
 void ObjectMap::vote(MapObject& m, int cls, float w) const {
   w = std::max(w, 1e-3f);
   bool found = false;
@@ -241,11 +228,6 @@ void ObjectMap::vote(MapObject& m, int cls, float w) const {
     if (v > best) { best = v; bc = c; }
   }
   if (bc != m.cls && best > p_.name_switch * cur) m.cls = bc;
-}
-
-bool ObjectMap::nameOk(const MapObject& m, int cls) const {
-  if (m.cls == cls) return true;
-  return p_.name_vote && nameShare(m, cls) >= p_.name_share;
 }
 
 bool ObjectMap::isBig(const MapObject& m) const {
@@ -705,9 +687,6 @@ void ObjectMap::update(const ObjFrame& f) {
     std::vector<int32_t>& PV = wpv_;
     const size_t words = (size_t(D->mask_w) * D->mask_h + 31) / 32;
     for (int k = 0; k < D->n; ++k) {
-      if (kindOf(D->cls[k]) == kKindStructure) {   // 벽·바닥·문 등: 격자만(물체 아님)
-        if (p_.ap_name_struct_skip) { ++aps_.n_name_struct; continue; }
-      }
       X.clear(); Y.clear(); Z.clear(); ZC.clear(); PU.clear(); PV.clear();
       // 상자 안만 훑는다(검출 영상 화소 → 깊이 화소)
       const float* b = D->box + 4 * k;
@@ -1090,53 +1069,6 @@ void ObjectMap::update(const ObjFrame& f) {
     q.xyz = std::move(o.cxyz);
     q.px = std::move(o.cpx);
     points_.push_back(std::move(q));
-  }
-  // 3b. 조각 합치기: 이번 관측 하나(검출 하나 = 물체 하나)의 상자 안에 다른 같은 이름 물체가 거의 다 들어 있으면 같은 물체의 조각
-  if (p_.frag_overlap > 0) {
-    std::vector<std::pair<uint32_t, uint32_t>> fr;   // (남김, 지움)
-    for (int a = 0; a < int(obs.size()); ++a) {
-      const uint32_t keep = assoc_[obs[a].det].obj_id;
-      if (!keep) continue;
-      const Obs& o = obs[a];
-      const double oext = std::max({o.ext[0], o.ext[1], o.ext[2]});
-      for (size_t c = 0; c < objs_.size(); ++c) {
-        const MapObject& q = objs_[c];
-        if (q.id == keep || obj_hit[c] || q.held_by >= 0 || !nameOk(q, o.cls)) continue;
-        bool inside = true;
-        for (int k = 0; k < 3; ++k) inside = inside && q.pos[k] >= o.lo[k] - 0.05 && q.pos[k] <= o.hi[k] + 0.05;
-        if (!inside || std::max({q.ext[0], q.ext[1], q.ext[2]}) > oext) continue;
-        if (da::boxOverlap(q.lo, q.hi, o.lo, o.hi, p_.merge_min_ext) < p_.frag_overlap) continue;
-        fr.emplace_back(keep, q.id);
-      }
-    }
-    std::vector<std::pair<uint32_t, uint32_t>> gone_to;   // 지운 id → 남은 id
-    auto cur = [&](uint32_t id) {
-      for (bool ch = true; ch;) {
-        ch = false;
-        for (auto& [g, t] : gone_to) if (g == id) { id = t; ch = true; break; }
-      }
-      return id;
-    };
-    for (auto [kid, did] : fr) {
-      kid = cur(kid);
-      did = cur(did);
-      if (kid == did) continue;
-      auto ki = std::find_if(objs_.begin(), objs_.end(), [&](const MapObject& x) { return x.id == kid; });
-      auto di = std::find_if(objs_.begin(), objs_.end(), [&](const MapObject& x) { return x.id == did; });
-      if (ki == objs_.end() || di == objs_.end()) continue;
-      if (di->n_obs > ki->n_obs || (di->n_obs == ki->n_obs && did < kid)) {   // 관측이 많은(같으면 먼저 본) 쪽 id 를 남김
-        std::swap(ki, di);
-        std::swap(kid, did);
-      }
-      gone_to.emplace_back(did, kid);
-      da::absorbObject(*ki, *di, p_, f.stamp, &kinds_);
-      ki->confirmed = ki->confirmed || di->confirmed;
-      const size_t dpos = size_t(di - objs_.begin());
-      obj_hit.erase(obj_hit.begin() + long(dpos));
-      objs_.erase(di);
-      remapId(did, kid);
-      for (const MapObject& x : objs_) if (x.id == kid) { event(f.stamp, x, 7); break; }
-    }
   }
   // 4. 부재 확인(확정·안 든 것·이번에 안 맞은 것): 물체 점을 투영해 보일 만큼 보이는데 검출이 없으면 놓침
   if (f.depth_m || f.depth_mm) {

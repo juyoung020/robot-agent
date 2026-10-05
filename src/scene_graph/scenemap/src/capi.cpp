@@ -1971,7 +1971,7 @@ int sm_get_objprob_stats(sm_ctx* c, int64_t out[16]) {
   if (!c || !out) return -1;
   std::lock_guard<std::mutex> g(c->mu);
   const ApStats& a = c->om.apStats();
-  const long v[16] = {a.n_obs, a.n_wall, a.n_wall_name, a.n_ceil, a.n_floor, a.n_name_struct, a.n_assoc, a.n_new, a.n_merge, a.n_obj_struct,
+  const long v[16] = {a.n_obs, a.n_wall, a.n_wall_name, a.n_ceil, a.n_floor, 0L, a.n_assoc, a.n_new, a.n_merge, a.n_obj_struct,
                       a.n_reenc_req, a.n_reenc_done, a.n_through, a.n_so_big, a.n_wall_tall, a.n_blocked};
   for (int i = 0; i < 16; ++i) out[i] = v[i];
   return 0;

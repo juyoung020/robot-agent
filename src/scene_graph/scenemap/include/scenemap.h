@@ -426,7 +426,7 @@ int sm_set_object_embeddings(sm_ctx*, const uint32_t* ids, const float* emb, int
 /* 바깥 이름 관측(confirm_object 등): 물체 id 가 이름 name(sm_set_labels 표)이라는 증거, 자연 로그 우도비 log_lr(> 0 = 그렇다).
  * 이름 사후에 그대로 더해 두며 영상 모습이 더 와도 줄이지 않는다. 0 = 성공, -2 = 이름 없음, -3 = 물체 없음·objprob 아님 */
 int sm_observe_object_name(sm_ctx*, uint32_t id, const char* name, float log_lr);
-/* 진단 셈: [0] 관측 [1] 벽(큼) [2] 벽(작고 구조물 이름) [3] 천장 [4] 바닥 [5] 검출 이름이 구조물 [6] 붙음 [7] 새 물체 [8] 병합
+/* 진단 셈: [0] 관측 [1] 벽(큼) [2] 벽(작고 구조물 이름) [3] 천장 [4] 바닥 [5] (안 씀, 0) [6] 붙음 [7] 새 물체 [8] 병합
  * [9] 구조물 덩어리 지움 [10] 다시 담기 요청 [11] 다시 담기 받음 [12] 벽 너머(창 밖) 관측 버림 [13] 문·창·기둥 이름인데 그 모양보다 큰 벽 조각 [14] 벽 선 없이 높고 넓은 세운 평면(벽) [15] 벽 같은 조각·납작한 이름 크기 밖이라 버린 관측 */
 int sm_get_objprob_stats(sm_ctx*, int64_t out[16]);
 

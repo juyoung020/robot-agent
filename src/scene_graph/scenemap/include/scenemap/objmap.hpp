@@ -9,9 +9,9 @@
 //            가릴 때 팔 화소가 물체 상자를 키우거나 옮기지 않게). 점 min_points 미만 버림. 점의 hand_frac 이상이 팔 끝 hand_r 안이면(손에 든 것) 버림. 점의 90 백분위 높이 < floor_h 면
 //            바닥 조각(바닥에 깔리는 이름 — 러그·카펫·매트 — 은 둠)
 //   이름   : 물체마다 이름 표(이름 번호별 점수 합). 이름 = 최댓값(지금 이름보다 name_switch 배 넘어야 바뀜)
-//   같은 것: 이름이 같거나 관측 이름이 물체 이름 표에서 name_share 이상. 중심 거리 < max(da_min, da_k·큰 쪽 크기) 이거나
-//            map 축 상자 사이 틈 < da_gap. (틈 + 이름 다르면 0.02)·중심 거리 순으로 1:1(탐욕). 큰 가구(한 변 > big 또는 고정 종류)는
-//            상자를 합집합으로 키우고 위치 = 상자 중심 — 단 keyframe 마다 면마다 grow_max 까지만, 한 변 max_ext 넘게는 안 키움
+//   같은 것: objprob 하나(objprob.hpp) — 이름 없이 관측마다 P(같은 물체)(SigLIP 2 임베딩 vMF + 위치·접촉 로지스틱)가 가장 큰 물체에 붙이고,
+//            물체끼리는 다음 keyframe 앞 apMergePass 가 합침. 작은 물체는 칼만 위치, 큰 가구(한 변 > big 또는 고정 종류)는 상자를
+//            합집합으로 키우고 위치 = 상자 중심 — 단 keyframe 마다 면마다 grow_max 까지만, 한 변 max_ext 넘게는 안 키움
 //   확정   : 서로 다른 keyframe 에서 confirm 번 보이면 물체. 후보가 prune_s 동안 다시 안 보이면 버림
 //   움직임 : 관측 중심(영상 가장자리에 닿지 않은 것, 카메라가 move_max_cam_w 보다 천천히 돌 때)이 move_n 번 잇달아 move_v 넘게
 //            같은 쪽으로 가고 쉬던 상자를 벗어나면 평균 대신 관측 자리로 바로 따라감(옮겨짐 상태)
@@ -50,8 +50,6 @@ struct ObjParams {
   int min_points = 20;
   float zmin = 0.15f, zmax = 5.0f;
   float hand_r = 0.40f, hand_frac = 0.5f;
-  double da_min = 0.30, da_k = 0.5;
-  double da_gap = 0.10;           // 상자끼리 이 안으로 붙어 있으면 같은 것(부분만 보이는 큰 가구)
   double big = 0.5;               // 상자 한 변이 이보다 크면 합집합으로 키움(작은 물체는 평균)
   int confirm = 2;
   double prune_s = 10.0;
@@ -83,21 +81,13 @@ struct ObjParams {
   int cloud_cap = 8000;   // 큰 가구(소파 ≈ 4 m²)의 구름이 objprob 접촉 판정에 쓰임
   double cloud_hand_r = 0.10;
   double body_r = 0.30;
-  // 병합(da/merge.hpp): 확정된 같은 이름 물체끼리 상자가 이만큼(축별 겹침 비율의 곱) 겹치면 하나로
-  bool merge = true;
-  double merge_overlap = 0.35;
-  double merge_min_ext = 0.05;
+  double merge_min_ext = 0.05;    // 상자 겹침 비율(da::boxOverlap)에서 얇은 변을 이 값까지 부풀림
   // ---- 바뀜 판정(10-04, dynamic-object-mapping-benchmark 로 고침 — README "바뀜 규칙") ----
   // 바닥 조각: 관측 점의 90 백분위 높이가 이보다 낮으면(map z, 바닥 = 0) 물체가 아님
   double floor_h = 0.05;
   // 이름 모으기: 물체마다 이름 번호별 점수 합(표). 이름 = 표의 최댓값(지금 이름보다 name_switch 배 넘어야 바꿈).
-  // 관측 이름이 표에서 name_share 이상이면 같은 물체 후보. 병합(da)은 이름이 달라도 상자가 거의 같으면(name_merge_iou) 합침
-  // 조각 합치기: 이번 관측 상자 안에 다른 같은 이름 물체 상자가 이 비율(축별 겹침 곱) 넘게 들어 있고 더 작으면 한 물체로(0 = 끔)
-  double frag_overlap = 0.0;      // 켜면 0.6 정도. 10-04 실제 검출에서 끈 쪽이 조금 나음(static 0.697 vs 0.684) — 기본 끔
   bool name_vote = true;
-  double name_share = 0.2;
   double name_switch = 1.25;
-  double name_merge_iou = 0.5;
   // 사라짐(보임 근거): 물체 점(구름, 없으면 상자 격자) absent_samples 개를 투영해 시야 안·안 가림 비율이 absent_vis 이상,
   // 보이는 부분 화소 크기 ≥ absent_min_px, 카메라 거리 ≤ 이 물체를 검출했던 가장 먼 거리·absent_det_k + 0.2 일 때만 놓침 +1.
   // 큰 것(한 변 > big)·고정 종류도 판정하되 gone_misses_big 번·gone_min_s_big 초. 시간 대신 카메라가 gone_view_d 넘게 옮긴 시점의 놓침도 됨
@@ -131,8 +121,7 @@ struct ObjParams {
                                   // 상자가 영상 가장자리에 닿은 관측(잘림)도 안 씀
   // ---- objprob(objprob.hpp): 이름 없는 같은 것 판정·기하 구조물 거르기·물체 임베딩 vMF·이름 사후 — 물체 지도의 유일한 규칙.
   // 검출마다 임베딩(ObjFrame.emb)이 있어야 한다(capi sm_set_det_embeddings)
-  bool ap_name_struct_skip = false; // true: 검출 하나의 이름(cls)이 구조물이면 버림(옛 규칙). 끔(기본): FastSAM 조각의 이름은 자주 틀려
-                                    // (소파 조각 → partition·baseboard) 기하·합친 물체의 이름 사후로만 거름
+  // 검출 하나의 이름(cls)으로 구조물을 버리지 않는다: 조각의 이름은 자주 틀려(소파 조각 → partition·baseboard) 기하·합친 물체의 이름 사후로만 거름
   ApParams ap;
   KappaParams kap;
   double ap_q_pos = 1e-4;         // 칼만: 물체 자리 과정 잡음(m²/s, 가만히 있는 물체)
@@ -143,7 +132,7 @@ struct ObjParams {
 
 // objprob 진단 셈(ObjectMap::apStats)
 struct ApStats {
-  long n_through = 0, n_obs = 0, n_wall = 0, n_wall_name = 0, n_ceil = 0, n_floor = 0, n_name_struct = 0;
+  long n_through = 0, n_obs = 0, n_wall = 0, n_wall_name = 0, n_ceil = 0, n_floor = 0;
   long n_assoc = 0, n_new = 0, n_merge = 0, n_obj_struct = 0, n_reenc_req = 0, n_reenc_done = 0;
   long n_blocked = 0;     // 벽 같은 조각·납작한 이름 크기 밖이라 안 붙이고 버린 관측
   long n_wall_tall = 0;   // 벽 선 없이 높고 넓은 세운 평면이라 벽
@@ -261,8 +250,6 @@ class ObjectMap {
   // 바닥에 깔리는 이름(러그·카펫·매트): 바닥 조각 거르기(floor_h)에서 뺌. 표 밖 번호는 아님
   void setFloorClasses(std::vector<uint8_t> f) { floor_cls_ = std::move(f); }
   bool floorLevel(int cls) const { return cls >= 0 && size_t(cls) < floor_cls_.size() && floor_cls_[cls]; }
-  // 이름 표에서 cls 의 몫(0..1). 표가 비면 cls == m.cls 일 때 1
-  static double nameShare(const MapObject& m, int cls);
   // 마지막 update 의 검출별 짝(크기 = dets->n, 검출 순서)
   const std::vector<DetAssoc>& lastAssoc() const { return assoc_; }
   std::vector<ObsPoints>& lastPoints() { return points_; }
@@ -299,7 +286,6 @@ class ObjectMap {
  private:
   void event(double t, const MapObject& o, int kind);
   void vote(MapObject& m, int cls, float w) const;
-  bool nameOk(const MapObject& m, int cls) const;
   bool isBig(const MapObject& m) const;
   // 사라짐 근거: 2 = 안 보이고 자리 너머가 보임, 1 = 보여야 하는데 안 보임(놓침), 0 = 판단 못 함(시야 밖·가림·멀다·작다)
   int absentEvidence(const MapObject& m, const ObjFrame& f) const;

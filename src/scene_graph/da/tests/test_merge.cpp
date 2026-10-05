@@ -1,4 +1,4 @@
-// da/merge 시험: 중복은 합치고, 따로 있는 물체·다른 이름(상자가 거의 같지 않으면)·들고 있는 것은 건드리지 않는다.
+// da 시험: absorbObject(objprob apMergePass 가 같은 것으로 본 두 물체를 하나로)와 boxOverlap.
 #include <cstdio>
 #include <vector>
 
@@ -19,75 +19,37 @@ static MapObject obj(uint32_t id, int cls, double cx, double cy, double cz, doub
 int main() {
   std::printf("test_merge\n");
   ObjParams op;
-  da::MergeParams mp;
-  {  // 같은 탁자가 둘로 확정됨(상자가 크게 겹침) → 하나, 관측이 많은 id 가 남음
-    std::vector<MapObject> v = {obj(1, 3, 2.0, 1.0, 0.4, 1.2, 0.8, 0.8, 4), obj(7, 3, 2.1, 1.05, 0.4, 1.0, 0.7, 0.8, 9)};
-    const auto r = da::mergeDuplicates(v, mp, op, 20.0);
-    CHECK(r.size() == 1 && v.size() == 1, "merged %zu left %zu", r.size(), v.size());
-    CHECK(v[0].id == 7 && r[0].drop == 1, "kept id %u", v[0].id);
-    CHECK(v[0].n_obs == 13, "n_obs %u", v[0].n_obs);
-    CHECK(v[0].first_seen == 1.0, "first_seen %.1f", v[0].first_seen);
+  {  // 작은 물체: n_obs 가중 평균, n_obs 합, 먼저 본 쪽 first_*, 이름 표 합침(이름 = 최댓값)
+    MapObject a = obj(1, 3, 1.0, 0.0, 0.4, 0.08, 0.08, 0.1, 9), b = obj(7, 4, 1.1, 0.0, 0.4, 0.08, 0.08, 0.1, 1);
+    a.votes = {{3, 2.f}};
+    b.votes = {{4, 5.f}};
+    da::absorbObject(a, b, op, 20.0);
+    CHECK(a.n_obs == 10 && a.first_seen == 1, "n_obs %u first %.0f", a.n_obs, a.first_seen);
+    CHECK(std::fabs(a.pos[0] - 1.01) < 1e-9, "weighted pos %.3f", a.pos[0]);
+    CHECK(a.cls == 4 && a.votes.size() == 2, "name table cls %d votes %zu", a.cls, a.votes.size());
+    CHECK(a.last_seen == 17, "last_seen %.1f", a.last_seen);
   }
-  {  // 나란히 놓인 의자 둘(상자가 맞닿기만 함) → 그대로
-    std::vector<MapObject> v = {obj(1, 5, 1.0, 1.0, 0.45, 0.5, 0.5, 0.9), obj(2, 5, 1.6, 1.0, 0.45, 0.5, 0.5, 0.9)};
-    CHECK(da::mergeDuplicates(v, mp, op, 20.0).empty() && v.size() == 2, "adjacent chairs merged");
+  {  // 큰 가구(한 변 > big): 상자 합집합, 위치 = 상자 중심
+    MapObject a = obj(1, 3, 2.0, 1.0, 0.4, 1.2, 0.8, 0.8, 4), b = obj(2, 3, 3.0, 1.0, 0.4, 1.2, 0.8, 0.8, 9);
+    da::absorbObject(a, b, op, 20.0);
+    CHECK(std::fabs(a.lo[0] - 1.4) < 1e-9 && std::fabs(a.hi[0] - 3.6) < 1e-9 && std::fabs(a.pos[0] - 2.5) < 1e-9, "union box %.2f..%.2f pos %.2f", a.lo[0], a.hi[0], a.pos[0]);
   }
-  {  // 이름이 다르고 상자가 거의 같음: 이름 모으기를 끄면 그대로, 켜면(기본) 한 물체가 이름 둘로 따로 생긴 것 → 합침, 이름 표도 합침
-    std::vector<MapObject> v = {obj(1, 3, 2, 1, 0.4, 1.0, 0.8, 0.8), obj(2, 4, 2, 1, 0.4, 1.0, 0.8, 0.8)};
-    v[0].votes = {{3, 2.f}};
-    v[1].votes = {{4, 1.f}};
-    ObjParams nv = op; nv.name_vote = false;
-    CHECK(da::mergeDuplicates(v, mp, nv, 20.0).empty(), "different classes merged with name_vote off");
-    CHECK(da::mergeDuplicates(v, mp, op, 20.0).size() == 1 && v.size() == 1, "same box, two names not merged");
-    CHECK(v[0].votes.size() == 2 && v[0].cls == 3, "votes %zu cls %d", v[0].votes.size(), v[0].cls);
+  {  // 점 구름: 지운 쪽 점이 남는 쪽에 들어감(같은 복셀은 하나)
+    MapObject a = obj(1, 3, 1.0, 0.0, 0.4, 0.1, 0.1, 0.1), b = obj(2, 3, 1.0, 0.0, 0.4, 0.1, 0.1, 0.1);
+    const float pa[6] = {1.0f, 0.0f, 0.4f, 1.1f, 0.0f, 0.4f}, pb[6] = {1.1f, 0.0f, 0.4f, 1.2f, 0.0f, 0.4f};
+    const uint8_t rgb[6] = {10, 10, 10, 10, 10, 10};
+    a.cloud.add(pa, rgb, 2, op.voxel, op.cloud_cap, 1.0);
+    b.cloud.add(pb, rgb, 2, op.voxel, op.cloud_cap, 1.0);
+    da::absorbObject(a, b, op, 2.0);
+    CHECK(a.cloud.size() == 3, "cloud %zu", size_t(a.cloud.size()));
   }
-  {  // 이름이 다르고 한 상자가 다른 상자 안(탁자 위 컵, IoU 작음) → 그대로
-    std::vector<MapObject> v = {obj(1, 3, 2, 1, 0.4, 1.0, 0.8, 0.8), obj(2, 4, 2, 1, 0.5, 0.1, 0.1, 0.12)};
-    CHECK(da::mergeDuplicates(v, mp, op, 20.0).empty(), "cup on table merged");
+  {  // boxOverlap: 같은 상자 1, 맞닿기만 0, 납작한 상자 둘(두께 0)은 min_ext 로 부풀려 겹침
+    const double lo1[3] = {0, 0, 0}, hi1[3] = {1, 1, 1}, lo2[3] = {1, 0, 0}, hi2[3] = {2, 1, 1};
+    CHECK(da::boxOverlap(lo1, hi1, lo1, hi1, 0.05) > 0.999, "same box");
+    CHECK(da::boxOverlap(lo1, hi1, lo2, hi2, 0.05) == 0.0, "touching only");
+    const double rl[3] = {0, 0, 0}, rh[3] = {2, 1, 0};
+    CHECK(da::boxOverlap(rl, rh, rl, rh, 0.05) > 0.999, "flat rug");
   }
-  {  // 납작한 러그(두께 ~0)가 겹쳐 둘로 확정 → 합침
-    std::vector<MapObject> v = {obj(1, 8, 3, 3, 0.01, 1.4, 0.9, 0.002), obj(2, 8, 3.05, 3.02, 0.012, 1.3, 0.9, 0.003)};
-    CHECK(da::mergeDuplicates(v, mp, op, 20.0).size() == 1, "flat rugs not merged");
-  }
-  {  // 들고 있거나 사라진 것, 후보(미확정)는 합치지 않는다
-    std::vector<MapObject> v = {obj(1, 3, 2, 1, 0.4, 1, 1, 1), obj(2, 3, 2, 1, 0.4, 1, 1, 1), obj(3, 3, 2, 1, 0.4, 1, 1, 1)};
-    v[0].held_by = 0; v[1].state = SM_GONE; v[2].confirmed = false;
-    CHECK(da::mergeDuplicates(v, mp, op, 20.0).empty() && v.size() == 3, "held/gone/candidate merged");
-  }
-  {  // 셋이 겹침 → 하나로(연쇄), 큰 가구는 상자 합집합
-    std::vector<MapObject> v = {obj(1, 3, 2.0, 1, 0.4, 1.2, 0.8, 0.8, 3), obj(2, 3, 2.5, 1, 0.4, 1.2, 0.8, 0.8, 3), obj(3, 3, 3.0, 1, 0.4, 1.2, 0.8, 0.8, 3)};
-    const auto r = da::mergeDuplicates(v, mp, op, 20.0);
-    CHECK(v.size() <= 2 && !r.empty(), "chain left %zu", v.size());
-    double lo = 9, hi = -9;
-    for (const auto& o : v) { lo = std::min(lo, o.lo[0]); hi = std::max(hi, o.hi[0]); }
-    CHECK(lo < 1.45 && hi > 3.55, "union box lost the extent: %.2f..%.2f", lo, hi);
-  }
-  {  // 큰 가구 둘이 겹치지만 합집합이 한 변 max_ext(4 m)를 넘음 → 그대로(objmap 상자 키우기와 같은 한도)
-    std::vector<MapObject> v = {obj(1, 3, 1.5, 1, 0.4, 3.0, 0.9, 0.8), obj(2, 3, 2.7, 1, 0.4, 3.6, 0.9, 0.8)};   // x 0..3, 0.9..4.5
-    CHECK(da::mergeDuplicates(v, mp, op, 20.0).empty() && v.size() == 2, "merged past max_ext");
-    ObjParams wide = op; wide.max_ext = 5.0;
-    CHECK(da::mergeDuplicates(v, mp, wide, 20.0).size() == 1 && v.size() == 1 && v[0].hi[0] - v[0].lo[0] > 4.4, "within max_ext not merged");
-  }
-  {  // 고정 종류(kinds)는 작아도 합집합으로 보므로 같은 한도: 작은 상자 평균이면 4 m 안이어도, 고정 종류의 합집합이 넘으면 안 합침
-    std::vector<MapObject> v = {obj(1, 2, 1.5, 1, 0.4, 0.3, 0.3, 4.0), obj(2, 2, 1.5, 1, 0.8, 0.3, 0.3, 4.0)};   // z -1.6..2.4, -1.2..2.8
-    const std::vector<uint8_t> kinds = {0, 0, kKindStatic};
-    CHECK(da::mergeDuplicates(v, mp, op, 20.0, &kinds).empty() && v.size() == 2, "static kind merged past max_ext");
-    CHECK(da::mergeDuplicates(v, mp, op, 20.0).size() == 1, "small objects (averaged) not merged");
-  }
-  {  // 병합 끄기
-    std::vector<MapObject> v = {obj(1, 3, 2, 1, 0.4, 1, 1, 1), obj(2, 3, 2, 1, 0.4, 1, 1, 1)};
-    da::MergeParams off = mp; off.enable = false;
-    CHECK(da::mergeDuplicates(v, off, op, 20.0).empty() && v.size() == 2, "disabled but merged");
-  }
-  {  // 점 구름: 합친 뒤 남은 물체의 점이 두 물체 것의 합집합
-    std::vector<MapObject> v = {obj(1, 3, 2, 1, 0.4, 1.2, 0.8, 0.8, 4), obj(2, 3, 2, 1, 0.4, 1.2, 0.8, 0.8, 4)};
-    const float a[6] = {2.0f, 1.0f, 0.3f, 2.2f, 1.0f, 0.3f}, b[6] = {2.4f, 1.1f, 0.3f, 2.0f, 1.0f, 0.3f};   // 한 점은 같은 복셀
-    v[0].cloud.add(a, nullptr, 2, 0.02, 4000, 1.0);
-    v[1].cloud.add(b, nullptr, 2, 0.02, 4000, 2.0);
-    da::mergeDuplicates(v, mp, op, 20.0);
-    CHECK(v.size() == 1 && v[0].cloud.size() == 3, "cloud points %zu (want 3: one shared voxel)", v.empty() ? 0 : v[0].cloud.size());
-  }
-  if (g_fail) { std::printf("test_merge: %d failed\n", g_fail); return 1; }
-  std::printf("  ok\n");
-  return 0;
+  std::printf(g_fail ? "FAILED %d\n" : "ok\n", g_fail);
+  return g_fail ? 1 : 0;
 }
