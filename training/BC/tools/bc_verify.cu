@@ -33,7 +33,9 @@ static std::vector<T_> dl(const T_* d, size_t n) {
 static std::vector<double> bfv(const std::vector<uint16_t>& v) { std::vector<double> o(v.size()); for (size_t i = 0; i < v.size(); ++i) o[i] = bf2f(v[i]); return o; }
 static std::vector<double> fv(const std::vector<float>& v) { return std::vector<double>(v.begin(), v.end()); }
 
-static std::string g_teacher = std::string(std::getenv("HOME") ? std::getenv("HOME") : "") + "/ra_ppoout/g5/t4/on_s1/ckpt_final.bin";
+// 교사 체크포인트: --teacher > $RA_CHECKPOINTS/ppo/teacher.bin (기본 data/checkpoints — 이 파일에서 세 칸 위가 저장소)
+static std::string ckpt_root() { const char* e = std::getenv("RA_CHECKPOINTS"); if (e && *e) return e; std::string f = __FILE__; for (int i = 0; i < 4; ++i) f = f.substr(0, f.find_last_of('/')); return f + "/data/checkpoints"; }
+static std::string g_teacher = ckpt_root() + "/ppo/teacher.bin";
 static std::string g_text = "";
 static bool g_lite = false;
 static bool g_act8 = false;    // --act8: 행동 8 모두 학습(act_mask 0xff, VLA_INPUT 5절)
@@ -60,7 +62,7 @@ static BcConfig small_cfg(uint64_t seed, int graphs) {
   if (g_gdrop) c.goal_drop = 0.5f;
   if (g_txt) c.text = 1;
   if (g_stage >= 0) c.stage = g_stage;
-  if (g_raug) { c.render_aug = 1; c.ra_color = 0.8f; c.ra_light = 0.8f; c.ra_expo = 0.8f; c.render_team_mix = 0.25f; }
+  if (g_raug) { c.render_aug = 1; c.ra_color = 0.8f; c.ra_light = 0.8f; c.ra_expo = 0.8f; c.render_team_mix = 0.25f; }   // paths-ok (ra_ = render_aug 필드)
   if (g_arch1 && !g_lite) { c.arch = 1; c.tf_d = 128; c.tf_layers = 2; c.tf_heads = 2; c.tf_mlp = 256; c.tf_elayers = 2; }
   if (g_aug) {
     c.aug_on = 1; c.aug_vel_sigma = 0.05f; c.aug_prev_drop = 0.1f; c.aug_prev_sigma = 0.05f;

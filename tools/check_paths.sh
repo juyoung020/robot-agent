@@ -4,7 +4,7 @@
 #   tools/check_paths.sh --staged   # 이번 커밋에서 새로 더한 줄만(pre-commit 훅이 씀)
 # 걸리는 것: ~/ · $HOME/ · /home/<누구>/ 경로, behavior-2026, ra_*·realbag_build*·sgrt_build* 폴더 이름(뒤에 / 나 끝이 오는 것만 — ra_paths.h 같은 파일 이름은 통과).
 # 경로는 config/paths.env 변수(RA_ROOT RA_BUILD RA_MODELS RA_DATASETS B1K_ROOT …)로 읽을 것.
-# 안 보는 것: *.md·docs/·archive/·refs/·src/behavior-2026(역사·설명), config/ 자신, 이 도구와 훅, conda 환경($HOME/miniconda3 · ~/.config 설정).
+# 안 보는 것: *.md·docs/·archive/·refs/(역사·설명), config/ 자신, 이 도구와 훅, conda 환경($HOME/miniconda3 · ~/.config 설정).
 # 한 줄만 예외로 하려면 그 줄에 `paths-ok` 를 적는다.
 cd "$(git rev-parse --show-toplevel)" || exit 2
 PAT='(~|\$HOME|\$\{HOME\}|/home/[a-z][a-z0-9_-]*)/|behavior-2026|(^|[^A-Za-z0-9_])(ra_[a-z0-9_]+|realbag_build[a-z0-9_]*|sgrt_build[a-z0-9_]*)(/|$|[[:space:]"'\''])'

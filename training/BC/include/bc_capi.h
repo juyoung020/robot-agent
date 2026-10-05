@@ -57,7 +57,7 @@ typedef struct BcConfig {
   float ra_expo;        /* 노출·대비·채널 이득 흔들기 세기(0..1) */
   float render_team_mix;   /* 팀 기본 설정(튕김 1·반사 1·잡음 제거 4)으로 그릴 표본 비율(0 = 싼 설정만) */
   /* ---- E2 BEHAVIOR 집 장면(stage 3, 커리큘럼 B1–B3): 장면 묶음·커리큘럼 값(ppo_capi.h PpoBCurr 와 같은 배치 = env bsc::BCurr). 영상 학생은 아직 안 됨(렌더가 상자 방만) ---- */
-  int32_t beh;          /* 1 = 장면 묶음(~/ra_b1k)을 만들어 환경·지도에(stage 3 이면 늘) */
+  int32_t beh;          /* 1 = 장면 묶음($RA_B1K_SCENES)을 만들어 환경·지도에(stage 3 이면 늘) */
   int32_t map_nav_k;    /* 지도 다가가기 거리장 주기(0 = 10) */
   float b_p1, b_p2;     /* B1·B2 비율(나머지 B3) */
   uint32_t b_scene_mask;   /* 0 = 모든 장면 */
