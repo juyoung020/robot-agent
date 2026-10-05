@@ -3,9 +3,10 @@
 //
 //   realbag_run <stream dir>[,<stream dir>…] <out dir> [옵션]
 //     --robot limo_omx|r1pro   scenemap 로봇 매개변수(기본 limo_omx — 우리 로봇의 SLAM·몸 크기 설정)
-//     --pose slam|odom|gt|carto 자세 원천(기본 slam = 바퀴 오도메트리 적분 + 깊이 가상 스캔 맞추기). carto = Cartographer(../../slam_carto,
-//                              2D 라이다 scans.bin + 바퀴 오도메트리, bag2stream.py --scan-only) 자세를 영상마다 sm_push_ext_pose(SM_POSE_EXT).
-//                              --carto-config <lua>(기본 openloris → openloris_hokuyo.lua), 끝에 <out>/carto_map.pgm·metrics.json "carto". gt = 정답 베이스 자세(여러 판을
+//     --pose carto|odom|gt     자세 원천(기본 carto = Cartographer(../../slam_carto): 2D 라이다 scans.bin + 바퀴 오도메트리(bag2stream.py
+//                              --scan-only) → 영상마다 sm_push_ext_pose(SM_POSE_EXT). slam = carto(옛 이름 — 깊이 맞추기 slam2d 는 10-06 archive).
+//                              스트림에 scans.bin 이 없으면 경고하고 odom. --carto-config <lua>(기본 openloris → openloris_hokuyo.lua),
+//                              끝에 <out>/carto_map.pgm·metrics.json "carto". gt = 정답 베이스 자세(여러 판을
 //                              한 지도에 이을 때 — 판 사이 재위치 추정이 없으므로). slam·odom 에서도 정답은 진단(sm_get_pose_diag)에만 넣는다
 //     --det fastsam|yolo|none  검출(기본 fastsam = 이름 없는 분할 엔진 + SigLIP 2 이름(dom_bench_det --classify 와 같은 길). 분할 엔진 기본은
 //                              ObjectSAM(YOLO26n 학생, yolo26n-seg-obj-416.plan — objprob_front.hpp kDefaultEngine), 원래 FastSAM-s 는
@@ -30,6 +31,7 @@
 //
 // 쓰는 것(<out>/): memory/(sm_save_dsg — sgview 가 읽음, 1 s 마다), traj.csv(프레임마다 추정·오도메트리·정답 카메라 xy), objects.csv(노드 전부, structural 열), walls.csv(scenemap 벽 선분),
 //   events.csv(새 물체·사라짐·옮겨짐·지움, 판 번호), metrics.json(ATE·지도·물체 수), stdout 요약.
+#include "ra_paths.h"
 #include <zlib.h>
 
 #include <chrono>
@@ -270,11 +272,10 @@ struct Detector {
     if (mode == "none") return true;
     namer = namer_in.empty() ? (mode == "fastsam" ? "siglip" : "engine") : namer_in;
     if (mode == "fastsam" && namer != "siglip") { std::fprintf(stderr, "fastsam needs --namer siglip\n"); return false; }
-    const std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
     std::string engine = engine_in;
     if (engine.empty())
-      engine = home + (mode == "yolo" ? "/ovdet_models/archive/x86_sm120/yolo26s-seg-416.plan"   // yolo: 비교용, 보관 엔진(2026-10-05)
-                                      : std::string("/ovdet_models/x86_sm120/") + kDefaultEngine);
+      engine = ra::models() + (mode == "yolo" ? "/archive/x86_sm120/yolo26s-seg-416.plan"   // yolo: 비교용, 보관 엔진(2026-10-05)
+                                      : std::string("/x86_sm120/") + kDefaultEngine);
     engine_path = engine;
     char err[2048] = {0};
     OvdConfig oc;
@@ -503,16 +504,15 @@ const char* stateName(int s) { return s == SM_SEEN ? "seen" : s == SM_GONE ? "go
 
 int main(int argc, char** argv) {
   if (argc < 3) {
-    std::fprintf(stderr, "usage: realbag_run <stream dir>[,<stream dir>...] <out dir> [--robot limo_omx|r1pro] [--pose slam|odom|gt] "
+    std::fprintf(stderr, "usage: realbag_run <stream dir>[,<stream dir>...] <out dir> [--robot limo_omx|r1pro] [--pose carto|odom|gt] "
                          "[--det fastsam|yolo|none] [--namer siglip|engine] [--det-every 3] [--dump f.gz|--load f.gz] [--live host:port] [--rate 1] [--sg run_dir] "
                          "[--ref-map memdir] [--snap-at t,..] [--frames N] [--objprob [--label-prior f.json]] [--inspect]\n");
     return 2;
   }
-  const std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
   std::string carto_config;
-  std::string robot = "limo_omx", pose = "slam", det_mode = "fastsam", namer, engine, dump_path, load_path, live, sg_run, ref_map, snap_at;
-  std::string clip_plan = home + "/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan";
-  std::string labels_dir = home + "/embed_work/labels/objects-v1";
+  std::string robot = "limo_omx", pose = "carto", det_mode = "fastsam", namer, engine, dump_path, load_path, live, sg_run, ref_map, snap_at;
+  std::string clip_plan = ra::models() + "/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan";
+  std::string labels_dir = ra::labels();
   int det_every = 3;
   long max_frames = 1L << 40;
   double rate = 1.0, gap = 5.0, save_s = 1.0;
@@ -634,7 +634,13 @@ int main(int argc, char** argv) {
     }
   }
   if (inspect) sm_set_inspect(c, 1);
-  sm_set_pose_mode(c, pose == "gt" ? SM_POSE_GT : pose == "odom" ? SM_POSE_ODOM : pose == "carto" ? SM_POSE_EXT : SM_POSE_SLAM);
+  if (pose == "slam") pose = "carto";
+  if (pose == "carto" && streams.size() == 1 && !(streams[0].have_bl && std::filesystem::exists(streams[0].dir + "/scans.bin"))) {
+    std::fprintf(stderr, "[carto] %s has no 2D lidar (scans.bin/T_bl, bag2stream.py --scan-only) -> --pose odom\n", streams[0].dir.c_str());
+    pose = "odom";
+  }
+  if (pose != "carto" && pose != "odom" && pose != "gt") { std::fprintf(stderr, "--pose carto|odom|gt (slam2d is archived)\n"); return 2; }
+  sm_set_pose_mode(c, pose == "gt" ? SM_POSE_GT : pose == "odom" ? SM_POSE_ODOM : SM_POSE_EXT);
   // Cartographer(--pose carto): 스캔 + 바퀴 오도메트리 → 영상마다 자세(sm_push_ext_pose)
   std::vector<ScanRec> scans;
 #ifdef RB_HAVE_CARTO

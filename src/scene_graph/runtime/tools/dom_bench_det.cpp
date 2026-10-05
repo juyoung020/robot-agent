@@ -11,6 +11,7 @@
 //                 [--classify] [--clip plan] [--labels dir] [--dump dets.gz | --load dets.gz]
 //     --dump  검출·이름(이름 표 포함)을 프레임마다 gzip 파일로 남김. --load 는 그것을 읽어 GPU 없이 scenemap 만 다시 돌림
 //             (objmap 규칙 고치기·매개변수 비교용 — 검출은 같은 것)
+#include "ra_paths.h"
 #include <zlib.h>
 
 #include <chrono>
@@ -121,10 +122,9 @@ int main(int argc, char** argv) {
                  "[--clip plan] [--labels dir] [--dump dets.gz | --load dets.gz]\n");
     return 2;
   }
-  const std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
-  std::string engine = home + "/ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan";   // ObjectSAM(YOLO26n 학생). 원래 FastSAM-s = --engine …/FastSAM-s-416.plan
-  std::string clip_plan = home + "/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan";
-  std::string labels_dir = home + "/embed_work/labels/objects-v1";
+  std::string engine = ra::models() + "/x86_sm120/yolo26n-seg-obj-416.plan";   // ObjectSAM(YOLO26n 학생). 원래 FastSAM-s = --engine …/FastSAM-s-416.plan
+  std::string clip_plan = ra::models() + "/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan";
+  std::string labels_dir = ra::labels();
   float conf = 0.25f;
   int every = 1, max_frames = 1 << 30;
   bool classify = false;

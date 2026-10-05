@@ -1,4 +1,5 @@
 // sgrt_clip.hpp 구현.
+#include "ra_paths.h"
 #include "sgrt_clip.hpp"
 
 #include <algorithm>
@@ -13,10 +14,6 @@ namespace fs = std::filesystem;
 
 namespace sgrt_clip {
 namespace {
-std::string homePath(const char* rel) {
-  const char* h = std::getenv("HOME");
-  return std::string(h ? h : "") + "/" + rel;
-}
 double usSince(std::chrono::steady_clock::time_point t) {
   return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t).count();
 }
@@ -38,7 +35,7 @@ bool ClipMem::init(const std::string& out_dir) {
   const char* e = std::getenv("SGRT_CLIP");
   if (!e || !*e || std::string(e) == "0") return false;
   std::string engine = e;
-  if (engine == "1") engine = homePath("ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan");
+  if (engine == "1") engine = ra::models() + "/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan";
   sgc_config c;
   sgc_default_config(&c);
   c.engine = engine.c_str();
@@ -50,9 +47,9 @@ bool ClipMem::init(const std::string& out_dir) {
     return false;
   }
   cache_ = new sgclip::NameCache();
-  std::string ldir = std::getenv("SGRT_LABELS") ? std::getenv("SGRT_LABELS") : homePath("embed_work/labels/objects-v1");
+  std::string ldir = std::getenv("SGRT_LABELS") ? std::getenv("SGRT_LABELS") : ra::labels();
   std::string sample = std::getenv("SGC_IMG_SAMPLE") ? std::getenv("SGC_IMG_SAMPLE")
-                                                     : homePath("ovdet_models/x86_sm120/siglip2_b32/img_sample_lvis10k.f16");
+                                                     : ra::models() + "/x86_sm120/siglip2_b32/img_sample_lvis10k.f16";
   if (!fs::exists(sample)) sample.clear();
   const std::string idx = out_dir + "/cache/index";
   loader_ = std::thread([this, ldir, idx, sample] {   // 색인을 처음 만들면 1 s 안팎 — 스텝을 막지 않게

@@ -7,6 +7,7 @@
 //     ftfy·html 풀기는 안 함(질의는 평범한 글).
 //   모으기: 토큰 번호 → siglip2_b32_tokemb.f16 의 줄(FP16 → FP32). 파일은 mmap(질의 하나가 ≤ 64 줄만 건드림).
 //   엔진: tok_emb N×64×768 FP32 → emb N×768(엔진 안에서 L2, FP16 출력이면 여기서 다시 정규화).
+#include "ra_paths.h"
 #include <NvInfer.h>
 #include <NvInferVersion.h>
 #include <cuda_runtime.h>
@@ -118,7 +119,7 @@ struct Mmap {
 const char* defaultDir() {
   static std::string d;
   if (const char* e = std::getenv("SGC_TEXT_DIR")) d = e;
-  else d = std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/ovdet_models/x86_sm120/siglip2_b32";
+  else d = ra::models() + "/x86_sm120/siglip2_b32";
   return d.c_str();
 }
 

@@ -1,4 +1,4 @@
-# libsgrt.so — ovdet(분할 엔진 TensorRT, 기본 ObjectSAM + SigLIP 2 objprob) + scenemap(slam2d·objmap·Spark-DSG 저장) 을 한 C ABI 로 (include/sgrt.h).
+# libsgrt.so — ovdet(분할 엔진 TensorRT, 기본 ObjectSAM + SigLIP 2 objprob) + slam_carto(Cartographer 자세) + scenemap(격자·objmap·Spark-DSG 저장) 을 한 C ABI 로 (include/sgrt.h).
 #   cmake -S src/scene_graph/runtime -B ~/sgrt_build && cmake --build ~/sgrt_build -j
 cmake_minimum_required(VERSION 3.18)
 # CUDA: ovdet 과 같은 툴킷(12.8, sm_120). best view 자르기 커널(src/crop.cu)
@@ -6,6 +6,10 @@ set(OVDET_CUDA_ROOT "/usr/local/cuda-12.8" CACHE PATH "CUDA toolkit root")
 set(CMAKE_CUDA_COMPILER ${OVDET_CUDA_ROOT}/bin/nvcc)
 set(CMAKE_CUDA_ARCHITECTURES 120 CACHE STRING "GPU architectures")
 project(sgrt LANGUAGES CXX CUDA)
+# 저장소 안 기본 경로(common/ra_paths.h): models/ovdet, data/embed_work/labels — config/paths.env 와 같은 규칙
+get_filename_component(RA_ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+add_compile_definitions(RA_ROOT_DIR="${RA_ROOT_DIR}")
+include_directories(${CMAKE_CURRENT_LIST_DIR}/../common)
 set(CUDAToolkit_ROOT ${OVDET_CUDA_ROOT})
 find_package(CUDAToolkit REQUIRED)
 set(CMAKE_CXX_STANDARD 20)
@@ -17,7 +21,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../scenemap ${CMAKE_BINARY_DIR}/sce
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../ovdet ${CMAKE_BINARY_DIR}/ovdet)
 # 물체 영상 임베딩(SigLIP 2 TensorRT + 라벨 찾기, src/scene_graph/clip) — SGRT_CLIP 이면 켜짐
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../clip ${CMAKE_BINARY_DIR}/clip)
-# Cartographer 자세 원천(../slam_carto, SGRT_POSE=slam|carto 기본). Cartographer 가 설치돼 있지 않으면 없이 빌드(slam2d 만)
+# Cartographer 자세 원천(../slam_carto, SGRT_POSE=carto 기본). Cartographer 가 설치돼 있지 않으면 없이 빌드(자세 = 오도메트리만)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../slam_carto ${CMAKE_BINARY_DIR}/slam_carto EXCLUDE_FROM_ALL)
 
 add_library(sgrt_crop STATIC src/crop.cu)

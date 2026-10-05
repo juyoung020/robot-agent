@@ -14,8 +14,8 @@ closed/open-vocabulary YOLO engines (~/ovdet_models/archive, old name rules). SG
 
 The head RGB stays on the GPU (ovdet reads device memory); depth is copied to host only on keyframe steps.
 
-Pose source (env SGRT_POSE, read by libsgrt): slam = carto (default: Cartographer 2D lidar + wheel odometry, src/scene_graph/slam_carto),
-slam2d (old scenemap depth scan matching, fallback until Cartographer is verified), odom, gt.
+Pose source (env SGRT_POSE, read by libsgrt): carto (default: Cartographer 2D lidar + wheel odometry, src/scene_graph/slam_carto;
+"slam" is the same), odom, gt. The old scenemap depth scan matcher (slam2d) is archived (archive/src/scene_graph/scenemap).
 Sim 2D lidar (env SGRT_LIDAR, default 1 for LIMO): the glue ray-casts the LIMO X2L lidar (src/sim/lidar/limo_lidar.py, 6 Hz,
 500 rays, 0.12-8 m, URDF laser_link) and hands each scan to libsgrt (sgrt_push_scan) before the step; SGRT_LIDAR=0 turns it off.
 The glue pushes the simulator's ground-truth robot base pose (robot.get_position_orientation(), world frame) every step

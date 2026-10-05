@@ -1,4 +1,5 @@
 // sgrt 구현(include/sgrt.h): ovdet + scenemap + 주기 저장을 한 C ABI 로.
+#include "ra_paths.h"
 #include "sgrt.h"
 
 #include <cuda_runtime.h>
@@ -222,10 +223,6 @@ int gatherCb(void* user, const int32_t* xy, int32_t n, uint8_t* rgb) {
   c->s->n_points += n;
   return rc;
 }
-std::string homePath(const std::string& rel) {
-  const char* h = std::getenv("HOME");
-  return std::string(h ? h : ".") + "/" + rel;
-}
 // objprob 켜기 판단·SigLIP 2·매개변수 파일. SGRT_OBJPROB = 1 | 0 | 없음(어휘가 'object' 하나인 분할 엔진이면 켬)
 bool objprobInit(sgrt* s, char* err, size_t err_len) {
   const char* e = std::getenv("SGRT_OBJPROB");
@@ -237,9 +234,9 @@ bool objprobInit(sgrt* s, char* err, size_t err_len) {
     return true;
   }
   const char* cp = std::getenv("SGRT_OBJPROB_CLIP");
-  const std::string clip_plan = cp && *cp ? cp : homePath("ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan");
+  const std::string clip_plan = cp && *cp ? cp : ra::models() + "/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan";
   const char* lp = std::getenv("SGRT_LABELS");
-  const std::string ldir = lp && *lp ? lp : homePath("embed_work/labels/objects-v1");
+  const std::string ldir = lp && *lp ? lp : ra::labels();
   sgc_config cc;
   sgc_default_config(&cc);
   cc.engine = clip_plan.c_str();
@@ -407,10 +404,10 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
                  sm_proprio_dim(sm_get_robot(s->sm)), smj.c_str());
   {
     const char* pm = std::getenv("SGRT_POSE");
-    const std::string m = pm && *pm ? pm : "slam";
-    const int mode = m == "gt" ? SM_POSE_GT : m == "odom" ? SM_POSE_ODOM : m == "slam2d" ? SM_POSE_SLAM : SM_POSE_EXT;
+    const std::string m = pm && *pm ? pm : "carto";
+    const int mode = m == "gt" ? SM_POSE_GT : m == "odom" ? SM_POSE_ODOM : SM_POSE_EXT;
     if (mode == SM_POSE_EXT && m != "slam" && m != "carto")
-      std::fprintf(stderr, "[sgrt] SGRT_POSE=%s unknown -> Cartographer (slam|carto|slam2d|odom|gt)\n", m.c_str());
+      std::fprintf(stderr, "[sgrt] SGRT_POSE=%s unknown -> carto (carto|odom|gt; slam = carto; slam2d is archived)\n", m.c_str());
     sgrt_set_pose_mode(s, mode);
   }
   if (const char* pl = std::getenv("SGRT_MAP_POLICY")) sm_set_map_update(s->sm, std::atoi(pl) ? 1 : 0, 0);
@@ -468,7 +465,7 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
       std::fprintf(stderr, "[sgrt] recording inputs to %s\n", rp);
     }
   }
-  std::fprintf(stderr, "[sgrt] pose mode %d (0 slam2d, 1 odom, 2 gt, 3 Cartographer), image lag %d\n", sm_get_pose_mode(s->sm), s->image_lag);
+  std::fprintf(stderr, "[sgrt] pose mode %d (1 odom, 2 gt, 3 Cartographer), image lag %d\n", sm_get_pose_mode(s->sm), s->image_lag);
   return s;
 }
 
@@ -598,7 +595,7 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
     } else if (!s->n_scans && !s->warned_noscan && s->step > 90) {
       s->warned_noscan = true;
       std::fprintf(stderr, "[sgrt] Cartographer: no lidar scans (sgrt_push_scan) after %lld steps -> pose = wheel odometry only "
-                           "(SGRT_POSE=slam2d for the old depth scan matcher)\n", (long long)s->step);
+                           "(no SLAM: feed the 2D lidar)\n", (long long)s->step);
     }
   }
 #endif
@@ -657,7 +654,7 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
     s->n_det = d ? d->n : 0;
   }
   else if (rc == 0 && !rgb && depth_m && w > 0 && h > 0) {
-    // 지도 전용 스텝(SGRT_MAP_EVERY): 깊이만 있고 검출 키프레임이 아님 — slam2d 지도만 갱신(스캔 ≈ 0.35 ms + 격자 ≈ 0.06 ms).
+    // 지도 전용 스텝(SGRT_MAP_EVERY): 깊이만 있고 검출 키프레임이 아님 — 격자만 갱신(스캔 ≈ 0.35 ms + 격자 ≈ 0.06 ms).
     // 물체 지도·검출·임베딩은 그대로 키프레임(kf_every)에서만. 지도(와 스트림 지도 영역)가 키프레임 주기가 아니라 이 주기로 갱신된다.
     sm_image si{};
     si.stamp = im_stamp;
@@ -785,9 +782,10 @@ sm_ctx* sgrt_scenemap(sgrt* s) { return s ? s->sm : nullptr; }
 int sgrt_set_pose_mode(sgrt* s, int32_t mode) {
   if (!s) return -1;
 #ifdef SGRT_HAVE_CARTO
+  if (mode == SM_POSE_SLAM) mode = SM_POSE_EXT;   // 옛 값(slam2d, archive) = Cartographer
   if (mode == SM_POSE_EXT && sm_get_robot(s->sm) != SM_ROBOT_LIMO_OMX) {
-    std::fprintf(stderr, "[sgrt] Cartographer needs LIMO wheel odometry (proprio 0-2) -> slam2d for this robot\n");
-    mode = SM_POSE_SLAM;
+    std::fprintf(stderr, "[sgrt] Cartographer needs LIMO wheel odometry (proprio 0-2) -> odom for this robot (R1 records)\n");
+    mode = SM_POSE_ODOM;
   }
   if (mode == SM_POSE_EXT && !s->carto) {
     sc_config cc = sc_default_config();
@@ -798,8 +796,8 @@ int sgrt_set_pose_mode(sgrt* s, int32_t mode) {
     char er[256] = {0};
     s->carto = sc_create(&cc, er, sizeof er);
     if (!s->carto) {
-      std::fprintf(stderr, "[sgrt] Cartographer: %s -> slam2d\n", er);
-      mode = SM_POSE_SLAM;
+      std::fprintf(stderr, "[sgrt] Cartographer: %s -> odom\n", er);
+      mode = SM_POSE_ODOM;
     } else {
       std::fprintf(stderr, "[sgrt] Cartographer pose source (%s, laser %.3f %.3f %.3f yaw %.3f)\n", cc.config_name ? cc.config_name : "limo_x2l.lua",
                    cc.laser_xyz[0], cc.laser_xyz[1], cc.laser_xyz[2], cc.laser_yaw);
@@ -807,9 +805,9 @@ int sgrt_set_pose_mode(sgrt* s, int32_t mode) {
   }
   if (mode != SM_POSE_EXT && s->carto) { sc_destroy(s->carto); s->carto = nullptr; }
 #else
-  if (mode == SM_POSE_EXT) {
-    std::fprintf(stderr, "[sgrt] built without slam_carto (tools/build_all.sh cartographer sgrt) -> slam2d\n");
-    mode = SM_POSE_SLAM;
+  if (mode == SM_POSE_EXT || mode == SM_POSE_SLAM) {
+    std::fprintf(stderr, "[sgrt] built without slam_carto (tools/build_all.sh cartographer sgrt) -> odom\n");
+    mode = SM_POSE_ODOM;
   }
 #endif
   return sm_set_pose_mode(s->sm, mode);
