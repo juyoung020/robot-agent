@@ -3,7 +3,7 @@
 // 스텝마다 환경(DeviceEnv::download)·지도(DeviceMap::download)를 내려받는다 — ppo_verify eval 의 충돌 다시 보기와 같은 방식. 갱신은 하지 않는다.
 //
 //   record_ppo --ckpt CKPT --out RUN_DIR [--config config.json] [--split eval] [--episodes 8] [--n-env 64] [--track 8]
-//              [--stage 2] [--use-map 2] [--goal-from-map 1] [--map 0.2 0.6] [--seed 7] [--stochastic] [--max-steps 3000]
+//              [--stage 2] [--use-map 2] [--goal-from-map 1] [--map 0 0] [--pnp B4 B5 B6] [--seed 7] [--stochastic] [--max-steps 3000]
 #include <cuda_runtime.h>
 
 #include <cstdio>
@@ -14,8 +14,12 @@
 #include <string>
 #include <vector>
 
+#include <memory>
+
 #include "g1_rec.h"
 #include "trainer.h"
+#include "env_beh.h"
+#include "beh_rec.h"   // 위 env·g1_rec 헤더 뒤에
 
 #define RCK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) { std::fprintf(stderr, "CUDA %s at %s:%d\n", cudaGetErrorString(e_), __FILE__, __LINE__); std::exit(1); } } while (0)
 
@@ -34,7 +38,8 @@ static double jget(const std::string& t, const char* key, double d) {
 int main(int argc, char** argv) {
   std::string ckpt, out, cfgp, split = "eval";
   int episodes = 8, N = 64, track = 8, stage = 2, use_map = -1, goal = -1, max_steps = 3000;
-  float p0 = 0.2f, p1 = 0.6f;
+  float p0 = 0.f, p1 = 0.f;   // 처음 지도 C0·C1 비율 — 기본 빈 지도 C2(학습과 같음, 10-06 결정)
+  float pnp[3] = {0.f, 0.f, 0.f};   // 잡기 물리 판 B4·B5·B6 비율(stage 3)
   uint64_t seed = 7;
   bool stochastic = false;
   std::string tag;
@@ -46,7 +51,8 @@ int main(int argc, char** argv) {
     if (s == "--ckpt") ckpt = nx(); else if (s == "--out") out = nx(); else if (s == "--config") cfgp = nx(); else if (s == "--split") split = nx();
     else if (s == "--episodes") episodes = std::stoi(nx()); else if (s == "--n-env") N = std::stoi(nx()); else if (s == "--track") track = std::stoi(nx());
     else if (s == "--stage") stage = std::stoi(nx()); else if (s == "--use-map") use_map = std::stoi(nx()); else if (s == "--goal-from-map") goal = std::stoi(nx());
-    else if (s == "--map") { p0 = std::stof(nx()); p1 = std::stof(nx()); } else if (s == "--seed") seed = std::stoull(nx());
+    else if (s == "--map") { p0 = std::stof(nx()); p1 = std::stof(nx()); }
+    else if (s == "--pnp") { for (float& x : pnp) x = std::stof(nx()); } else if (s == "--seed") seed = std::stoull(nx());
     else if (s == "--stochastic") stochastic = true; else if (s == "--max-steps") max_steps = std::stoi(nx());
     else if (s == "--no-sg") no_sg = true; else if (s == "--tag") tag = nx(); else if (s == "--keep-fail") keep_fail = std::stoi(nx());
   }
@@ -65,6 +71,8 @@ int main(int argc, char** argv) {
   c.act_dims = (int)jget(cfg, "act_dims", 2); c.goal_from_map = goal;
   c.map_p0 = p0; c.map_p1 = p1; c.map_kmin = 1; c.map_kmax = 8; c.map_reveal_r = 1.5f;
   c.fp8 = (int)jget(cfg, "fp8", 0);
+  c.bcurr.p4 = pnp[0]; c.bcurr.p5 = pnp[1]; c.bcurr.p6 = pnp[2];
+  if (pnp[0] + pnp[1] + pnp[2] > 0.f) c.bcurr.phys = 8;   // PF_FEAS: 잡기 가능 짝에서만(ppo_pnp 의 feas 1 과 같음)
   ppo::Trainer tr(c);
   // 체크포인트(ppo_verify eval 과 같은 배치: 머리 64 B + 변수·Adam m·v + 학습 상태). 결정적 정책 = log σ → −12
   std::vector<uint8_t> b(64 + sizeof(float) * 3 * tr.lay.total + sizeof(net::TrainState));
@@ -92,6 +100,21 @@ int main(int argc, char** argv) {
   std::vector<int> iv;
   std::vector<uint64_t> rg;
   gmap::MapHost mh;
+  std::unique_ptr<rec::BehRec> beh;   // BEHAVIOR 판(stage 3): 장면 머리 = 벽·창·가구·문 + 집을 물체·놓을 곳(beh_rec.h, record_bc 와 같음)
+  if (stage >= 3 && tr.scenes) {
+    R.sg = false;
+    R.skill = pnp[0] + pnp[1] + pnp[2] > 0.f ? "pick" : "approach";
+    R.home_prefix = "B";
+    beh = std::make_unique<rec::BehRec>(tr.scenes.get());
+    R.scene_fn = [&](int i) {
+      env::Soa hs{fs.data(), iv.data(), rg.data(), N};
+      env::BState b;
+      env::load_b(hs, i, b);
+      env::PState p;
+      env::load_p(hs, i, p);
+      return beh->scene_json(b, p);
+    };
+  }
   const int T = tr.T;
   for (int k = 0; k < max_steps && !R.done_enough(episodes, keep_fail); ++k) {
     const int t = k % T;
