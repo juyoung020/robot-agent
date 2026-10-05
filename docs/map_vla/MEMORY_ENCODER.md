@@ -90,6 +90,18 @@
 
 구현 기준: `training/vla/src/model.cu`(`VCfg::mem`), 검증 `tools/vla_verify.cu --mem`, 설계 [TRAINING_DESIGN](TRAINING_DESIGN.md) 2–3절.
 
+### 8.0 신경망 종류
+
+기억 인코더는 **트랜스포머**다(Perceiver 류): 잠재 질의가 교차 어텐션으로 물체 집합을 읽고, 자기 어텐션·피드포워드(SwiGLU)를 거치는 pre-norm(RMSNorm) 블록 2 개.
+
+| | 기억 인코더 | 그 뒤 몸통 | 전체 |
+|---|---|---|---|
+| 학생 RecallVLA | 트랜스포머(블록 2) | 트랜스포머(Qwen3.5-0.8B 24 층: Gated DeltaNet 18 + 풀 어텐션 6) | 트랜스포머 |
+| 교사 PPO(지금) | 없음(칸 16 → MLP → 평균·최댓값) | MLP(976 → 256 → 256 → 128) | MLP |
+| 교사 PPO(10-06 결정 뒤) | 트랜스포머(블록 2, 폭 64) | MLP | 트랜스포머 기억 인코더 + MLP 몸통 |
+
+활성 함수: 학생 GELU, 교사는 지금 ELU → 10-06 결정으로 GELU 로 통일(포팅 때).
+
 ### 8.1 구조 — Perceiver 류 잠재 교차 어텐션
 
 입력 집합 X = {x_1 … x_N}(N ≤ 256, 물체 칸 304 = 289 + 표시·편향)을 고정 크기 잠재 배열 Z ∈ R^{M×H}(M = 32, H = 1024)로 요약한다. Perceiver(Jaegle 외 2021)·Set Transformer 의 PMA(Lee 외 2019)와 같은 꼴이다.
