@@ -1,4 +1,4 @@
-"""Label table (~40k English object names + Korean names) -> ~/embed_work/labels/labels.jsonl
+"""Label table (~40k English object names + Korean names) -> $RA_EMBED_WORK/labels/labels.jsonl
 
 Sources (license):
   WordNet 3.1 nouns under artifact / food / plant / animal / natural_object / plant_part (WordNet licence, permissive)
@@ -10,11 +10,11 @@ One row per English name: {"i", "name", "synset", "src": [...], "ko": [...], "ko
 import os, sys, csv, json, re, collections
 from nltk.corpus import wordnet31 as wn
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import WORK
+from common import WORK, BENCH
 
 D = f'{WORK}/data'; OUT = f'{WORK}/labels'
 B1K = os.path.join(os.environ.get('B1K_ROOT', os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../third_party/BEHAVIOR-1K')), 'asset_pipeline/metadata/category_mapping.csv')
-CFG = '/home/juyoung/robot-agent/src/scene_graph/ovdet/config'
+CFG = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../src/scene_graph/ovdet/config')
 ROOTS = ['artifact.n.01', 'food.n.01', 'food.n.02', 'plant.n.02', 'animal.n.01', 'natural_object.n.01', 'plant_part.n.01']
 
 
@@ -55,7 +55,7 @@ def main():
         return ko.get(wn_id(s), [])
 
     # curated vocabularies first (their spelling wins)
-    _a = sys.argv; sys.argv = ['x']; sys.path.insert(0, os.path.expanduser('~/clip_bench'))
+    _a = sys.argv; sys.argv = ['x']; sys.path.insert(0, os.path.expanduser('$CLIP_BENCH'))
     import score as S
     sys.argv = _a
     for n in S.VOCAB: add(n, '', 'eval_vocab')

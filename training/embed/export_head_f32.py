@@ -1,6 +1,6 @@
 """Embed head h (train_head.py Head, depth 1) → raw FP32 file for the C++ appearance tool (training/BC/tools/app_head.cpp). OFFLINE.
 
-  ~/embed_venv/bin/python training/embed/export_head_f32.py [run=sb32_pe_300k]   # -> ~/embed_work/runs/<run>/head_h.f32
+  $EMBED_PY training/embed/export_head_f32.py [run=sb32_pe_300k]   # -> $RA_EMBED_WORK/runs/<run>/head_h.f32
 Order: ln.weight, ln.bias, blocks.0.0.weight [1024][768], blocks.0.0.bias, blocks.0.3.weight [768][1024], blocks.0.3.bias, out.weight [128][768], out.bias.
 """
 import sys, os, numpy as np, torch

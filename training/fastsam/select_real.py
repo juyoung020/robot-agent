@@ -1,6 +1,6 @@
 """실제 사진 고르기·받기: COCO(panoptic + LVIS) 학습·평가 이미지 목록, LVIS 학습 제외 범주, 이미지 받기, LVIS 주석 추리기.
 
-  ~/fastsam_venv/bin/python select_real.py [--n-indoor 9000 --n-other 3000 --val-indoor 1000 --val-other 500]
+  $FS_PY select_real.py [--n-indoor 9000 --n-other 3000 --val-indoor 1000 --val-other 500]
 
 실내 = panoptic 의 벽·바닥·천장 stuff 가 이미지의 10 % 이상. 평가는 COCO val2017 ∩ LVIS v1 val(LVIS 주석이 있는 것만).
 LVIS 제외 범주(heldout_lvis.txt): COCO 80 과 겹치지 않는 c·f 빈도 범주에서 120 개(시드 0) — 학습 라벨에서 지우고 평가의 'unseen'.

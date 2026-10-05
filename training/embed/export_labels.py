@@ -1,8 +1,8 @@
 """Write the runtime label table folder (format: training/embed/README.md "라벨 표 형식").
 
-  python export_labels.py --out ~/embed_work/labels/objects-v1 [--head <run>]
+  python export_labels.py --out $RA_EMBED_WORK/labels/objects-v1 [--head <run>]
 
-Inputs: ~/embed_work/labels/labels.jsonl + text_siglip2_b32.npy (encode_labels.py); with --head, also text128 from that
+Inputs: $RA_EMBED_WORK/labels/labels.jsonl + text_siglip2_b32.npy (encode_labels.py); with --head, also text128 from that
 run's P applied to text_<teacher>.npy (the 128-d head space).
 """
 import os, sys, json, hashlib, argparse, datetime, collections, numpy as np

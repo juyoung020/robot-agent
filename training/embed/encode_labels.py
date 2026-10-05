@@ -1,6 +1,6 @@
 """Teacher text embeddings for the label table (+ NLLB Korean fallback for names Wikidata did not cover).
 
-  python encode_labels.py pe_l14 siglip2_so400m        # -> ~/embed_work/labels/text_<key>.npy (FP16, L2-normalised)
+  python encode_labels.py pe_l14 siglip2_so400m        # -> $RA_EMBED_WORK/labels/text_<key>.npy (FP16, L2-normalised)
   python encode_labels.py --nllb                       # fills "ko" for rows without Wikidata Korean, ko_src="nllb"
 
 NLLB-200-distilled-600M is CC BY-NC 4.0: fine for research tables, replace for a commercial release.

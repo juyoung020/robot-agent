@@ -1,7 +1,7 @@
 // csv2run — 규약 이전에 돈 실행(ppo_run·bc_run 의 log.csv + config.json + events.txt/results.json)을 실행 폴더 규약으로 옮긴다.
 // 원본 폴더는 읽기만 하고, 새 폴더(--out 밑)에 run.json · progress.jsonl · evals/ 를 쓴다. 키 이름은 ppo_run/bc_run 의 runfolder.rs 와 같다.
 //
-//   csv2run --out ~/trainview_work/imported <실행 폴더> [<실행 폴더> …]
+//   csv2run --out data/trainview_work/imported <실행 폴더> [<실행 폴더> …]
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;

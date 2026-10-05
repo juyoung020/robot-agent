@@ -1,6 +1,6 @@
 """Export a trained head to ONNX (runtime: 768-d SigLIP 2 vector -> L2-normalised 128-d; first 64 = 64-d) + 128-d label table.
 
-  python export_head.py <run>      # -> ~/embed_work/runs/<run>/head128.onnx (opset 13, dynamic batch)
+  python export_head.py <run>      # -> $RA_EMBED_WORK/runs/<run>/head128.onnx (opset 13, dynamic batch)
 
 Graph = LayerNorm -> residual MLP (GELU erf) -> Linear -> L2 norm. Only MatMul/Add/Erf/ReduceMean/Div/Sqrt ops (TRT 8.2 ok).
 The input is the stored per-object vector itself (L2-normalised emb), so the head can run on the CPU too (~1.6 MFLOP).

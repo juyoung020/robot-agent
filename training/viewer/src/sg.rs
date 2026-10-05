@@ -1,7 +1,7 @@
 // 재생 탭의 sgview 화면 — **진짜 sgview**(src/scene_graph/sgview, 실시간에 쓰는 같은 바이너리·같은 서버 코드)를 쓴다. 흉내 내지 않는다.
 //
 //   판 = OmniGibson 기록에서 만든 <이름>.sg/ (stream.sgs = scenemap 이 보낸 sgview 스트림 + 시뮬 시각) 또는 GPU 환경 판 .trp(→ 같은 스트림 형식으로 한 번 바꿈).
-//   세션(브라우저 쿠키 sgsess)마다: sgview 프로세스 하나(--ingest) + sgs_play 하나(--ctl: 시간 조종은 보내는 쪽이 한다 — seek·pause·rate, behavior-2026 tools/realbag/sgs_play.cpp).
+//   세션(브라우저 쿠키 sgsess)마다: sgview 프로세스 하나(--ingest) + sgs_play 하나(--ctl: 시간 조종은 보내는 쪽이 한다 — seek·pause·rate, src/scene_graph/tools/realbag/sgs_play.cpp).
 //   iframe 이 부르는 sgview 경로(/sg/ → /, /stream·/api/*·/file/*)는 그 프로세스로 그대로 넘긴다(역프록시). 이 파일에 sgview 화면 코드는 없다.
 //   .trp 처럼 읽는 쪽 일(정책 지도 격자, 부모 화면 정보)만 여기서 한다. 동시에 sgview 는 MAX_PROCS 개, 오래 안 쓰면 끔.
 use crate::http::{self, Req};
@@ -600,7 +600,7 @@ fn b64(data: &[u8]) -> String {
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
-/// 지금 인지 소스(behavior-2026 서브모듈 src/scene_graph 의 scenemap·runtime·ovdet·clip·da 트리 해시) — og_replay.py pipeline_info 와 같은 식. 60 s 캐시
+/// 지금 인지 소스(robot-agent src/scene_graph 의 scenemap·runtime·ovdet·clip·da·slam_carto 트리 해시) — og_replay_lib.py pipeline_info 와 같은 식. 60 s 캐시
 pub fn pipeline_now() -> Value {
     static C: Mutex<Option<(Instant, Value)>> = Mutex::new(None);
     let mut g = C.lock().unwrap();
@@ -609,10 +609,10 @@ pub fn pipeline_now() -> Value {
             return v.clone();
         }
     }
-    let b26 = repo_root().join("src/behavior-2026");
-    let git = |a: &str| Command::new("git").arg("-C").arg(&b26).args(["rev-parse", a]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let root = repo_root();
+    let git = |a: &str| Command::new("git").arg("-C").arg(&root).args(["rev-parse", a]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
     let mut trees = serde_json::Map::new();
-    for d in ["scenemap", "runtime", "ovdet", "clip", "da"] {
+    for d in ["scenemap", "runtime", "ovdet", "clip", "da", "slam_carto"] {
         trees.insert(d.into(), json!(git(&format!("HEAD:src/scene_graph/{}", d))));
     }
     let v = json!({"git": git("HEAD"), "trees": trees});

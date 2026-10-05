@@ -1,6 +1,6 @@
 // og2sg — OmniGibson LIMO 탐사 한 판(sgrt 기록 rec.bin + 실행 폴더) → 학습 뷰어 재생용 "sgview 판"(<이름>.sg/ 폴더).
 //
-// sgview(장면 그래프 실시간 뷰어)가 그리는 것과 똑같게 보이도록, 기록을 scenemap(C ABI, behavior-2026 서브모듈 — 읽기만)으로 다시 돌리면서
+// sgview(장면 그래프 실시간 뷰어)가 그리는 것과 똑같게 보이도록, 기록을 scenemap(C ABI, src/scene_graph)으로 다시 돌리면서
 // scenemap 자신의 sgview 스트림(sm_stream_start: POSE · MAP_RECT · VIEW · JOINTS 프레임)을 켜고, 그 스트림을 이 프로세스가 소켓으로 받아
 // 시뮬 시각을 붙여 파일에 적는다. 재생(trainview /stream)은 이 프레임을 시각대로 다시 보낸다 — 그리기는 sgview 의 index.html 그대로.
 //

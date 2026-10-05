@@ -1,6 +1,6 @@
 """VLA name / instruction tables in the frozen 128-d embed space (VLA_INPUT.md 3·6·7절) — OFFLINE, HF cache only.
 
-  HF_HUB_OFFLINE=1 ~/embed_venv/bin/python training/embed/vla_tables.py [--out training/data/vla_v1]
+  HF_HUB_OFFLINE=1 $EMBED_PY training/embed/vla_tables.py [--out training/data/vla_v1]
 
 The 128-d space is the embed contract (README "목표와 구조"): P = frozen linear PE-Core L/14 text/image (1024) -> 128 from
 runs/sb32_pe_300k/head.pt. Names: l2(P · PE-L text(name, 4 templates)) — taken from objects-v1/text128_sb32_pe_300k.f16

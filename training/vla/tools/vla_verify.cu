@@ -36,7 +36,11 @@ using namespace rvla;
 #define CK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) { std::fprintf(stderr, "CUDA %s line %d\n", cudaGetErrorString(e_), __LINE__); std::exit(2); } } while (0)
 
 static std::string HOME() { const char* h = getenv("HOME"); return h ? h : "."; }
-static std::string QDIR() { return HOME() + "/robot-agent/training/model/Qwen3.5-0.8B"; }
+// 저장소 뿌리: $RA_ROOT, 없으면 이 파일 위치(training/vla/tools)에서 세 칸 위
+static std::string ROOT() { const char* r = getenv("RA_ROOT"); if (r && *r) return r; std::string f = __FILE__; for (int i = 0; i < 4; ++i) f = f.substr(0, f.find_last_of('/')); return f; }
+static std::string QDIR() { return ROOT() + "/training/model/Qwen3.5-0.8B"; }
+// 선택 문장 표(없으면 무작위 토큰): $RA_BUILD/vla/text/table.bin
+static std::string TABDIR() { const char* b = getenv("RA_BUILD"); return (b && *b ? std::string(b) : ROOT() + "/build") + "/vla/text/table.bin"; }
 static std::string SIGP() {
   return HOME() + "/.cache/huggingface/hub/models--timm--ViT-B-32-SigLIP2-256/snapshots/" +
          std::string("") ;
@@ -509,7 +513,7 @@ static int run_v67(bool real, int B, int Lmin) {
   Model m;
   std::string err;
   if (!m.init(c, real ? QDIR() : "", real ? sig_path() : "", &err)) { std::fprintf(stderr, "init %s\n", err.c_str()); return 2; }
-  TTab tt = load_tab(HOME() + "/ra_vla/text/table.bin");
+  TTab tt = load_tab(TABDIR());
   HB h;
   make_batch(h, m.c, real ? B : 2, real ? Lmin : 0, 3, real && tt.ok ? &tt : nullptr);
   cudaStream_t st;
@@ -952,7 +956,7 @@ static int run_bench(int B, int Lmin, bool novis, bool fp32opt, int steps, bool 
   o.init(oc, {&m.qp, &m.ap});
   if (novis) { o.bufs[1].skip0 = 0; o.bufs[1].skip1 = m.v_proj.off; }
   const size_t after_opt = used_bytes();
-  TTab tt = load_tab(HOME() + "/ra_vla/text/table.bin");
+  TTab tt = load_tab(TABDIR());
   HB h;
   make_batch(h, m.c, B, Lmin, 1, tt.ok ? &tt : nullptr);
   cudaStream_t st;

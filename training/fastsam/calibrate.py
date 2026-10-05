@@ -1,6 +1,6 @@
 """점수 문턱 맞추기를 가중치에 넣기: 분류 로짓 bias 에 b = logit(0.25) − logit(t) 를 더한다.
 
-  ~/fastsam_venv/bin/python calibrate.py <in.pt> <out.pt> --t 0.10
+  $FS_PY calibrate.py <in.pt> <out.pt> --t 0.10
 
 실행 엔진의 conf 0.25 가 원래 모델의 conf t 와 정확히 같아진다(시그모이드 앞 상수 이동 — 점수 순서가 그대로라
 NMS·마스크 중복 제거 결과도 문턱만 바꾼 것과 같다). 실행 코드·설정(conf 0.25)은 그대로 두고 꺼낼 수 있다.

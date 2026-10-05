@@ -1,6 +1,6 @@
-"""Eval harness on the CLIP study's eval set (~/clip_bench/evalset.json, 567 crops, read-only).
+"""Eval harness on the CLIP study's eval set ($CLIP_BENCH/evalset.json, 567 crops, read-only).
 
-  python evalset.py embed b32_openai mc2_s0 siglip2_so400m     # -> ~/embed_work/emb/eval_<key>.npz (views + text banks)
+  python evalset.py embed b32_openai mc2_s0 siglip2_so400m     # -> $RA_EMBED_WORK/emb/eval_<key>.npz (views + text banks)
   python evalset.py score b32_openai mc2_s0 siglip2_so400m     # zero-shot numbers with each model's own text tower
 
 Metrics reuse clip_bench/score.py definitions (VOCAB, Q, ok, retrieval) by import, so they match the study.

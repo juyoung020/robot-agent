@@ -9,7 +9,7 @@
       world.set_robot(st.x, st.y, st.yaw, st.q, st.qg); world.place_pick(st.pick)   # pick = (pos[3], quat[4]) 또는 None
       out = perc.step(si * dt, st, world, want_cam=...)   # out.rgb / out.wrist (np uint8) 또는 None, out.keyframe
   stats = perc.close()
-libsgrt 는 build_deps.sh 가 만든 $TRAINVIEW_DEPS/libsgrt.so(기본 ~/trainview_work/deps). 엔진·objprob 기본값은 runtime 소스 것(sgrt_glue ENGINE) — 여기서 정하지 않는다.
+libsgrt 는 build_deps.sh 가 만든 $TRAINVIEW_DEPS/libsgrt.so(기본 data/trainview_work/deps). 엔진·objprob 기본값은 runtime 소스 것(sgrt_glue ENGINE) — 여기서 정하지 않는다.
 """
 import hashlib
 import math
@@ -32,7 +32,8 @@ sys.path.insert(0, os.path.join(REPO, "config"))
 from paths import paths as _paths  # noqa: E402
 B1K = os.environ.get("B1K_ROOT") or _paths().get("B1K_ROOT", os.path.join(REPO, "third_party/BEHAVIOR-1K"))   # config/paths.env
 TI = os.path.join(B1K, "datasets/2026-challenge-task-instances")
-DEPS = os.environ.get("TRAINVIEW_DEPS", os.path.expanduser("~/trainview_work/deps"))   # build_deps.sh 가 robot-agent 소스에서 만들어 링크해 둔 곳
+TV_WORK = os.environ.get("RA_TRAINVIEW_WORK") or os.path.join(REPO, "data/trainview_work")
+DEPS = os.environ.get("TRAINVIEW_DEPS", os.path.join(TV_WORK, "deps"))   # build_deps.sh 가 robot-agent 소스에서 만들어 링크해 둔 곳
 TMP = None
 
 
@@ -44,7 +45,7 @@ def log(msg):
 def prepare_tmp():
     """디스크·임시 폴더(OG 는 /tmp/tmp* 에 GB 를 남긴다) · 텍스처 캐시 비움"""
     global TMP
-    base = os.path.expanduser("~/trainview_work/og_tmp")
+    base = os.path.join(TV_WORK, "og_tmp")
     TMP = tempfile.mkdtemp(prefix="ogrp_", dir=base if os.path.isdir(base) else None)
     os.environ["TMPDIR"] = os.environ["TMP"] = os.environ["TEMP"] = TMP
     tempfile.tempdir = TMP
@@ -381,7 +382,7 @@ def pipeline_info():
             return subprocess.check_output(["git", "-C", REPO, *x], stderr=subprocess.DEVNULL, text=True).strip()
         except Exception:
             return ""
-    trees = {d: git("rev-parse", f"HEAD:src/scene_graph/{d}") for d in ("scenemap", "runtime", "ovdet", "clip", "da")}
+    trees = {d: git("rev-parse", f"HEAD:src/scene_graph/{d}") for d in ("scenemap", "runtime", "ovdet", "clip", "da", "slam_carto")}
     import sgrt_glue as sg
     eng = str(getattr(sg, "ENGINE", ""))
     stem = os.path.basename(eng).replace(".plan", "")

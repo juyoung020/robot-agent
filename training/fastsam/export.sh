@@ -7,7 +7,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 [ -f "$HERE/env_local.sh" ] && source "$HERE/env_local.sh"
 PT=$1; NAME=$2; IMGSZ=${IMGSZ:-416}
-P=${OUT_PT:-$HOME/ovdet_models/pt}; E=${OUT_PLAN:-$HOME/ovdet_models/x86_sm120}; mkdir -p "$P" "$E"
+P=${OUT_PT:-$OVDET_MODELS/pt}; E=${OUT_PLAN:-$OVDET_MODELS/x86_sm120}; mkdir -p "$P" "$E"
 FS_PY=${FS_PY:-python}; TRT_PY=${TRT_PY:-python}
 [ -e "$E/$NAME.plan" ] && [ "${FORCE:-0}" != 1 ] && { echo "$E/$NAME.plan exists (FORCE=1 to overwrite)"; exit 1; }
 cp "$PT" "$P/$NAME.pt"

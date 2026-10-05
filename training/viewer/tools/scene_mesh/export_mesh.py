@@ -1,8 +1,8 @@
 """BEHAVIOR 장면 진짜 메시 → 재생 탭 바탕 층용 줄인 메시(장면마다 한 번, 캐시).
 
-  ~/fastsam_venv/bin/python export_mesh.py [장면 …]   # 기본: RL 장면 7 개
-  입력: ~/datasets/fastsam_obj/sim/<장면>/{scene_mesh.npz, objects.json} (training/fastsam/sim_render.py 가 OmniGibson 에서 뽑은
-        보이는 visual 메시, 세계 좌표, 면 → 물체 번호). 출력: ~/trainview_work/scene_mesh/<장면>.smsh
+  $FS_PY export_mesh.py [장면 …]   # 기본: RL 장면 7 개
+  입력: $RA_DATASETS/fastsam_obj/sim/<장면>/{scene_mesh.npz, objects.json} (training/fastsam/sim_render.py 가 OmniGibson 에서 뽑은
+        보이는 visual 메시, 세계 좌표, 면 → 물체 번호). 출력: $RA_TRAINVIEW_WORK/scene_mesh/<장면>.smsh
 
 물체마다 꼭짓점을 격자(기본 4 cm, 큰 구조물 8 cm)로 묶어(vertex clustering) 면 수를 줄인다 — 모양은 남고 크기는 수십 분의 일.
 천장·지붕·바닥 덮개(ceilings·roof·carpet·rug)와 아주 높은 것(z 바닥 > 2.6 m)은 뺀다(위에서 볼 때 집을 가림). 바닥(floors)은 남긴다.
@@ -16,8 +16,9 @@ import sys
 
 import numpy as np
 
-SRC = os.path.expanduser(os.environ.get("FASTSAM_SIM", "~/datasets/fastsam_obj/sim"))
-OUT = os.path.expanduser(os.environ.get("SCENE_MESH_DIR", "~/trainview_work/scene_mesh"))
+_R = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../..")
+SRC = os.environ.get("FASTSAM_SIM") or os.path.join(os.environ.get("RA_DATASETS") or f"{_R}/data/datasets", "fastsam_obj/sim")
+OUT = os.environ.get("SCENE_MESH_DIR") or os.path.join(os.environ.get("RA_TRAINVIEW_WORK") or f"{_R}/data/trainview_work", "scene_mesh")
 SCENES = sys.argv[1:] or ["house_single_floor", "house_double_floor_lower", "house_double_floor_upper", "restaurant_diner", "Rs_int",
                           "hotel_suite_large", "office_cubicles_right"]
 DROP = ("ceilings", "roof", "carpet", "rug", "skylight", "downlight", "ceiling")

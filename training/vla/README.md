@@ -1,20 +1,19 @@
 # RecallVLA — 학습기 (C++/CUDA)
 
-사양·결정: [docs/map_vla/MAPVLA_SPEC.md](../../docs/map_vla/MAPVLA_SPEC.md). 몸통 = Qwen3.5-0.8B(전부 학습), 영상 = SigLIP 2 B/32-256, 지도·몸 인코더, π0.5 꼴 행동 전문가, 단계 문장 출력.
+사양·결정: [docs/map_vla/MAPVLA_SPEC.md](../../docs/map_vla/MAPVLA_SPEC.md). 몸통 = Qwen3.5-0.8B(전부 학습), 영상 = SigLIP 2 B/32-256, 지도·몸 인코더, 행동 전문가(flow matching), 단계 문장 출력.
 PyTorch·JAX 없음. Python 은 오프라인 기준값 덤프(`tools/qwen_ref.py`)만.
 
 ## 빌드
+경로는 `config/paths.env`(`RA_BUILD`, `CLIP_PY`)를 따른다. `tools/build_all.sh vla` 가 `build/vla` 에 만든다.
 ```
-cmake -S training/vla -B ~/ra_vla/build && cmake --build ~/ra_vla/build -j4
-~/clip_venv/bin/python training/vla/tools/qwen_ref.py training/model/Qwen3.5-0.8B ~/ra_vla/ref/q08   # 한 번(HF FP32 CPU, 약 20 s)
-~/ra_vla/build/qwen_verify cos   training/model/Qwen3.5-0.8B ~/ra_vla/ref/q08 --neg
-~/ra_vla/build/qwen_verify gen   training/model/Qwen3.5-0.8B ~/ra_vla/ref/q08
-~/ra_vla/build/qwen_verify v67   training/model/Qwen3.5-0.8B
-~/ra_vla/build/qwen_verify bench training/model/Qwen3.5-0.8B 32 232
-~/clip_venv/bin/python training/vla/tools/qwen_rope_ref.py training/model/Qwen3.5-0.8B ~/ra_vla/ref/q08   # 한 번(RoPE 위치별 기준값, 약 7 s)
-~/ra_vla/build/qwen_verify rope  training/model/Qwen3.5-0.8B ~/ra_vla/ref/q08
-~/ra_vla/build/vla_verify v5 [--ki0|--frozen-vis]; ~/ra_vla/build/vla_verify neg|v67|opt|dnref|dn|att   # (ctest 로도)
-~/ra_vla/build/vla_verify bench 24 232; ~/ra_vla/build/vla_verify dnbench 24 232
+. config/paths.env; tools/build_all.sh vla
+Q=training/model/Qwen3.5-0.8B; R=$RA_BUILD/vla/ref/q08; V=$RA_BUILD/vla
+$CLIP_PY training/vla/tools/qwen_ref.py $Q $R        # 한 번(HF FP32 CPU, 약 20 s)
+$CLIP_PY training/vla/tools/qwen_rope_ref.py $Q $R   # 한 번(RoPE 위치별 기준값, 약 7 s)
+$V/qwen_verify cos $Q $R --neg;  $V/qwen_verify gen $Q $R;  $V/qwen_verify rope $Q $R
+$V/qwen_verify v67 $Q;  $V/qwen_verify bench $Q 32 232
+$V/vla_verify v5 [--ki0|--frozen-vis];  $V/vla_verify neg|v67|opt|dnref|dn|att   # (ctest 로도)
+$V/vla_verify bench 24 232;  $V/vla_verify dnbench 24 232
 ```
 
 ## M1 — Qwen3.5 앞 계산·디코딩 (잰 값, 2026-10-04)

@@ -21,9 +21,9 @@ pub struct RunFolder {
     hook: Option<trainfmt::replay_hook::ReplayHook>,
 }
 
-// 실제 인식(scene_graph) 소스 판 — behavior-2026 서브모듈 HEAD(정보용: GPU 지도는 우리 포트라 자동으로 따라가지 않음, TRAINING_DESIGN 6.1)
+// 실제 인식(scene_graph) 소스 판 — robot-agent src/scene_graph 의 마지막 커밋(정보용: GPU 지도는 우리 포트라 자동으로 따라가지 않음, TRAINING_DESIGN 6.1)
 fn scene_graph_git() -> Value {
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../src/behavior-2026");
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let out = std::process::Command::new("git").arg("-C").arg(&repo).args(["log", "-1", "--format=%H %cs %s", "--", "src/scene_graph"]).output();
     match out {
         Ok(o) if o.status.success() => json!(String::from_utf8_lossy(&o.stdout).trim().to_string()),

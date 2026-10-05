@@ -5,7 +5,7 @@
 //! - 학습기가 죽으면 같이 죽는다(pdeathsig — 띄운 스레드가 끝나도). GPU 메모리는 판 수 N 으로 묶는다(기본 64 판, 수백 MB).
 //! - 결과는 실행 폴더 s_eval/replays/ep_<n>_it<이터>_<스킬>_<결과>.trp + s_eval/episodes_eval.jsonl, 도구 출력은 s_eval/record.log.
 //! 설정(학습 설정 JSON 의 "replays"): false 면 끔. {"episodes": 4, "failures": 2, "n_env": 64, "recorder": 경로, "every": 1(체크포인트 몇 개마다)}.
-//! 도구 경로: 설정 → 환경 변수 TRAINVIEW_RECORD_PPO / TRAINVIEW_RECORD_BC → ~/ra_recbuild/record_{ppo,bc}. 없으면 조용히 끔(로그 한 줄).
+//! 도구 경로: 설정 → 환경 변수 TRAINVIEW_RECORD_PPO / TRAINVIEW_RECORD_BC → $RA_BUILD/record_replay/record_{ppo,bc}(기본 build/record_replay). 없으면 조용히 끔(로그 한 줄).
 //! 도구는 학습기와 **같은 소스 나무**로 빌드해야 한다(신경망·관측 배치가 같아야 체크포인트가 읽힘) — README "재생 기록".
 use serde_json::Value;
 use std::fs;
@@ -44,7 +44,11 @@ impl ReplayHook {
             .and_then(|x| x.as_str())
             .map(|s| s.replace('~', &home))
             .or_else(|| std::env::var(env_key).ok())
-            .unwrap_or_else(|| format!("{}/ra_recbuild/record_{}", home, kind));
+            .unwrap_or_else(|| {
+                let b = std::env::var("RA_BUILD").ok().filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| format!("{}/../../build", env!("CARGO_MANIFEST_DIR")));
+                format!("{}/record_replay/record_{}", b, kind)
+            });
         let bin = PathBuf::from(bin);
         if !bin.is_file() {
             eprintln!("replays: recorder {} not found — automatic replays off (build training/viewer/tools/record_replay)", bin.display());

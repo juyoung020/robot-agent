@@ -1,6 +1,6 @@
 """Object crops from LVIS v1 boxes+masks on COCO train2017 images, streamed (images are fetched, cropped, dropped).
 
-  python build_crops.py --n 300000 --out ~/embed_work/data/lvis_crops
+  python build_crops.py --n 300000 --out $RA_EMBED_WORK/data/lvis_crops
 
 Output: tar shards (5k crops each) with <id>.jpg (crop, square, 1.3x box context, gray pad, 288 px) and <id>.png (mask, same
 frame) + meta.jsonl (id, image_id, cat, synset, box_in_crop x0 y0 x1 y1, area). Labels are kept for analysis only; training
@@ -8,6 +8,7 @@ targets are teacher embeddings. Licenses: LVIS annotations CC BY 4.0, COCO image
 Indoor bias: --indoor fraction of crops come from images that contain an indoor-furniture category.
 """
 import os, sys, json, io, tarfile, random, argparse, collections, threading, queue, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); from common import WORK
 import numpy as np, requests
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
@@ -43,8 +44,8 @@ def crop_one(img, segm, box, H, W):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--ann', default=os.path.expanduser('~/embed_work/data/lvis_v1_train.json'))
-    ap.add_argument('--out', default=os.path.expanduser('~/embed_work/data/lvis_crops'))
+    ap.add_argument('--ann', default=f'{WORK}/data/lvis_v1_train.json')
+    ap.add_argument('--out', default=f'{WORK}/data/lvis_crops')
     ap.add_argument('--n', type=int, default=300000)
     ap.add_argument('--min_side', type=int, default=32)
     ap.add_argument('--per_img', type=int, default=8)

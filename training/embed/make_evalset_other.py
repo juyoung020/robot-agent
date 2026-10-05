@@ -1,13 +1,14 @@
-"""Held-out eval set from a DIFFERENT BEHAVIOR house (generalisation check), same format as ~/clip_bench/evalset.json.
+"""Held-out eval set from a DIFFERENT BEHAVIOR house (generalisation check), same format as $CLIP_BENCH/evalset.json.
 
-  python make_evalset_other.py --root ~/embed_work/data/demos_other --eps 1800,1801,1802 --every 300
+  python make_evalset_other.py --root $RA_EMBED_WORK/data/demos_other --eps 1800,1801,1802 --every 300
 
 FastSAM-s 416 masks on demo frames, matched to ground-truth objects (gt_scene 3D boxes + odometry, as clip_bench/
 dump_fastsam.py): mask >= 60 % on one object, IoU >= 0.2, area >= 600 px, <= 60 per category.
 Default episodes: task 9 putting_up_Christmas_decorations_inside in house_single_floor (radio eval = house_double_floor_lower).
--> ~/embed_work/eval_other/{evalset.json, crops/}
+-> $RA_EMBED_WORK/eval_other/{evalset.json, crops/}
 """
 import os, sys, json, random, argparse, collections, numpy as np
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); from common import WORK, OVDET, BUILD
 from PIL import Image
 B = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..')   # robot-agent
 sys.path.insert(0, B + '/src/scene_graph/ovdet/tools'); sys.path.insert(0, B + '/src/scene_graph/scenemap/eval')
@@ -17,12 +18,12 @@ import demo_data as dp, gt_scene
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--root', default=os.path.expanduser('~/embed_work/data/demos_other'))
+    ap.add_argument('--root', default=f'{WORK}/data/demos_other')
     ap.add_argument('--eps', default='1800,1801,1802')
     ap.add_argument('--every', type=int, default=300)
-    ap.add_argument('--out', default=os.path.expanduser('~/embed_work/eval_other'))
-    ap.add_argument('--lib', default=os.path.expanduser('~/embed_work/ovdet_build/libovdet.so'))
-    ap.add_argument('--engine', default=os.path.expanduser('~/ovdet_models/x86_sm120/FastSAM-s-416.plan'))
+    ap.add_argument('--out', default=f'{WORK}/eval_other')
+    ap.add_argument('--lib', default=f'{BUILD}/sgrt/ovdet/libovdet.so')
+    ap.add_argument('--engine', default=f'{OVDET}/x86_sm120/FastSAM-s-416.plan')
     a = ap.parse_args(); random.seed(0)
     gt_scene.DEMOS = a.root                        # episode -> task instance from the downloaded meta
     C = f'{a.out}/crops'; os.makedirs(C, exist_ok=True)

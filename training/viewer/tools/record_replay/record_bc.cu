@@ -66,7 +66,7 @@ int main(int argc, char** argv) {
   int keep_fail = 0;
   bool no_sg = false, map_given = false;
   int og_per = 2;                                   // BEHAVIOR 판: 체크포인트마다 학생·교사 각 몇 판을 OG 다시 돌리기 줄에(0 = 끔)
-  std::string og_queue = "~/trainview_work/og_queue";
+  std::string og_queue = getenv("RA_TRAINVIEW_WORK") && *getenv("RA_TRAINVIEW_WORK") ? std::string(getenv("RA_TRAINVIEW_WORK")) + "/og_queue" : std::string(REPO_DIR) + "/data/trainview_work/og_queue";
   for (int a = 1; a < argc; ++a) {
     const std::string s = argv[a];
     auto nx = [&]() { return a + 1 < argc ? std::string(argv[++a]) : std::string(); };

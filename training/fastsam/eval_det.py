@@ -1,7 +1,7 @@
 """검출 단계 평가: 같은 프레임에 엔진 여럿(ovdet C API, 실행 때와 같은 후처리) → 정답 대비 표 + 짝 부트스트랩.
 
-  ~/fastsam_venv/bin/python eval_det.py --set sim_eval --plans base=~/ovdet_models/x86_sm120/FastSAM-s-416.plan \
-      new=~/ovdet_models/x86_sm120/FastSAM-s-416-obj.plan --out ~/datasets/fastsam_obj/eval/sim_eval.json
+  $FS_PY eval_det.py --set sim_eval --plans base=$OVDET_MODELS/x86_sm120/FastSAM-s-416.plan \
+      new=$OVDET_MODELS/x86_sm120/FastSAM-s-416-obj.plan --out $RA_DATASETS/fastsam_obj/eval/sim_eval.json
 
 정의(프레임마다, 정답 하나씩):
   found     : 검출 마스크 가운데 그 픽셀의 50 % 이상이 이 정답 위인 것이 하나라도 있음(지도 파이프라인이 노드를 만드는 조건과 같은 뜻 —

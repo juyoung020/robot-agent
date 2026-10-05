@@ -1,14 +1,18 @@
 """Shared paths, model wrappers and crop views for the embedding-head training (training/embed).
 
-Views follow ~/clip_bench/embed.py (box / stretch / masked) so our numbers line up with the CLIP study.
-Everything heavy (data, embeddings, weights) lives under ~/embed_work, never in git.
+Views follow the CLIP study (box / stretch / masked) so our numbers line up with it.
+Everything heavy (data, embeddings, weights) lives under $RA_EMBED_WORK (default data/embed_work, gitignored).
+Paths follow config/paths.env: RA_EMBED_WORK, OVDET_MODELS, RA_BUILD.
 """
 import os
 os.environ.setdefault("TIMM_FUSED_ATTN", "0")
 import numpy as np, torch, torch.nn.functional as F
 
-WORK = os.path.expanduser(os.environ.get('EMBED_WORK', '~/embed_work'))
-BENCH = os.path.expanduser('~/clip_bench')          # the CLIP study's eval set (read-only)
+REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
+WORK = os.environ.get('RA_EMBED_WORK') or os.environ.get('EMBED_WORK') or f'{REPO}/data/embed_work'
+OVDET = os.environ.get('OVDET_MODELS') or f'{REPO}/models/ovdet'
+BUILD = os.environ.get('RA_BUILD') or f'{REPO}/build'
+BENCH = os.environ.get('CLIP_BENCH') or f'{WORK}/clip_bench'   # the CLIP study's eval set (read-only; archived — set CLIP_BENCH to use)
 VIEWS = ('box', 'stretch', 'masked')
 
 # key: (open_clip name, pretrained tag, license)

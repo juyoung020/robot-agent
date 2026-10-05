@@ -1,13 +1,14 @@
 """Unlabelled sim object crops: FastSAM-s (ovdet C API, class-agnostic) on BEHAVIOR demo frames -> same shard format as
 build_crops.py (288 px square crop, 1.3x context, mask png, meta jsonl).
 
-  python build_sim_crops.py --eps 1-56,58-132,134-199 --every 45 --out ~/embed_work/data/sim_radio
+  python build_sim_crops.py --eps 1-56,58-132,134-199 --every 45 --out $RA_EMBED_WORK/data/sim_radio
 
 All local demos are turning_on_radio in ONE house, the same house as the eval episodes (0, 57, 133 are skipped here,
 but the same object instances appear). Results trained with these crops are a separately labelled "same-house" variant.
-Engine: ~/ovdet_models/x86_sm120/FastSAM-s-416.plan; library: our own build in ~/embed_work/ovdet_build.
+Engine: $OVDET_MODELS/x86_sm120/FastSAM-s-416.plan; library: our own build in build/sgrt/ovdet.
 """
 import os, sys, io, json, tarfile, argparse, numpy as np
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); from common import WORK, OVDET, BUILD
 from PIL import Image
 B = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..')   # robot-agent
 sys.path.insert(0, B + '/src/scene_graph/ovdet/tools'); sys.path.insert(0, B + '/src/scene_graph/scenemap/eval')
@@ -28,9 +29,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--eps', default='1-56,58-132,134-199')
     ap.add_argument('--every', type=int, default=45, help='frame step (30 fps)')
-    ap.add_argument('--out', default=os.path.expanduser('~/embed_work/data/sim_radio'))
-    ap.add_argument('--lib', default=os.path.expanduser('~/embed_work/ovdet_build/libovdet.so'))
-    ap.add_argument('--engine', default=os.path.expanduser('~/ovdet_models/x86_sm120/FastSAM-s-416.plan'))
+    ap.add_argument('--out', default=f'{WORK}/data/sim_radio')
+    ap.add_argument('--lib', default=f'{BUILD}/sgrt/ovdet/libovdet.so')
+    ap.add_argument('--engine', default=f'{OVDET}/x86_sm120/FastSAM-s-416.plan')
     ap.add_argument('--min_area', type=int, default=600)
     ap.add_argument('--max_frac', type=float, default=0.6)
     ap.add_argument('--shard', type=int, default=5000)

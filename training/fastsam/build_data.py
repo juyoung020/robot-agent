@@ -1,6 +1,6 @@
 """학습 데이터(YOLO 분할 형식) 만들기 — 자기 증류 라벨.
 
-  ~/fastsam_venv/bin/python build_data.py --source sim_train --shard 0/4
+  $FS_PY build_data.py --source sim_train --shard 0/4
   (source: sim_train | sim_val | coco_train | coco_val | ade_train ; 결과 $FASTSAM_DATA/yolo/{images,labels}/{train,val}/)
 
 라벨 한 장 = 정답 통째 마스크 전부 + 원래 FastSAM-s(옛 엔진, conf 0.25) 마스크 중 남길 것:

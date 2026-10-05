@@ -1,6 +1,6 @@
 """FastSAM-s(YOLOv8s-seg, 클래스 'object' 하나) 미세조정 — Ultralytics(AGPL-3.0).
 
-  ~/fastsam_venv/bin/python train.py --name obj_v1 [--epochs 30 --batch 32 --lr0 0.002]
+  $FS_PY train.py --name obj_v1 [--epochs 30 --batch 32 --lr0 0.002]
 
 데이터: build_data.py 출력 $FASTSAM_DATA/yolo (images/{train,val}, labels/{train,val}).
 입력 416(실행 엔진과 같음). overlap_mask=False(원래 FastSAM 학습과 같이 — 정답 통째와 그 위 작은 물체가 겹칠 수 있음).

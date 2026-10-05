@@ -3,20 +3,21 @@
 # openloris_fullcount 와 같은 설정) → 살아 있는 노드 수·같은 이름 0.5 m 쌍·구조물처럼 보이는 노드(정답 없음 → 기하 대용).
 #   bash realcheck.sh <이름> <엔진 .plan> [plain|objprob]
 set -euo pipefail
+. "$(dirname "$0")/env_local.sh"
 N=$1; ENG=$2; MODE=${3:-plain}
-DATA=${FASTSAM_DATA:-$HOME/datasets/fastsam_obj}
-BIN=${REALBAG_BIN:-$HOME/realbag_build_fsobj}
+DATA=${FASTSAM_DATA:-$RA_DATASETS/fastsam_obj}
+BIN=${REALBAG_BIN:-$RA_BUILD/realbag}
 OLD=ap''rime
-PD=$HOME/datasets/objprob; [ -d "$PD" ] || PD=$HOME/datasets/$OLD
+PD=$RA_DATASETS/objprob; [ -d "$PD" ] || PD=$RA_DATASETS/$OLD
 FLAG=--objprob; grep -aq -- "--objprob" "$BIN/realbag_run" || FLAG=--$OLD
 X=(); [ "$MODE" = objprob ] && X=($FLAG --label-prior "$PD/fit1/label_prior.json")
 for s in ol_office1-1 ol_office1-5; do
   R=$DATA/realcheck/${N}_${MODE}_$s
   rm -rf "$R"; mkdir -p "$DATA/realcheck"
-  "$BIN/realbag_run" "$HOME/datasets/realbags/streams/$s" "$R" --pose slam --max-depth 4 --det fastsam --engine "$ENG" "${X[@]}" \
+  "$BIN/realbag_run" "$RA_DATASETS/realbags/streams/$s" "$R" --pose slam --max-depth 4 --det fastsam --engine "$ENG" "${X[@]}" \
     > "$R.log" 2>&1
 done
-~/fastsam_venv/bin/python - "$DATA/realcheck" "$N" "$MODE" <<'E'
+$FS_PY - "$DATA/realcheck" "$N" "$MODE" <<'E'
 import csv, json, sys
 root, n, mode = sys.argv[1:]
 for s in ('ol_office1-1', 'ol_office1-5'):

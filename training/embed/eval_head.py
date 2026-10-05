@@ -1,6 +1,6 @@
 """Score a trained head (train_head.py run) on the eval set, next to the base's and the teacher's own zero-shot numbers.
 
-  python eval_head.py <run> [<run> ...]      # -> ~/embed_work/runs/<run>/eval.json and a printed table
+  python eval_head.py <run> [<run> ...]      # -> $RA_EMBED_WORK/runs/<run>/eval.json and a printed table
 
 Rows: base zero-shot (own text tower), teacher zero-shot, teacher image through P (projection ceiling), head (128 and 64 d).
 Vocabularies: 'v360' = clip_bench VOCAB (as the CLIP study), 'big' = whole label table (30.5k names).

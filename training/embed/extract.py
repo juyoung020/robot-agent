@@ -1,6 +1,6 @@
 """Frozen-encoder embeddings for every crop in tar shards -> FP16 .npy per (model, view).
 
-  python extract.py --crops ~/embed_work/data/lvis_crops --out ~/embed_work/emb/lvis \
+  python extract.py --crops $RA_EMBED_WORK/data/lvis_crops --out $RA_EMBED_WORK/emb/lvis \
       --base b32_openai,mc2_s0 --teacher pe_l14,siglip2_so400m
 
 base models get views box / stretch / masked / aug (aug = jittered box + flip + colour, seeded by row), and for
@@ -11,7 +11,7 @@ import os, sys, io, json, glob, tarfile, argparse, time
 import numpy as np, torch
 from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import Enc, view, view_mask, POOL
+from common import Enc, view, view_mask, POOL, WORK
 
 BASE_VIEWS = ('box', 'stretch', 'masked', 'aug')
 TEACH_VIEWS = ('box', 'stretch')
@@ -73,8 +73,8 @@ class Shards(torch.utils.data.IterableDataset):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--crops', default=os.path.expanduser('~/embed_work/data/lvis_crops'))
-    ap.add_argument('--out', default=os.path.expanduser('~/embed_work/emb/lvis'))
+    ap.add_argument('--crops', default=f'{WORK}/data/lvis_crops')
+    ap.add_argument('--out', default=f'{WORK}/emb/lvis')
     ap.add_argument('--base', default='siglip2_b32,b32_openai,mc2_s0')
     ap.add_argument('--teacher', default='pe_l14,siglip2_so400m')
     ap.add_argument('--bs', type=int, default=128)

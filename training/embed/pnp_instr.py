@@ -1,7 +1,7 @@
 """Pick-and-place instruction table (CURRICULUM_BEHAVIOR2026 B3–B5, VLA_INPUT §6) in the frozen 128-d embed space — OFFLINE, HF cache only.
 
-  ~/ra_envbuild/bscene_check --dump-combos /tmp/combos.tsv          # the (object, source, destination, relation) combos that occur
-  HF_HUB_OFFLINE=1 ~/embed_venv/bin/python training/embed/pnp_instr.py --combos /tmp/combos.tsv [--out training/data/pnp_v1]
+  build/env/bscene_check --dump-combos /tmp/combos.tsv          # the (object, source, destination, relation) combos that occur
+  HF_HUB_OFFLINE=1 $EMBED_PY training/embed/pnp_instr.py --combos /tmp/combos.tsv [--out training/data/pnp_v1]
 
 For every combo that occurs in the env's candidate table it writes NTPL sentences in a fixed order: NTPL_TRAIN training sentences
 (English templates, then Korean) followed by held-out sentences (one English, one Korean; VLA_INPUT §7 unseen phrasing), with name

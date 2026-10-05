@@ -1,7 +1,7 @@
 """BEHAVIOR 장면 → LIMO 높이 카메라 RGB + 물체 단위 instance 분할(정답).
 
   flock $OG_LOCK python sim_render.py   # OmniGibson python --scene Rs_int --n 200 \
-      --out ~/datasets/fastsam_obj/sim/Rs_int
+      --out $RA_DATASETS/fastsam_obj/sim/Rs_int
 
 카메라: LIMO 몸통 카메라(우리 LIMO + OMX OmniGibson 설정과 같음)
   - 높이 0.18 m, 앞을 수평으로 봄, H-FOV 67.9°(Orbbec Dabai), 640×480(실제 Dabai 4:3).
@@ -37,7 +37,7 @@ os.makedirs(a.out, exist_ok=True)
 # (죽은 프로세스가 남긴 것은 다음 시작 때 지움).
 import shutil  # noqa: E402
 import tempfile  # noqa: E402
-TMPROOT = os.path.join(os.environ.get('FASTSAM_DATA', os.path.expanduser('~/datasets/fastsam_obj')), 'tmp')
+TMPROOT = os.path.join(os.environ.get('FASTSAM_DATA', os.path.join(os.environ.get('RA_DATASETS', os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../data/datasets')), 'fastsam_obj'.rstrip('/'))), 'tmp')
 os.makedirs(TMPROOT, exist_ok=True)
 for d in os.listdir(TMPROOT):
     pid = d.rsplit('_', 1)[-1]
@@ -46,7 +46,7 @@ for d in os.listdir(TMPROOT):
 # OG 텍스처 캐시(appdata/global/cache/texturecache)는 장면마다 ~3 GB 씩 커진다(46 장면에 135 GB 로 디스크를 채움) →
 # og.lock 을 잡은 동안(이 프로세스 시작·끝) 지운다. 디스크 여유가 15 GB 아래면 시작하지 않는다(종료 코드 3).
 TEXCACHE = os.path.join(os.environ.get('OMNIGIBSON_APPDATA_PATH', os.path.join(
-    os.environ.get('B1K_ROOT', os.path.expanduser('~/BEHAVIOR-1K')), 'OmniGibson', 'appdata')), 'global', 'cache', 'texturecache')
+    os.environ.get('B1K_ROOT', os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../third_party/BEHAVIOR-1K')), 'OmniGibson', 'appdata')), 'global', 'cache', 'texturecache')
 shutil.rmtree(TEXCACHE, ignore_errors=True)
 if shutil.disk_usage(os.path.expanduser('~')).free < 15 * 2**30:
     print('[render] disk free < 15 GB — stop', flush=True)

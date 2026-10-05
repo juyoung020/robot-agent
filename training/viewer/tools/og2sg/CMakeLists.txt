@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.18)
-# og2sg — OmniGibson LIMO 탐사 기록(rec.bin) → 학습 뷰어 "sgview 판"(.sg). scenemap(C++, CPU)은 behavior-2026 서브모듈 소스를 그대로 빌드해 C ABI 로만 쓴다(읽기만).
-#   cmake -S training/viewer/tools/og2sg -B ~/ra_og2sg && cmake --build ~/ra_og2sg -j 4
+# og2sg — OmniGibson LIMO 탐사 기록(rec.bin) → 학습 뷰어 "sgview 판"(.sg). scenemap(C++, CPU)은 src/scene_graph 소스를 그대로 빌드해 C ABI 로만 쓴다(읽기만).
+#   tools/build_all.sh og2sg  (→ build/og2sg)
 project(og2sg LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 if(NOT CMAKE_BUILD_TYPE)

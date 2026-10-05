@@ -1,6 +1,6 @@
 """Results table (markdown) from sweep_t.py outputs: one column per (candidate, threshold), original engine first.
 
-  python make_table.py v1=sweep_fs_v1:0.07 v2=sweep_fs_v2:0.05 n26=sweep_n26:0.04 --eval-dir ~/datasets/fastsam_obj/eval
+  python make_table.py v1=sweep_fs_v1:0.07 v2=sweep_fs_v2:0.05 n26=sweep_n26:0.04 --eval-dir $RA_DATASETS/fastsam_obj/eval
 """
 import argparse
 import json
@@ -15,7 +15,7 @@ FRAME = ['struct_fp_per_frame', 'under_per_frame', 'dets_per_frame']
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('cands', nargs='+')
-    ap.add_argument('--eval-dir', default=os.path.expanduser('~/datasets/fastsam_obj/eval'))
+    ap.add_argument('--eval-dir', default=os.path.join(os.environ.get('RA_DATASETS', os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../data/datasets')), 'fastsam_obj/eval'.rstrip('/')))
     ap.add_argument('--sets', nargs='+', default=['sim_eval', 'coco_val', 'ade_val'])
     a = ap.parse_args()
     for s in a.sets:

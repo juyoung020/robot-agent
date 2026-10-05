@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 # 다시 빌드해 공개 헤더로만 쓴다(학습기 CMake 를 add_subdirectory — 소스가 바뀌면 다시 빌드됨, 그쪽 파일은 고치지 않음).
 # .trp 바이트는 trpc(Rust trainfmt 의 C ABI 정적 라이브러리)가 쓴다.
 #
-#   cmake -S training/viewer/tools/record_replay -B ~/ra_recbuild && cmake --build ~/ra_recbuild -j 4
+#   tools/build_all.sh record_replay  (→ build/record_replay)
 if(NOT CMAKE_CUDA_COMPILER AND EXISTS /usr/local/cuda-12.8/bin/nvcc)
   set(CMAKE_CUDA_COMPILER /usr/local/cuda-12.8/bin/nvcc)
 endif()
@@ -39,7 +39,7 @@ add_library(trpc STATIC IMPORTED)
 set_target_properties(trpc PROPERTIES IMPORTED_LOCATION ${TRPC_LIB})
 add_dependencies(trpc trpc_build)
 set(TRPC_LINK trpc pthread dl m)
-# 진짜 scenemap(GPU 판 → sgview 판, sg_feed.h): behavior-2026 서브모듈 소스를 읽기만 해서 빌드
+# 진짜 scenemap(GPU 판 → sgview 판, sg_feed.h): src/scene_graph/scenemap 소스를 그대로 빌드
 set(SCENEMAP_DIR "${TR}/../src/scene_graph/scenemap" CACHE PATH "scenemap source (read only)")
 add_subdirectory(${SCENEMAP_DIR} scenemap EXCLUDE_FROM_ALL)
 

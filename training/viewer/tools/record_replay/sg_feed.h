@@ -5,7 +5,7 @@
 //   - 정책 지도(G2)의 keyframe 마다 sm_push_image_rgb: 깊이 640×400 + id 버퍼 = 정책 지도와 같은 장면 상자(MapCore::prim + 방)를 같은 카메라에서
 //     CPU 로 화소마다 광선 추적(map_cmp render() 를 옮김), RGB = 같은 광선의 면 음영(물체 종류 색) — 점구름이 그 색. 검출 = id 버퍼의 완벽한 마스크.
 //   - scenemap 자신의 sgview 스트림을 받아(og2sg 와 같은 Capture) stream.sgs, 끝에 sm_save_dsg → memory/(물체 조각·점구름 PLY).
-// 팀 RenderBatch(src/behavior-2026 엔진)는 RGB·깊이만 내고 물체 id 버퍼가 없어 검출 마스크를 못 만든다 → map_cmp 의 CPU 광선 추적(정책 지도와 바이트까지 같은 장면)을 쓴다.
+// RenderBatch(training/render_engine)는 RGB·깊이만 내고 물체 id 버퍼가 없어 검출 마스크를 못 만든다 → map_cmp 의 CPU 광선 추적(정책 지도와 바이트까지 같은 장면)을 쓴다.
 #pragma once
 #include <cmath>
 #include <cstdio>
