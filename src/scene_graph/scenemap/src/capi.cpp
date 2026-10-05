@@ -131,6 +131,7 @@ struct sm_ctx {
   bool ext_cam = false;
   float ext_T[12] = {0};
   std::deque<sm_pose2> gtq;           // 외부 자세(stamp 순). GT 가 아닌 모드에서는 진단(떠밀림)에만 씀
+  std::deque<sm_pose2> extq;          // EXT 모드 자세(sm_push_ext_pose — Cartographer 등 다른 SLAM). 정답(gtq)과 따로라 진단은 그대로
   bool diag_align = false;            // 진단: map ← 외부 프레임 맞춤(첫 keyframe 에서 오차 0)
   Pose2 align;
   sm_pose_diag diag{};
@@ -325,8 +326,8 @@ void toMap(const Pose2& P, const float b[2][3], double m[2][3]) {
 
 // 적분 한 표본(데이터: proprio i 의 base_qvel 이 i-1 → i 구간 속도). 제자리 잡음은 Slam2D 와 같은 규칙.
 // 외부 자세 중 stamp 이하 가장 최근 것(max_age 안). 없으면 false
-bool gtAt(const sm_ctx* c, double stamp, Pose2* out, double max_age = 0.1) {
-  for (auto it = c->gtq.rbegin(); it != c->gtq.rend(); ++it) {
+bool poseAt(const std::deque<sm_pose2>& q, double stamp, Pose2* out, double max_age) {
+  for (auto it = q.rbegin(); it != q.rend(); ++it) {
     if (it->stamp > stamp + 1e-6) continue;
     if (stamp - it->stamp > max_age) return false;
     *out = Pose2{it->x, it->y, it->yaw};
@@ -334,6 +335,8 @@ bool gtAt(const sm_ctx* c, double stamp, Pose2* out, double max_age = 0.1) {
   }
   return false;
 }
+bool gtAt(const sm_ctx* c, double stamp, Pose2* out, double max_age = 0.1) { return poseAt(c->gtq, stamp, out, max_age); }
+bool extAt(const sm_ctx* c, double stamp, Pose2* out, double max_age = 0.1) { return poseAt(c->extq, stamp, out, max_age); }
 
 // 격자에서 바뀐 영역만 스트림으로(잠금 안, 스텝 스레드). 모양·원점이 바뀌면 전체. 보내지 못하면(링이 가득 참) 다음에 전체를 다시 보낸다
 void streamMap(sm_ctx* c) {
@@ -370,6 +373,7 @@ void integrate(sm_ctx* c, const Prop& p) {
   Pose2 g;
   // 같은 stamp 의 외부 자세가 있을 때만(없는 스텝은 적분으로 이어감 — 접착부는 영상 짝 스텝에만 넣어도 됨)
   if (c->pose_mode == SM_POSE_GT && gtAt(c, p.stamp, &g, 1e-4)) c->slam.setPose(g);
+  if (c->pose_mode == SM_POSE_EXT && extAt(c, p.stamp, &g, 1e-4)) c->slam.setPose(g);
   // 영상이 없는 스텝에도 든 물체가 손을 따라가게
   float eef[2][3], grip[2];
   robotHands(c->robot, p.q, eef, grip);
@@ -627,6 +631,7 @@ int sm_reset(sm_ctx* c) {
   c->clean_objects = true;
   c->rooms.reset();
   c->gtq.clear();
+  c->extq.clear();
   c->diag_align = false;
   c->diag = sm_pose_diag{};
   c->diag_s2xy = c->diag_s2yaw = 0;
@@ -907,7 +912,11 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   }
   if (!c->have_used) return 0;                  // 짝지을 proprio 가 아직 없음
   Pose2 known;
-  const bool use_gt = c->pose_mode == SM_POSE_GT && gtAt(c, im->stamp, &known);
+  bool use_gt = c->pose_mode == SM_POSE_GT && gtAt(c, im->stamp, &known);
+  if (c->pose_mode == SM_POSE_EXT) {   // 외부 SLAM: 영상 시각의 자세, 없으면 지난 외부 자세 + 적분(맞추기는 안 함)
+    if (!extAt(c, im->stamp, &known)) known = c->slam.pose();
+    use_gt = true;
+  }
   const auto tf = TClock::now();
   c->addT(kStPair, usBetween(tp, tf));
   BodyFk fk;
@@ -1724,7 +1733,7 @@ uint32_t sm_snap_object_room(const sm_snapshot_t* s, uint32_t id) {
 // ---- 자세 원천·넣기 정책·단계 시간(추가 ABI) ----
 
 int sm_set_pose_mode(sm_ctx* c, int32_t mode) {
-  if (!c || mode < SM_POSE_SLAM || mode > SM_POSE_GT) return -1;
+  if (!c || mode < SM_POSE_SLAM || mode > SM_POSE_EXT) return -1;
   std::lock_guard<std::mutex> g(c->mu);
   c->pose_mode = mode;
   c->slam.setMethod(mode == SM_POSE_ODOM ? 'O' : c->params.method);
@@ -1760,6 +1769,16 @@ int sm_push_pose(sm_ctx* c, const sm_pose2* p) {
   // 적분·짝짓기에 쓸 만큼만(가장 오래 기다리는 proprio·영상보다 2 s 앞까지)
   const double keep = (c->have_used ? c->last_used.stamp : p->stamp) - 2.0;
   while (c->gtq.size() > 2 && c->gtq[1].stamp < keep) c->gtq.pop_front();
+  return 0;
+}
+
+int sm_push_ext_pose(sm_ctx* c, const sm_pose2* p) {
+  if (!c || !p || !std::isfinite(p->x) || !std::isfinite(p->y) || !std::isfinite(p->yaw)) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  if (!c->extq.empty() && p->stamp < c->extq.back().stamp - 1e-9) c->extq.clear();   // 시각이 되돌아감(새 판)
+  c->extq.push_back(*p);
+  const double keep = (c->have_used ? c->last_used.stamp : p->stamp) - 2.0;
+  while (c->extq.size() > 2 && c->extq[1].stamp < keep) c->extq.pop_front();
   return 0;
 }
 

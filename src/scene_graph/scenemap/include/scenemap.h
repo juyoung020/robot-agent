@@ -321,15 +321,19 @@ int sm_take_dirty(sm_ctx*, int32_t out[4], uint64_t* version);
 /* ---- 자세 원천(추가 ABI, 10-03) ----
  * SM_POSE_SLAM(기본): base_qvel 적분 예측 + 깊이 가상 스캔 맞추기(실제 로봇·대회 제출).
  * SM_POSE_ODOM: 적분만(맞추기 없음, 비교용).
+ * SM_POSE_EXT(10-06): sm_push_ext_pose 로 받은 다른 SLAM 의 자세(Cartographer — ../slam_carto). keyframe 은 맞추기 없이 영상 stamp 의
+ *   자세로 넣고(없으면 지난 외부 자세 + 적분), proprio 마다 같은 stamp 의 외부 자세가 있으면 그것으로 바꾼다. sm_push_pose(정답)는
+ *   GT 가 아니므로 진단(떠밀림)에만 쓰인다 — 정답과 외부 SLAM 을 같이 넣어 실시간 오차를 잰다.
  * SM_POSE_GT: sm_push_pose 로 받은 외부 자세(시뮬 정답 베이스 자세 — 진단·시각화용, 대회 규칙상 제출에는 못 씀). map = 그 자세의
  *   프레임(시뮬 world). proprio 마다 그 stamp 의 자세로 바꾸고, keyframe 은 맞추기 없이 영상 stamp 의 자세로 넣는다.
  *   카메라 외부 자세는 어느 모드든 proprio 순기구학(베이스 ← 카메라).
  * sm_push_pose: 스텝마다(그 스텝 proprio 와 같은 stamp) 외부 베이스 자세. GT 가 아닌 모드에서도 넣으면 진단(sm_get_pose_diag)에
  *   쓴다 — 첫 keyframe 에서 두 프레임을 맞추고 그 뒤 keyframe 마다 지금 자세와의 차(떠밀림). */
-enum { SM_POSE_SLAM = 0, SM_POSE_ODOM = 1, SM_POSE_GT = 2 };
+enum { SM_POSE_SLAM = 0, SM_POSE_ODOM = 1, SM_POSE_GT = 2, SM_POSE_EXT = 3 };
 int sm_set_pose_mode(sm_ctx*, int32_t mode);
 int sm_get_pose_mode(sm_ctx*);
 int sm_push_pose(sm_ctx*, const sm_pose2* pose);
+int sm_push_ext_pose(sm_ctx*, const sm_pose2* pose);   /* EXT 모드 자세(map ← base). 영상보다 먼저 같은 stamp 로 */
 typedef struct {
   int32_t n;                   /* 비교한 keyframe 수 */
   double stamp;                /* 마지막 비교 시각 */
