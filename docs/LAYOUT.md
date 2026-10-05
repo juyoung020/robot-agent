@@ -16,7 +16,7 @@ tools/        build_all.sh(빌드)·check_all.sh(전체 점검: 빌드·시험·
 config/       paths.env(경로 기본값, git) · paths.local.env(내 PC, git 밖) · paths.py
 docs/ refs/   설계 문서 · 참고 목록(논문·코드·데이터시트는 refs/download.sh 로 받음)
 build/        (git 밖) 모든 빌드 결과 — cmake build/<이름>, cargo build/cargo/<이름>, 실행 파일 링크 build/bin/
-third_party/  (git 밖) BEHAVIOR-1K(B1K_ROOT)·cartographer 등 큰 외부 코드·자산
+third_party/  (git 밖) BEHAVIOR-1K(B1K_ROOT)·cartographer·ObjectSAM(공개 저장소 작업 사본) 등 외부 코드·자산
 ```
 conda·venv(`behavior`, `fastsam_venv` 등)와 시스템 캐시(`~/.cache`)만 홈에 둔다 — `config/paths.env` 의 `CONDA_SH`·`OG_CONDA_ENV`·`*_PY` 로 가리킨다.
 
