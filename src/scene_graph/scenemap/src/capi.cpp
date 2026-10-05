@@ -1,4 +1,4 @@
-// scenemap C ABI(include/scenemap.h) 구현 — slam2d + objmap(검출 → 물체 지도) + 저장(sm_save_dsg, dsg_save.cpp).
+// scenemap C ABI(include/scenemap.h) 구현 — mapper2d(외부 자세로 격자) + objmap(검출 → 물체 지도) + 저장(sm_save_dsg, dsg_save.cpp).
 //
 // 입력 스레드 하나가 push 를 부르고, 계획기 쪽이 아무 때나 스냅숏을 만든다. 상태는 뮤텍스 하나 아래.
 // 스냅숏은 그 순간의 자세·상태·격자(i8)를 통째로 복사한 것(참조 카운트) — 격자 600×600 에서 약 1 ms.
@@ -27,7 +27,7 @@
 #include "scenemap/objmap.hpp"
 #include "scenemap/rooms.hpp"
 #include "scenemap/sgraph.hpp"
-#include "scenemap/slam2d.hpp"
+#include "scenemap/mapper2d.hpp"
 #include "scenemap/timing.hpp"
 
 using namespace scenemap;
@@ -93,8 +93,8 @@ constexpr int kCropMaxSide = 256;
 
 struct sm_ctx {
   std::mutex mu;
-  SlamParams params;
-  Slam2D slam;
+  MapperParams params;
+  Mapper2D mapper;                    // 2D 격자 쌓기(자세는 밖에서 — Cartographer·정답·오도메트리)
   ObjParams oparams;
   ObjectMap om;
   std::vector<std::string> labels;
@@ -125,8 +125,8 @@ struct sm_ctx {
   bool clean_objects = true;
   RoomTracker rooms;                  // 방 나누기(자기 잠금, sm_snapshot 이 잠금 밖에서 부름)
   std::atomic<bool> rooms_force{false};
-  // 자세 원천(sm_set_pose_mode): SLAM(적분 + 스캔 맞추기) / ODOM(적분만) / GT(sm_push_pose 외부·정답 자세)
-  int pose_mode = SM_POSE_SLAM;
+  // 자세 원천(sm_set_pose_mode): EXT(기본, sm_push_ext_pose — Cartographer, 없으면 적분) / ODOM(적분만) / GT(sm_push_pose 정답 자세)
+  int pose_mode = SM_POSE_EXT;
   // 외부 카메라 외부 자세(sm_set_cam_extrinsic): cam 0 의 베이스 ← 광학 프레임을 순기구학 대신 이 값으로(카메라만 있는 기록 — 벤치마크)
   bool ext_cam = false;
   float ext_T[12] = {0};
@@ -182,7 +182,7 @@ struct sm_ctx {
     std::lock_guard<std::mutex> g(tmu);
     tm.h[st].add(us);
   }
-  explicit sm_ctx(const SlamParams& p) : params(p), slam(p), om(oparams) {
+  explicit sm_ctx(const MapperParams& p) : params(p), mapper(p), om(oparams) {
     for (const char* n : kStructureNames) kind_names[SM_KIND_STRUCTURE].push_back(n);
     for (const char* n : kStaticNames) kind_names[SM_KIND_STATIC].push_back(n);
   }
@@ -275,7 +275,7 @@ BodyState robotBody(int robot, const float* q, BodyFk* fk) {
 }
 
 // 로봇별 몸 크기 매개변수(R1 = 구조체 기본값 그대로). LIMO 0.32 × 0.22 × 0.25 m, 깊이 카메라 높이 0.18 m, OMX 팔 닿는 거리 ≈ 0.4 m
-void robotParams(int robot, SlamParams* sp, ObjParams* op) {
+void robotParams(int robot, MapperParams* sp, ObjParams* op) {
   if (robot != kRobotLimoOmx) return;
   ScanParams& s = sp->scan;
   s.self_r = 0.22f;            // 몸통 반대각선 0.19 m + 여유(R1 0.55)
@@ -299,19 +299,6 @@ void robotParams(int robot, SlamParams* sp, ObjParams* op) {
   op->grip_closed = 0.6f;      // 0 = 완전히 닫힘, 1.745 = 다 열림
   op->grasp_check = true;
   op->grip_gap = {{0.0, 0.0}, {0.095, 0.01}, {0.231, 0.02}, {0.347, 0.03}, {0.408, 0.04}, {0.5236, 0.0551}, {0.7854, 0.0933}};
-  // 스캔 맞추기(10-04, LIMO 만): 오도메트리가 정확하다(이동 0.8 %/m, 회전 치우침 1.2 %). 원래 값(점 σ 1 cm, 사전항 2 cm + 10 %)이면
-  // 스캔 점 수백 개의 정보가 사전항을 수천 배 눌러 예측은 사실상 무시되고, 좁은 시야(67.9°)로 벽 하나·복도만 보이는 keyframe 에서
-  // 맞추기가 벽을 따라 미끄러지거나(복도 퇴화) 덜 찬 지도에 끌려 keyframe 하나에 4–10 cm 씩 튀고(gate 8 cm 안이라 받아짐), 그 자세로 넣은
-  // 지도(이중 벽)에 뒤 스캔이 다시 맞아 오차가 굳었다. 점 σ 를 10 cm(점끼리 상관 — 정보 정규화)로, 사전항을 오도메트리 오차 크기
-  // (5 mm + 3 %·이동, 0.2° + 3 %·회전)로 두어 퇴화 방향은 오도메트리, 잘 잡히는 방향(벽 법선·yaw)만 스캔이 고친다.
-  // 받기 문턱도 오도메트리와 맞는 범위로(keyframe 하나에 3 cm·1.5° 또는 사전항 4σ 넘게 고치면 버림).
-  sp->sigma_r = 0.10;
-  sp->prior_xy0 = 0.005;
-  sp->prior_xy_k = 0.03;
-  sp->prior_yaw0 = 0.2 * M_PI / 180.0;
-  sp->prior_yaw_k = 0.03;
-  sp->gate_xy = 0.03;
-  sp->gate_yaw = 1.5 * M_PI / 180.0;
 }
 
 // 베이스 기준 점 → map (slam 자세)
@@ -324,7 +311,7 @@ void toMap(const Pose2& P, const float b[2][3], double m[2][3]) {
   }
 }
 
-// 적분 한 표본(데이터: proprio i 의 base_qvel 이 i-1 → i 구간 속도). 제자리 잡음은 Slam2D 와 같은 규칙.
+// 적분 한 표본(데이터: proprio i 의 base_qvel 이 i-1 → i 구간 속도). 제자리 잡음은 Mapper2D 와 같은 규칙.
 // 외부 자세 중 stamp 이하 가장 최근 것(max_age 안). 없으면 false
 bool poseAt(const std::deque<sm_pose2>& q, double stamp, Pose2* out, double max_age) {
   for (auto it = q.rbegin(); it != q.rend(); ++it) {
@@ -341,7 +328,7 @@ bool extAt(const sm_ctx* c, double stamp, Pose2* out, double max_age = 0.1) { re
 // 격자에서 바뀐 영역만 스트림으로(잠금 안, 스텝 스레드). 모양·원점이 바뀌면 전체. 보내지 못하면(링이 가득 참) 다음에 전체를 다시 보낸다
 void streamMap(sm_ctx* c) {
   if (!c->stream.running()) return;
-  OccGrid& gr = c->slam.gridMut();
+  OccGrid& gr = c->mapper.gridMut();
   const int w = gr.width(), h = gr.height();
   if (w <= 0 || h <= 0) return;
   int d0, d1, d2, d3;
@@ -365,20 +352,20 @@ void streamMap(sm_ctx* c) {
 void integrate(sm_ctx* c, const Prop& p) {
   if (c->have_used) {
     const double dt = p.stamp - c->last_used.stamp;
-    if (dt > 0 && dt < 1.0) c->slam.pushVelocity(p.v[0], p.v[1], p.v[2], dt);
+    if (dt > 0 && dt < 1.0) c->mapper.pushVelocity(p.v[0], p.v[1], p.v[2], dt);
   }
   const auto t0 = TClock::now();
   c->last_used = p;
   c->have_used = true;
   Pose2 g;
   // 같은 stamp 의 외부 자세가 있을 때만(없는 스텝은 적분으로 이어감 — 접착부는 영상 짝 스텝에만 넣어도 됨)
-  if (c->pose_mode == SM_POSE_GT && gtAt(c, p.stamp, &g, 1e-4)) c->slam.setPose(g);
-  if (c->pose_mode == SM_POSE_EXT && extAt(c, p.stamp, &g, 1e-4)) c->slam.setPose(g);
+  if (c->pose_mode == SM_POSE_GT && gtAt(c, p.stamp, &g, 1e-4)) c->mapper.setPose(g);
+  if (c->pose_mode == SM_POSE_EXT && extAt(c, p.stamp, &g, 1e-4)) c->mapper.setPose(g);
   // 영상이 없는 스텝에도 든 물체가 손을 따라가게
   float eef[2][3], grip[2];
   robotHands(c->robot, p.q, eef, grip);
   double eefm[2][3];
-  const Pose2 P = c->slam.pose();
+  const Pose2 P = c->mapper.pose();
   toMap(P, eef, eefm);
   c->om.updateHands(p.stamp, eefm, grip, P.th);
   if (c->pose_mode != SM_POSE_GT && c->stream.running()) c->stream.pushPose(p.stamp, P.x, P.y, P.th);
@@ -391,7 +378,7 @@ Pose2 preview(const sm_ctx* c, double* stamp) {
     *stamp = g.stamp;
     return Pose2{g.x, g.y, g.yaw};
   }
-  Pose2 q = c->slam.pose();
+  Pose2 q = c->mapper.pose();
   double t = c->have_used ? c->last_used.stamp : 0;
   for (const Prop& p : c->pending) {
     const double dt = p.stamp - t;
@@ -474,7 +461,7 @@ bool cfgNumber(const std::string& j, const char* key, double* out) {
 }  // namespace
 
 sm_ctx* sm_create(const char* config_json) {
-  sm_ctx* c = new sm_ctx(SlamParams{});
+  sm_ctx* c = new sm_ctx(MapperParams{});
   sm_set_robot(c, SM_ROBOT_LIMO_OMX);            // 기본: LIMO + OMX-F(우리 로봇). R1 Pro 는 config "robot": "r1pro" 로 명시한 옛 기록·시험용
   if (!config_json || !*config_json) return c;
   const std::string j(config_json);
@@ -503,7 +490,7 @@ int sm_set_robot(sm_ctx* c, int32_t robot) {
   {
     std::lock_guard<std::mutex> g(c->mu);
     c->robot = robot;
-    SlamParams sp{};
+    MapperParams sp{};
     ObjParams op{};
     op.voxel = c->oparams.voxel;          // sm_set_cloud_params 로 바꾼 값은 둔다
     op.cloud_cap = c->oparams.cloud_cap;
@@ -605,7 +592,7 @@ int sm_set_kind_names(sm_ctx* c, int32_t kind, const char* const* names, int32_t
 int sm_reset(sm_ctx* c) {
   if (!c) return -1;
   std::lock_guard<std::mutex> g(c->mu);
-  c->slam = Slam2D(c->params);
+  c->mapper = Mapper2D(c->params);
   {
     ApText tm = c->om.textModel();     // objprob 글 모델은 판이 바뀌어도 그대로
     c->om = ObjectMap(c->oparams);
@@ -639,7 +626,7 @@ int sm_reset(sm_ctx* c) {
   c->slog = nullptr;
   if (const char* lp = std::getenv("SM_SLAM_LOG")) {
     c->slog = std::fopen(lp, "w");
-    if (c->slog) std::fprintf(c->slog, "stamp,pred_x,pred_y,pred_th,cand_x,cand_y,cand_th,x,y,th,ref_x,ref_y,ref_th,n_hits,inliers,matched,accepted,still,odom_xy,odom_yaw\n");
+    if (c->slog) std::fprintf(c->slog, "stamp,x,y,th,ref_x,ref_y,ref_th,n_hits,inserted,odom_xy,odom_yaw\n");
   }
   c->grid8.reset();
   c->grid8_ver = ~0ull;
@@ -650,8 +637,7 @@ int sm_reset(sm_ctx* c) {
   c->wall_th = 0; c->wall_th_t = -1e300; c->walls_full_t = -1e300;
   c->graph.reset();
   c->obj_meta.clear();
-  c->slam.setMethod(c->pose_mode == SM_POSE_ODOM ? 'O' : c->params.method);
-  c->slam.setUpdatePolicy(c->map_policy, c->still_every);
+  c->mapper.setUpdatePolicy(c->map_policy, c->still_every);
   return 0;
 }
 
@@ -728,7 +714,7 @@ int sm_push_image_ex(sm_ctx* c, const sm_image* im, const sm_detections* dets, s
 namespace {
 // 스냅숏·그래프가 쓰는 격자 사본(보이는 값이 바뀌었을 때만 새로). mu 아래
 bool refreshGrid8(sm_ctx* c) {
-  const OccGrid& gr = c->slam.grid();
+  const OccGrid& gr = c->mapper.grid();
   if (c->grid8 && c->grid8_ver == gr.cellsVersion() && c->grid8_w == gr.width() && c->grid8_h == gr.height()) return false;
   const auto tg = TClock::now();
   auto v = std::make_shared<std::vector<int8_t>>(size_t(gr.width()) * gr.height());
@@ -744,7 +730,7 @@ bool refreshGrid8(sm_ctx* c) {
 // 벽 선분(walls.hpp): 격자가 바뀌었거나 바닥 가구 영역이 바뀌었을 때만, 바뀐 행만 다시 계산. 스냅숏은 결과를 나눠 쓴다. mu 아래
 // 벽 추출에서 빼는 영역 = 바닥에 놓인 확정 물체(소파·탁자 …)의 바닥 면적 + 0.1 m. 벽에 걸린 것(액자·조명, 바닥이 0.4 m 위)은 안 뺀다.
 void refreshWalls(sm_ctx* c) {
-  const OccGrid& gr = c->slam.grid();
+  const OccGrid& gr = c->mapper.grid();
   const bool grid_changed = c->walls_grid_ver != c->grid8_ver;   // 다른 곳(그래프 갱신)이 격자 사본을 먼저 새로 만들었어도 놓치지 않게 버전으로 본다
   std::vector<scenemap::WallRect> rects;
   for (const MapObject& o : c->om.objects()) {
@@ -786,7 +772,7 @@ void refreshWalls(sm_ctx* c) {
   const bool same = c->wallsp && c->walls_x0 == gr.x0() && c->walls_y0 == gr.y0();
   if (same && !grid_changed && !rects_changed) return;
   int dx0, dy0, dx1, dy1;
-  const bool d = c->slam.gridMut().takeDirty(&dx0, &dy0, &dx1, &dy1, 2);
+  const bool d = c->mapper.gridMut().takeDirty(&dx0, &dy0, &dx1, &dy1, 2);
   scenemap::WallGrid wg{c->grid8->data(), gr.width(), gr.height(), double(gr.res()), gr.x0() * double(gr.res()), gr.y0() * double(gr.res())};
   int ylo = 0, yhi = -1;   // 전부
   if (same && d) { ylo = dy0 - gr.y0(); yhi = dy1 - gr.y0(); }
@@ -812,7 +798,7 @@ void refreshWalls(sm_ctx* c) {
 void updateGraph(sm_ctx* c, double stamp, bool objects) {
   const auto t0 = TClock::now();
   // GT mode: the trajectory comes straight from the pushed GT poses (sm_push_pose), not from the SLAM/odometry pose sampled at keyframes.
-  if (c->pose_mode != SM_POSE_GT) c->graph.updateAgent(stamp, c->slam.pose());
+  if (c->pose_mode != SM_POSE_GT) c->graph.updateAgent(stamp, c->mapper.pose());
   if (objects) {
     std::vector<ObjIn> v;
     for (const MapObject& o : c->om.objects()) {
@@ -829,7 +815,7 @@ void updateGraph(sm_ctx* c, double stamp, bool objects) {
   }
   const auto t1 = TClock::now();
   c->addT(kStGraphObj, usBetween(t0, t1));
-  OccGrid& gr = c->slam.gridMut();
+  OccGrid& gr = c->mapper.gridMut();
   int b[4];
   const bool d = gr.takeDirty(&b[0], &b[1], &b[2], &b[3], 1);
   if (gr.width() > 0 && c->graph.placesDue(stamp, d, gr.width(), gr.height(), gr.x0(), gr.y0())) {
@@ -845,7 +831,7 @@ void updateGraph(sm_ctx* c, double stamp, bool objects) {
 void poseDiag(sm_ctx* c, double stamp) {
   Pose2 ref;
   if (c->pose_mode == SM_POSE_GT || !gtAt(c, stamp, &ref)) return;
-  const Pose2 est = c->slam.pose();
+  const Pose2 est = c->mapper.pose();
   if (!c->diag_align) {   // align = est ∘ ref⁻¹
     const double cs = std::cos(ref.th), sn = std::sin(ref.th);
     const Pose2 inv{-(cs * ref.x + sn * ref.y), -(-sn * ref.x + cs * ref.y), -ref.th};
@@ -868,15 +854,13 @@ void poseDiag(sm_ctx* c, double stamp) {
   d.ref[0] = r.x; d.ref[1] = r.y; d.ref[2] = r.th;
   d.stamp = stamp;
 }
-// SM_SLAM_LOG 한 줄: stamp, 예측 x y th, 맞춘 결과 x y th, 쓴 자세 x y th, 정답(맞춤) x y th, 점 수, 인라이어, 맞춤·받음, 적분 이동
+// SM_SLAM_LOG 한 줄: stamp, 넣은 자세 x y th, 정답(맞춤) x y th, 점 수, 넣음, 적분 이동
 void slamLog(sm_ctx* c, double stamp) {
   const KeyframeStats& k = c->last_kf;
-  const Pose2 P = c->slam.pose();
   Pose2 ref{NAN, NAN, NAN}, g;
   if (c->diag_align && gtAt(c, stamp, &g)) ref = compose(c->align, g);
-  std::fprintf(c->slog, "%.4f,%.5f,%.5f,%.6f,%.5f,%.5f,%.6f,%.5f,%.5f,%.6f,%.5f,%.5f,%.6f,%d,%d,%d,%d,%d,%.5f,%.6f\n", stamp, k.pred.x,
-               k.pred.y, k.pred.th, k.cand.x, k.cand.y, k.cand.th, P.x, P.y, P.th, ref.x, ref.y, ref.th, k.n_hits, k.inliers, int(k.matched),
-               int(k.accepted), int(k.still), k.odom_xy, k.odom_yaw);
+  std::fprintf(c->slog, "%.4f,%.5f,%.5f,%.6f,%.5f,%.5f,%.6f,%d,%d,%.5f,%.6f\n", stamp, k.pose.x, k.pose.y, k.pose.th, ref.x, ref.y, ref.th,
+               k.n_hits, int(k.inserted), k.odom_xy, k.odom_yaw);
 }
 }  // namespace
 
@@ -901,7 +885,7 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   std::lock_guard<std::mutex> g(c->mu);
   c->st.last_image_stamp = im->stamp;
   c->st.n_images++;
-  if (im->cam != 0 || !im->depth_m) return 0;   // slam2d 는 cam 0 깊이만(R1 머리, LIMO 몸통 앞 깊이 카메라)
+  if (im->cam != 0 || !im->depth_m) return 0;   // 격자는 cam 0 깊이만(R1 머리, LIMO 몸통 앞 깊이 카메라)
   tot.on = true;
   // 영상 stamp 까지 적분(같은 stamp 의 proprio 가 이 영상의 짝)
   const auto tp = TClock::now();
@@ -912,11 +896,9 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   }
   if (!c->have_used) return 0;                  // 짝지을 proprio 가 아직 없음
   Pose2 known;
-  bool use_gt = c->pose_mode == SM_POSE_GT && gtAt(c, im->stamp, &known);
-  if (c->pose_mode == SM_POSE_EXT) {   // 외부 SLAM: 영상 시각의 자세, 없으면 지난 외부 자세 + 적분(맞추기는 안 함)
-    if (!extAt(c, im->stamp, &known)) known = c->slam.pose();
-    use_gt = true;
-  }
+  // 자세: GT = 정답, EXT = 외부 SLAM(Cartographer) — 둘 다 영상 시각의 것이 없으면 지난 외부 자세 + 적분. ODOM = 적분만
+  const bool have_known = (c->pose_mode == SM_POSE_GT && gtAt(c, im->stamp, &known)) || (c->pose_mode == SM_POSE_EXT && extAt(c, im->stamp, &known));
+  if (!have_known) known = c->mapper.pose();
   const auto tf = TClock::now();
   c->addT(kStPair, usBetween(tp, tf));
   BodyFk fk;
@@ -931,9 +913,8 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   dv.fx = float(im->fx); dv.fy = float(im->fy); dv.cx = float(im->cx); dv.cy = float(im->cy);
   std::memcpy(dv.T_bc, fk.T_head, sizeof(dv.T_bc));
   {
-    std::lock_guard<std::mutex> tg(c->tmu);   // 단계 시간은 slam2d 가 직접 더함
-    if (use_gt) c->last_kf = c->slam.keyframeKnown(dv, body, known, &c->tm);
-    else c->last_kf = c->slam.keyframe(dv, body, nullptr, &c->tm);
+    std::lock_guard<std::mutex> tg(c->tmu);   // 단계 시간은 mapper2d 가 직접 더함
+    c->last_kf = c->mapper.keyframe(dv, body, known, &c->tm);
   }
   poseDiag(c, im->stamp);
   if (c->slog) slamLog(c, im->stamp);
@@ -941,9 +922,9 @@ int sm_push_image_rgb(sm_ctx* c, const sm_image* im, const sm_detections* dets, 
   c->reenc.clear();
   c->reenc_pub.clear();
   c->reenc_bits.clear();
-  if (!dets) { c->last_assoc.clear(); c->last_view_upd.clear(); c->last_view_q.clear(); updateGraph(c, im->stamp, false); c->det_emb_n = -1; return 0; }   // 검출 없음: 지도(slam2d)만
-  // 물체 지도: map ← 카메라 = slam 자세 ∘ 순기구학 머리 카메라(objmap_eval 과 같은 계산)
-  const Pose2 P = c->slam.pose();
+  if (!dets) { c->last_assoc.clear(); c->last_view_upd.clear(); c->last_view_q.clear(); updateGraph(c, im->stamp, false); c->det_emb_n = -1; return 0; }   // 검출 없음: 격자만
+  // 물체 지도: map ← 카메라 = 지도 자세 ∘ 순기구학 머리 카메라
+  const Pose2 P = c->mapper.pose();
   const double cs = std::cos(P.th), sn = std::sin(P.th);
   F.stamp = im->stamp;
   F.w = im->w;
@@ -1171,7 +1152,7 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
     const Pose2 q = preview(c, &t);
     s->pose = sm_pose2{t, q.x, q.y, q.th};
     s->st = c->st;
-    const OccGrid& gr = c->slam.grid();
+    const OccGrid& gr = c->mapper.grid();
     s->res = gr.res();
     s->ox = gr.x0() * double(gr.res());
     s->oy = gr.y0() * double(gr.res());
@@ -1182,8 +1163,8 @@ int sm_snapshot(sm_ctx* c, sm_snapshot_t** out) {
     s->cellsp = c->grid8;
     s->wallsp = c->wallsp;
     {
-      const Scan2& sc = c->slam.lastScan();
-      const Pose2 sp = c->slam.lastScanPose();
+      const Scan2& sc = c->mapper.lastScan();
+      const Pose2 sp = c->mapper.lastScanPose();
       s->scan_pose = sm_pose2{c->st.last_image_stamp, sp.x, sp.y, sp.th};
       s->scan_ox = sc.ox; s->scan_oy = sc.oy;
       s->scan_hx = sc.hx; s->scan_hy = sc.hy; s->scan_fx = sc.fx; s->scan_fy = sc.fy;
@@ -1377,7 +1358,7 @@ int sm_snap_movable(const sm_snapshot_t* s, uint32_t id) {
 int sm_take_dirty(sm_ctx* c, int32_t out[4], uint64_t* version) {
   if (!c || !out) return -1;
   std::lock_guard<std::mutex> g(c->mu);
-  OccGrid& gr = c->slam.gridMut();
+  OccGrid& gr = c->mapper.gridMut();
   if (version) *version = gr.version();
   int x0, y0, x1, y1;
   if (!gr.takeDirty(&x0, &y0, &x1, &y1)) return 0;
@@ -1735,8 +1716,7 @@ uint32_t sm_snap_object_room(const sm_snapshot_t* s, uint32_t id) {
 int sm_set_pose_mode(sm_ctx* c, int32_t mode) {
   if (!c || mode < SM_POSE_SLAM || mode > SM_POSE_EXT) return -1;
   std::lock_guard<std::mutex> g(c->mu);
-  c->pose_mode = mode;
-  c->slam.setMethod(mode == SM_POSE_ODOM ? 'O' : c->params.method);
+  c->pose_mode = mode == SM_POSE_SLAM ? SM_POSE_EXT : mode;   // SM_POSE_SLAM(옛 slam2d, archive) = EXT
   return 0;
 }
 
@@ -1794,7 +1774,7 @@ int sm_set_map_update(sm_ctx* c, int32_t policy, int32_t still_every) {
   std::lock_guard<std::mutex> g(c->mu);
   c->map_policy = policy;
   if (still_every > 0) c->still_every = still_every;
-  c->slam.setUpdatePolicy(policy, still_every);
+  c->mapper.setUpdatePolicy(policy, still_every);
   return 0;
 }
 

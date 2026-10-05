@@ -46,7 +46,7 @@ typedef struct sm_snapshot_t sm_snapshot_t;
 typedef struct { double stamp; const float* proprio; int n_proprio; } sm_proprio;
 typedef struct {
   double stamp; int cam; int w, h;       /* cam — R1: 0 머리, 1 왼손목, 2 오른손목. LIMO: 0 몸통 앞 깊이 카메라(Orbbec Dabai), 1 손목(깊이 없음).
-                                            지도(slam2d·objmap)는 cam 0 깊이만 쓴다. 원 텐서 크기 */
+                                            지도(mapper2d·objmap)는 cam 0 깊이만 쓴다. 원 텐서 크기 */
   const uint8_t* rgba;                   /* w×h×4 (NULL 가능) */
   const float* depth_m;                  /* w×h 미터 (NULL 가능) */
   double fx, fy, cx, cy;                 /* 그 해상도의 내부 파라미터(평가기 eval_utils.CAMERA_INTRINSICS) */
@@ -314,16 +314,16 @@ typedef struct {
   int32_t n_free; const float* fx; const float* fy;     /* 빈 광선 끝(베이스 기준 m) */
 } sm_scan2;
 int sm_snap_scan(const sm_snapshot_t*, sm_scan2* out);
-/* 바뀐 영역(추가 ABI): 지난 부름 뒤 slam2d 가 격자에 넣은 스캔들이 고친 칸의 경계 상자(지금 격자 칸 좌표 x0,y0,x1,y1, 끝 포함).
+/* 바뀐 영역(추가 ABI): 지난 부름 뒤 mapper2d 가 격자에 넣은 스캔들이 고친 칸의 경계 상자(지금 격자 칸 좌표 x0,y0,x1,y1, 끝 포함).
  * 1 = 바뀜, 0 = 안 바뀜. 부를 때마다 비운다(소비자 하나 — sgrt_map). version = 격자 insert 횟수. 다음 sm_snapshot 과 짝. */
 int sm_take_dirty(sm_ctx*, int32_t out[4], uint64_t* version);
 
 /* ---- 자세 원천(추가 ABI, 10-03) ----
- * SM_POSE_SLAM(기본): base_qvel 적분 예측 + 깊이 가상 스캔 맞추기(실제 로봇·대회 제출).
- * SM_POSE_ODOM: 적분만(맞추기 없음, 비교용).
- * SM_POSE_EXT(10-06): sm_push_ext_pose 로 받은 다른 SLAM 의 자세(Cartographer — ../slam_carto). keyframe 은 맞추기 없이 영상 stamp 의
+ * SM_POSE_EXT(기본, 10-06): sm_push_ext_pose 로 받은 SLAM 자세(Cartographer — ../slam_carto, libsgrt 가 넣음). keyframe 은 영상 stamp 의
  *   자세로 넣고(없으면 지난 외부 자세 + 적분), proprio 마다 같은 stamp 의 외부 자세가 있으면 그것으로 바꾼다. sm_push_pose(정답)는
- *   GT 가 아니므로 진단(떠밀림)에만 쓰인다 — 정답과 외부 SLAM 을 같이 넣어 실시간 오차를 잰다.
+ *   GT 가 아니므로 진단(떠밀림)에만 쓰인다 — 정답과 외부 SLAM 을 같이 넣어 실시간 오차를 잰다. 외부 자세를 안 넣으면 적분만.
+ * SM_POSE_ODOM: base_qvel 적분만(외부 자세를 넣어도 안 씀, 비교용).
+ * SM_POSE_SLAM(0): 옛 scenemap slam2d(깊이 가상 스캔 맞추기) 자리 — 10-06 archive 로 옮김. 이제 SM_POSE_EXT 와 같다(옛 호출자용).
  * SM_POSE_GT: sm_push_pose 로 받은 외부 자세(시뮬 정답 베이스 자세 — 진단·시각화용, 대회 규칙상 제출에는 못 씀). map = 그 자세의
  *   프레임(시뮬 world). proprio 마다 그 stamp 의 자세로 바꾸고, keyframe 은 맞추기 없이 영상 stamp 의 자세로 넣는다.
  *   카메라 외부 자세는 어느 모드든 proprio 순기구학(베이스 ← 카메라).

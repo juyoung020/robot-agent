@@ -1,4 +1,4 @@
-// 자세 원천(SM_POSE_GT/SLAM/ODOM)·사건 기반 격자 넣기(서 있을 때 생기고 없어지는 장애물)·단계 시간 시험.
+// 자세 원천(SM_POSE_GT/EXT/ODOM)·사건 기반 격자 넣기(서 있을 때 생기고 없어지는 장애물)·단계 시간 시험.
 // 합성 장면: 8×8 m 방(벽 높이 2.5 m) + 상자 장애물, 머리 깊이는 순기구학 카메라에서 광선 추적으로 만든다.
 #include <cmath>
 #include <cstdio>
@@ -188,7 +188,7 @@ static void testStillUpdate() {
               occ1, free1, idle1, occ0, free0);
 }
 
-// 3. SLAM·ODOM 모드에 외부 자세를 넣으면 떠밀림 진단: 0.3 m/s 직진 3 s 후 오차가 작음
+// 3. EXT(외부 SLAM 자세 없이 = 적분)·ODOM 모드에 정답 자세를 넣으면 떠밀림 진단: 0.3 m/s 직진 3 s 후 오차가 작음
 static void testDiag(int mode, const char* name) {
   Run r;
   sm_set_pose_mode(r.c, mode);
@@ -204,6 +204,42 @@ static void testDiag(int mode, const char* name) {
   CHECK(d.n >= 14, "%s diag n %d", name, d.n);
   CHECK(d.max_xy < 0.03 && d.max_yaw < 0.02, "%s drift %.3f m %.3f rad", name, d.max_xy, d.max_yaw);
   std::printf("  %s + 외부 자세 진단: keyframe %d, 최대 %.2f cm / %.2f°\n", name, d.n, d.max_xy * 100, d.max_yaw * 180 / M_PI);
+}
+
+// 3b. EXT: 외부 SLAM 자세(sm_push_ext_pose)가 지도 자세가 되고(적분을 이김), 정답(sm_push_pose)은 진단에만.
+//     외부 자세 = 정답을 (0.5, -0.2, 10°) 옮긴 프레임 → 지도 자세는 외부 자세, 진단 오차는 0(첫 keyframe 에서 프레임 맞춤)
+static void testExt() {
+  Run r;
+  CHECK(sm_get_pose_mode(r.c) == SM_POSE_EXT, "default pose mode %d (want EXT)", sm_get_pose_mode(r.c));
+  sm_set_pose_mode(r.c, SM_POSE_SLAM);   // 옛 값 = EXT
+  CHECK(sm_get_pose_mode(r.c) == SM_POSE_EXT, "SLAM alias -> %d", sm_get_pose_mode(r.c));
+  const double vel[3] = {0.25, 0, 0.2};
+  const double off[3] = {0.5, -0.2, 10 * M_PI / 180};
+  double pose[3] = {-1.0, 0.2, 0.1}, ext[3] = {0, 0, 0};
+  for (int k = 0; k < 120; ++k) {
+    const double co = std::cos(off[2]), so = std::sin(off[2]);
+    ext[0] = off[0] + co * pose[0] - so * pose[1];
+    ext[1] = off[1] + so * pose[0] + co * pose[1];
+    ext[2] = pose[2] + off[2];
+    if (k % 2 == 0) {   // 외부 SLAM 은 15 Hz(사이 스텝은 적분)
+      const sm_pose2 e{r.step / 30.0, ext[0], ext[1], ext[2]};
+      sm_push_ext_pose(r.c, &e);
+    }
+    r.stepTo(pose, vel, {}, k % 6 == 0);
+    pose[0] += std::cos(pose[2]) * vel[0] / 30.0;
+    pose[1] += std::sin(pose[2]) * vel[0] / 30.0;
+    pose[2] += vel[2] / 30.0;
+  }
+  sm_snapshot_t* s = nullptr;
+  sm_snapshot(r.c, &s);
+  const sm_pose2 P = sm_snap_pose(s);
+  sm_snapshot_release(s);
+  const double exy = std::hypot(P.x - ext[0], P.y - ext[1]);
+  CHECK(exy < 0.02 && std::fabs(P.yaw - ext[2]) < 0.02, "map pose %.3f %.3f %.3f vs ext %.3f %.3f %.3f", P.x, P.y, P.yaw, ext[0], ext[1], ext[2]);
+  sm_pose_diag d{};
+  sm_get_pose_diag(r.c, &d);
+  CHECK(d.n >= 18 && d.max_xy < 0.02 && d.max_yaw < 0.01, "EXT diag n %d max %.3f m %.3f rad", d.n, d.max_xy, d.max_yaw);
+  std::printf("  EXT 외부 자세: 지도 자세 차 %.2f cm, 정답 진단 keyframe %d 최대 %.2f cm / %.2f°\n", exy * 100, d.n, d.max_xy * 100, d.max_yaw * 180 / M_PI);
 }
 
 // 4. 단계 시간 ABI
@@ -277,7 +313,8 @@ int main() {
   std::printf("test_posemap\n");
   testGtPose();
   testStillUpdate();
-  testDiag(SM_POSE_SLAM, "SLAM");
+  testDiag(SM_POSE_EXT, "EXT");
+  testExt();
   testDiag(SM_POSE_ODOM, "ODOM");
   testTiming();
   testGraph();

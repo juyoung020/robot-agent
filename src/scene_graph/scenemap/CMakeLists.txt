@@ -8,13 +8,13 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O2")
 
-add_library(scenemap STATIC src/scan.cpp src/grid.cpp src/slam2d.cpp src/fk.cpp src/capi.cpp src/objmap.cpp src/bestview.cpp src/cloud.cpp src/png.cpp src/walls.cpp src/stream.cpp ../da/src/merge.cpp
+add_library(scenemap STATIC src/scan.cpp src/grid.cpp src/mapper2d.cpp src/fk.cpp src/capi.cpp src/objmap.cpp src/bestview.cpp src/cloud.cpp src/png.cpp src/walls.cpp src/stream.cpp ../da/src/merge.cpp
             src/dsg_save.cpp src/rooms.cpp src/sgraph.cpp src/objprob.cpp src/inspect.cpp)
 target_include_directories(scenemap PUBLIC include ../da/include)
 find_package(ZLIB REQUIRED)   # best view PNG(deflate·crc32)
 target_link_libraries(scenemap PUBLIC ZLIB::ZLIB)
 # Spark-DSG(저장, scene.json). 우리 수정본 src/scene_graph/spark_dsg 를 먼저 쓰고(병목을 고치려고 가져옴, OUR_CHANGES.md),
-# 없으면 설치본(~/.local). 둘 다 없어도 scene.json 은 빠른 쓰기(sceneJsonFast, 같은 형식)로 쓴다 — 라이브러리는 SM_DSG_SAVE=spark 비교·시험 읽기용.
+# 없으면 설치본(사용자 .local). 둘 다 없어도 scene.json 은 빠른 쓰기(sceneJsonFast, 같은 형식)로 쓴다 — 라이브러리는 SM_DSG_SAVE=spark 비교·시험 읽기용.
 set(SM_SPARK_DSG_DIR "${CMAKE_CURRENT_LIST_DIR}/../spark_dsg")
 if(NOT TARGET spark_dsg::spark_dsg AND EXISTS "${SM_SPARK_DSG_DIR}/CMakeLists.txt")
   set(SPARK_DSG_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -41,10 +41,6 @@ endif()
 set_target_properties(scenemap PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_options(scenemap PRIVATE -Wall -Wextra)
 
-add_executable(slam2d_eval tools/slam2d_eval.cpp)
-target_link_libraries(slam2d_eval scenemap)
-add_executable(objmap_eval tools/objmap_eval.cpp)
-target_link_libraries(objmap_eval scenemap)
 add_executable(map_timeline tools/map_timeline.cpp)
 target_link_libraries(map_timeline scenemap ZLIB::ZLIB)
 # sgrt 기록(SGRT_RECORD) 재생: 자세 모드 비교·단계별 µs(tools/sm_bench.cpp)
@@ -56,10 +52,6 @@ if(PNG_FOUND)
 endif()
 add_executable(sm_bench tools/sm_bench.cpp)
 target_link_libraries(sm_bench scenemap)
-add_executable(stage_bench tools/stage_bench.cpp)
-target_link_libraries(stage_bench scenemap)
-add_executable(capi_replay tools/capi_replay.cpp)
-target_link_libraries(capi_replay scenemap)
 
 enable_testing()
 add_executable(test_fk tests/test_fk.cpp)
@@ -79,7 +71,7 @@ if(spark_dsg_FOUND)
   target_compile_definitions(test_rooms PRIVATE SM_TEST_SPARK_DSG)
 endif()
 add_test(NAME rooms COMMAND test_rooms ${CMAKE_CURRENT_BINARY_DIR}/test_rooms_out)
-# 자세 원천(GT/SLAM/ODOM)·서 있을 때 장애물 생김/없어짐(사건 기반 넣기)·단계 시간
+# 자세 원천(GT/EXT/ODOM)·서 있을 때 장애물 생김/없어짐(사건 기반 넣기)·단계 시간
 add_executable(test_posemap tests/test_posemap.cpp)
 target_link_libraries(test_posemap scenemap)
 add_test(NAME posemap COMMAND test_posemap)

@@ -1,6 +1,6 @@
 // sgrt 기록(SGRT_RECORD) 재생 — C ABI 로만 scenemap 을 굴려 자세 모드 비교(떠밀림)·단계별 µs 를 잰다.
 //
-//   sm_bench <rec.bin> [--pose slam|odom|gt] [--lag 0|1] [--policy 0|1] [--no-dets] [--snap-every N] [--save-every S]
+//   sm_bench <rec.bin> [--pose odom|gt] [--lag 0|1] [--policy 0|1] [--no-dets] [--snap-every N] [--save-every S]
 //            [--save DIR] [--traj out.csv] [--labels names.txt] [--frames N] [--loops K] [--robot r1pro|limo_omx] [--sm-config JSON]
 //
 // 재생은 sgrt_step 과 같은 순서: 스텝마다 (외부 자세) → proprio, keyframe 이면 영상(stamp = 직전 스텝, --lag 1) + 검출.
@@ -26,11 +26,11 @@ using sgrec::load;
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    std::fprintf(stderr, "usage: sm_bench <rec.bin> [--pose slam|odom|gt] [--lag 0|1] [--policy 0|1] [--no-dets] [--snap-every N] "
+    std::fprintf(stderr, "usage: sm_bench <rec.bin> [--pose odom|gt] [--lag 0|1] [--policy 0|1] [--no-dets] [--snap-every N] "
                          "[--save-every S] [--save DIR] [--traj out.csv] [--labels names.txt] [--frames N] [--loops K] [--robot r1pro|limo_omx] [--sm-config JSON]\n");
     return 2;
   }
-  std::string pose = "slam", save_dir, traj, labels_path, sm_cfg;   // sm_cfg 비면 sm_create(NULL) = LIMO
+  std::string pose = "odom", save_dir, traj, labels_path, sm_cfg;   // sm_cfg 비면 sm_create(NULL) = LIMO
   double gt_shift = 0;   // 외부 자세 stamp 를 이만큼 스텝 뒤로(= 그 자세가 늦게 그려진다고 봄)
   int lag = 1, policy = 1, snap_every = 6, frames = 0, loops = 1;
   double save_every = 0;
@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
     std::vector<const char*> np;
     for (auto& n : names) np.push_back(n.c_str());
     sm_set_labels(c, np.data(), int(np.size()));
-    sm_set_pose_mode(c, pose == "gt" ? SM_POSE_GT : pose == "odom" ? SM_POSE_ODOM : SM_POSE_SLAM);
+    sm_set_pose_mode(c, pose == "gt" ? SM_POSE_GT : SM_POSE_ODOM);   // SLAM(Cartographer)은 libsgrt 안 — 재생은 sgrt_replay
     sm_set_map_update(c, policy, 0);
   };
   FILE* tf = traj.empty() ? nullptr : std::fopen(traj.c_str(), "w");

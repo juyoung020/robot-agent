@@ -1,7 +1,7 @@
 # scenemap — 2D 지도 · 물체 기억 · 장면 그래프 (C++)
 
 로봇의 proprio(R1 Pro 61 f32 또는 LIMO + OMX-F 12 f32 — 아래 "LIMO + OMX-F" 절)와 머리(LIMO: 몸통 앞) 깊이, 검출(마스크 + 이름 번호)로 실시간 기억을 만든다.
-2D 점유 격자와 로봇 자세(slam2d), 물체 지도(objmap), 방 나누기, 장면 그래프, 파일 저장, 뷰어 스트림까지 한다.
+2D 점유 격자(자세는 밖에서 — Cartographer `../slam_carto`, mapper2d 가 그 자세로 격자를 쌓음), 물체 지도(objmap), 방 나누기, 장면 그래프, 파일 저장, 뷰어 스트림까지 한다.
 밖에서는 C ABI 하나(`include/scenemap.h`)로 부른다. CUDA 는 쓰지 않는다(장치 쪽 자르기는 `../runtime`).
 설계·측정은 [docs/scenemap_설계.md](../../../docs/scenemap_설계.md).
 
@@ -19,7 +19,7 @@
 | `include/scenemap/fk.hpp` · `src/fk.cpp` · `r1pro_fk_table.hpp` · `limo_omx_fk_table.hpp` | 순기구학(proprio 관절값 + URDF 표) — R1 Pro 와 LIMO + OMX-F. 카메라·팔 끝 자세는 이것으로만 만든다. 표는 `tools/gen_fk_table.py`(R1)·`tools/gen_limo_fk_table.cpp`(LIMO)가 만든다(손으로 고치지 말 것) |
 | `scan.*` | 깊이 → 베이스 기준 가상 2D 스캔. 높이 띠 안 점 = 장애물(방위 칸마다 가장 가까운 것), 띠 아래 바닥 점 = 빈 광선 끝. 로봇 몸·팔은 뺀다 |
 | `grid.*` | 2D 점유 격자(로그 오즈), 필요하면 넓어짐. 보이는 값(−1 모름, 0..100 %)을 늘 고쳐 두고, 바뀐 영역(dirty)을 추적 |
-| `slam2d.*` | `base_qvel` 적분 예측 + keyframe 가상 스캔 맞추기(`'A'` Cartographer 식 / `'B'` point-to-line, 기본 `'B'`) + 격자 넣기 |
+| `mapper2d.*` | 자세는 밖에서(SM_POSE_EXT = Cartographer 기본·GT·ODOM): keyframe 사이·외부 자세가 없을 때 `base_qvel` 적분, keyframe 깊이 가상 스캔을 그 자세로 격자에 넣기(넣기 정책), 마지막 스캔. 옛 `slam2d.*`(깊이 스캔 맞추기로 자세를 고치던 것)는 10-06 `archive/src/scene_graph/scenemap` |
 | `objmap.*` | 검출 마스크 + 깊이 + 자세 → 물체 3D 위치·크기 → 같은 물체 판단 → 갱신. 확정·옮겨짐·사라짐·들기·받침 따라가기. 이름 종류(옮길 수 있음 / 구조물 — 노드 안 됨 / 고정 가구). 끝에 `../da` 로 중복 병합 |
 | `objprob_math.h` | objprob 계산 한 곳(10-06): 같은 것 로지스틱·기하 특징·κ(viewKappa)·이름 사후 정규화·상위어 고르기·이름 분포 겹침·칼만 — `__host__ __device__` 인라인, STL 없음. scenemap(double, `OpmStd`)과 GPU 학습 지도(`training/RL/map`, float 결정적 수학)가 같이 부름. 규칙을 바꾸면 여기를 고침(두 쪽이 함께 바뀜). 맞춤 시험 `training/RL/map/tools/objprob_parity.cpp` |
 | `objprob.*` | 확률 물체 모델(아래 "scenemap 확률 모드"): vMF 임베딩 사후(r = Σκz)·상위 K 모습·이름 범주 사후(상위어로 올림·엔트로피·바깥 관측)·같은 것 로지스틱 특징·평면 맞춤(PCA)·접촉 칸. `ObjParams::objprob` 일 때만 쓰임 |
@@ -64,32 +64,21 @@ cmake -S src/scene_graph/scenemap -B ~/scenemap_build && cmake --build ~/scenema
 
 | 도구 | 하는 일 |
 |---|---|
-| `slam2d_eval <ep.bin> <out prefix> [--method A\|B] [--carto-prior] [--pgm]` | 학습 데모 한 판(`eval/export_episode.py`)을 slam2d 로 재생, 프레임별 추정 자세·keyframe 통계. 채점은 `eval/score_slam.py` |
-| `objmap_eval <ep.bin> <det.bin> <out prefix> [--gt-pose] [--min-cells N]` | '완벽한 검출'(`eval/export_gtdet.py`)로 물체 지도를 만들어 물체 표·사건을 씀. 채점은 `eval/score_objmap.py` |
-| `capi_replay <ep.bin> <est.bin>` | 같은 판을 C ABI 로 넣고 keyframe 자세를 `slam2d_eval` 결과와 비교, 격자 크기·reachable |
 | `map_timeline <ep.bin> <det.bin> <out dir> [--min-cells N]` | 팀 벤치마크 형식 지도 시간표 `map_timeline.csv`, 물체 점 `map_points.npz` |
 | `dom_bench <seq dir> <pred root> [--min-px 100] [--every 1] [--bench-static]` | dynamic-object-mapping-benchmark 시퀀스(toolkit 배치)를 '완벽한 검출'(정답 인스턴스 마스크 + 범주)로 넣어 `<pred root>/<seq>/map_timeline.csv`·`map_points.npz`. 카메라만 있는 기록은 `sm_set_cam_extrinsic`(베이스 = 카메라 바닥 투영, GT 자세 모드)으로 넣는다(`tools/dom_seq.hpp`, libpng 있을 때만 빌드). 실제 검출판은 `../runtime/tools/dom_bench_det.cpp`(`--dump dets.gz` 로 검출·이름을 남기고 `--load` 로 GPU 없이 scenemap 만 다시 돌림 — 규칙 비교용). `moving` 열 = 든 것, 또는 옮겨짐 상태이고 두 프레임 잇달아 중심이 3 cm/프레임 넘게 옮겨 간 것(지도 출력만으로). 점수는 아래 "물체 바뀜 규칙" |
-| `sm_bench <rec.bin> [--pose slam\|odom\|gt] [--lag 0\|1] [--policy 0\|1] …` | sgrt 기록(`SGRT_RECORD`)을 C ABI 로 재생: 자세 모드 비교(떠밀림), 단계별 µs 표. `--robot limo_omx`(또는 `--sm-config '<json>'`)로 LIMO 기록 — 기록에는 로봇이 안 적히므로 sgrt 의 `SGRT_ROBOT` 과 같게 준다(없으면 R1) |
-| `stage_bench <rec.bin> [--loops K] [--frames N]` | 같은 기록을 내부 C++ API 로 재생해 fk·scan·match·insert·objmap 단계 µs(옛 판 소스로도 빌드되게 오래된 모양만 씀) |
+| `sm_bench <rec.bin> [--pose odom\|gt] [--lag 0\|1] [--policy 0\|1] …` | sgrt 기록(`SGRT_RECORD`)을 C ABI 로 재생: 단계별 µs 표(Cartographer 자세는 libsgrt 안이라 `../runtime/tools/sgrt_replay` 로). `--robot limo_omx`(또는 `--sm-config '<json>'`)로 LIMO 기록 — 기록에는 로봇이 안 적히므로 sgrt 의 `SGRT_ROBOT` 과 같게 준다(없으면 R1) |
 | `rooms_pgm <memory dir> [출력 dir] [되풀이 수]` | 저장된 기억(map.pgm·map.yaml·view.json)에서 방을 나눠 표, `rooms.pgm`, `rooms_color.ppm`. 되풀이 수를 주면 시간 중앙값 |
 | `stream_sim <memory_dir> <host:port> [초] [pose_hz] [map_hz] [view_hz]` | 시뮬 없이 sgview(`--ingest`)에 합성 프레임을 높은 주기로 보내는 부하 시험 |
 | `gen_fk_table.py` | `src/sim/integ/fk/r1pro_cam_fk.json` → `include/scenemap/r1pro_fk_table.hpp` |
 | `gen_limo_fk_table <map_vla.urdf> <out.hpp>` | LIMO + OMX-F URDF → `include/scenemap/limo_omx_fk_table.hpp`(같이 빌드됨, 아래 LIMO 절) |
-| `sgrec.hpp` | sgrt 기록 읽기(`sm_bench`·`stage_bench` 공용) |
+| `sgrec.hpp` | sgrt 기록 읽기(`sm_bench`·`sgrt_replay` 공용, 'L' 라이다 스캔 포함) |
 
 ### 채점 (`eval/`, 파이썬, 로봇 밖)
 
-정답은 채점에만 쓴다. 학습 데모는 `data/2026-challenge-demos`, 원본 HDF5 는 `data/2026-challenge-rawdata`.
+정답은 채점에만 쓴다. BEHAVIOR R1 시연 채점 도구(export_episode·score_slam·score_objmap …)는 10-06 `archive/src/scene_graph/scenemap/eval`.
 
 | 파일 | 하는 일 |
 |---|---|
-| `demo_data.py` | 학습 데모(LeRobot v3) 읽기, 헤드 깊이 역양자화, 640 × 480 판 내부 파라미터 |
-| `gt_traj.py` | 원본 HDF5 에서 프레임별 정답 자세(로봇·물체). `python gt_traj.py <에피소드>` 로 요약 |
-| `gt_scene.py` | 과제 인스턴스에서 정답 물체 상자, map 프레임으로 옮김 |
-| `export_episode.py <에피소드> [--stride 3] [--lag 1] [--out …]` | `slam2d_eval` 입력 `ep_<ep>.bin`(proprio·정답 자세·keyframe 깊이 160 × 120) |
-| `export_gtdet.py <에피소드> [--every 9] [--lag 1] [--step 2]` | '완벽한 검출' `ep_<ep>_det.bin`(정답 상자로 깊이 점 라벨) |
-| `score_slam.py <ep.bin> <out prefix>[,…] [--npz …]` | 이동 거리별 위치·yaw 오차, keyframe 시간 p50/p99 |
-| `score_objmap.py <에피소드> <out prefix> [--lag 1]` | 찾음·상자 거리·중심 거리·중복·헛것·합쳐짐·옮겨짐 |
 | `score_map_gt.py <memory_dir> --gt-map <pgm> [--gt-objects …] [--slam-start x y yaw]` | 저장된 기억을 시뮬 정답(world)과 비교: 빈칸 정밀도, 점유 근처 비율, 벽 어긋남, 물체 중심 ↔ 정답 AABB 거리 |
 
 ### 환경 변수 (진단용)
@@ -101,7 +90,7 @@ cmake -S src/scene_graph/scenemap -B ~/scenemap_build && cmake --build ~/scenema
 | `SM_MERGE_LOG` | 있으면 병합마다 stderr 에 한 줄 |
 | `SM_WALLS_CHECK` | 있으면 벽 증분 계산을 처음부터 계산한 것과 비교 |
 | `SM_KEEP` | `test_scene_json` 이 출력 폴더를 지우지 않음 |
-| `SM_SLAM_LOG=<파일>` | keyframe 마다 slam2d 예측·맞춤·정답·점 수 CSV(아래 LIMO SLAM) |
+| `SM_SLAM_LOG=<파일>` | keyframe 마다 넣은 자세·정답(맞춤)·스캔 점 수·넣음·적분 이동 CSV |
 | `SM_OBJ_PARAMS="key=val,…"` | objmap 바뀜 판정 매개변수 덮어쓰기(이름은 `ObjParams` 그대로 — `objmap.cpp` `envOverrides`, 모르는 이름은 stderr 에 알림). A/B 비교용 |
 | `SM_OBJ_LOG` | 있으면 objmap 사건(후보·확정·옮겨짐·사라짐·병합 …)과 옮겨짐 잇기(`[link]`)를 stderr 에 |
 | `SM_WALLS_AXIS` | 있으면 capi 벽 추출을 예전처럼 축 정렬만(기운 slam 지도에서 벽이 거의 없음 — 비교용) |
@@ -118,7 +107,7 @@ sgrt 쪽 `SGRT_*` 변수는 [../runtime/README.md](../runtime/README.md).
 | `fk` | 순기구학이 시연 robot2cam 자세를 재현 |
 | `objmem` | C ABI 만으로 합성 RGB-D + 검출: 구조물·movable, 상자 이상값, 큰 가구 상자 자람 한도, 사라짐(컵 2 s, 큰 소파 4 s), 다른 자리에 나타난 같은 이름을 사라진 물체 id 로 다시 잇기, best view, PNG(자체 디코더로 화소 비교)·scene.json 다시 읽기, 점 구름(자리·색·한도·들기·옮겨짐), 시간 |
 | `rooms` | 두 방 + 문, ㄱ자, 복도 + 방 셋, 잡음, 크기 다른 방, 이상한 설정, 자람(id 유지), 물체 배정·이름, 외부 이름, 저장, C ABI, 600 × 600 시간 |
-| `posemap` | 자세 원천(GT/SLAM/ODOM), 서 있을 때 장애물이 생기고 없어지는 것(사건 기반 넣기), 단계 시간 |
+| `posemap` | 자세 원천(GT/EXT/ODOM, EXT = 외부 SLAM 자세가 지도 자세·정답은 진단만), 서 있을 때 장애물이 생기고 없어지는 것(사건 기반 넣기), 단계 시간 |
 | `relations` | 물체끼리 on/in/near 변이 없음, 물체 부모는 방·place 만 |
 | `gt_traj` | GT 자세 모드에서 agent 노드가 `sm_push_pose` 정답 자세를 그대로 따라감(영상·proprio 없이) |
 | `scene_json` | scene.json 에 frontier·mesh·건물 층·GVD 필드가 없음, 줄인 Spark-DSG 로 다시 읽힘 |
@@ -383,7 +372,7 @@ python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py /tmp/map_vla.urdf   # �
 | 프레임 | 링크 | 뜻 |
 |---|---|---|
 | 베이스 | `base_footprint` | 바닥(z = 0), x 앞, y 왼쪽. 스캔 높이 띠·물체 z 가 이 기준 |
-| cam 0 | `depth_camera_lens_optical_frame`(`depth_camera_link` +x 0.010 m 렌즈 + 광학 회전) | 몸통 앞 Orbbec Dabai 렌즈: base_footprint 에서 (0.094, 0, 0.18) m, 수평 앞(OmniGibson `eyes` 와 같은 자리, robot-agent 391c04b). `depth_link` 는 센서 몸체 중심(0.084)이라 쓰지 않는다. 지도(slam2d·objmap)에 쓰는 유일한 깊이 |
+| cam 0 | `depth_camera_lens_optical_frame`(`depth_camera_link` +x 0.010 m 렌즈 + 광학 회전) | 몸통 앞 Orbbec Dabai 렌즈: base_footprint 에서 (0.094, 0, 0.18) m, 수평 앞(OmniGibson `eyes` 와 같은 자리, robot-agent 391c04b). `depth_link` 는 센서 몸체 중심(0.084)이라 쓰지 않는다. 지도(격자·objmap)에 쓰는 유일한 깊이 |
 | cam 1 | `wrist_cam_optical_frame` | OMX-F link5 메시 안 RGB 카메라(37.9° 아래), 깊이 없음 → 지도에 안 씀(`sm_push_image` 가 cam ≠ 0 은 지나감) |
 | 잡는 점 | `grasp_point`(omx_link5 x 0.08003) | `T_eef`·잡기 규칙. E0 실측(robot-agent 66fe1ee, `docs/map_vla/CURRICULUM_BEHAVIOR2026.md` 5.3): 물체가 실제로 쥐이는 자리 = OmniGibson `get_eef_position`, `omx_end_effector_link` 에서 손가락 축으로 0.0119 m 뒤. URDF(map_vla_description xacro)에 프레임으로 넣음 |
 | 팔 끝 | `omx_end_effector_link` | `T_tip`(내부). 팔 뼈대 = omx_link0, joint1..5 원점, 팔 끝 — 스캔·objmap 팔 가리기 캡슐 |
@@ -416,34 +405,12 @@ python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py /tmp/map_vla.urdf   # �
   는 못 든다. 손끝 틈(그리퍼 각 → 틈 표: E0 쥔 각도 1·2·3·4 cm = 0.095·0.231·0.347·0.408 rad, 그 위 `finger_gap_hull` link5 x 0.08 틈)이
   5 mm 넘고(끝까지 닫힘 = 빈손), 가장 좁은 변 − 2.5 cm ≤ 틈 ≤ 가장 넓은 변 + 2.5 cm 이어야 든다. 든 뒤 끝까지 닫히면 놓친 것으로 놓는다.
 
-이 값들은 실측 전 추정이다(실제 로봇 기록으로 맞출 것). 나머지(격자·objmap 확정/사라짐 규칙)는 R1 과 같고, slam2d 맞추기 가중·받기 문턱만 아래처럼 다르다.
+이 값들은 실측 전 추정이다(실제 로봇 기록으로 맞출 것). 나머지(격자·objmap 확정/사라짐 규칙)는 R1 과 같다.
 
-**LIMO SLAM(slam2d 맞추기, 10-04)**
-
-원인(시뮬 LIMO 기록 4 개 재생, `SM_SLAM_LOG` 로 keyframe 마다 예측·맞춘 결과·정답): 원래 가중(스캔 점 σ 1 cm, 사전항 2 cm + 10 %·이동)이면
-스캔 점 100–700 개의 정보가 오도메트리 사전항을 수천 배 눌러 예측이 사실상 무시된다. 좁은 시야(67.9°)에 벽 하나·복도만 보이거나 지도가 덜 찬
-keyframe(제자리 회전·출발 회전)에서 맞추기가 벽을 따라 미끄러지거나(복도 퇴화) 덜 찬 지도에 끌려 keyframe 하나에 4–10 cm 씩 튀었고
-(받기 문턱 8 cm·4σ 안이라 받아짐 — keyframe 사이 오도메트리는 1 mm·0.1° 수준인데), 그 자세로 넣은 지도(이중 벽)에 뒤 스캔이 다시 맞아
-오차가 고정 어긋남으로 굳었다. 맞추기는 평균으로 오차를 줄이지도 못했다(맞춘 뒤 정답에 가까워진 keyframe 43–51 %).
-높이 띠(맞추기 점을 0.5 m 아래로만 — 오히려 나빠짐)·첫 대응 반경(0.20 → 0.10 m — 나빠짐)·인라이어 하한은 원인이 아니었다.
-
-고침(`capi.cpp` `robotParams`, LIMO 만): 점 σ `sigma_r` 1 → 10 cm(점끼리 상관 — 스캔 정보 정규화), 사전항을 오도메트리 오차 크기로
-(`prior_xy0` 5 mm, `prior_xy_k` 3 %, `prior_yaw0` 0.2°, `prior_yaw_k` 3 %), 받기 문턱 `gate_xy` 3 cm·`gate_yaw` 1.5°(또는 사전항 4σ).
-퇴화 방향은 오도메트리를 따르고 잘 잡히는 방향(벽 법선·yaw — 회전 치우침 1.2 % 를 고침)만 스캔이 고친다. 코드 경로는 그대로라 R1 은 바이트까지 같다.
-
-| 기록(`sm_bench --robot limo_omx --no-dets`) | 전 RMS / 최대 / 끝 cm | 뒤 RMS / 최대 / 끝 cm | keyframe 튐 최대(전 → 뒤) cm | 점유 ±5 cm(전 → 뒤, gt 자세) | 벽 선분 ±5 cm(전 → 뒤, gt 자세) |
-|---|---|---|---|---|---|
-| 제자리 360° 14 s (turning_on_radio) | 1.47 / 2.81 / 0.45 | 0.70 / 1.24 / 0.34 | 0.95 → 0.24 | 95.3 → 95.5 % (95.1) | 95.2 → 96.5 % (96.6) |
-| explore 104 s (turning_on_radio) | 8.30 / 14.07 / 2.77 | 1.45 / 2.75 / 2.39 | 7.28 → 0.84 | 93.2 → 96.4 % (96.1) | 91.1 → 96.1 % (97.0) |
-| explore 121 s (bringing_water) | 12.25 / 26.33 / 4.57 | 2.68 / 4.93 / 3.25 | 11.06 → 0.76 | 89.5 → 96.5 % (97.4) | 93.6 → 98.5 % (94.0) |
-| explore 146 s (turning_on_radio, 고칠 때 안 씀) | 9.68 / 14.14 / 12.16 | 2.19 / 3.70 / 2.53 | 7.37 → 0.94 | 90.5 → 97.5 % (98.4) | 86.4 → 97.4 % (98.4) |
-
-오차 = keyframe 자세와 정답(첫 keyframe 에서 맞춤)의 거리, 튐 = 이웃 keyframe 사이 오차 벡터 변화. 점유 ±5 cm = 점유 칸(map.pgm 0) 중심이
-정답 지나갈 수 없는 곳(`gt_trav.py` .pgm, 1 cm 로 늘린 거리 변환)에서 5 cm 안인 비율, 벽 선분 = 저장 지도에 `wallSegmentsAligned` 를 돌린 선분을 1 cm 마다
-같은 거리로. 오도메트리만(odom)은 RMS 2.7–23 cm(회전 치우침으로 yaw 3°대) — 맞추기는 꼭 필요하다.
-
-진단: `SM_SLAM_LOG=<파일>`(sm_reset 때 열림)이면 keyframe 마다 한 줄 — stamp, 예측·맞춘 결과·쓴 자세, 정답(맞춤), 스캔 점 수, 인라이어, 맞춤·받음·제자리, 적분 이동.
+**LIMO SLAM**: 10-06 부터 Cartographer(2D 라이다 + 바퀴 오도메트리, `../slam_carto`, libsgrt 가 `sm_push_ext_pose` 로 넣음). 옛 scenemap
+slam2d(깊이 가상 스캔 맞추기 — LIMO 가중 고침 10-04, 시뮬 기록 4 개 표)는 `archive/src/scene_graph/scenemap`(slam2d.cpp·.hpp, slam2d_eval·objmap_eval·
+stage_bench·capi_replay)로 옮겼고, 그 맞춤 기록은 git 이력(이 README 10-04 판)에 남는다. Cartographer 대 slam2d 비교는 `../slam_carto/README.md`.
 
 **R1 회귀**(LIMO SLAM 고침 10-04 에도 다시: sm_bench 9 개 저장·자세 CSV, `sgrt_replay` 9 개 저장 디렉터리 전부 바이트 같음, ctest 12 개 통과): 바꾸기 전 빌드와 sgrt 기록 3 개(`mem_pose_slam_*`, `mem_pose_gt_move*`) × 자세 모드 3 개(slam·gt·odom)를 `sm_bench --save --traj` 로 재생해 keyframe 자세 CSV·`map.pgm`·`scene.json`·`view.json`·물체 PNG/PLY 가 바이트까지 같음, ctest 기존 10 개 통과.
 
-**아직 R1 전용**: `tools/`(slam2d_eval·objmap_eval·stage_bench·capi_replay·map_timeline 은 R1 61 proprio 기록·`computeBodyFk` 를 씀. sm_bench 는 `--robot` 으로 고름), `eval/`(BEHAVIOR 데모·평가기 형식), `test_fk`·`test_objmem`·`test_posemap` 의 proprio, `sm_object`·이름 종류 표의 "person = 로봇 팔 오검출" 규칙, 스캔의 `shoulder`(캡슐이 있으면 안 씀). sgrt(`../runtime`)는 `SGRT_ROBOT=limo_omx` 로 고른다(그쪽 README "로봇 고르기").
+**아직 R1 전용**: `tools/`(map_timeline 은 R1 61 proprio 기록·`computeBodyFk` 를 씀. sm_bench 는 `--robot` 으로 고름), `eval/`(BEHAVIOR 데모·평가기 형식), `test_fk`·`test_objmem`·`test_posemap` 의 proprio, `sm_object`·이름 종류 표의 "person = 로봇 팔 오검출" 규칙, 스캔의 `shoulder`(캡슐이 있으면 안 씀). sgrt(`../runtime`)는 `SGRT_ROBOT=limo_omx` 로 고른다(그쪽 README "로봇 고르기").
