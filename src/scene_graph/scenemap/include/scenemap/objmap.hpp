@@ -33,6 +33,7 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -256,7 +257,7 @@ class ObjectMap {
     if (cap > 0) p_.cloud_cap = cap;
   }
   const ObjParams& params() const { return p_; }
-  ObjParams& paramsMut() { return p_; }
+  ObjParams& paramsMut() { pair_cache_.clear(); return p_; }
   // ---- objprob ----
   void setTextModel(ApText t) { text_ = std::move(t); }
   const ApText& textModel() const { return text_; }
@@ -294,6 +295,9 @@ class ObjectMap {
   bool apStructObject(MapObject& m);
   bool labelRelated(int a, int b) const;
   ApPair apPairObj(MapObject& a, MapObject& b);
+  uint64_t pairSig(const MapObject& m) const;   // apPairObj 이 읽는 것(상자·구름·벡터·이름 사후)의 지문
+  // 물체 쌍 판정 캐시: (a id, b id) → (a 지문, b 지문, 결과). 둘 다 안 바뀌었으면 다시 계산하지 않음(결과 같음)
+  std::unordered_map<uint64_t, std::tuple<uint64_t, uint64_t, ApPair>> pair_cache_, pair_next_;
   const ApContactIdx& apContactIdx(MapObject& m);
   ApText text_;
   ApStats aps_;

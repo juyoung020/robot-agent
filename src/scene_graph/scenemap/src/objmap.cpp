@@ -1134,6 +1134,21 @@ ApPair ObjectMap::apPairObj(MapObject& a, MapObject& b) {
   return q;
 }
 
+uint64_t ObjectMap::pairSig(const MapObject& m) const {
+  uint64_t h = 1469598103934665603ull;   // FNV-1a
+  auto mix = [&](const void* p, size_t n) {
+    const auto* b = static_cast<const uint8_t*>(p);
+    for (size_t i = 0; i < n; ++i) h = (h ^ b[i]) * 1099511628211ull;
+  };
+  mix(m.lo, sizeof m.lo); mix(m.hi, sizeof m.hi); mix(m.pos, sizeof m.pos);
+  const uint64_t c[3] = {m.cloud.version, m.cloud.size(), uint64_t(uintptr_t(m.cloud.data.get()))};
+  mix(c, sizeof c);
+  const ApState& s = *m.ap;
+  mix(&s.ver, sizeof s.ver);
+  if (!s.post.empty()) mix(s.post.data(), s.post.size() * sizeof(float));
+  return h ? h : 1;   // 0 은 '아직 안 셈'
+}
+
 // 물체끼리 같은 것 판정(이름 없이): 상자 틈 gate 안 쌍마다 P(같음), 큰 것부터 하나씩 합침(한 판에 물체 하나는 한 번만 — 바뀐 상자로
 // 다음 keyframe 에 다시). 합친 물체는 통째 다시 담기를 기다림(need_whole)
 void ObjectMap::apMergePass(double t) {
@@ -1141,6 +1156,7 @@ void ObjectMap::apMergePass(double t) {
   smask_.assign(size_t(std::max(0, text_.n_labels)), 0);
   for (int l = 0; l < text_.n_labels; ++l) smask_[size_t(l)] = kindOf(l) == kKindStructure || kindOf(l) == kKindStructObj;   // 막기: 구조물 쪽 전부
   std::vector<std::tuple<double, uint32_t, uint32_t>> cand;
+  std::vector<uint64_t> sig(objs_.size(), 0);   // 물체 지문(필요할 때 한 번)
   for (size_t i = 0; i < objs_.size(); ++i) {
     MapObject& a = objs_[i];
     if (!a.ap || a.held_by >= 0 || a.state == SM_GONE) continue;
@@ -1166,7 +1182,14 @@ void ObjectMap::apMergePass(double t) {
       if ((flatNamed(a) || flatNamed(b)) &&
           std::max(std::max(a.hi[0], b.hi[0]) - std::min(a.lo[0], b.lo[0]), std::max(a.hi[1], b.hi[1]) - std::min(a.lo[1], b.lo[1])) > A.flat_max_w)
         continue;   // 납작한 벽걸이 이름 크기 밖
-      const ApPair q = apPairObj(a, b);
+      if (!sig[i]) sig[i] = pairSig(a);
+      if (!sig[j]) sig[j] = pairSig(b);
+      const uint64_t key = (uint64_t(a.id) << 32) | b.id, sa = sig[i], sb = sig[j];
+      ApPair q;
+      auto it = pair_cache_.find(key);
+      if (it != pair_cache_.end() && std::get<0>(it->second) == sa && std::get<1>(it->second) == sb) q = std::get<2>(it->second);
+      else q = apPairObj(a, b);
+      pair_next_[key] = {sa, sb, q};
       static const bool log_m = std::getenv("SM_AP_LOG") != nullptr;
       if (log_m && q.p > 0.2)
         std::fprintf(stderr, "[ap-pair] t=%.1f O%u O%u contact %.2f gap %.2f cdist %.2f cos %.3f ov %.2f sup %.0f p %.2f\n", t, a.id, b.id, q.f[0], q.f[1],
@@ -1174,6 +1197,8 @@ void ObjectMap::apMergePass(double t) {
       if (q.p >= A.merge_p) cand.emplace_back(q.p, a.id, b.id);
     }
   }
+  pair_cache_.swap(pair_next_);   // 이번에 본 쌍만 남김
+  pair_next_.clear();
   if (cand.empty()) return;
   std::sort(cand.begin(), cand.end(), [](const auto& x, const auto& y) { return std::get<0>(x) > std::get<0>(y); });
   std::vector<uint32_t> used;

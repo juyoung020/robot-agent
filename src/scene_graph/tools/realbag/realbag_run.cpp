@@ -1074,19 +1074,25 @@ int main(int argc, char** argv) {
   std::string snames;
   for (auto& s : streams) snames += (snames.empty() ? "" : ",") + s.name;
   double objmap_us = 0;   // scenemap objmap 단계 평균 µs/검출 keyframe
+  std::string stagej = "{";   // scenemap 단계마다 {n, mean_us, p99_us}
   {
     sm_stage_timing tm[32];
     const int nt = sm_get_timing(c, tm, 32);
-    for (int i = 0; i < std::min(nt, 32); ++i)
+    for (int i = 0; i < std::min(nt, 32); ++i) {
       if (std::string(tm[i].name) == "objmap") objmap_us = tm[i].mean_us;
+      if (tm[i].n > 0)
+        stagej += std::string(stagej.size() > 1 ? "," : "") + "\"" + tm[i].name + "\":" +
+                  Obj().num("n", double(tm[i].n)).num("mean_us", tm[i].mean_us).num("p99_us", tm[i].p99_us).done();
+    }
   }
+  stagej += "}";
   const std::string metrics =
       Obj().str("streams", snames).str("robot", robot).str("pose", pose).str("det", D.mode == "load" ? "load:" + load_path : D.mode)
           .str("engine", D.engine_path).num("det_gpu_mb", double(D.deviceBytes()) / 1048576.0)
           .raw("se2_map_to_gt", "[" + jnum(Tu.c) + "," + jnum(Tu.s) + "," + jnum(Tu.tx) + "," + jnum(Tu.ty) + "]")
           .num("det_every", det_every).num("max_depth", max_depth).num("frames", double(n_frames)).num("det_frames", double(n_detf))
           .num("dets_per_frame", n_detf ? double(n_dets) / n_detf : 0).num("det_ms", D.n_calls ? D.det_ms / D.n_calls : 0)
-          .num("clip_ms", D.n_calls ? D.clip_ms / D.n_calls : 0).raw("objprob", apj).num("objmap_us", objmap_us).num("inspect", inspect ? 1 : 0).str("objprob_params", obj_params_file).num("duration_s", t_end).num("wall_s", wall).num("gt_path_m", gt_len)
+          .num("clip_ms", D.n_calls ? D.clip_ms / D.n_calls : 0).raw("objprob", apj).num("objmap_us", objmap_us).raw("stages_us", stagej).num("inspect", inspect ? 1 : 0).str("objprob_params", obj_params_file).num("duration_s", t_end).num("wall_s", wall).num("gt_path_m", gt_len)
           .raw("ate_se2_cam", ateJ(a_est)).raw("ate_se2_odom", ateJ(a_odo)).raw("ate_first_cam", ateJ(a_est1)).raw("ate_first_odom", ateJ(a_odo1))
           .num("yaw_rms_deg", yaw_rms * 180 / M_PI).raw("carto", cartoj)
           .raw("pose_diag", Obj().num("n", pd.n).num("rms_xy", pd.rms_xy).num("max_xy", pd.max_xy).num("last_xy", pd.last_xy)
