@@ -857,7 +857,6 @@ void ObjectMap::update(const ObjFrame& f) {
       if (m.parent && dist3(m.pos, o.pos) > 0.3) m.parent = 0;
       if (m.last_kf != f.stamp) ++m.n_obs;
       m.last_kf = f.stamp;
-      const double w = std::min<double>(m.n_obs, 20);
       const bool big = kindOf(m.cls) == kKindStatic || kindOf(m.cls) == kKindStructObj || std::max({m.hi[0] - m.lo[0], m.hi[1] - m.lo[1], o.ext[0], o.ext[1]}) > p_.big;
       // 움직이는 중(사람이 옮김): 관측 중심(날 것)이 잇달아 move_v 넘는 빠르기로 같은 쪽으로 가고 쉬던 자리에서 move_min_d(또는 상자
       // 반 폭) 넘게 벗어나면 그동안 평균·합집합 대신 관측 자리로 바로 옮긴다(평균이 뒤처져 놓치지 않게)
@@ -923,20 +922,15 @@ void ObjectMap::update(const ObjFrame& f) {
           }
           m.pos[k] = 0.5 * (m.lo[k] + m.hi[k]);
           m.ext[k] = m.hi[k] - m.lo[k];
-        } else if (m.ap) {
+        } else {
           // 칼만(축마다): 예측 P += q·dt, 관측 잡음 R = (r0 + r1·깊이)² (+ 잘렸으면 (반 폭)²), 이득 K = P/(P+R)
           const double K = opm::kalman_gain(m.ap->P[k], p_.ap_q_pos, dt_seen, opm::kalman_R(p_.ap_r0, p_.ap_r1, o.zmed, o.trunc, o.ext[k]));   // objprob_math.h
           m.pos[k] += K * (o.pos[k] - m.pos[k]);
           m.lo[k] += K * (o.lo[k] - m.lo[k]);
           m.hi[k] += K * (o.hi[k] - m.hi[k]);
           m.ext[k] = m.hi[k] - m.lo[k];
-        } else {
-          m.pos[k] = (m.pos[k] * (w - 1) + o.pos[k]) / w;
-          m.ext[k] = (m.ext[k] * (w - 1) + o.ext[k]) / w;
-          m.lo[k] = (m.lo[k] * (w - 1) + o.lo[k]) / w;
-          m.hi[k] = (m.hi[k] * (w - 1) + o.hi[k]) / w;
         }
-        if (big && m.ap) {   // 큰 것: 자리는 상자 합집합, 분산만 칼만(상자 폭의 1/4 을 관측 잡음에)
+        if (big) {   // 큰 것: 자리는 상자 합집합, 분산만 칼만(상자 폭의 1/4 을 관측 잡음에)
           opm::kalman_big(m.ap->P[k], p_.ap_q_pos, dt_seen, p_.ap_r0 + p_.ap_r1 * o.zmed, m.ext[k]);   // objprob_math.h
         }
       }
@@ -1280,11 +1274,6 @@ bool ObjectMap::apStructObject(MapObject& m) {
         for (size_t k = 0; k + 3 < wsegs_.size() && dm > A.wall_d; k += 4) dm = std::min(dm, segDist(P[size_t(3 * i)], P[size_t(3 * i + 1)], &wsegs_[k]));
         nw += dm <= A.wall_d;
       }
-      auto pct = [](std::vector<double>& x, double q) {
-        const size_t k = std::min(x.size() - 1, size_t(q * double(x.size() - 1) + 0.5));
-        std::nth_element(x.begin(), x.begin() + long(k), x.end());
-        return x[k];
-      };
       const double su = pct(u, 0.95) - pct(u, 0.05), sv = pct(v, 0.95) - pct(v, 0.05);
       s.maj = float(std::max(su, sv));
       s.minr = float(std::min(su, sv));

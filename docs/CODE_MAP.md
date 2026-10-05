@@ -111,6 +111,20 @@
 - 최적화 여지: 창 틈 잇기가 벽 선분 쌍 O(n²)(벽 수십 개라 작음). `sm_snap_reachable` 이 부를 때마다 W×H dist 배열을 새로 잡음 — 자주 부르면 재사용 가능. 스냅숏마다 물체 구름(shared)·이름 문자열 복사.
 - 안 쓰는 것: `robotHands`·`robotBody` 의 robot 인자(로봇이 하나라 늘 같음). C ABI 함수는 모두 부르는 곳 있음(scenemap.h 선언마다 저장소 전체 검색).
 
+**`src/objmap.cpp`** (1440 줄) — 물체 지도 본체(`ObjectMap::update`, keyframe 마다 한 번).
+- 0. `updateHands`: 그리퍼가 닫혀 `grip_settle_s` 동안 멈추면 한 번, 잡는 점 `grasp_r` 안 가장 가까운 들 수 있는 확정 물체를 held(`holdable`: 큰 것·고정 종류 아님, 가운데 변 ≤ `grasp_max_w`, 손끝 틈(`gripGap` 표)이 폭과 맞음). 끝까지 닫히거나 열리면 `release`(놓은 자리 아래 받침 물체에 `parent` 로 붙임). 든 것·붙은 것은 손·받침을 따라 평행 이동(구름 포함).
+- 1. `apMergePass`: 지난 keyframe 들 구름으로 물체 쌍 P(같음)(`apPairObj` — 접촉·틈·중심 거리·μ cos·겹침·받침·이름 분포 겹침 → 로지스틱) ≥ `merge_p` 인 쌍을 큰 P 부터 1:1 합침(`da::absorbObject` + `apMerge`).
+- 2. 검출 → 관측(`Obs`): 상자 안 깊이 화소를 성기게(`max_pts` 기준 간격) 훑어 마스크(1 칸 깎기) 안 점만 map 으로, 팔 캡슐 안 점 버림, 깊이 중앙값 ± MAD 밖 버림, 손 가까운 점이 많으면(든 것) 버림, 10·50·90 백분위 상자. 바닥 조각·벽 너머(창 밖) 버림. `apObsStructural`: 조각 하나의 구조물 확률(`ps`)·구조 물체 확률(`pso`)·가장 그럴듯한 라벨, RANSAC 평면 → 천장·바닥·높고 넓은 벽·벽 선분 위 평면이면 버림(문·창 크기 안이면 남김). 천장 높이도 여기서 추정(`ceil_est_`).
+- 3. 짝: 관측마다 P(같음) 가 가장 큰 물체(≥ `same_p`), 구조물 막기·이름 충돌(`name_veto`)·두 물체에 걸친 마스크(`bridge_drop`) 처리. 한 물체에 붙은 조각들은 가장 큰 조각에 합쳐 한 번 갱신.
+- 4. 갱신: 작은 것은 축마다 칼만(`objprob_math.h kalman_gain`), 큰 것은 상자 합집합(면마다 `grow_max` 까지) + 분산만 칼만. 움직이는 중(사람이 옮김)이면 관측 자리로 바로(`snap`). 새 물체: id·ap 상태, `appeared`(전에 본 자리에 새로 나타남) 표시, 같은 영상 뒤 조각을 상자 맞닿음으로 같이 묶음(`frame_group`).
+- 5. 이름: 이번에 본 물체마다 `apRename`(objprob 사후 최댓값 → `cls`). 구름 후보를 `points_` 로 내보냄(색은 capi 가 붙여 `addPoints`).
+- 6. 부재: 확정·안 맞은 물체를 투영해 보일 만큼 보이는데 검출이 없으면 놓침(`absentEvidence` — 가림·너머 보임 구분), 카메라가 옮기거나 돌아야 새 근거로 셈, 검출률로 필요한 놓침 수, 독립 근거면 GONE. `relink`: 사라진 것 ↔ 새로 나타난 것(μ cos, 거리·시간)을 이어 옮겨짐.
+- 7. 지우기: 구조물 덩어리(`apStructObject` — 구름 평면·천장 띠·주방향 폭·벽 선 근접, 문·창 크기 확인, 크면 숨김), 확정 안 된 오래된 후보, 몇 번 안 보이고 사라진 헛검출. 윗면 살펴본 정도(`inspTop`), 본 곳 기록(`markView`).
+- `buildReencode`: 이번에 본 확정 물체의 구름을 영상에 투영해 마스크를 만들고, 모습 품질 κ 가 지금보다 `reenc_gain` 배 좋거나 합쳐진 물체면 통째 다시 담기 요청(상위 `reenc_max` 개).
+- 진단 환경 변수: `SM_OBJ_PARAMS`(매개변수), `SM_OBJ_LOG`·`SM_AP_LOG`·`SM_MOVE_LOG`·`SM_ABS_LOG`·`SM_LINK_LOG`(stderr 로그).
+- 최적화 여지: `apMergePass`·관측 짝이 물체 수 n 에 대해 O(n²)·O(관측×n) — 상자 틈 `gate` 로 바로 거르지만 물체가 수백 개면 격자 색인이 나음(지금 실제 bag 118 개라 측정 먼저). `buildReencode` 가 물체마다 마스크 크기 `grid` 를 새로 채움(마스크 160×160 이면 작음). `relink`·`updateHands` 의 id 찾기는 선형.
+- 안 쓰는 것: 없음(모든 물체가 ap 상태를 가짐 — 확인함).
+
 **`include/scenemap.h`** — 위 C ABI 선언·설명. 로봇은 LIMO + OMX-F 하나(`SM_ROBOT_LIMO_OMX`, proprio 12).
 
 **`include/scenemap/objmap.hpp`** — `ObjParams`(기본값 = 리모: 깊이 0.15–3 m, 손 하나, grasp_r 0.12, 그리퍼 닫힘 0.6 rad, 잡기 확인 켬, 틈 표), `MapObject`, `ObjFrame`, `ObjectMap`. 규칙 요약이 머리말.
