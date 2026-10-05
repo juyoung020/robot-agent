@@ -1,7 +1,7 @@
 # agent — high-level planner agent + evaluator↔VLA relay (Rust)
 
 The "judgement" layer of `plan.md` §1–2. It keeps the long plan, memory and step tracking, and gives VLA only the
-instruction for the current step. Design, decisions, measurements and how to run: **[docs/에이전트_설계.md](../../../docs/에이전트_설계.md)** (Korean).
+instruction for the current step. Design, decisions, measurements and how to run: **[docs/에이전트_설계.md](../README.md)** (Korean).
 
 ## Two paths
 

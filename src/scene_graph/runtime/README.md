@@ -7,7 +7,7 @@
 - 지도·물체 기억: scenemap(그 자세로 격자 mapper2d·objmap·방·장면 그래프·저장). 깊이는 호스트 f32 미터.
 - (선택) 물체 영상 임베딩: sgclip(SigLIP 2, `../clip`). `SGRT_CLIP` 이면 켜짐.
 
-파이썬은 포인터만 넘긴다(`glue/sgrt_glue.py`). 한 스레드에서 부른다. 설계는 [docs/scenemap_설계.md](../../../docs/scenemap_설계.md) 3.2.2·3.5·3.6·3.7절.
+파이썬은 포인터만 넘긴다(`glue/sgrt_glue.py`). 한 스레드에서 부른다. 설계는 [docs/scenemap_설계.md](../scenemap/README.md) 3.2.2·3.5·3.6·3.7절.
 
 ```
 매 스텝     sgrt_step(proprio)                    → scenemap 자세 적분, 든 물체 따라가기

@@ -3,7 +3,7 @@
 로봇(LIMO + OMX-F)의 proprio(12 f32 — 아래 "LIMO + OMX-F" 절)와 머리(LIMO: 몸통 앞) 깊이, 검출(마스크 + 이름 번호)로 실시간 기억을 만든다.
 2D 점유 격자(자세는 밖에서 — Cartographer `../slam_carto`, mapper2d 가 그 자세로 격자를 쌓음), 물체 지도(objmap), 방 나누기, 장면 그래프, 파일 저장, 뷰어 스트림까지 한다.
 밖에서는 C ABI 하나(`include/scenemap.h`)로 부른다. CUDA 는 쓰지 않는다(장치 쪽 자르기는 `../runtime`).
-설계·측정은 [docs/scenemap_설계.md](../../../docs/scenemap_설계.md).
+설계·측정은 [docs/scenemap_설계.md](README.md).
 
 - 장면 그래프에 기억하는 층은 **물체**(OBJECTS)와 **방**(ROOMS) 두 층이다. 로봇 keyframe 자세(궤적)는 물체 층 번호의 agent partition 에 붙는다.
 - 장소(place)는 `sgraph.cpp` 가 2D 격자에서 계산하는 백엔드 값이다. 길 찾기(`sm_snap_place_path`)·이동·탐색이 쓰고, 뷰어는 그리지 않는다.

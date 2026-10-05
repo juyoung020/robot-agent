@@ -381,7 +381,7 @@ memory/
 | 글 쪽 | `clip/tools/text_query.py` | SigLIP 2 글 탑(로봇 밖, CPU): 글 → 768-d, 기억 폴더 찾기, HTTP `/encode`·`/search` |
 | 시험 | `ctest`(clip 4 개) | 커널 = CPU 기준, 엔진 = PyTorch FP32, 찾기 = 전부 훑기, 캐시 규칙 |
 
-- 자세한 배치·ABI 는 서브모듈 [docs/scenemap_설계.md](../src/behavior-2026/docs/scenemap_설계.md) 3.7, [clip/README.md](../src/scene_graph/clip/README.md).
+- 자세한 배치·ABI 는 서브모듈 [docs/scenemap_설계.md](../src/scene_graph/scenemap/README.md) 3.7, [clip/README.md](../src/scene_graph/clip/README.md).
 
 ### 8.2 정확도 맞춤 (PC, TRT 10.16)
 

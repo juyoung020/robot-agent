@@ -3,7 +3,7 @@
 물체 기억(scenemap)의 물체마다 **영상 벡터 1개(768-d)** 를 만들고, 그 벡터로 이름을 붙이고(라벨 표), 글로 찾는다.
 **물체 찾기(`sgsearch.h`)** 는 에이전트 도구(`robot-agent/src/agent/tools/search_objects`, 글 결과)와 RecallVLA(자기 질의 벡터 → 상위 K 칸)가
 같이 쓰는 공용 색인이다 — 아래 "물체 찾기".
-설계·측정은 [docs/clip_candidates.md](../../../../../docs/clip_candidates.md)(상위 저장소) 3.5·6·8절.
+설계·측정은 [docs/clip_candidates.md](../../../docs/clip_candidates.md)(상위 저장소) 3.5·6·8절.
 
 - 모델: SigLIP 2 B/32-256(Apache-2.0, open_clip `ViT-B-32-SigLIP2-256` / `webli`). 영상 탑만 로봇에서 돈다.
 - 마스크: MAP 풀링 주의집중 logit 에 `log(max(w, 0.01))` 를 더한다(w = 8 × 8 칸 마스크 비율). 출력은 물체당 1개(L2 정규화).
