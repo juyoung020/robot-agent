@@ -1,0 +1,51 @@
+{
+ "comment": "E6 DAgger 확인(2026-10-06, CURRICULUM_BEHAVIOR2026 5.6.1): B4 만, 상태 없는 대본 교사(teacher_script 2) 시연 → student-lite BC 300 → DAgger 3 × (학생 롤아웃 4 + 갱신 150) → 평가. cap 1.4 M = 교사 시연이 DAgger 자료에 밀려나지 않게. teacher_script 1 이면 상태 있는 교사(대조)",
+ "teacher": "",
+ "teacher_script": 2,
+ "n_env": 1024,
+ "horizon": 64,
+ "stage": 3,
+ "use_map": 2,
+ "teacher_use_map": 2,
+ "student_goal": 0,
+ "act_mask": 255,
+ "mb": 8192,
+ "upd_steps": 50,
+ "dw_chunk": 1024,
+ "store_render": 0,
+ "cap": 1400000,
+ "seed": 1,
+ "data_seed": 1000,
+ "lr": 0.0003,
+ "max_grad_norm": 1.0,
+ "map_p0": 1.0,
+ "map_p1": 0.0,
+ "map_kmin": 3,
+ "map_kmax": 6,
+ "map_reveal_r": 1.5,
+ "beh": {
+  "on": 1,
+  "mix": [
+   0.0,
+   0.0
+  ],
+  "pnp": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "nav_k": 10,
+  "feas": 1
+ },
+ "goal_drop": 0.0,
+ "record_rollouts": 12,
+ "bc_updates": 300,
+ "dagger": true,
+ "dagger_iters": 3,
+ "dagger_rollouts": 4,
+ "dagger_updates": 150,
+ "eval_iters": 8,
+ "eval_drop": 1,
+ "eval_seed": 777,
+ "eval_teacher": true
+}

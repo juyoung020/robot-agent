@@ -513,3 +513,5 @@ scenemap 기본값에서 가져온 값: 격자 Q·l_hit·l_miss·l_min/max, scan
 - `tools/pnp_teach.cu`: 대본 교사 성공률(환경 + 지도 + 교사, GPU) — 단계 × 물체 폭 반 × 바닥/면, 포기 비율. 잰 값은 CURRICULUM_BEHAVIOR2026 5.5절.
 - 남은 일: 막는 물체(실패 판 `p_occ`)는 지도 prim 에 없음(몸통·팔·놓기에만 있음).
 - (2026-10-05 교사 다시 씀) `pnp_teach` 는 기본으로 잡기 가능 표를 만들고 `PF_FEAS` 로 뽑음(`--all` 이면 모든 짝), 끝에 집마다·놓을 꼴(B5: 바닥/면/용기)·교사 포기 까닭(`TI_FAIL`)·계획 수. 잰 값(1,024 판): B4 0.947·B5 0.911·B6 0.767 — CURRICULUM_BEHAVIOR2026 5.6. `map_verify 512 400 --stage 3 --curr 0.34,0.33 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --fail 0.005,0.3 --teacher` 비트 동일, 예전 두 판 출력 같음.
+
+- 2026-10-06: `pnp_teach --sl`(상태 없는 교사로 몲, 실패 판의 마지막 단계 표), `--agree`(상태 있는 교사가 몰고 같은 상태에서 상태 없는 교사 라벨을 견줌 — 단계별 비트 같음·|Δ| ≤ 0.05·베이스만·팔만), `map_verify --teacher-sl`(지도 되먹임과 함께 비트 동일). 잰 값 CURRICULUM_BEHAVIOR2026 5.6.1.

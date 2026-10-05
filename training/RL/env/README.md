@@ -172,3 +172,27 @@ API(뒤로 맞음): `bsc::BCurr` 끝에 `p4, p5, p6, p_slip, p_occ, phys`(0 이�
 ~/ra_envbuild/env_bench 200 3 4096 --pnp 0.34,0.33,0.33 --mix 0,0 --teacher --feas   # 교사 커널 셋 따로(env_bench_prof 면 계획 종류별)
 ```
 잰 값: 비트 동일(교사 버퍼까지, 2,279 계획), 음성 대조 33,418 다름, `pnp_check` 표 CPU == 장치 0 다름·PF_FEAS 판 비트 없는 짝 0. N 4,096: 잡기 판 환경 스텝 1.10–1.24 ms, 교사 앞 + 행동 0.61(B4)·4.76(B5)·0.84(B6) ms, 계획 커널 12–19 ms(계획하는 판이 있는 스텝).
+
+## 교사 빠르게 + 상태 없는 교사(2026-10-06)
+설계·잰 값 [CURRICULUM_BEHAVIOR2026](../../../docs/map_vla/CURRICULUM_BEHAVIOR2026.md) 5.6.1. 환경 스텝·예전 판 출력은 그대로(env_verify A1·A2 `--arm`·stage 3 `--follow --point 0.5,0.5`·`--strict`·잡기 판 `--arm --feas --fail` 출력이 바꾸기 전 빌드와 같음).
+
+| 파일 | 바뀐 것 |
+|---|---|
+| `include/teacher.h` | 계획 = 판 하나에 블록 하나(`T_CHUNK` 128, `WCtx{lane, nl, sh}` — nl 32 워프는 잡기 가능 표 `feas_k`), 정적 점유 표(`tch_occ` = 표 + 움직이는 것, 표 없으면 `tch_occ_full`), 이어 하는 서는 자리 조각은 `TBuf::rb`(판마다 닿는 칸 2 KB), 등급 1·2 찾은 조각에서 끝, `CarryCache`(들고 다닐 때 팔 검사), 지역 계획 비용 차례 검사, `tch_extract` (+1, +1) 이웃 고침, `TI_SNP`(찾기 조각 수), `ENV_PROF` 재기(계획 구간 `g_tseg`·찾기 까닭·등급·행동 단계·거절 까닭) |
+| `include/teacher_sl.h` | 상태 없는 교사: `sl_decide`(상태 → 단계·빠진 캐시), `sl_plan`(빠진 캐시 채움: 서는 자리·그 자리 팔·P 에서 거꾸로 BFS), `sl_act`. 버퍼 `SlBuf`(판마다 `SlRec` + BFS 칸 36 KB) |
+| `include/bscene.h`·`bscene_host.h` | `SceneSet::tocc·toccix`, `SceneBuild::tocc·toccix` |
+| `src/env_kernel.cu` | `tocc_k`(pnp_feasibility 안), 계획 커널 블록, `DeviceEnv::enable_teacher_sl()`·`teacher_sl(act)`(`sl_pre_k` → `sl_plan_k` → `sl_act_k`), `TEACH_NO_TOCC=1` 이면 장치는 칠함(확인용) |
+| `src/env_ref.cpp`·`include/env_api.h` | `CpuEnv::teacher_sl`, `slbuf()` |
+| `tools/env_verify.cu` | `--teacher-sl`(행동 + 캐시 비트 비교), `--sl-fresh`(CPU 는 스텝마다 캐시를 비움 → 라벨 = 상태의 함수), `--negative-teacher-sl` |
+| `tools/env_bench.cu` | `--teacher-sl`, 측정 빌드는 계획 구간·찾기 까닭·조각 수·등급·행동 단계·거절 까닭 |
+
+```
+~/ra_envbuild/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher --feas --fail 0.005,0.3 --point 0.3,0   # 상태 있는 교사
+TEACH_NO_TOCC=1 ~/ra_envbuild/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher --feas --fail 0.005,0.3 --point 0.3,0   # 표 == 칠하기
+~/ra_envbuild/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher-sl --feas --fail 0.005,0.3 --point 0.3,0
+~/ra_envbuild/env_verify 256 500 --stage 3 --mix 0,0 --pnp 0.34,0.33,0.33 --sl-fresh --feas --point 0.3,0 --fail 0.005,0.3        # 라벨 = 상태의 함수
+~/ra_envbuild/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --feas --negative-teacher-sl                        # 실패해야 정상
+TDBG_NAVFREE=1 / TDBG_DWA=1 env_verify ... --teacher   # CPU: 캐시한 팔 검사·지역 계획이 예전 식과 같은 답인지 셈
+~/ra_envbuild/env_bench 300 3 4096 --pnp 0.34,0.33,0.33 --mix 0,0 --teacher[-sl] --feas
+```
+잰 값: 모두 비트 동일(교사 버퍼·캐시까지), `--sl-fresh` 256 × 500 0 다름, 음성 대조 `--negative-teacher` 33,091·`--negative-teacher-sl` 36,186 다름, 캐시한 팔 검사 49만 번·지역 계획 2.4만 번 예전 식과 0 다름. N 4,096 교사 ms/스텝: 상태 있는 B4 2.55·B5 5.92·B6 2.26·섞음 4.34(전 15.3·27.5·14.4·22.9), 상태 없는 2.16·4.51·5.17·4.56. 장치 메모리 +73 MB(정적 점유 표), `teacher_sl` 켜면 판마다 +36 KB.

@@ -548,3 +548,24 @@ X0 464 → **976**(교사 격자 16 × 16 × 2 = 512, `obs.h` 지도 값 ÷4, PO
 - 실행기 `beh.feas` 1 → `PpoBCurr::phys` 8(`PF_FEAS`, B4–B6 를 잡기 가능 짝에서만). 학습기는 잡기 물리 판(p4+p5+p6 > 0) 이나 `PF_FEAS` 면 시작 때 `env::pnp_feasibility`(6.7 s). `config/ppo_pnp.json` 에 `"feas": 1`.
 - **예전 해시 그대로**: `snap` 여섯 판 `0d811c3c40224f56`·`55302e302eb3295c`·`c4f9085ecc7a98d6`·`16a7eedce65e2ed8`·`cd1093cc7e7a06e6`·`b36a77501c6eff6a`.
 - **잡기 물리 판 새 해시**(환경 고침 셋 때문, `snap <파일> 2048 64 6 3 2 --act8 --pnp 0.25,0.25,0.25`): FNV-1a `0a8a7f717a7a0f67`, legacy-layout `c40e522e7df4b8d2`, e6-log `b6ce45fea1096aa7`(마지막 기록 B4/B5/B6 끝 102/11/0).
+
+## 집기 판 한 바퀴 재기(2026-10-06, nsys `--cuda-graph-trace=node`)
+`ppo_run config/ppo_pnp.json --minutes 0.75`(N 4,096, T 64, 단계 B4, 미니배치 4 × 에포크 5, 지도 C0, 행동 8), nsys 2025.6.3. 바퀴 128 중 앞 3·끝 1 을 뺀 124 바퀴 평균(바퀴 = `env_apply_k` 에서 다음까지, 롤아웃/갱신 = `gather_k`·`gae_k` 앞/뒤). 같은 GPU 에 다른 작은 일 둘(ovdet·realbag, 합 1.3 GB).
+
+| 구간 | ms/바퀴 | 몫 | 커널(스텝·미니배치당) |
+|---|---|---|---|
+| 환경 스텝(잡기 물리 판) | 82.5 | 23.0 % | `step_kernel_pnp` 1.27 ms × 64, `step_kernel_beh` 16 µs × 64 |
+| 지도 근사 | 70.4 | 19.6 % | `map_kf_kernel` 0.73 ms × 64, `map_tok_kernel` 0.31 ms × 64, `map_nav_kernel` 33 µs, `map_begin_kernel` 30 µs |
+| 관측·토큰 모으기 | 5.2 | 1.4 % | `assemble_k` 76 µs × 65, `obs_rows_k` 3 µs |
+| 정책 앞(롤아웃) | 15.6 | 4.3 % | `slot_fwd_k` 114 µs, gemm 40 µs × 3, 머리 gemm 5 µs (× 65) |
+| 롤아웃 나머지(표본·기록·apply) | 0.3 | 0.1 % | `sample_k`·`epstat_k`·`log_k`·`curr_k` |
+| 갱신 앞 | 66.0 | 18.4 % | `slot_fwd_k` 1.72 ms × 20, gemm 0.50 ms × 60, 머리 gemm 70 µs × 20 |
+| 갱신 뒤(dX·dW·칸 뒤) | 95.6 | 26.7 % | `slot_bwd_k` 1.76 ms × 20, dX gemm 0.49 ms × 60, dW gemm 0.28 ms × 60, `dw_reduce_k` 0.40 ms × 20 |
+| 미니배치 모으기 | 22.0 | 6.1 % | `gather_k` 1.10 ms × 20 |
+| PPO 손실·Adam·기울기 크기·GAE | 1.1 | 0.3 % | |
+| **합(커널)** | **358.6** | | 바퀴 벽시계 359.4 ms(7.3e5 env-step/s), 롤아웃 174 + 갱신 185 |
+| 호스트 빈틈 | 0.8 | 0.2 % | 1 ms 넘는 빈틈 124 바퀴에 7 번. 동기·할당·memcpy 는 시작(장면 묶음·잡기 가능 표)에만 |
+
+- 대본 교사는 PPO 바퀴에 없다(시연 모으기·DAgger 라벨, BC 만). 교사 비용(N 4,096, 지도 없음, `env_bench … --teacher[-sl] --feas`): 상태 있는 교사 B4 2.55·B5 5.92·B6 2.26·섞음 4.34 ms/스텝(계획 커널 2.0–4.1 + 앞·행동 0.45–1.8), 상태 없는 교사 2.16·4.51·5.17·4.56 — 바꾸기 전 15.3·27.5·14.4·22.9(CURRICULUM_BEHAVIOR2026 5.6.1).
+- 잡기 판 바퀴는 B1–B3 바퀴(롤아웃 약 110 ms)보다 롤아웃이 길다: 환경(잡기 판 커널 — 팔 점 8 × 서브스텝 10 충돌 + 순기구학)과 지도 keyframe 이 롤아웃의 88 %. 갱신은 B1–B3 와 같은 모양(185 ms).
+- 해시: 이 작업(교사·도구)은 PPO 경로를 안 바꿈 — 환경 커널·지도·학습기 소스 그대로(env_verify 예전 설정 넷·잡기 판 `--arm` 출력이 바꾸기 전 빌드와 같음).
