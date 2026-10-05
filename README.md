@@ -30,7 +30,7 @@
 <td align="center" width="50%"><img src="docs/assets/limo_manipulator.png" width="380" alt="리모 + 매니퓰레이터"></td>
 </tr>
 <tr>
-<td align="center"><sub>BEHAVIOR Challenge 2026 시뮬레이터(OmniGibson)에서 로봇이 라디오를 집어 켜는 모습 (turning_on_radio, 6배속)</sub></td>
+<td align="center"><sub>BEHAVIOR-1K 장면(OmniGibson)에서 로봇이 라디오를 집어 켜는 모습 (turning_on_radio, 6배속)</sub></td>
 <td align="center"><sub>리모 + 매니퓰레이터 URDF 를 RViz 에 띄운 모습 (TF 프레임 표시)</sub></td>
 </tr>
 <tr>
@@ -61,103 +61,75 @@
 ## 어떻게 동작하나요
 
 ```
-카메라·라이다 ──▶ ① 물체 기억 (scene graph) ──▶ ② 큰 계획·대화 (LLM) ──▶ ③ 작은 계획·행동 (우리 VLA) ──▶ 로봇
-                   "무엇이 어디에 있나"          "무엇을 어떤 순서로"           "지금 이 단계를 어떻게"
-                          ▲                                                                   │
-                          └─────────────────────── 움직이며 본 것으로 기억 갱신 ◀─────────────┘
+카메라·라이다 ──▶ ① 물체 기억 ──▶ ② 에이전트 (LLM) ──▶ ③ RecallVLA ──▶ 리모 + 팔
+                "무엇이 어디에 있나"   "무엇을 할까"        "지금 어떻게 움직일까"
+                       ▲                                              │
+                       └────────── 움직이며 본 것으로 기억 갱신 ◀───────┘
 ```
 
-1. **물체 기억** — 로봇이 본 물체를 2D 지도 위에 등록하고, 옮겨지거나 사라지면 고친다.
-2. **큰 계획·대화 (LLM)** — 사람과 채팅으로 대화하고, 물체 기억을 읽어 VLA 에게 상황을 풀어 준다 ("컵은 주방 식탁 위, 놓을 곳은 거실 식탁"). 물체가 화면 밖으로 벗어나 VLA 가 움직일 수 없으면, 기억을 보고 다시 계획한다.
-3. **작은 계획·행동 (VLA)** — LLM 의 지시와 카메라 영상을 받아, 할 일을 잘게 나눠(팔 뻗기 → 잡기 → 들기) 로봇 팔·바퀴를 실제로 움직인다. 집다가 놓치는 것처럼 눈앞에서 생긴 실패는 스스로 복구한다.
-   - VLA 는 π0.5 가 아니라 **우리가 만든 VLA** 다(10-04, π0.5 는 버림). 본 모델은 **RecallVLA**(Qwen3.5-0.8B 전부 학습 + SigLIP 2 + 물체 기억 → 단계 문장 + 행동, [사양](docs/map_vla/MAPVLA_SPEC.md), 학습기 [`training/vla`](training/vla/README.md) — 큰 학습은 아직). 지금 도는 작은 학생은 얼린 SigLIP 2 영상 탑 + 물체 기억 지도 토큰 + 지시 문장 → flow matching 행동이고, 시뮬 RL·대본 교사에게서 BC·DAgger 로 배운다([`training/BC`](training/BC/README.md)).
+1. **물체 기억** — 로봇이 본 물체를 2D 지도 위에 등록하고, 옮겨지거나 사라지면 고친다. 물체는 ObjectSAM 으로 자르고 SigLIP 2 로 이름·임베딩을 붙이며, 같은 물체는 확률로 합친다(scenemap). 위치는 Cartographer SLAM.
+2. **에이전트 (LLM)** — 사람과 채팅으로 대화하고, 물체 기억에서 찾아(이름·생김새) 무엇을 집어 어디에 놓을지 정한다. Qwen3.5-9B.
+3. **RecallVLA** — 카메라 영상과 물체 기억을 보고 로봇 팔·바퀴를 실제로 움직인다. 본 적 있는 물체는 기억에서 떠올려 바로 가고, 본 적 없는 물체는 탐색해서 찾는다. 집다가 놓치면 스스로 다시 한다. Qwen3.5-0.8B + SigLIP 2 → 다음 단계 문장 + 행동([사양](docs/map_vla/MAPVLA_SPEC.md)).
 
 ## 로봇
 
-AgileX 리모(LIMO) 기본형(가정, **프로를 받을 수도 있음**) + 매니퓰레이터 ROBOTIS OMX-F. 자세한 전제와 할 일은 [`docs/plan.md`](docs/plan.md).
+AgileX 리모(LIMO, 기본형 가정 — 프로일 수도 있음) + ROBOTIS OMX-F 팔. 로봇 설명(URDF)은 [`src/robot`](src/robot/README.md), 전제와 할 일은 [계획](docs/plan.md).
 
 ## 폴더 구조
 
 ```
 robot-agent/
-├── docs/            # 계획(plan.md), 모델 선택, 후보 조사, Map_Vla 설계(map_vla/) (목록은 docs/README.md)
-├── src/             # 코드 (ROS 2 패키지)
-│   ├── robot/       # 리모 + 매니퓰레이터(OMX-F) 로봇 설명(URDF·RViz)
-│   ├── scene_graph/ # ① 물체 기억 (scenemap·da·spark_dsg·sgview·runtime·ovdet·clip·tools/realbag — 유일한 원본)
-│   ├── agent/       # ② 큰 계획·대화 (LLM)·실패 복구
-│   │   ├── skills/  #   스킬(한 가지 일을 끝까지 하는 단위, 지금은 explore)
-│   │   ├── tools/   #   LLM 에게 보이는 도구(move_robot, Rust)
-│   │   └── prompts/ #   공통 프롬프트
-│   ├── vla/         # ③ 작은 계획·행동 (우리 VLA — 지금은 README 만, 학습 코드는 training/vla·training/BC)
-│   ├── app/         # 휴대폰 앱 (iOS·Android, 채팅으로 명령)
-│   └── behavior-2026/ # 서브모듈: BEHAVIOR Challenge 2026 (시뮬레이터에서 같은 구조를 시험)
-│       ├── src/scene_graph/ # 물체 기억 원본: scenemap·da·ovdet·clip(물체 영상 임베딩)·runtime(sgrt)·sgview
-│       │                    #   뷰어 = sgview(Rust, 실시간): tools/run_sgview.sh · tools/run_explore_live.sh. viewer/(sgviz, Python)는 옛 뷰어(실시간 아님, 안 씀)
-│       │                    #   spark_dsg/: Spark-DSG 우리 수정본 (BSD-3, 층 3개로 줄임 · mesh/zmq 제거)
-│       ├── tools/   #   실행·측정·검증 스크립트
-│       └── archive/ #   지금 안 쓰는 모듈 (지우지 않고 옮겨 둠)
-├── training/        # 모델 학습 (embed/: 영상–글 임베딩 증류, RL/·BC/: 교사·작은 학생, vla/: RecallVLA, fastsam/: ObjectSAM 분할, viewer/: 학습 뷰어, model/: 베이스 모델)
-├── scripts/         # 설치·실행 스크립트
-├── tools/           # 실행·점검 도구
-├── tests/           # 테스트 (sandbox/ 는 AI·사람 실험 공간)
-└── refs/            # 참고 논문·코드 목록
+├── src/
+│   ├── scene_graph/ # ① 물체 기억 — scenemap(지도·물체)·clip(SigLIP 2)·ovdet(분할)·runtime·sgview(뷰어)·tools/realbag(실제 bag 평가)
+│   ├── agent/       # ② 에이전트 — runtime(도구 호출 루프)·tools(코드)·skills(지시문)·planner·prompts
+│   ├── vla/         # ③ RecallVLA 실행 쪽(학습은 training/)
+│   ├── robot/       # 리모 + OMX-F 로봇 설명(URDF·RViz·OmniGibson 설정)
+│   ├── sim/         # 시뮬 실행(OmniGibson 리모 탐사·지도·move_robot)
+│   └── app/         # 휴대폰 앱(iOS·Android)
+├── training/        # 학습 — RL(교사·GPU 환경)·BC(학생)·vla(RecallVLA)·fastsam(ObjectSAM)·viewer(학습 뷰어)·embed
+├── config/          # 경로 설정(paths.env)
+├── tools/           # 빌드·실행·점검(build_all.sh, check_env.sh, run_sgview.sh …)
+├── docs/            # 계획·모델 선택·설계 문서(목록은 docs/README.md)
+├── archive/         # 지금 안 쓰는 코드(지우지 않고 옮겨 둠)
+├── tests/ · scripts/ · refs/
+└── build/ · models/ · data/ · third_party/   # git 밖 — 빌드 결과·가중치·데이터·외부 코드(BEHAVIOR-1K, Cartographer)
 ```
+
+자세한 배치: [docs/LAYOUT.md](docs/LAYOUT.md)
 
 ## 문서
 
-- [docs/README.md](docs/README.md) — 이 저장소 문서 목록
-- [docs/clip_candidates.md](docs/clip_candidates.md) — CLIP 류 임베딩 모델 후보·측정
-- [docs/map_vla/README.md](docs/map_vla/README.md) — Map_Vla(리모 + 매니퓰레이터 VLA) 설계 문서
-- [src/scene_graph/README.md](src/scene_graph/README.md) — 물체 기억 코드(원본)·빌드
-- [src/robot/README.md](src/robot/README.md) — 리모 + 매니퓰레이터 로봇 설명(URDF·RViz)
-- [training/README.md](training/README.md) — 모델 학습(교사·학생·RecallVLA·분할·학습 뷰어)
-- [scenemap 설계](https://github.com/juyoung020/behavior-2026/blob/main/docs/scenemap_설계.md) — 물체 기억(2D SLAM·물체 지도·계획기 질의) 설계 (서브모듈)
-- [archive/README.md](https://github.com/juyoung020/behavior-2026/blob/main/archive/README.md) — 지금 안 쓰는 모듈: 무엇을, 왜, 어떻게 되살리나 (서브모듈)
-- [tools/README.md](https://github.com/juyoung020/behavior-2026/blob/main/tools/README.md) — 실행·측정·검증 스크립트 (서브모듈)
-
-## 정한 것
-
-- 이미지 임베딩: SigLIP 2 B/32.
-- 분할(10-05 결정): ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, [github.com/juyoung020/ObjectSAM](https://github.com/juyoung020/ObjectSAM) v1.0) + SigLIP 2 + objprob(scenemap 확률 모드, 기본 켬, 매개변수 `objprob_params/yolo26n-seg-obj-416.json`), 입력 416. 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼.
-- 물체 벡터는 원본 임베딩 그대로 두고, 이름은 기억 폴더의 `cache/` 에 둔다.
-- CUDA 12.8.
-- 지도 자세: `SGRT_POSE` 로 고른다(`slam`·`odom`·`gt`, 실제 로봇 기본 `slam`, 시뮬 시험은 `gt`).
-
-## BEHAVIOR Challenge 2026 (서브모듈)
-
-[`src/behavior-2026`](https://github.com/juyoung020/behavior-2026) 은 같은 구조(물체 기억 + LLM 계획 + VLA)를 Stanford BEHAVIOR Challenge 2026 시뮬레이터(OmniGibson, Isaac Sim 5.1)에서 시험하는 저장소다. 물체 기억은 scenemap(2D SLAM + 물체 지도 — ObjectSAM 분할 + SigLIP 2 + objprob), 행동은 π0.5 네이티브 CUDA 엔진(그 저장소 것 — 우리 VLA 는 π0.5 를 쓰지 않는다). 실행 환경은 Ubuntu 22.04 + RTX 4090(자세히는 그 저장소의 `docs/Linux_설치.md`).
-
-```bash
-git submodule update --init src/behavior-2026   # 서브모듈 받기 (그 안의 BEHAVIOR-1K 등은 필요할 때 --recursive)
-```
+| 문서 | 내용 |
+|---|---|
+| [계획](docs/plan.md) | 무엇을 만드나, 할 일과 상태, 위험 |
+| [모델 선택](docs/model_selection.md) | 부품마다 무엇을 쓰고 왜 |
+| [map_vla](docs/map_vla/README.md) | RecallVLA·관측·학습 설계 |
+| [src/scene_graph](src/scene_graph/README.md) | 물체 기억 코드·빌드 |
+| [training](training/README.md) | 학습(교사·학생·RecallVLA·ObjectSAM·학습 뷰어) |
+| [docs/README.md](docs/README.md) | 전체 문서 목록 |
 
 ## 시작하기
 
 ```bash
 git clone https://github.com/juyoung020/robot-agent.git
 cd robot-agent
-bash refs/download.sh   # 참고 논문 PDF·코드를 refs/ 에 받기 (깃에는 안 올라감)
-python3 -m pytest tests/  # 테스트 실행
+tools/check_env.sh              # 필요한 외부 경로·도구 점검 (경로는 config/paths.env, 내 PC 값은 config/paths.local.env)
+tools/build_all.sh              # 전부 build/ 에 빌드. 골라서: tools/build_all.sh sgrt sgview
+tools/run_sgview.sh <기억 폴더> [--live]   # 물체 기억 뷰어
+bash refs/download.sh           # 참고 논문·코드 받기(선택)
 ```
 
-### 빌드·실행
-
-```bash
-tools/check_env.sh              # 외부 경로·도구 점검(경로는 config/paths.env, 내 PC 값은 config/paths.local.env)
-tools/build_all.sh              # 전부 build/ 한 곳에 빌드(-j4, 증분). 골라서: tools/build_all.sh sgrt sgview
-tools/run_sgview.sh <memory 폴더> [--live]
-```
-
-배치·외부 경로 설명: [docs/LAYOUT.md](docs/LAYOUT.md)
+시뮬은 BEHAVIOR-1K 장면(OmniGibson)을 쓴다. `third_party/BEHAVIOR-1K` 에 받고 데이터 약관에 동의해야 한다.
 
 ## 라이선스
 
 우리 코드는 [Apache-2.0](LICENSE) 이다. 제3자 구성 요소는 각자 라이선스를 따른다.
-- Qwen3.5(0.8B·2B 가중치) — Apache-2.0
+- Qwen3.5(0.8B 가중치) — Apache-2.0
 - SigLIP 2(open_clip / timm 가중치) — Apache-2.0
-- PE-Core(이름·생김새 벡터 공간) — Apache-2.0
-- BEHAVIOR-1K / OmniGibson 코드 — MIT, **BEHAVIOR 데이터 묶음(장면·물체 자산)은 자체 약관**(비상업 학술 연구만, 재배포 금지). 이 저장소는 BEHAVIOR 자산을 담지 않으며, 쓰려면 각자 약관에 동의하고 받는다.
+- PE-Core(지금 이름표에 쓰는 글 공간) — Apache-2.0
+- Cartographer — Apache-2.0
+- ObjectSAM 가중치 — AGPL-3.0 ([github.com/juyoung020/ObjectSAM](https://github.com/juyoung020/ObjectSAM))
+- BEHAVIOR-1K / OmniGibson 코드 — MIT, **BEHAVIOR 데이터(장면·물체 자산)는 자체 약관**(비상업 학술 연구만, 재배포 금지). 이 저장소는 BEHAVIOR 자산을 담지 않는다.
 - spark_dsg — MIT 저작권 문구(`src/scene_graph/spark_dsg/LICENSE`)
-- 서브모듈 `src/behavior-2026` 은 그 저장소의 라이선스를 따른다.
 
-RecallVLA(지도 + VLA 파운데이션 모델, [사양](docs/map_vla/MAPVLA_SPEC.md))를 BEHAVIOR 자산으로 학습한 가중치는 비상업 연구용으로 공개한다.
+RecallVLA 를 BEHAVIOR 자산으로 학습한 가중치는 비상업 연구용으로 공개한다.
