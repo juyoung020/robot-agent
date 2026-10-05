@@ -1,0 +1,35 @@
+{
+ "scene": "house_double_floor_lower",
+ "task": "turning_on_radio",
+ "res": 0.05,
+ "origin": [
+  -5.3100000000000005,
+  -2.21
+ ],
+ "width": 299,
+ "height": 220,
+ "rows": "increasing y",
+ "rooms": {
+  "corridor_0": 3,
+  "kitchen_0": 6,
+  "living_room_0": 7
+ },
+ "missing_rooms": [],
+ "floor_m2": 55.39250000000001,
+ "room_m2": {
+  "corridor_0": 20.560000000000002,
+  "kitchen_0": 22.0775,
+  "living_room_0": 12.722500000000002
+ },
+ "start_pose_world": [
+  4.901848316192627,
+  3.8323094844818115,
+  0.85841190378586
+ ],
+ "reach_m2": 53.5,
+ "reach_robot_r": 0.37,
+ "instance": 301,
+ "excluded": [
+  "garden_0"
+ ]
+}

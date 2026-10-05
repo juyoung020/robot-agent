@@ -21,7 +21,7 @@ llm = ["dep:bagent"]
 
 [dependencies]
 serde_json = "1"
-bagent = { package = "behavior-agent", path = "../../../behavior-2026/src/agent/planner", optional = true }
+bagent = { package = "behavior-agent", path = "../../planner", optional = true }
 
 [profile.release]
 opt-level = 3

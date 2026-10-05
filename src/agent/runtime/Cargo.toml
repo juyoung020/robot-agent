@@ -17,7 +17,7 @@ path = "src/bin/run_skill.rs"
 [dependencies]
 serde_json = "1"
 move_robot = { path = "../tools/move_robot" }
-bagent = { package = "behavior-agent", path = "../../behavior-2026/src/agent/planner" }
+bagent = { package = "behavior-agent", path = "../planner" }
 
 [profile.release]
 opt-level = 3

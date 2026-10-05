@@ -1,6 +1,6 @@
 //! 자동 확인(증거). 단계가 끝났는지 기억(scenemap 물체) + 그리퍼 + 손끝으로 판정한다. LLM 은 이 판정을 바꾸지 못한다(plan.md 8절).
 //!
-//! 판정 규칙과 문턱은 기존 계획기 `behavior-2026/src/agent/planner/src/planner.rs` `Core::evidence` 와
+//! 판정 규칙과 문턱은 기존 계획기 `src/agent/planner/src/planner.rs` `Core::evidence` 와
 //! `docs/에이전트_설계.md` 1.7 을 그대로 옮겼다(plan.md 3.2 의 `task/verify.rs` 자리, POLICY 3.1 성공 표):
 //! - 집기: 그리퍼가 무언가에 닫힘(빈손으로 끝까지 닫히지 않음) + 대상이 0.1 m 넘게 들림(또는 기억 상태 `held`) → done,
 //!   끝까지 닫힘(빈손) → failed. R1 의 "손가락 폭 0.005 m" 는 OMX-F 에서 벌림 비율 [`EMPTY_FRAC`] 로 둔다(추정).

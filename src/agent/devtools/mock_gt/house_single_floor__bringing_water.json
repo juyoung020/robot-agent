@@ -1,0 +1,41 @@
+{
+ "scene": "house_single_floor",
+ "task": "bringing_water",
+ "res": 0.05,
+ "origin": [
+  -2.05,
+  -3.45
+ ],
+ "width": 565,
+ "height": 554,
+ "rows": "increasing y",
+ "rooms": {
+  "corridor_0": 13,
+  "dining_room_0": 14,
+  "entryway_0": 15,
+  "kitchen_0": 18,
+  "living_room_0": 19,
+  "living_room_1": 20
+ },
+ "missing_rooms": [],
+ "floor_m2": 161.02750000000003,
+ "room_m2": {
+  "corridor_0": 65.40750000000001,
+  "dining_room_0": 9.505,
+  "entryway_0": 18.5775,
+  "kitchen_0": 13.5975,
+  "living_room_0": 39.355000000000004,
+  "living_room_1": 14.492500000000001
+ },
+ "start_pose_world": [
+  8.865306854248047,
+  1.431834101676941,
+  2.592657079845361
+ ],
+ "reach_m2": 122.46500000000002,
+ "reach_robot_r": 0.37,
+ "instance": 301,
+ "excluded": [
+  "garden_0"
+ ]
+}

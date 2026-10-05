@@ -1,0 +1,31 @@
+[package]
+name = "behavior-agent"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+description = "BEHAVIOR Challenge 2026 상위 계획 에이전트(Qwen, OpenAI 호환 도구 호출) + 평가기↔VLA 중계기"
+publish = false
+
+[lib]
+name = "bagent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bagent"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# float_roundtrip: 기록(JSONL)의 실수를 읽을 때 비트까지 같게(기본 파서는 마지막 자리가 1 ULP 틀릴 수 있어 재생이 어긋났다)
+serde_json = { version = "1", features = ["float_roundtrip"] }
+# 나머지(웹소켓·msgpack·HTTP·base64·SHA-1)는 손으로 짰다. HTTPS 는 시스템 curl 을 부른다(llm.rs).
+# 단계 경계에서만: 카메라 영상 → JPEG → LLM 이미지 입력(의존성 없는 순수 Rust)
+jpeg-encoder = "0.6"
+# poll(2): 계획하는 동안 두 소켓의 ping 에 답하기
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = 1

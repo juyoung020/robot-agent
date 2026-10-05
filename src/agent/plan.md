@@ -4,7 +4,7 @@
 질문: **"우리 AI agent 를 이 프로젝트에서 적극적으로 활용하려면 어떻게 해야 하나"** — 답은 이 문서 하나에 둔다.
 
 근거로 읽은 것: 팀 `README.md`·`docs/plan.md`·`docs/model_selection.md`, 수업 강의계획서·labs(week02·03·05),
-기존 Rust 계획기 `src/behavior-2026/src/agent/planner/`(설계 `docs/에이전트_설계.md`, 통합 `docs/통합_실시간.md`, `plan.md` 4.1),
+기존 Rust 계획기 `src/agent/planner/`(설계 `docs/에이전트_설계.md`, 통합 `docs/통합_실시간.md`, `plan.md` 4.1),
 물체 기억 C ABI `scenemap.h`·`sgrt.h`, 2025 2위 `refs/openpi-comet`, 팀 벤치마크 `refs/code/dynamic-object-mapping-benchmark`.
 추정은 "(추정)", 사용자가 정할 것은 "(결정 필요)"로 적었다.
 
