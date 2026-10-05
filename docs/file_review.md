@@ -53,11 +53,11 @@
 - [ ] `src/scene_graph/scenemap/include/scenemap/sgraph.hpp` (156)
 - [ ] `src/scene_graph/scenemap/include/scenemap/stream.hpp` (80)
 - [ ] `src/scene_graph/scenemap/include/scenemap/timing.hpp` (102)
-- [ ] `src/scene_graph/scenemap/include/scenemap/walls.hpp` (87)
+- [x] `src/scene_graph/scenemap/include/scenemap/walls.hpp` (87)
 - [ ] `src/scene_graph/scenemap/src/bestview.cpp` (93)
 - [x] `src/scene_graph/scenemap/src/capi.cpp` (2050) — **안 부르던 C ABI 5 개·늘 false 인 handled 칸**, R1 주석, 늘 참인 LIMO 분기, 'limo' 별칭
 - [ ] `src/scene_graph/scenemap/src/cloud.cpp` (129)
-- [ ] `src/scene_graph/scenemap/src/dsg_save.cpp` (813)
+- [x] `src/scene_graph/scenemap/src/dsg_save.cpp` (813) — Spark-DSG 로 저장하던 비교 길 제거(라이브러리 링크 없앰)
 - [ ] `src/scene_graph/scenemap/src/fk.cpp` (142)
 - [ ] `src/scene_graph/scenemap/src/grid.cpp` (221)
 - [ ] `src/scene_graph/scenemap/src/inspect.cpp` (139)
@@ -69,7 +69,7 @@
 - [ ] `src/scene_graph/scenemap/src/scan.cpp` (332)
 - [ ] `src/scene_graph/scenemap/src/sgraph.cpp` (559)
 - [ ] `src/scene_graph/scenemap/src/stream.cpp` (269)
-- [ ] `src/scene_graph/scenemap/src/walls.cpp` (524)
+- [x] `src/scene_graph/scenemap/src/walls.cpp` (524) — '예전처럼' 주석
 - [ ] `src/scene_graph/scenemap/tests/fake_siglip.h` (22)
 - [ ] `src/scene_graph/scenemap/tests/gen_limo_fk_ref.py` (99)
 - [ ] `src/scene_graph/scenemap/tests/limo_fk_ref.hpp` (21)
@@ -95,7 +95,7 @@
 
 ## `src/scene_graph/slam_carto` (12 파일, 2027 줄)
 - [ ] `src/scene_graph/slam_carto/CMakeLists.txt` (40)
-- [ ] `src/scene_graph/slam_carto/README.md` (150)
+- [x] `src/scene_graph/slam_carto/README.md` (150) — slam2d 비교 도구(지움)
 - [ ] `src/scene_graph/slam_carto/calib/carto_drift.json` (800)
 - [ ] `src/scene_graph/slam_carto/config/carto_2d.lua` (42)
 - [ ] `src/scene_graph/slam_carto/config/limo_x2l.lua` (12)
@@ -110,14 +110,14 @@
 ## `src/scene_graph/ovdet` (12 파일, 1730 줄)
 - [ ] `src/scene_graph/ovdet/.gitignore` (8)
 - [ ] `src/scene_graph/ovdet/CMakeLists.txt` (35)
-- [ ] `src/scene_graph/ovdet/README.md` (107)
+- [x] `src/scene_graph/ovdet/README.md` (107) — 옛 COCO 엔진 절·없는 SGRT_PROMPT
 - [ ] `src/scene_graph/ovdet/config/coco80.txt` (80)
 - [ ] `src/scene_graph/ovdet/config/task_prompts.txt` (102)
 - [ ] `src/scene_graph/ovdet/config/vocab_all.txt` (273)
 - [ ] `src/scene_graph/ovdet/include/ovdet.h` (110)
 - [ ] `src/scene_graph/ovdet/scripts/build_linux.sh` (8)
 - [ ] `src/scene_graph/ovdet/src/ovdet.cu` (763)
-- [ ] `src/scene_graph/ovdet/tools/build_engines.py` (56)
+- [x] `src/scene_graph/ovdet/tools/build_engines.py` (56) — 옛 yolo26s 예시
 - [ ] `src/scene_graph/ovdet/tools/ovdet_cmp.cpp` (124)
 - [ ] `src/scene_graph/ovdet/tools/ovdet_smoke.c` (64)
 
@@ -125,7 +125,7 @@
 - [ ] `src/scene_graph/clip/CMakeLists.txt` (110)
 - [ ] `src/scene_graph/clip/README.md` (150)
 - [ ] `src/scene_graph/clip/include/sgclip.h` (177)
-- [ ] `src/scene_graph/clip/include/sgsearch.h` (102)
+- [x] `src/scene_graph/clip/include/sgsearch.h` (102)
 - [ ] `src/scene_graph/clip/src/crop.cu` (120)
 - [ ] `src/scene_graph/clip/src/crop.hpp` (31)
 - [ ] `src/scene_graph/clip/src/encoder.cpp` (529)
@@ -133,7 +133,7 @@
 - [ ] `src/scene_graph/clip/src/labels_impl.hpp` (45)
 - [ ] `src/scene_graph/clip/src/memstore.cpp` (177)
 - [ ] `src/scene_graph/clip/src/memstore.hpp` (53)
-- [ ] `src/scene_graph/clip/src/objindex.cpp` (1079)
+- [x] `src/scene_graph/clip/src/objindex.cpp` (1079) — 옛 이름 사후 배열 형식
 - [ ] `src/scene_graph/clip/src/textenc.cpp` (378)
 - [ ] `src/scene_graph/clip/tests/test_cache.cpp` (91)
 - [ ] `src/scene_graph/clip/tests/test_crop.cpp` (85)
@@ -343,7 +343,7 @@
 - [ ] `src/agent/plan.md` (449)
 - [ ] `src/agent/planner/.gitignore` (2)
 - [ ] `src/agent/planner/Cargo.toml` (31)
-- [ ] `src/agent/planner/README.md` (62)
+- [x] `src/agent/planner/README.md` (62) — 공부용 표시
 - [ ] `src/agent/planner/assets/r1pro_cam_fk.json` (772)
 - [ ] `src/agent/planner/assets/tasks.json` (55967)
 - [ ] `src/agent/planner/prompts/system.md` (36)
@@ -357,7 +357,7 @@
 - [ ] `src/agent/planner/src/http.rs` (181)
 - [ ] `src/agent/planner/src/image.rs` (85)
 - [ ] `src/agent/planner/src/instruction.rs` (313)
-- [ ] `src/agent/planner/src/lib.rs` (41)
+- [x] `src/agent/planner/src/lib.rs` (41) — 공부용 표시
 - [ ] `src/agent/planner/src/link.rs` (1512)
 - [ ] `src/agent/planner/src/llm.rs` (547)
 - [ ] `src/agent/planner/src/main.rs` (503)
@@ -419,13 +419,13 @@
 - [ ] `training/viewer/tools/og_replay/og_replay.py` (161)
 - [ ] `training/viewer/tools/og_replay/og_replay.sh` (59)
 - [ ] `training/viewer/tools/og_replay/og_replay_lib.py` (393)
-- [ ] `training/viewer/tools/record_replay/CMakeLists.txt` (58)
+- [x] `training/viewer/tools/record_replay/CMakeLists.txt` (58)
 - [ ] `training/viewer/tools/record_replay/beh_rec.h` (294)
 - [ ] `training/viewer/tools/record_replay/g1_rec.h` (327)
 - [ ] `training/viewer/tools/record_replay/gpu_sg.h` (116)
 - [ ] `training/viewer/tools/record_replay/rec_util.h` (210)
 - [ ] `training/viewer/tools/record_replay/record_bc.cu` (242)
-- [ ] `training/viewer/tools/record_replay/record_ppo.cu` (117)
+- [x] `training/viewer/tools/record_replay/record_ppo.cu` (117) — 빈 지도 기본·--pnp·--scenes·BEHAVIOR 장면 머리
 - [ ] `training/viewer/tools/record_replay/sg_capture.h` (85)
 - [ ] `training/viewer/tools/record_replay/trpc/.gitignore` (1)
 - [ ] `training/viewer/tools/record_replay/trpc/Cargo.toml` (15)
@@ -442,7 +442,7 @@
 - [ ] `training/RL/map/CMakeLists.txt` (107)
 - [ ] `training/RL/map/README.md` (470)
 - [ ] `training/RL/map/include/drift_params.h` (16)
-- [ ] `training/RL/map/include/map.h` (3061)
+- [x] `training/RL/map/include/map.h` (3061) — 잡음 스위치·겹친 넣기 조건·지운 폴더·커밋 번호 주석
 - [ ] `training/RL/map/include/map_api.h` (137)
 - [ ] `training/RL/map/include/map_tok.h` (846)
 - [x] `training/RL/map/include/mem_tok.h` (131) — 잡음 스위치
@@ -530,7 +530,7 @@
 - [ ] `training/RL/config/ppo_a2_ft40.json` (66)
 - [ ] `training/RL/config/ppo_g4.json` (96)
 - [ ] `training/RL/config/ppo_g4_notok.json` (96)
-- [ ] `training/RL/config/ppo_pnp.json` (200)
+- [x] `training/RL/config/ppo_pnp.json` (200) — GT 지도 단계 → C2
 - [ ] `training/RL/network/README.md` (95)
 - [ ] `training/RL/network/include/fp8_ref.h` (43)
 - [ ] `training/RL/network/include/net.h` (176)
