@@ -10,6 +10,7 @@
 #include "omx_workspace_grasp.h"   // 팔이 닿는지: URDF 로 미리 계산한 OMX 잡는 점 작업 공간(tools/omx_ws --grasp, env 헤더)
 #include "vla_vocab.h"       // 이름 표 행·상위어·이름 확신도(training/data/vla_v1 에서 생성)
 #include "topview.h"         // 위에서 본 지도 그림 — 하나의 정의(교사 격자 MapTok::tv, 학생 RGB)
+#include "mem_tok.h"         // 기억 줄 한 함수(mem_row) — 실제 로봇 sm_tok.h 와 같은 식
 
 namespace gmap {
 
@@ -500,6 +501,36 @@ DEV void tv_topstate(const MapCore& m, const Slot* ob, const BCtx* bxp, const ui
 }
 
 // 목표 칸 하나(GoalVal 16 값 FP16): kind 0 = 없음, 1 = 물체, 2 = 점. 위치 P(지도 좌표)는 known 일 때만. (px, py, c, s) = 믿는 자세, eef_b = base_link 손끝
+// 창 방 k 의 종류 예측 6(mem_tok.h room_type_pred — 참 종류에 판 고정 잡음). 드러나지 않았거나 방 밖이면 모름 1
+DEV void room_pred_local(const MapCore& m, const BCtx* bxp, bool beh, int k, float out[6]) {
+  int ty = -1, key = k;
+  if (k >= 0 && ((m.rrev >> k) & 1)) {
+    if (beh) { key = bxp->bm->rid[k]; ty = (int)bxp->sd->rtype[key]; }
+    else ty = m.rtype[k];
+  }
+  room_type_pred(m.ep, key, ty, out);
+}
+// GPU 저장소 칸 → ObjView(mem_tok.h). 실제 쪽 어댑터는 sm_tok.h
+DEV void objview_slot(const MapCore& m, const Slot& S, const BCtx* bxp, bool beh, int t_kf, int tbug, const TPrev& tp, int tag_prev, int rrk, bool target, ObjView& o) {
+  const bool live = !S.held && S.last_seen == t_kf;   // 지금 보는 중이면 그 keyframe 의 관측 자리(Slot::meas), 아니면 지도 자리 − slam 자세(VLA_INPUT 3절)
+  const float* P = (live && tbug != 3) ? S.meas : S.pos;
+  for (int a = 0; a < 3; ++a) { o.P[a] = P[a]; o.pos[a] = S.pos[a]; o.first_pos[a] = S.first_pos[a]; o.ext[a] = S.ext[a]; }
+  o.vel_ok = m.t > 0 && tp.tag == ((S.id << 16) | tag_prev);
+  if (o.vel_ok) { o.vel[0] = (S.pos[0] - tp.p[0]) / MP::tok_dt; o.vel[1] = (S.pos[1] - tp.p[1]) / MP::tok_dt; o.vel[2] = (S.pos[2] - tp.p[2]) / MP::tok_dt; }
+  else { o.vel[0] = 0.f; o.vel[1] = 0.f; o.vel[2] = 0.f; }
+  o.state = S.state; o.held = S.held; o.live = live;
+  o.age_s = (float)(m.t - S.last_seen) * MP::tok_dt;
+  o.score = S.score; o.n_obs = (float)S.n_obs;
+  o.dl = m.plen - S.seen_len; o.dr = m.prot - S.seen_rot;
+  const int ok = beh ? broom_local(*bxp, S.pos[0], S.pos[1]) : room_of(m, S.pos[0], S.pos[1]);
+  o.same_room = rrk >= 0 && ok == rrk;
+  o.target = target;
+  o.name_p = S.name_p; o.name_p2 = S.name_p2;
+  room_pred_local(m, bxp, beh, ok, o.rtype);
+  o.closest = S.closest; o.n_views = (float)S.n_views;
+  o.has_top = S.tset ? 1 : 0;
+  o.top_seen = (float)popc32((uint32_t)S.top_bits) * (1.f / 16.f);
+}
 DEV void goal_fill(uint16_t* g, int kind, bool known, bool lost, const float P[3], float px, float py, float c, float s, const float eef_b[3]) {
   float v[N_GV];
   for (int q = 0; q < N_GV; ++q) v[q] = 0.f;
@@ -685,6 +716,9 @@ DEV void make_tokens_n(const MapCore& m, const Slot* ob, const uint32_t* occ, co
   for (int j = lane; j < 8; j += nl)
     if (j >= nseg) for (int q = 0; q < 5; ++q) o.wall[16 + 5 * j + q] = 0;
   // 4) 물체 칸
+  RobotRef rref;
+  rref.px = px; rref.py = py; rref.c = c; rref.s = s;
+  for (int a = 0; a < 3; ++a) { rref.eef_b[a] = m.eef_b[a]; rref.eef_m[a] = m.eef_m[a]; }
   const int t_kf = m.det_t;   // 마지막 검출 keyframe 시각(지금 보는 중 = 그때 봄)
   const int tag_now = m.t & 0xffff, tag_prev = (m.t - 1) & 0xffff;
 #pragma unroll
@@ -702,55 +736,12 @@ DEV void make_tokens_n(const MapCore& m, const Slot* ob, const uint32_t* occ, co
         const float kj = j == tgt ? -1.f : ts.sk[j];
         rank += kj < kb || (kj == kb && j < b);
       }
-      uint16_t* v = o.slot[rank];   // 바로 FP16 으로(지역 배열 없이)
-      // 지금 보는 중이면 그 keyframe 의 관측 자리(Slot::meas — 이번 프레임 깊이 → 카메라 → 몸에 해당), 아니면 지도 자리 − slam 자세(VLA_INPUT 3절)
-      const bool live = !S.held && S.last_seen == t_kf;
-      const float* P = (live && tbug != 3) ? S.meas : S.pos;
-      const float dx = P[0] - px, dy = P[1] - py;
-      const float pr0 = c * dx + s * dy, pr1 = -s * dx + c * dy, pr2 = P[2] - MP::base_z;
-      const float pe0 = pr0 - m.eef_b[0], pe1 = pr1 - m.eef_b[1], pe2 = pr2 - m.eef_b[2];
-      const float dist = sqrtf(pr0 * pr0 + pr1 * pr1);
-      v[T_POS] = f2h(pr0); v[T_POS + 1] = f2h(pr1); v[T_POS + 2] = f2h(pr2);
-      v[T_POS_EEF] = f2h(pe0); v[T_POS_EEF + 1] = f2h(pe1); v[T_POS_EEF + 2] = f2h(pe2);
-      v[T_DIST] = f2h(dist);
-      v[T_BEAR] = f2h(atan2f_d(pr1, pr0));
-      for (int a = 0; a < 3; ++a) v[T_EXT + a] = f2h(S.ext[a]);
-      v[T_EEF_C] = f2h(sqrtf(pe0 * pe0 + pe1 * pe1 + pe2 * pe2));
-      float g2 = 0.f, blo[3], bhi[3];
-      for (int a = 0; a < 3; ++a) {
-        blo[a] = P[a] - 0.5f * S.ext[a];
-        bhi[a] = P[a] + 0.5f * S.ext[a];
-        const float gk = maxf(0.f, maxf(blo[a] - m.eef_m[a], m.eef_m[a] - bhi[a]));
-        g2 = g2 + gk * gk;
-      }
-      v[T_EEF_S] = f2h(sqrtf(g2));
-      v[T_REACH] = omx_reach_box(P, S.ext, px, py, c, s) ? (uint16_t)0x3c00u : (uint16_t)0u;
-      const float fdx = S.pos[0] - S.first_pos[0], fdy = S.pos[1] - S.first_pos[1];
-      v[T_DISP] = f2h(c * fdx + s * fdy);
-      v[T_DISP + 1] = f2h(-s * fdx + c * fdy);
-      v[T_DISP + 2] = f2h(S.pos[2] - S.first_pos[2]);
-      if (m.t > 0 && tp.tag == ((S.id << 16) | tag_prev)) {
-        const float vx = (S.pos[0] - tp.p[0]) / MP::tok_dt, vy = (S.pos[1] - tp.p[1]) / MP::tok_dt;
-        v[T_VEL] = f2h(c * vx + s * vy);
-        v[T_VEL + 1] = f2h(-s * vx + c * vy);
-        v[T_VEL + 2] = f2h((S.pos[2] - tp.p[2]) / MP::tok_dt);
-      } else {
-        v[T_VEL] = 0; v[T_VEL + 1] = 0; v[T_VEL + 2] = 0;
-      }
-      for (int q = 0; q < 4; ++q) v[T_STATE + q] = S.state == q ? (uint16_t)0x3c00u : (uint16_t)0u;   // FP16 1.0 / 0
-      v[T_AGE] = f2h((float)(m.t - S.last_seen) * MP::tok_dt);
-      v[T_SCORE] = f2h(S.score);
-      v[T_NOBS] = f2h((float)S.n_obs);
-      v[T_SRC] = live ? (uint16_t)0x3c00u : (uint16_t)0u;
-      {  // 마지막 본 뒤 믿는 이동·회전에 Cartographer 걸음 오차(drift_params.h): σ = √(앞·옆 분산) + yaw σ·거리 (되돌림 빼고 — 위쪽 어림)
-        const float dl = m.plen - S.seen_len, dr = m.prot - S.seen_rot;
-        const float vxy = (CartoDrift::long_cd + CartoDrift::lat_cd) * dl + (CartoDrift::long_cr + CartoDrift::lat_cr) * dr;
-        const float vyaw = CartoDrift::yaw_cd * dl + CartoDrift::yaw_cr * dr;
-        v[T_UNC] = f2h(S.held ? 0.f : sqrtf(fmaxf(vxy, 0.f)) + sqrtf(fmaxf(vyaw, 0.f)) * dist);
-      }
-      const int ok = beh ? broom_local(*bxp, S.pos[0], S.pos[1]) : room_of(m, S.pos[0], S.pos[1]);
-      v[T_SAMEROOM] = (rrk >= 0 && ok == rrk) ? (uint16_t)0x3c00u : (uint16_t)0u;
-      v[T_TARGET] = (b == tgt || b == tgt2) ? (uint16_t)0x3c00u : (uint16_t)0u;   // BEHAVIOR 집기·놓기: 집을 물체 + 놓을 곳
+      uint16_t* v = o.slot[rank];
+      ObjView ov;
+      objview_slot(m, S, bxp, beh, t_kf, tbug, tp, tag_prev, rrk, b == tgt || b == tgt2, ov);
+      float fv[MEM_N33];
+      mem_row(ov, rref, fv, MEM_N33);   // 기억 줄 한 함수(mem_tok.h) — 실제 로봇 sm_tok.h 와 같은 식
+      for (int q2 = 0; q2 < MEM_N33; ++q2) v[q2] = f2h(fv[q2]);
       // 이름 = objprob 이름 사후(Slot::cls — 문턱 넘은 라벨 행·상위어 행, 모름 −1 = 이름 벡터 0), 이름 확신도 2 = 고른 이름 사후·1위 − 2위 사후(GPU_MAP_PORT 5절 —
       // 실제 쪽 sm_tok.h 도 같은 정의로 바꿈). 생김새 행: BEHAVIOR = 상자 한 행(C_ITEM, P5 에서 SigLIP 2 원형으로), 상자 방 = 주 출처 종류, 유령 = NCLS
       v[T_CONF1] = f2h(S.name_p);
@@ -774,7 +765,7 @@ DEV void make_tokens_n(const MapCore& m, const Slot* ob, const uint32_t* occ, co
     float bd = kInf;
     if (beh) {   // 방 종류 = 장면 방 이름의 종류, 문 = 창 안 문 중 아는 쪽 방이 모두 드러난 것
       const BMapEnv& B = *bxp->bm;
-      r[rrk >= 0 ? (int)bxp->sd->rtype[B.rid[rrk]] : N_RTYPE] = 1.f;
+      room_pred_local(m, bxp, true, rrk, r);   // 방 종류 = 예측(참 종류 + 판 고정 잡음, 점검 8절)
       for (int j = 0; j < B.ndoor; ++j) {
         const int a = B.da[j], c2 = B.db[j];
         if ((a >= 0 && !((m.rrev >> a) & 1)) || (c2 >= 0 && !((m.rrev >> c2) & 1))) continue;
@@ -789,7 +780,7 @@ DEV void make_tokens_n(const MapCore& m, const Slot* ob, const uint32_t* occ, co
         }
       }
     } else
-    r[rrk >= 0 ? m.rtype[rrk] : N_RTYPE] = 1.f;
+    room_pred_local(m, bxp, false, rrk, r);
     for (int j = 0; !beh && j < m.n_room - 1; ++j) {   // 문 = 양쪽 방이 다 드러난 자르는 선(scenemap: 두 방 사이 이음매)
       if (!((m.rrev >> j) & 1) || !((m.rrev >> (j + 1)) & 1)) continue;
       const float dxw = (m.raxis ? m.rdoor[j] : m.rcut[j]) - px, dyw = (m.raxis ? m.rcut[j] : m.rdoor[j]) - py;

@@ -21,6 +21,10 @@ a = ap.parse_args()
 keep = set(x.strip() for x in a.eps.split(',') if x.strip())
 
 
+def base(s):   # 가구 조각 출처 SRC_FURN + j + 조각·0x2000 → 조각 번호 뺌(map.h src_base)
+    return 64 + ((s - 64) & 0x1FFF) if s >= 64 else s
+
+
 def med(v):
     v = sorted(v)
     return v[len(v) // 2] if v else float('nan')
@@ -60,12 +64,18 @@ for d in a.dirs:
         conf = [s for s in (last_slots or []) if s['conf']]
         S['nconf'].append(len(conf))
         S['ghost'].append(sum(1 for s in conf if s['src'] < 0))
-        srcs = collections.Counter(s['src'] for s in conf if s['src'] >= 0)
+        srcs = collections.Counter(base(s['src']) for s in conf if s['src'] >= 0)
         S['dup'].append(sum(c - 1 for c in srcs.values() if c > 1))
+        S['distinct'].append(len(srcs))
+        for s_ in conf:   # 유령 종류(map.h: g = −1 − src; g < 3 상자 방 자리, < 3 + 0x2000 벽 토막, 그 위 헛조각)
+            if s_['src'] < 0:
+                g = -1 - s_['src']
+                S['gk_' + ('box' if g < 3 else 'wall' if g < 3 + 0x2000 else 'phantom')].append(1)
     n = max(1, len(S['n']))
     o = dict(episodes=len(S['n']), target_confirmed=sum(S['found']) / n, t_med=med(S['t']), dist_at_conf_med=med(S['dist_at_conf']),
              det_rate=sum(S['det']) / max(1, sum(S['det']) + sum(S['miss'])), det_rate_ep_med=med(S['det_rate_ep']),
-             nconf_end_med=med(S['nconf']), ghost_per_ep=sum(S['ghost']) / n, dup_per_ep=sum(S['dup']) / n)
+             nconf_end_med=med(S['nconf']), ghost_per_ep=sum(S['ghost']) / n, dup_per_ep=sum(S['dup']) / n, distinct_true_per_ep=sum(S['distinct']) / n,
+             ghost_wall_per_ep=len(S['gk_wall']) / n, ghost_phantom_per_ep=len(S['gk_phantom']) / n)
     out[d] = o
     print(d, json.dumps({k: (round(v, 3) if isinstance(v, float) else v) for k, v in o.items()}))
 if a.json:

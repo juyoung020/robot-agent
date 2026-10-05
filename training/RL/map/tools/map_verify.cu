@@ -392,12 +392,14 @@ int main(int argc, char** argv) {
         const int r = R.room_at(c.ex + B.wx, c.ey + B.wy);
         const int loc = (r >= 0 && r < 32) ? B.lut[r] : -1;
         const bool rev = loc >= 0 && ((c.rrev >> loc) & 1);
-        const int want = rev ? rtype_rasc(R.str(R.rooms[r].name)) : 5;
-        int got = -1;
-        for (int q = 0; q < 6; ++q) if (gmap::h2f(tk.room[q]) > 0.5f) got = got < 0 ? q : 99;
+        // 토큰 = 그 방 참 종류(RASC 이름에서 따로 읽음)의 예측(mem_tok.h room_type_pred, 판 고정 잡음 — 점검 8절)
+        float want[6];
+        gmap::room_type_pred(c.ep, r, rev ? rtype_rasc(R.str(R.rooms[r].name)) : -1, want);
+        bool bad = false;
+        for (int q = 0; q < 6; ++q) bad |= std::fabs(gmap::h2f(tk.room[q]) - want[q]) > 2e-3f;
         ++room_chk;
         room_known += rev;
-        room_bad += got != want;
+        room_bad += bad;
         door_tok += gmap::h2f(tk.room[9]) > 0.5f;
       }
       {  // 목표 칸(VLA_INPUT 2.1): 독립 계산과 견줌 — 점 목표는 env 의 참 점을 믿는 자세로 돌린 값, 물체 목표는 표시 칸(T_TARGET 맨 앞)과 같은 자리
@@ -496,9 +498,10 @@ int main(int argc, char** argv) {
       int tn;
       if (S.src >= gmap::SRC_FURN) {   // 가구(장면 정적 상자 — 깊이 광선 검출): 이름 = 장면 상자 이름 표 행
         ++q_furn;
-        tn = sb.host.sc[cmap.h.bm[i].scene].bname[S.src - gmap::SRC_FURN];
-        if (std::find(seen_furn.begin(), seen_furn.end(), (int)S.src) != seen_furn.end()) ++q_dup;
-        else seen_furn.push_back(S.src);
+        const int fb = gmap::src_base(S.src);   // 조각은 같은 정답 물체(조각 번호 뺌)
+        tn = sb.host.sc[cmap.h.bm[i].scene].bname[fb - gmap::SRC_FURN];
+        if (std::find(seen_furn.begin(), seen_furn.end(), fb) != seen_furn.end()) ++q_dup;
+        else seen_furn.push_back(fb);
       } else {
         if ((seen_src >> S.src) & 1u) ++q_dup;
         seen_src |= 1u << S.src;

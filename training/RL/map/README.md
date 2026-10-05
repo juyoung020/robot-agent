@@ -28,18 +28,18 @@ map.step(env.soa(), 0, 0, st, rec.at(t)); // 지도: 환경 상태를 읽기만 
 
 ## 빌드/실행
 ```
-cmake -S . -B ~/ra_mapbuild && cmake --build ~/ra_mapbuild -j
-~/ra_mapbuild/map_verify 2048 600              # GPU == CPU 비트 동일이어야 통과
-~/ra_mapbuild/map_verify 2048 600 --negative   # 실패해야 정상(종료 코드 0)
-~/ra_mapbuild/map_bench 200 65536             # 판 수 1,024 … 65,536
-~/ra_mapbuild/map_prof 200 32768 32768       # 한 판 수만, 구간별 시간(clock64)
-~/ra_mapbuild/map_drift 4 1024                # 자세 오차: 4 = LIMO 둘째 탐색 판 비슷(38 m), 2 = 첫 판(13 m), 3 = limo4, 1 = R1 탐색, 0 = gt_move
-~/ra_mapbuild/map_verify 2048 600 --arm        # 팔을 푼 G1(arm_free) + 팔·그리퍼 행동: 들기·놓기도 비트 동일
-~/ra_mapbuild/map_verify 2048 600 --curr 1,0   # 처음 지도 C0(전체). 0,1 = C1(부분), 0.34,0.33 = 섞음, 기본 0,0 = C2(빈 지도). --negative 와 같이 써도 됨
-MAP_CURR=0.34,0.33 ~/ra_mapbuild/map_bench 200 32768   # 처음 지도를 채우는 리셋 비용까지
-~/ra_mapbuild/map_tokrec 256 300 tok.bin --arm # 지도 토큰 기록
-cmake -S . -B ~/ra_mapbuild -DMAP_REALCHECK=ON && cmake --build ~/ra_mapbuild --target map_realcheck && ~/ra_mapbuild/map_realcheck 256 600
-MAP_BENCH_NOTOK=1 ~/ra_mapbuild/map_bench 200 65536   # 토큰 커널을 뺀 시간(측정용)
+tools/build_all.sh map
+build/map/map_verify 2048 600              # GPU == CPU 비트 동일이어야 통과
+build/map/map_verify 2048 600 --negative   # 실패해야 정상(종료 코드 0)
+build/map/map_bench 200 65536             # 판 수 1,024 … 65,536
+build/map/map_prof 200 32768 32768       # 한 판 수만, 구간별 시간(clock64)
+build/map/map_drift 4 1024                # 자세 오차: 4 = LIMO 둘째 탐색 판 비슷(38 m), 2 = 첫 판(13 m), 3 = limo4, 1 = R1 탐색, 0 = gt_move
+build/map/map_verify 2048 600 --arm        # 팔을 푼 G1(arm_free) + 팔·그리퍼 행동: 들기·놓기도 비트 동일
+build/map/map_verify 2048 600 --curr 1,0   # 처음 지도 C0(전체). 0,1 = C1(부분), 0.34,0.33 = 섞음, 기본 0,0 = C2(빈 지도). --negative 와 같이 써도 됨
+MAP_CURR=0.34,0.33 build/map/map_bench 200 32768   # 처음 지도를 채우는 리셋 비용까지
+build/map/map_tokrec 256 300 tok.bin --arm # 지도 토큰 기록
+cmake -S . -B build/map -DMAP_REALCHECK=ON && cmake --build build/map --target map_realcheck && build/map/map_realcheck 256 600
+MAP_BENCH_NOTOK=1 build/map/map_bench 200 65536   # 토큰 커널을 뺀 시간(측정용)
 # 맞춤 값 바꿔 보기(CPU 참조판, 같은 결과):
 g++ -std=c++17 -O2 -ffp-contract=off -fopenmp -DDRIFT_CPU_ONLY -DKF_CORR_XY_V=0.002f -DODO_T_V=0.08f -I include -I ../env/include \
     -I /usr/local/cuda-12.8/include tools/map_drift.cpp src/map_ref.cpp -o /tmp/drift && /tmp/drift 1 256

@@ -14,6 +14,7 @@
 #include <cstring>
 #include "env.h"
 #include "env_soa.h"
+#include "percept_params.h"   // 인지 흉내 값(생성: ../map_calib/percept/percept_header.py ← percept_calib.json, 진짜 OG 기록에 맞춤)
 #include "drift_params.h"   // Cartographer 자세 오차 흉내 값(생성: ../map_calib/tools/carto_drift_header.py ← src/scene_graph/slam_carto/calib/carto_drift.json)
 // objprob 계산 하나(scenemap 과 같은 헤더 — 같은 것 로지스틱·이름 사후·상위어·κ·칼만·이름 분포 겹침). 저장소 안 상대 경로(빌드마다 include 경로를 안 더하게)
 #include "../../../../src/scene_graph/scenemap/include/scenemap/objprob_math.h"
@@ -80,9 +81,14 @@ constexpr int NWRECT = 64;              // 벽 무시 영역 수 한도(넘치�
 constexpr int NOBJW = NOBJ / 32;
 constexpr int MAXDET = 24;              // 한 keyframe 검출 최대(과제 물체·가구 — 큰 것은 조각 둘까지 — + 유령 자리). 넘치면 뒤 검출 버림
 constexpr int NCLS = 6;
+constexpr int GH_WALL0 = N_GHOST_V, GH_PHAN0 = N_GHOST_V + 0x2000;
 constexpr int NSRC = N_PRIM + N_GHOST_V;   // 인지 흉내 출처 수(참 물체 + 유령 자리)
 constexpr int SRC_FURN = 64;              // 출처 번호: 가구(장면 정적 상자 j) = SRC_FURN + j (BEHAVIOR 판, 인지 흉내 percept.h)
 constexpr int HID_PRIM = 0x4000;          // 깊이 광선이 맞은 것: 과제 물체 p = HID_PRIM + p
+// 가구 조각: 출처 = SRC_FURN + j + 조각·0x2000(조각 0 = 통째, 1..3) — j < FURN_MAXJ. 유령 출처 = −1 − g: g < N_GHOST_V 상자 방 유령 자리,
+// GH_WALL0 + 벽 토막 열쇠(벽·창 상자 j·16 + 토막, & 0x1FFF), GH_PHAN0 + j = 가구 j 의 어긋난 헛조각
+constexpr int FURN_MAXJ = 0x2000 - SRC_FURN;
+constexpr int PE_WALLKEY = 0x10000;       // 가구 후보 해시 칸의 벽 토막 열쇠 = PE_WALLKEY + j·16 + 토막(phase_cast)
 constexpr int NFCAND = 32;                // keyframe 하나의 가구 검출 후보(맞은 광선이 있는 정적 상자) 한도
 constexpr int PE_NFH = 128;               // 광선이 맞은 정적 상자 모으기 해시 칸(넘치면 pe_hovf — 결과가 넣는 차례에 달라질 수 있어 셈)
 constexpr int N_MET = 8;
@@ -147,9 +153,13 @@ struct MP {
   static constexpr float self_r = 0.05f, self_pad = 0.01f;       // 팔 캡슐 반경(OMX 링크, capi robotBody 0.05) + 거르기 여유
   // ---- 오도메트리·slam ---- Cartographer 흉내: drift_params.h(CartoDrift), map.h phase_begin
   // ---- 검출 ----
-  // TODO: R1/COCO-era — to be re-measured with ObjectSAM pipeline (GPU_MAP_PORT)
-  // 놓침 확률, 카메라–물체 중심 거리별 계단(R1 시뮬 기록 보정: < 1.5 m 0.15, 1.5–2.5 m 0.10, ≥ 2.5 m 0.79. LIMO 기록으로는 맞추지 못해 그대로)
-  static constexpr float miss_d1 = 1.5f, miss_d2 = 2.5f, p_miss_near = 0.15f, p_miss_mid = 0.10f, p_miss_far = 0.79f;
+  // 검출 확률(ObjectSAM yolo26n-seg-obj-416 + objprob 짝, 진짜 OG 기록 205 keyframe 에 맞춤 — percept_params.h): p = σ(b0 + b1·ln(보이는 화소 / px0) + 앞 상태 항)
+  static constexpr float pe_b0 = PE_B0_V, pe_b1 = PE_B1_V, pe_px0 = PE_PX0_V, pe_lg_hit = PE_LG_HIT_V, pe_lg_miss = PE_LG_MISS_V;
+  // 가구 조각(판·상자마다 고정 2–3 조각, keyframe 마다 통째 p_whole), 조각끼리 생김새 cos, 벽 유령 자리(1 m 토막), 어긋난 헛조각 — percept_params.h(gpu_stats 로 맞춤)
+  static constexpr float pe_frag_min = PE_FRAG_MIN_V, pe_p_frag2 = PE_P_FRAG2_V, pe_p_frag3 = PE_P_FRAG3_V, pe_p_whole = PE_P_WHOLE_V, pe_cos_part = PE_COS_PART_V;
+  static constexpr float pe_wall_site = PE_WALL_SITE_V, pe_wall_det = PE_WALL_DET_V, pe_wall_seg = 1.0f;
+  static constexpr float pe_furn_px = PE_FURN_PX_V;   // 가구 보이는 화소 배율
+  static constexpr float pe_phantom = PE_PHANTOM_V, pe_phantom_det = PE_PHANTOM_DET_V, pe_phantom_d = PE_PHANTOM_D_V;
   // TODO: COCO-80 detector era — to be re-measured with ObjectSAM pipeline (GPU_MAP_PORT)
   static constexpr float p_conf = P_CONF_V;                      // 틀린 이름 (LIMO 탐색 기록 보정: 확정 물체 틀린 이름 3/16 = 0.19 에 맞춤)
   // 가짜 물체: 판마다 정해진 유령 자리 n_ghost 개가 시야에 들면 keyframe 마다 p_ghost 로 검출된다
@@ -206,13 +216,11 @@ struct MP {
   static constexpr float insp_top_range = 2.0f, insp_top_inc_deg = 80.f, insp_top_probe_h = 0.05f, insp_top_min_side = 0.25f, insp_top_zmin = 0.20f,
                          insp_top_zmax = 1.50f, insp_top_tol0 = 0.05f, insp_top_tol_k = 0.02f;
   // ---- 인지 흉내(percept.h, 통계판 — 값은 맞춤 전 처음 값, GPU_MAP_PORT.md 2절. BASELINE 이 오면 map_calib/percept json 으로) ----
-  static constexpr float pe_p_mm = 0.5f;         // 지난 keyframe 에 놓친 물체를 또 놓칠 확률(2 상태 마르코프, 가정)
   static constexpr float pe_q_top = 0.55f;       // 좋은 모습(κ = κ_ref)에서 맞는(또는 체계적으로 틀린) 이름의 p(c|z) (가정)
   static constexpr float pe_q_rest = 0.02f;      // 상위 4 밖 라벨 전체 몫(가정)
   static constexpr float pe_ll_sig = 0.3f;       // 관측 log p 잡음 σ(κ_ref 기준, √(κ_ref/κ) 배) (가정)
   static constexpr float pe_cos_same = 0.85f, pe_cos_sim = 0.75f, pe_cos_diff = 0.55f;   // 출처 원형 cos: 같은 종류 다른 개체 / 비슷한 이름 / 그 밖 (가정 — P5 SigLIP 2 표로)
   static constexpr float pe_cos_jit = 0.02f;     // 관측 cos 흔들림 σ (가정)
-  static constexpr float pe_p_split = 0.10f, pe_split_min = 0.8f;   // 큰 물체(수평 긴 변 ≥ 0.8 m) 조각 둘로 (가정, radio r3 중복 45/96 로 맞출 것)
   static constexpr float pe_p_under = 0.05f, pe_under_gap = 0.05f;  // 맞닿은 두 물체 한 마스크로 (가정, 잘못 합침 12/96)
   static constexpr int pe_n_lab = 4;             // 관측 이름 상위 k
   static constexpr int det_every = 2;            // 검출(인지 흉내 + objprob 갱신)은 keyframe 중 지난 검출에서 이 스텝 넘게 지난 것만 — 진짜 파이프라인 검출 5 Hz(sgrt kf_every 6 @ 30 Hz), 제어 10 Hz
@@ -312,6 +320,7 @@ struct MapCore {
   float cam_yaw_kf;        // 지난 keyframe 의 믿는 카메라 yaw(움직임 근거: 카메라가 0.6 rad/s 넘게 돌면 안 씀)
   int cam_t_kf;            // 그 스텝(−1 없음)
   int n_relink_total, n_merge_total;   // 옮겨짐 잇기·중복 병합 누적(리셋에 안 지움, 통계)
+  uint32_t pe_hit;         // 인지 흉내: 지난 keyframe 에 후보였고 검출된 prim 비트(앞 상태 로짓 항)
   uint32_t pe_miss;        // 인지 흉내 2 상태 마르코프: 지난 keyframe 에 후보였는데 놓친 prim 비트(percept.h)
   uint32_t pe_fmiss[16];   // 같은 것, 가구(정적 상자 j & 511 비트)
   int det_t;               // 마지막 영상 keyframe 스텝(영상·검출은 det_every 스텝에 한 번 — 진짜 sgrt kf_every 6 @ 30 Hz = 5 Hz)
@@ -321,7 +330,7 @@ struct MapCore {
   int nlab;                // 이름 라벨 수(BEHAVIOR 이름 표 행 수, 상자 방 NCLS) — 판 리셋 때
   int16_t snm[NSRC];       // 출처(prim 0..N_PRIM−1, 유령 N_PRIM + g)의 이름 행 — 판 리셋 때(장면 이름 표를 전역에서 다시 읽지 않게)
   int16_t ssim[NSRC][3];   // 그 이름의 비슷한 이름 3(BEHAVIOR 장면 묶음 sim3, 상자 방 다음 종류들)
-  int pad_core[6];         // 16 B 배수(장치 복사)
+  int pad_core[5];         // 16 B 배수(장치 복사)
   float plen, prot;        // 믿는 오도메트리 누적 이동 m·회전 rad(판 안)
   // 벽 선분: 가로·세로 개수(선분은 따로 장치 배열), 넘침 누적
   int nseg_h, nseg_v, n_wall_ovf, n_wall_runs;   // n_wall_runs: 벽 선분을 다시 계산한 횟수(누적, 통계)
@@ -384,7 +393,7 @@ struct Scratch {
       int pe_hid[PE_NFH], pe_hcnt[PE_NFH];   // 가구 후보 모으기 해시(상자 번호, 맞은 광선 수)
       int pe_fid[NFCAND], pe_fcnt[NFCAND], pe_nf, pe_hovf;
       int pe_cnp[N_PRIM + NFCAND + N_GHOST_V], pe_coff[N_PRIM + NFCAND + N_GHOST_V];
-      uint32_t pe_pmiss, pe_drop, pe_fset[16], pe_fclr[16], pe_upair[16];
+      uint32_t pe_pmiss, pe_phit, pe_drop, pe_fset[16], pe_fclr[16], pe_upair[16];
     };
   };
   int obs_to[MAXDET], hit[NNEAR];   // obs_to: 근처 목록 자리(−1 새 물체, FRESH + 자리 = 이번 영상에 생긴 물체)
@@ -846,7 +855,7 @@ DEV void reset_core(MapCore& m, const EnvView& e, const bsc::SceneSet* ss = null
   m.n_conf = 0; m.sweep = 0; m.det_t = -1000;
   m.ins_flag = 0; m.lchg = 0;
   for (int k = 0; k < NCOL; ++k) m.isig[k] = 0;
-  m.pe_miss = 0u;
+  m.pe_miss = 0u; m.pe_hit = 0u;
   for (int k = 0; k < 16; ++k) m.pe_fmiss[k] = 0u;
   if (beh) make_scene_beh(m, e, *ss, *bm); else make_scene(m, e);
   m.init_pad = beh ? 1 : 0;   // BEHAVIOR 판 표시(종류 = 이름 표 행)
@@ -1026,19 +1035,36 @@ DEV int lab_sim(const BCtx& bx, int c, int k) {
   return c >= 0 ? (c + 1 + k) % NCLS : -1;
 }
 // 출처(src: prim p ≥ 0, 유령 −1−g)의 이름 행(판 리셋 때 캐시)
-DEV int src_name(const MapCore& m, int src) { return src > -32768 ? (int)m.snm[src_idx(src)] : -1; }
+DEV bool src_cached(int src) { return src >= 0 ? src < N_PRIM : (src > -32768 && -1 - src < N_GHOST_V); }   // 판 리셋 캐시(snm·ssim)에 있는 출처
+DEV int src_name(const MapCore& m, int src) { return src_cached(src) ? (int)m.snm[src_idx(src)] : -1; }
 // 출처 둘의 원형 생김새 cos(인지 흉내 쪽 모형 — 진짜 SigLIP 2 원형 표는 P5): 같은 출처 1, 같은 이름 pe_cos_same, 비슷한 이름 pe_cos_sim, 그 밖 pe_cos_diff
 // 출처의 이름 행·비슷한 이름(가구 = 장면 상자 이름 표, 그 밖 = 판 리셋 때 캐시)
+DEV uint64_t splitmix64_c(uint64_t x) { return splitmix64(x); }   // 값 하나의 해시(판·자리마다 고정인 뽑기)
+DEV int furn_j(int src) { return (src - SRC_FURN) & 0x1FFF; }                 // 가구 출처 → 장면 상자 번호
+DEV int src_base(int src) { return src >= SRC_FURN ? SRC_FURN + furn_j(src) : src; }   // 조각 번호를 뺀 출처(정답 셈)
+// 벽 유령 자리의 이름(판·자리마다 고정): 진짜 유령 이름 분포(og_cmp 24 판: window 11·cabinet 5·railing 3·door 3·furniture 3·picture frame 2·…)를
+// vla_v1 이름 표에 있는 행으로 — window·railing·picture frame·pillar 행은 아직 없음(P5 이름 표에서 더함): door 565, poster 305, shelf 343, cabinet 15, furniture 448
+DEV int wall_ghost_name(const MapCore& m, int wk) {
+  const uint64_t h = splitmix64_c(((uint64_t)(uint32_t)m.ep << 20) ^ (uint64_t)wk ^ 0x47484e4dull);
+  const int u = (int)((h >> 33) % 100ull);
+  return u < 30 ? 448 : u < 50 ? 565 : u < 65 ? 15 : u < 80 ? 305 : 343;
+}
 DEV int src_name_x(const MapCore& m, const BCtx& bx, int src) {
-  if (src >= SRC_FURN) return bx.on ? (int)bx.sd->bname[src - SRC_FURN] : -1;
+  if (src >= SRC_FURN) return bx.on ? (int)bx.sd->bname[furn_j(src)] : -1;
+  if (src < 0 && src > -32768) {
+    const int g = -1 - src;
+    if (g >= GH_PHAN0) return bx.on ? (int)bx.sd->bname[g - GH_PHAN0] : -1;
+    if (g >= GH_WALL0) return bx.on ? wall_ghost_name(m, g - GH_WALL0) : -1;
+  }
   return src_name(m, src);
 }
 DEV int src_sim_x(const MapCore& m, const BCtx& bx, int src, int k) {
-  if (src >= SRC_FURN) { const int c = src_name_x(m, bx, src); return c >= 0 ? (int)bx.ss->sim3[c * 3 + k] : -1; }
+  if (!src_cached(src)) { const int c = src_name_x(m, bx, src); return (c >= 0 && bx.on) ? (int)bx.ss->sim3[c * 3 + k] : -1; }
   return src > -32768 ? (int)m.ssim[src_idx(src)][k] : -1;
 }
 DEV float proto_cos(const MapCore& m, const BCtx& bx, int a, int b) {
   if (a == b) return 1.f;
+  if (a >= SRC_FURN && b >= SRC_FURN && furn_j(a) == furn_j(b)) return MP::pe_cos_part;   // 같은 가구의 다른 조각
   if (a <= -32768 || b <= -32768) return MP::pe_cos_diff;
   const int na = src_name_x(m, bx, a), nb = src_name_x(m, bx, b);
   if (na < 0 || nb < 0) return MP::pe_cos_diff;
@@ -1682,8 +1708,21 @@ DEV void phase_cast(const MapCore& m, Scratch& sh, const EnvView& e, int tid, in
     sh.cold1[col] = dv1;
     if (bx.on)   // 깊이 범위 안에서 맞은 정적 상자를 해시 칸에 세기(인지 흉내의 가구 후보 — 넣는 차례와 무관하게 같은 집합·수, 차례는 상자 번호로 뒤에 정함)
       for (int r = 0; r < NROWC; ++r) {
-        const int id = hid[r];
+        int id = hid[r];
         if (id < 0 || id >= HID_PRIM || !(tr[r] >= MP::zmin && tr[r] <= MP::zmax)) continue;
+        if (bx.sd->bkind[id] & (bsc::BK_WALL | bsc::BK_WINDOW)) {   // 벽·창: 맞은 점의 1 m 토막이 이 판의 유령 자리면 그 열쇠로(아니면 안 셈)
+          if (!MP::noise) continue;
+          const bsc::SBox& b = bx.sd->box[id];
+          const float hxw = o[0] + bx.wx + tr[r] * d0 - b.cx, hyw = o[1] + bx.wy + tr[r] * d1 - b.cy;
+          const bool lx = b.hx >= b.hy;
+          const float along = lx ? (b.c * hxw + b.s * hyw) : (-b.s * hxw + b.c * hyw), half = lx ? b.hx : b.hy;
+          int seg = (int)floorf((along + half) * (1.f / MP::pe_wall_seg));
+          seg = seg < 0 ? 0 : seg > 15 ? 15 : seg;
+          const int key = PE_WALLKEY + id * 16 + seg;
+          const uint64_t hs = splitmix64_c(((uint64_t)(uint32_t)m.ep << 24) ^ (uint64_t)key ^ 0x57414c4cull);
+          if (!((float)(hs >> 40) * (1.0f / 16777216.0f) < MP::pe_wall_site)) continue;
+          id = key;
+        }
         int h = (int)(((uint32_t)id * 2654435761u) >> 25) & (PE_NFH - 1);
         int probe = 0;
         for (; probe < PE_NFH; ++probe, h = (h + 1) & (PE_NFH - 1)) {
