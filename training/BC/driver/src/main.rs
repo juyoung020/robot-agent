@@ -98,6 +98,7 @@ struct BcConfig {
     b_p_slip: f32,
     b_p_occ: f32,
     teacher_script: i32,
+    b_feas: i32,
 }
 
 #[repr(C)]
@@ -328,6 +329,7 @@ fn main() {
         b_p_slip: v.get("beh").and_then(|b| b.get("fail")).and_then(|m| m.get(0)).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
         b_p_occ: v.get("beh").and_then(|b| b.get("fail")).and_then(|m| m.get(1)).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
         teacher_script: gi(&v, "teacher_script", 0) as i32,   // E6: B4–B6 라벨 = 대본 특권 교사
+        b_feas: v.get("beh").and_then(|b| b.get("feas")).and_then(|x| x.as_i64()).unwrap_or(0) as i32,   // 잡기 가능 짝만(PF_FEAS)
     };
     let r0 = gi(&v, "record_rollouts", 4) as usize;
     let u0 = gi(&v, "bc_updates", 100) as usize;

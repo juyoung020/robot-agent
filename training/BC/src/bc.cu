@@ -574,7 +574,7 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
   bcurr_d = alloc<bsc::BCurr>(1);
   {
     bsc::BCurr b0{cfg.b_p1, cfg.b_p2, cfg.b_scene_mask, cfg.b_split, cfg.b_yaw_jit, cfg.b_strict, cfg.b_nofilter, cfg.b_eval_instr, cfg.b_p_point, cfg.b_p_goto,
-                  cfg.b_p4, cfg.b_p5, cfg.b_p6, cfg.b_p_slip, cfg.b_p_occ, 0};
+                  cfg.b_p4, cfg.b_p5, cfg.b_p6, cfg.b_p_slip, cfg.b_p_occ, cfg.b_feas ? (int)bsc::PF_FEAS : 0};
     if (cfg.beh || cfg.stage >= env::kStageBeh) {
       if (cfg.vision) { std::fprintf(stderr, "bc: BEHAVIOR stage 3 with vision is not supported yet (renderer draws the box room only)\n"); std::abort(); }
       cfg.beh = 1;
@@ -583,6 +583,7 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
       scenes = std::make_unique<bsc::SceneBuild>();
       std::string err;
       if (!bsc::build_scenes(bo, *scenes, &err) || !bsc::upload(*scenes, &err)) { std::fprintf(stderr, "bc: BEHAVIOR scene build failed: %s\n", err.c_str()); std::abort(); }
+      if (cfg.b_feas || cfg.teacher_script) env::pnp_feasibility(*scenes);   // 잡기 가능 표(고르기 PF_FEAS·대본 교사 서는 자리)
       dev_bytes += scenes->dev_bytes;
       if (b0.scene_mask == 0) b0.scene_mask = (1u << scenes->host.nsc) - 1u;
       if (b0.p1 == 0.f && b0.p2 == 0.f && b0.p4 + b0.p5 + b0.p6 == 0.f) { b0.p1 = bsc::kBCurrDefault.p1; b0.p2 = bsc::kBCurrDefault.p2; }   // 비율을 안 주면 env_verify 기본 섞음

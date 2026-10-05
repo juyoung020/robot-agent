@@ -483,6 +483,7 @@ Trainer::Trainer(const PpoConfig& c) : cfg(c) {
       dev_bytes += scenes->dev_bytes;
       if (b0.scene_mask == 0) b0.scene_mask = (1u << scenes->host.nsc) - 1u;
       std::fprintf(stderr, "ppo: BEHAVIOR scenes %d, entries %d, device %.1f MB\n", scenes->host.nsc, scenes->host.nent, scenes->dev_bytes / 1e6);
+      if ((b0.phys & bsc::PF_FEAS) || b0.p4 + b0.p5 + b0.p6 > 0.f) env::pnp_feasibility(*scenes);   // 잡기 가능 표(PF_FEAS 고르기)
     }
     PCK(cudaMemcpy(bcurr_d, &b0, sizeof b0, cudaMemcpyHostToDevice));
   }

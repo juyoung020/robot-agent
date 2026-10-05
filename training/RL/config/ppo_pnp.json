@@ -39,6 +39,7 @@
     "coll": -20.0
   },
   "beh": {
+    "feas": 1,
     "scenes": [
       "house_single_floor",
       "house_double_floor_lower",

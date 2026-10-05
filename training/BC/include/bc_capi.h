@@ -74,6 +74,8 @@ typedef struct BcConfig {
   float b_p_slip, b_p_occ;
   int32_t teacher_script;   /* 1 = B4–B6 판의 교사 라벨(그리고 교사가 움직일 때 행동)을 대본 특권 교사(env teacher.h)로 — 다른 판은 체크포인트 교사 그대로.
                                교사 체크포인트 없이 써도 됨(B4–B6 만인 판). 장치에서·그래프 안(호스트 동기 없음) */
+  int32_t b_feas;           /* 1 = 잡기 가능 표(env pnp_feasibility, 시작 때 GPU 약 30 s)를 만들고 B4–B6 판을 그 단계로 될 수 있는 짝에서만 뽑음(BCurr::phys PF_FEAS) —
+                               대본 교사는 표의 서는 자리를 씀. teacher_script 1 이면 표는 늘 만듦(고르기는 이 값) */
 } BcConfig;
 
 typedef struct BcLog {
