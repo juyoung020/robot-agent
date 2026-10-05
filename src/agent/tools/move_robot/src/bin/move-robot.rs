@@ -74,7 +74,7 @@ fn llm(args: &[String]) {
     });
     let mut msgs = vec![
         Msg::system(
-            "You control a LIMO + OMX-F mobile manipulator (differential 2-wheel base that cannot move sideways, one 5-joint arm, one gripper) with one tool. \
+            "You control a LIMO + OMX-F mobile manipulator (4-wheel differential (skid-steer) base that cannot move sideways, one 5-joint arm, one gripper) with one tool. \
 Call move_robot one part at a time; read the result before the next call. If unsure of the current joint values, call delta with zeros first. \
 When the request is done (or impossible), answer the user in one short sentence without calling tools.",
         ),

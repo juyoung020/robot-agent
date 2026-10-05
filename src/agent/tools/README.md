@@ -44,7 +44,7 @@ list_place     {"place": "kitchen" | "R2" | "O12"}
 
 ## `move_robot` — 베이스·팔·그리퍼 직접 움직이기
 
-로봇은 AgileX LIMO(차동 2륜 베이스 — 앞뒤로 가고 제자리에서 돌 뿐 옆으로 못 감, 머리 RGB-D, 2D 라이다) + ROBOTIS OMX-F(관절 5 + 그리퍼, 손목 카메라) 하나다. 관절 이름은 `omx_joint1..5`, 한계는 `src/robot/real_limits.json`.
+로봇은 AgileX LIMO(4륜 차동(스키드 스티어) 베이스 — 앞뒤로 가고 제자리에서 돌 뿐 옆으로 못 감, 머리 RGB-D, 2D 라이다) + ROBOTIS OMX-F(관절 5 + 그리퍼, 손목 카메라) 하나다. 관절 이름은 `omx_joint1..5`, 한계는 `src/robot/real_limits.json`.
 
 한 부분을 목표까지 안전하게 움직이고 결과를 짧게 돌려준다. 닫힌 고리 실행기(검증·자르기·보간·판정)는 Rust 한 곳(`move_robot/src/lib.rs`,
 주행은 `nav.rs`·`robot_nav.rs`·`map.rs`)이고, 시뮬에서는 같은 코드가 `libmove_robot.so` 로 평가기 안에서 돈다.

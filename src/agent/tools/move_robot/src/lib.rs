@@ -1,4 +1,4 @@
-//! `move_robot` — LLM 이 로봇 한 부분(베이스·팔·그리퍼)을 직접 움직이는 도구 하나. 로봇은 AgileX LIMO(차동 2륜 베이스) + ROBOTIS OMX-F
+//! `move_robot` — LLM 이 로봇 한 부분(베이스·팔·그리퍼)을 직접 움직이는 도구 하나. 로봇은 AgileX LIMO(4륜 차동(스키드 스티어) 베이스) + ROBOTIS OMX-F
 //! (관절 5 + 그리퍼) 하나뿐이다.
 //!
 //! 이 크레이트가 하는 일은 이것뿐이다.
@@ -11,7 +11,7 @@
 //!
 //! 단위: 길이 m, 각도 도(°, LLM 에게 보이는 값). 안에서는 rad. 그리퍼는 0 = 닫힘 … 1 = 열림.
 //! 행동·관측 배치와 관절 한계는 [`limo`](관절 이름 omx_joint1..5, 한계 = `src/robot/real_limits.json`), 평가기 설정은 `src/robot/og/limo_omx_eval.yaml`.
-//! 베이스는 차동 2륜이라 앞뒤(vx)와 제자리 돌기(wz)만 낸다 — 옆으로 가지 못한다. 머리(카메라)는 몸에 붙어 앞만 본다.
+//! 베이스는 4륜 차동(스키드 스티어)이라 앞뒤(vx)와 제자리 돌기(wz)만 낸다 — 옆으로 가지 못한다. 머리(카메라)는 몸에 붙어 앞만 본다.
 
 pub mod ffi;
 pub mod frontier;
@@ -153,7 +153,7 @@ pub fn to_user(part: Part, v: &[f64]) -> Vec<f64> {
 // ---------------------------------------------------------------- 스키마
 
 pub const DESCRIPTION: &str = "Move ONE robot part and wait until it stops. Units: meters, degrees; left/counter-clockwise is positive. \
-The base is a 2-wheel differential drive: it drives forward/backward and turns in place, it cannot move sideways. \
+The base is a 4-wheel differential (skid-steer) drive: it drives forward/backward and turns in place, it cannot move sideways. \
 base modes: go_to = drive along a planned path through KNOWN free space to target id (\"F1\" frontier, \"R2\" room) or values [forward_m, left_m] (a point in front/left of the robot, must be known free); \
 probe = values [turn_left_deg, forward_m]: turn in place, then creep forward into UNKNOWN space, stopping before obstacles seen by the camera (forward_m 0 = just turn/look); \
 delta = values [forward_m, turn_left_deg] drive straight, then turn in place (no planning). Base results include a map summary. \
