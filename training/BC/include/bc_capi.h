@@ -77,6 +77,10 @@ typedef struct BcConfig {
                                교사 체크포인트 없이 써도 됨(B4–B6 만인 판). 장치에서·그래프 안(호스트 동기 없음) */
   int32_t b_feas;           /* 1 = 잡기 가능 표(env pnp_feasibility, 시작 때 GPU 약 30 s)를 만들고 B4–B6 판을 그 단계로 될 수 있는 짝에서만 뽑음(BCurr::phys PF_FEAS) —
                                대본 교사는 표의 서는 자리를 씀. teacher_script 1 이면 표는 늘 만듦(고르기는 이 값) */
+  int32_t b_gcand;          /* 1 = 잡기 서는 자리 후보(env pnp_stance_cands): 상태 없는 교사(teacher_script 2)가 물체가 처음 자리일 때 로봇에 가까운 후보에 섬(2026-10-06) */
+  int32_t b_sltol;          /* 상태 없는 교사 단계 문턱: 0 = 정밀(상태 있는 교사와 같음), 1 = 배울 수 있는 값(env teacher_sl.h sl_tol) */
+  int32_t mlp_w;            /* MLP 학생(arch 0) 몸통 폭 A1·A2(8 의 배수, 0 = 256 = 예전 student-lite) — 2026-10-06 */
+  int32_t pad_cfg;          /* 맞춤(0) */
 } BcConfig;
 
 typedef struct BcLog {
@@ -108,6 +112,12 @@ int bc_load_teacher(void* h, const char* path);
 int bc_reset_env(void* h, uint64_t env_seed);
 /* 누가 움직이나(0 교사, 1 학생)·기록하나 — 고정 호스트 링 → 장치 값 비동기 복사(동기·다시 잡기 없음), 다음에 띄우는 롤아웃부터 */
 int bc_set_mode(void* h, int32_t actor, int32_t record);
+/* DAgger β: 학생 그래프(actor 1)에서 판마다(에피소드 번호 해시) 이 확률로 교사가 몲 — 다음 bc_set_mode 부터. 학생 앞 계산은 늘 하므로 어긋남·진단은 모든 판 */
+int bc_set_beta(void* h, float beta);
+/* 자료 고리의 앞 keep 표본(교사 시연)을 덮어쓰지 않게 — 그 뒤 고리는 [keep, cap) 에서 돎. 비동기(다음 그래프부터). keep ≥ cap 이면 지키지 않고 −1 */
+int bc_set_keep(void* h, int64_t keep);
+/* 미니배치에서 지킨 시연(bc_set_keep)을 뽑는 몫(0 = 자료 전체 균등). 비동기 */
+int bc_set_demo_frac(void* h, float frac);
 int bc_set_map_curriculum(void* h, float p0, float p1, int32_t kmin, int32_t kmax, float reveal_r);
 /* 학습률 바꾸기(장치 값, 비동기 복사) */
 int bc_set_lr(void* h, float lr);
@@ -135,6 +145,8 @@ int bc_set_aug_eval(void* h, int32_t aug_on, int32_t eval_unseen);
 /* 학생 목표 표시 감추기 확률(장치 값, 비동기 — 다음 롤아웃·갱신부터). 1 = 늘 감춤(접지 평가) */
 int bc_set_goal_drop(void* h, float p);
 int bc_sync(void* h);
+/* 진단(환경 변수 BC_SLDIAG, teacher_script 2): 상태 없는 교사 단계별 스텝 몫·행동 칸별 (움직인 행동 − 교사)² 평균·판 끝 단계를 stderr 에 찍고 지움 — 동기 */
+int bc_sldiag(void* h, const char* tag);
 
 #ifdef __cplusplus
 }

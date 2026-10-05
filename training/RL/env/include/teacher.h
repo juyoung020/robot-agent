@@ -874,7 +874,7 @@ DEV bool lev_near(const uint8_t* lev, float x, float y) {   // 칸 또는 3 × 3
 
 // ---- 서는 자리 찾기 ----
 // 닿음 판단: 계획 때 BFS(lev0, 런타임) 또는 창 닿는 칸 비트(rb — 잡기 가능 표: 잡는 자세 칸에서 BFS)
-struct NavCtx { const uint8_t* lev; const uint32_t* rb; };
+struct NavCtx { const uint8_t* lev; const uint32_t* rb; int ib_max = 0; int ray = 0; };   // ib_max: 원호 후보의 팔 방향 수(0 = 7 모두, 1 = 물체를 마주봄만), ray 1 = 방향 k 0(목표 → 지금 로봇 쪽 반직선)만 — 서는 자리 후보
 DEV bool nav_reach(const NavCtx& nc, float x, float y) {
   if (nc.lev) return lev_near(nc.lev, x, y);
   if (nc.rb) {
@@ -1114,6 +1114,8 @@ DEV int stance_loop(const Core& c, const BState& b, const bsc::SceneSet& ss, con
     const float clo = pass ? bins[pass - 1] : -1.f, chi = bins[pass];
     const int ir = idx % T_NR, ib = (idx / T_NR) % 7, k = idx / (T_NR * 7);
     if (!((rmask >> ir) & 1u)) return 4;
+    if (nc.ib_max > 0 && ib >= nc.ib_max) return 4;
+    if (nc.ray && k != 0) return 4;
     const float bsv[7] = {0.f, 0.45f, -0.45f, 0.9f, -0.9f, 1.3f, -1.3f};
     const float bs = bsv[ib];
     const int kk = (k & 1) ? -((k + 1) >> 1) : (k >> 1);
@@ -1379,6 +1381,28 @@ TDEV void feas_entry(const bsc::SceneSet& ss, int ent, FeasOut& o, const WCtx& w
       o.pst6[0] = s6.x; o.pst6[1] = s6.y; o.pst6[2] = s6.yaw; o.pst6[3] = s6.dp;
     } else o.feas |= FR_NOPLACE << 24;
   } else o.feas |= FR_NOSTANCE << 24;
+}
+
+// ---- 잡기 서는 자리 후보(짝 하나, 판과 무관 — 2026-10-06, 상태 없는 교사가 로봇에 가까운 것을 고름) ----
+// 물체 처음 자리 둘레 방향 j(GC_DIR = 72, 5° 간격, 물체에서 1 m 떨어진 가상 로봇 — 물체를 봄, 나르는 자세)에서 잡기 서는 자리 찾기(stance_grasp, 바로 가는 자리 없음):
+// 그 방향 반직선 위(r 띠)·물체를 마주보는 자리만(팔 옆으로 뻗기 없음) — 서는 yaw·앞 물러난 자리 P 가 모두 물체 → 로봇 반직선 위라 학생이 물체 방위로 앎.
+// 같은 자리(비트)는 호스트가 하나로.
+constexpr int GC_DIR = 72, GC_K = GC_DIR;
+TDEV bool gcand_dir(const bsc::SceneSet& ss, int ent, int j, float out[4], const WCtx& w) {
+  const bsc::Entry& E = ss.ent[ent];
+  Core c;
+  BState b;
+  PState p;
+  feas_start(ss, E, ent, bsc::EK_B4, c, b, p);
+  float sn, cs;
+  sincosf_d(6.2831853f * (float)j / (float)GC_DIR, &sn, &cs);
+  c.x = p.o[0] + cs; c.y = p.o[1] + sn; c.yaw = atan2f_d(p.o[1] - c.y, p.o[0] - c.x);
+  const NavCtx nc{nullptr, E.rb >= 0 ? ss.rbits + E.rb : nullptr, 1, 1};   // 물체를 마주보고 방향 j 반직선 위 자리만(팔 방향 0 — 서는 yaw·들어가는 길이 관측의 물체 방위로 정해짐)
+  StanceOut so;
+  SPos sp{0, 0, -1, -1};
+  const bool ok = stance_grasp(c, b, ss, E, p, nc, 1e9f, 1e9f, 0.f, false, 0.f, so, w, sp, 1 << 30) == 1;
+  out[0] = so.x; out[1] = so.y; out[2] = so.yaw; out[3] = so.dp;
+  return ok;
 }
 
 // ---- 판마다: 1. 앞(사건·요청) ----

@@ -51,6 +51,11 @@ static_assert(L_TOK == 214, "token count");
 static_assert(grp_tok0(G_WALL) == grp_tok0(G_OBJ) + 16 && grp_tok0(G_OBJ) == 196, "token offsets");
 // 종류 임베딩 번호: 묶음 안 토큰 t 가 몇째 종류인지(영상 = 카메라·그림 64 씩)
 NDEV constexpr int grp_type_of(int g, int t) { return grp_ntype(g) > 1 ? t / (grp_ntok(g) / grp_ntype(g)) : 0; }
+// 영상 토큰 수 ni(192 = 영상 학생, 0 = 영상 없음 — BEHAVIOR 판, 2026-10-06): 묶음 시작·수·L 은 영상 묶음만 줄어듦(나머지 차례 그대로)
+NDEV constexpr int tok0(int g, int ni) { return g == G_IMG ? 0 : grp_tok0(g) - grp_ntok(G_IMG) + ni; }
+NDEV constexpr int ntok(int g, int ni) { return g == G_IMG ? ni : grp_ntok(g); }
+NDEV constexpr int tok_L(int ni) { return L_TOK - grp_ntok(G_IMG) + ni; }
+NDEV int grp_at(int t, int ni) { int g = ni ? 0 : 1; while (g + 1 < N_GRP && t >= tok0(g + 1, ni)) ++g; return g; }
 static_assert(grp_ntok(G_OBJ) == kGrp[G_OBJ].n_tok && grp_ntok(G_IMG) == kGrp[G_IMG].n_tok && grp_ntype(G_IMG) == kGrp[G_IMG].n_type, "group table");
 constexpr int DH = 64;                   // 머리 폭(고정)
 constexpr int TEMB = 32;                 // 시간 임베딩(bc.h temb_write 와 같은 식)
@@ -62,6 +67,7 @@ struct TfCfg {
   int Bmax = 256;
   int dw_chunk = 1024;
   uint64_t seed = 1;
+  int img = 1;            // 0 = 영상 토큰 없음(L 22)
 };
 
 // 변수 자리(평평한 FP32 버퍼 하나 — net::adam_step 이 그대로). 가중치는 [N][K](1 칸 = 편향), 벡터는 [n]
@@ -111,7 +117,7 @@ NDEV float gauss(uint64_t h) {
 struct Tf {
   TfCfg c;
   TfLayout lay;
-  int L = L_TOK, KA = 0, d1 = 0;   // KA = 행동 입력 줄 폭, d1 = d + 16(LN 출력 줄: d 칸 = 1)
+  int L = L_TOK, ni = 192, KA = 0, d1 = 0;   // ni = 영상 토큰 수(TfCfg::img)   // KA = 행동 입력 줄 폭, d1 = d + 16(LN 출력 줄: d 칸 = 1)
   float *P = nullptr, *G = nullptr, *Am = nullptr, *Av = nullptr;
   uint16_t* Pb = nullptr;
   float* gn_part = nullptr;

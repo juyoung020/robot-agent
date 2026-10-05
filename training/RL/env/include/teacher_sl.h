@@ -56,9 +56,53 @@ DEV bool sl_keyeq(const float* a, const float* b, int n) {
   return true;
 }
 // 서는 자리 열쇠: 잡기 = (판 종류, 짝, 물체 자세, 막는 물체), 놓기 = (판 종류, 짝, 쥠, 목표 꼴·점, 막는 물체)
-DEV void sl_stance_key(const BState& b, const PState& p, bool pl, float k[SL_KEY]) {
+// 단계 문턱(SceneSet::sl_tol, 2026-10-06): 0 = 상태 있는 교사와 같은 정밀 값(도착 1.5 mm·0.004 rad, 멈춤 0.01 m/s·0.02 rad/s, 팔 준비 0.05 rad, 마지막 팔 점 0.012 rad),
+// 1 = 배울 수 있는 값 — 학생(지도 토큰의 물체 자리 잡음 σ 약 2 cm, 회귀 오차)이 문턱을 넘어 다음 단계 라벨을 보게. 팔 계획은 어느 쪽이든 지금 베이스 자세에서 함
+struct SlTol { float arrive, arrive_yaw, still_v, still_w, armq, fine, corr_lat, app_r; };
+DEV SlTol sl_tol(const bsc::SceneSet& ss) {
+  if (ss.sl_tol) return SlTol{0.01f, 0.03f, 0.03f, 0.1f, 0.12f, 0.03f, 0.035f, 0.40f};
+  return SlTol{KT::arrive, KT::arrive_yaw, 0.01f, 0.02f, 0.05f, KT::q_tol_fine, 0.035f, 0.12f};
+}
+
+// 들어가는 길(corridor): 서는 자리 기준 옆 |lat| < corr_lat, 앞뒤 [min(0, dp) − 4 cm, max(0, dp) + 4 cm], yaw 는 들어가며 옆 고침(3·lat)만큼 봐줌
+DEV bool sl_corridor(float along, float lat, float eyaw, float dp, const SlTol& tl) {
+  return absf(lat) < tl.corr_lat && along >= minf(0.f, dp) - 0.04f && along <= maxf(0.f, dp) + 0.04f && absf(eyaw) < 0.06f + minf(3.f * absf(lat), 0.3f);
+}
+
+// 물체가 짝의 처음 자리(rest_obj)에 있나
+DEV bool sl_at_rest(const bsc::SceneSet& ss, const BState& b, const bsc::Entry& E, const PState& p) {
+  PState r0;
+  clear_p(r0);
+  rest_obj(ss, b, E, r0);
+  return sl_bits(r0.o[0]) == sl_bits(p.o[0]) && sl_bits(r0.o[1]) == sl_bits(p.o[1]) && sl_bits(r0.o[2]) == sl_bits(p.o[2]) && sl_bits(r0.yaw) == sl_bits(p.yaw);
+}
+// 서는 자리 후보 고르기(SceneSet::gcand, 2026-10-06): 잡기(B4·B6)이고 물체가 처음 자리면 로봇 몸통에서 서는 자리까지 가장 가까운 후보 번호 + 1, 아니면 0.
+// 로봇 자리의 조각 상수 함수 — 상태만 봄(학생이 간 자리에서도 같은 규칙: 관측으로 보이는 "가까운 쪽"에 섬)
+DEV int sl_gsel(const Core& c, const BState& b, const PState& p, const bsc::Entry& E, const bsc::SceneSet& ss, bool pl) {
+  if (pl || !ss.gcand || !ss.toccix || !(b.kind == bsc::EK_B4 || b.kind == bsc::EK_B6)) return 0;
+  const int ix = ss.toccix[b.ent];
+  if (ix < 0 || ss.gcn[ix] <= 0 || !sl_at_rest(ss, b, E, p)) return 0;
+  const float* g = ss.gcand + (size_t)ix * GC_K * 4;
+  // ① 로봇이 어느 후보의 들어가는 길(sl_corridor)에 있으면 그것(가장 앞 번호) — 들어가는 동안 안 바뀜
+  // ② 아니면 물체 → 로봇 방향과 물체 → 서는 자리 방향의 각이 가장 작은 후보(후보는 모두 물체를 마주봄) — 로봇이 물체 쪽 직선 위를 움직이는 동안 안 바뀜,
+  //    로봇이 물체 둘레를 돌 때만 이등분선에서 바뀜(예전 "P 가 가장 가까운" 은 이웃 후보 P 가 1–2 cm 차이라 스텝마다 뒤집혔음)
+  const SlTol tl = sl_tol(ss);
+  const float ar = atan2f_d(c.y - p.o[1], c.x - p.o[0]);
+  int bi = 0;
+  float bd = 1e30f;
+  for (int k = 0; k < ss.gcn[ix]; ++k) {
+    float sn, cs;
+    sincosf_d(g[4 * k + 2], &sn, &cs);
+    const float ex = g[4 * k] - c.x, ey = g[4 * k + 1] - c.y, dp = g[4 * k + 3];
+    if (sl_corridor(ex * cs + ey * sn, -ex * sn + ey * cs, wrap_pi(g[4 * k + 2] - c.yaw), dp, tl)) return k + 1;
+    const float d = absf(wrap_pi(atan2f_d(g[4 * k + 1] - p.o[1], g[4 * k] - p.o[0]) - ar));
+    if (d < bd) { bd = d; bi = k; }
+  }
+  return bi + 1;
+}
+DEV void sl_stance_key(const BState& b, const PState& p, bool pl, int gsel, float k[SL_KEY]) {
   for (int a = 0; a < SL_KEY; ++a) k[a] = 0.f;
-  k[0] = (float)b.kind; k[1] = (float)b.ent; k[2] = pl ? 1.f : 0.f;
+  k[0] = (float)b.kind; k[1] = (float)b.ent; k[2] = pl ? 1.f : 0.f; k[16] = (float)gsel;
   for (int a = 0; a < 4; ++a) k[3 + a] = p.oc[a];
   if (!pl) { k[7] = p.o[0]; k[8] = p.o[1]; k[9] = p.o[2]; k[10] = p.yaw; }
   else {
@@ -95,7 +139,8 @@ TDEV int sl_decide(const Core& c, const BState& b, const PState& p, const bsc::E
     return 0;
   }
   float k[SL_KEY];
-  sl_stance_key(b, p, x.pl, k);
+  const int gsel = sl_gsel(c, b, p, E, ss, x.pl);
+  sl_stance_key(b, p, x.pl, gsel, k);
   if (!r.st.valid || !sl_keyeq(k, r.st.key, SL_KEY)) return SLM_STANCE;
   if (!r.st.ok) { x.mode = SLD_FAIL; return 0; }
   float sn, cs;
@@ -108,9 +153,10 @@ TDEV int sl_decide(const Core& c, const BState& b, const PState& p, const bsc::E
   const float dp = r.st.dp;
   // 자리에 옴(상태 있는 교사의 도착 1.5 mm·0.004 rad + 여유): 팔 단계
   // (옆 어긋남은 들어오며 고친 만큼 남김 — 상태 있는 교사도 앞뒤·yaw 만 맞추고 그 자리에서 팔 계획)
-  const bool arrived = absf(x.along) <= KT::arrive;
-  if (arrived && absf(x.lat) < 0.035f && absf(x.eyaw) <= KT::arrive_yaw && !(c.v < -0.005f)) {
-    if (!(absf(c.v) < 0.01f && absf(c.w) < 0.02f)) { x.mode = SLD_WAIT; return 0; }
+  const SlTol tl = sl_tol(ss);
+  const bool arrived = absf(x.along) <= tl.arrive;
+  if (arrived && absf(x.lat) < 0.035f && absf(x.eyaw) <= tl.arrive_yaw && !(c.v < -0.005f)) {
+    if (!(absf(c.v) < tl.still_v && absf(c.w) < tl.still_w)) { x.mode = SLD_WAIT; return 0; }
     float ka[SL_KEY + 4];
     for (int a = 0; a < SL_KEY; ++a) ka[a] = k[a];
     ka[SL_KEY] = c.x; ka[SL_KEY + 1] = c.y; ka[SL_KEY + 2] = c.yaw; ka[SL_KEY + 3] = 0.f;
@@ -119,10 +165,9 @@ TDEV int sl_decide(const Core& c, const BState& b, const PState& p, const bsc::E
     x.mode = x.pl ? SLD_ARMP : SLD_ARMG;
     return 0;
   }
-  const float lo = minf(0.f, dp) - 0.04f, hi = maxf(0.f, dp) + 0.04f;   // P 둘레 3 cm(SLD_APP0 끝) + 여유
-  const bool corridor = absf(x.lat) < 0.035f && x.along >= lo && x.along <= hi && absf(x.eyaw) < 0.06f + minf(3.f * absf(x.lat), 0.3f);   // 들어가며 옆 고침(lc = 3·lat)만큼 yaw 봐줌
+  const bool corridor = sl_corridor(x.along, x.lat, x.eyaw, dp, tl);   // 들어가며 옆 고침(lc = 3·lat)만큼 yaw 봐줌
   // 팔이 잡기(놓기) 전 자세: 0.05 rad 안, 또는 지난 행동이 그 자세였고 팔이 멈춤(닿아 막힘·한계 — 상태 있는 교사의 45 스텝 시간 초과 대신, 상태만 봄)
-  bool armready = qerr(c, r.st.q) < 0.05f;
+  bool armready = qerr(c, r.st.q) < tl.armq;
   if (!armready) {
     bool same = true, still = true;
     for (int k = 0; k < 5; ++k) {
@@ -141,12 +186,12 @@ TDEV int sl_decide(const Core& c, const BState& b, const PState& p, const bsc::E
     const bool backing = dp >= 0.f && armready && c.v < -0.005f && x.along < 0.12f && absf(x.lat) > 0.002f;
     if (!armready) x.mode = x.pd <= 0.03f && absf(x.eyaw) >= 0.03f ? SLD_ROT : SLD_ARMQ0;   // P 에서 아직 덜 돌았으면 돌기 먼저(팔은 그다음)
     else if (backing) x.mode = SLD_BACKUP;
-    else if (absf(x.along) > KT::arrive) x.mode = SLD_DRIVE;   // 지나쳤으면 뒤로(상태 있는 교사는 지나침을 그대로 둠)
+    else if (absf(x.along) > tl.arrive) x.mode = SLD_DRIVE;   // 지나쳤으면 뒤로(상태 있는 교사는 지나침을 그대로 둠)
     else x.mode = SLD_FINE;
     return 0;
   }
   if (x.pd <= 0.03f) { x.mode = absf(x.eyaw) >= 0.03f ? SLD_ROT : SLD_ARMQ0; return 0; }
-  if (x.pd <= 0.12f) { x.mode = SLD_APP0; return 0; }   // P 둘레 12 cm(상태 있는 교사가 돌다 밀려도 다가가기에 남는 거리)는 곧게 P 로
+  if (x.pd <= tl.app_r) { x.mode = SLD_APP0; return 0; }   // P 둘레(정밀 12 cm — 상태 있는 교사가 돌다 밀려도 다가가기에 남는 거리, 배울 수 있는 문턱 40 cm — 서는 자리 둘레에서 길 찾기로 돌아 나가지 않고 곧게(뒤로도) P 로)
   // 길: P 에서 거꾸로 BFS(열쇠 = P + 물체·막는 물체 — 점유가 읽는 것)
   float kf[SL_KEY];
   for (int a = 0; a < SL_KEY; ++a) kf[a] = 0.f;
@@ -159,16 +204,10 @@ TDEV int sl_decide(const Core& c, const BState& b, const PState& p, const bsc::E
 }
 
 // ---- 계획(빠진 캐시 채우기) ----
-// 물체가 짝의 처음 자리(rest_obj)에 있나
-DEV bool sl_at_rest(const bsc::SceneSet& ss, const BState& b, const bsc::Entry& E, const PState& p) {
-  PState r0;
-  clear_p(r0);
-  rest_obj(ss, b, E, r0);
-  return sl_bits(r0.o[0]) == sl_bits(p.o[0]) && sl_bits(r0.o[1]) == sl_bits(p.o[1]) && sl_bits(r0.o[2]) == sl_bits(p.o[2]) && sl_bits(r0.yaw) == sl_bits(p.yaw);
-}
 TDEV void sl_plan_stance(const Core& c, const BState& b, const PState& p, const bsc::Entry& E, const bsc::SceneSet& ss, bool pl, SlPlan& o, const WCtx& w) {
   SlPlan n{};
-  sl_stance_key(b, p, pl, n.key);
+  const int gsel = sl_gsel(c, b, p, E, ss, pl);
+  sl_stance_key(b, p, pl, gsel, n.key);
   n.valid = 1; n.ok = 0; n.pl = pl ? 1 : 0;
   // 기준 로봇 자세(로봇 자리와 무관): 잡는 자세 칸에서 목표를 봄, 팔은 나르는 자세(잡기 가능 표 feas_start 와 같음)
   Core c0{};
@@ -184,7 +223,8 @@ TDEV void sl_plan_stance(const Core& c, const BState& b, const PState& p, const 
   }
   // 표의 자리(물체가 처음 자리·쥠이 표와 같을 때 — 상태 있는 교사가 판 시작에 쓰는 자리와 같음)
   const float* tab = nullptr;
-  if (ss.has_feas) {
+  if (gsel > 0) tab = ss.gcand + ((size_t)ss.toccix[b.ent] * GC_K + (gsel - 1)) * 4;   // 로봇에 가장 가까운 후보
+  else if (ss.has_feas) {
     if (!pl && sl_at_rest(ss, b, E, p)) {
       if (b.kind == bsc::EK_B4 && (E.feas & bsc::FE_GRASP)) tab = E.gst4;
       else if (b.kind == bsc::EK_B6 && (E.feas & bsc::FE_PLACE6)) tab = E.gst;
@@ -368,8 +408,8 @@ DEV float sl_segd(const Core& c, const float* a, const float* bq) {
   return e;
 }
 // 웨이포인트 Q0 → Q1 → Q2 중 다음 목표 번호(0..2), 3 = Q2 에 옴
-DEV int sl_wp_next(const Core& c, const float* Q) {
-  if (qerr(c, Q + 10) < KT::q_tol_fine) return 3;
+DEV int sl_wp_next(const Core& c, const float* Q, float fine) {
+  if (qerr(c, Q + 10) < fine) return 3;
   if (qerr(c, Q + 5) < KT::q_tol || sl_segd(c, Q + 5, Q + 10) < 0.06f) return 2;
   if (qerr(c, Q) < KT::q_tol || sl_segd(c, Q, Q + 5) < 0.06f) return 1;
   return 0;
@@ -540,13 +580,13 @@ TDEV void sl_act(const Soa& s, const SlBuf& sb, int i, const bsc::SceneSet& ss, 
     case SLD_FINE: case SLD_WAIT: {
       for (int k = 0; k < 5; ++k) qt[k] = Q[k];
       g = held ? 0.f : go;
-      if (mode == SLD_FINE && absf(x.eyaw) > KT::arrive_yaw) w = clampf(2.f * x.eyaw, -0.4f, 0.4f) * K::w_max;
+      if (mode == SLD_FINE && absf(x.eyaw) > sl_tol(ss).arrive_yaw) w = clampf(2.f * x.eyaw, -0.4f, 0.4f) * K::w_max;
       break;
     }
     case SLD_ARMG: {   // 잡기 전 → 가운데 → 잡기 → 닫기(닫는 중·여는 중은 그리퍼 속도로)
       const float* A = rec.ar.q;
       const float goa = grip_angle_of(rec.ar.open);
-      int k = sl_wp_next(c, A);
+      int k = sl_wp_next(c, A, sl_tol(ss).fine);
       if (k == 1 && qerr(c, A) < KT::q_tol && !(absf(c.q[5] - goa) < KT::q_tol)) k = 0;   // 잡기 전 자세에서 그리퍼가 다 열릴 때까지(상태 있는 교사 PRE)
       if (k < 3) {
         for (int j = 0; j < 5; ++j) qt[j] = A[5 * k + j];
@@ -584,7 +624,7 @@ TDEV void sl_act(const Soa& s, const SlBuf& sb, int i, const bsc::SceneSet& ss, 
     }
     case SLD_ARMP: {   // 놓기 전 → 가운데 → 놓기 → 열기
       const float* A = rec.ar.q;
-      const int k = sl_wp_next(c, A);
+      const int k = sl_wp_next(c, A, sl_tol(ss).fine);
       g = 0.f;
       if (k < 3) for (int j = 0; j < 5; ++j) qt[j] = A[5 * k + j];
       else { for (int j = 0; j < 5; ++j) qt[j] = A[10 + j]; g = grip_angle_of(rec.ar.open); mode = SLD_OPEN; }

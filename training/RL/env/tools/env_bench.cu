@@ -18,7 +18,8 @@ namespace env { void env_prof_read(unsigned long long out[8]); void env_prof_res
 int main(int argc, char** argv) {
   const int T = argc > 1 ? std::atoi(argv[1]) : 300, stage = argc > 2 ? std::atoi(argv[2]) : 1, maxN = argc > 3 ? std::atoi(argv[3]) : 1048576;
   bsc::BCurr cu = bsc::kBCurrDefault;
-  bool teach = false, feas = false, tsl = false;
+  bool teach = false, feas = false, tsl = false, gcand = false;
+  int sltol = 0;
   for (int a = 4; a < argc; ++a) {
     if (!std::strcmp(argv[a], "--pnp") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f,%f", &cu.p4, &cu.p5, &cu.p6);
     else if (!std::strcmp(argv[a], "--mix") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &cu.p1, &cu.p2);
@@ -26,13 +27,15 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--teacher")) teach = true;
     else if (!std::strcmp(argv[a], "--teacher-sl")) { teach = true; tsl = true; }   // 상태 없는 교사(teacher_sl.h): 교사 시간 = 앞 + 계획 + 행동 합
     else if (!std::strcmp(argv[a], "--feas")) feas = true;
+    else if (!std::strcmp(argv[a], "--gcand")) gcand = true;
+    else if (!std::strcmp(argv[a], "--sltol")) sltol = 1;
   }
   bsc::SceneBuild sb;
   if (stage >= kStageBeh) {
     std::string err;
     bsc::BuildOpt bo;
     if (!bsc::build_scenes(bo, sb, &err) || !bsc::upload(sb, &err)) { std::printf("scene build failed: %s\n", err.c_str()); return 1; }
-    if (feas) { pnp_feasibility(sb); cu.phys |= bsc::PF_FEAS; }
+    if (feas) { pnp_feasibility(sb); cu.phys |= bsc::PF_FEAS; if (gcand) pnp_stance_cands(sb); if (sltol) set_sl_tol(sb, sltol); }
   }
   cudaDeviceProp p;
   cudaGetDeviceProperties(&p, 0);

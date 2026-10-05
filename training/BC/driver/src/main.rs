@@ -99,6 +99,10 @@ struct BcConfig {
     b_p_occ: f32,
     teacher_script: i32,
     b_feas: i32,
+    b_gcand: i32,
+    b_sltol: i32,
+    mlp_w: i32,
+    pad_cfg: i32,
 }
 
 #[repr(C)]
@@ -149,6 +153,10 @@ extern "C" {
     fn bc_num_params(h: H) -> i64;
     fn bc_device_bytes(h: H) -> i64;
     fn bc_load_text_table(h: H, path: *const std::os::raw::c_char) -> i32;
+    fn bc_sldiag(h: H, tag: *const std::os::raw::c_char) -> i32;
+    fn bc_set_beta(h: H, beta: f32) -> i32;
+    fn bc_set_keep(h: H, keep: i64) -> i32;
+    fn bc_set_demo_frac(h: H, frac: f32) -> i32;
 }
 
 fn gi(v: &Value, k: &str, d: i64) -> i64 { v.get(k).and_then(|x| x.as_i64()).unwrap_or(d) }
@@ -330,6 +338,10 @@ fn main() {
         b_p_occ: v.get("beh").and_then(|b| b.get("fail")).and_then(|m| m.get(1)).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
         teacher_script: gi(&v, "teacher_script", 0) as i32,   // E6: B4–B6 라벨 = 대본 특권 교사
         b_feas: v.get("beh").and_then(|b| b.get("feas")).and_then(|x| x.as_i64()).unwrap_or(0) as i32,   // 잡기 가능 짝만(PF_FEAS)
+        b_gcand: v.get("beh").and_then(|b| b.get("gcand")).and_then(|x| x.as_i64()).unwrap_or(0) as i32,   // 잡기 서는 자리 후보(상태 없는 교사)
+        b_sltol: v.get("beh").and_then(|b| b.get("sltol")).and_then(|x| x.as_i64()).unwrap_or(0) as i32,   // 상태 없는 교사 단계 문턱(1 = 배울 수 있는 값)
+        mlp_w: gi(&v, "mlp_w", 0) as i32,   // MLP 학생 몸통 폭(0 = 256)
+        pad_cfg: 0,
     };
     let r0 = gi(&v, "record_rollouts", 4) as usize;
     let u0 = gi(&v, "bc_updates", 100) as usize;
@@ -376,7 +388,7 @@ fn main() {
         let (mut gn, mut gk, mut pn, mut ps) = (0f64, 0f64, 0f64, 0f64);
         for l in lg.iter().skip(eval_drop) { gn += l.g_n as f64; gk += (l.g_ok * l.g_n) as f64; pn += l.p_n as f64; ps += (l.p_succ * l.p_n) as f64; }
         let mut tab = vec![0u64; 3 * 2 * 10 * 6];
-        unsafe { bc_table(run.h, tab.as_mut_ptr()); }
+        unsafe { bc_table(run.h, tab.as_mut_ptr()); bc_sldiag(run.h, cstr(name).as_ptr()); }
         let tj = table_json(&tab);
         let a = &tj["all"];
         let st = &tj["by_stage"];
@@ -397,9 +409,23 @@ fn main() {
         results.insert(name.to_string(), tj);
         fs::write(out.join("results.json"), serde_json::to_string_pretty(&Value::Object(results.clone())).unwrap()).unwrap();
     };
-    let train = |run: &mut Run, n: usize| -> (f32, f32, f64) {
+    // 학습률 일정(갱신 그래프마다, 비동기 장치 값): "lr_sched": "cos" 면 앞 warmup 몫은 선형으로 올리고 그 뒤 cos 로 lr → lr_min (BC + DAgger 모든 갱신 그래프를 한 줄로)
+    let sched_cos = v.get("lr_sched").and_then(|x| x.as_str()) == Some("cos");
+    let lr_min = gf(&v, "lr_min", 0.0) as f32;
+    let warm = gf(&v, "lr_warmup", 0.02);
+    let total_upd = (u0 + nd * ud).max(1) as f64;
+    let lr0 = c.lr;
+    let lr_at = move |g: f64| -> f32 {
+        let x = g / total_upd;
+        if x < warm { lr0 * ((x / warm.max(1e-9)) as f32).max(0.02) } else { lr_min + 0.5 * (lr0 - lr_min) * (1.0 + (std::f64::consts::PI * ((x - warm) / (1.0 - warm)).min(1.0)).cos() as f32) }
+    };
+    let mut upd_done = 0usize;
+    if sched_cos { unsafe { bc_set_lr(h, lr_at(0.0)); } }
+    let mut train = |run: &mut Run, n: usize| -> (f32, f32, f64) {
         let t = Instant::now();
-        let l = run.launch(1, n, |_, _| {});
+        let base = upd_done;
+        let l = run.launch(1, n, |hh, k| if sched_cos { unsafe { bc_set_lr(hh, lr_at((base + k) as f64)); } });
+        upd_done += n;
         let k = l.len().saturating_sub(5);
         let last = l[k..].iter().map(|x| x.loss).sum::<f32>() / (l.len() - k).max(1) as f32;
         let gms: f32 = l.iter().map(|x| x.gpu_ms).sum();
@@ -408,6 +434,7 @@ fn main() {
     let record = |run: &mut Run, actor: i32, n: usize, seed: u64| -> (f32, i64, f64) {
         unsafe { bc_reset_env(run.h, seed); bc_set_mode(run.h, actor, 1); }
         let l = run.launch(0, n, |_, _| {});
+        unsafe { bc_sldiag(run.h, cstr(&run.phase.clone()).as_ptr()); }
         let dis = l.iter().map(|x| x.disagree).sum::<f32>() / l.len().max(1) as f32;
         let gms: f32 = l.iter().map(|x| x.gpu_ms).sum();
         (dis, l.last().map(|x| x.count).unwrap_or(0), gms as f64 / 1e3)
@@ -415,9 +442,16 @@ fn main() {
 
     // 학생 평가 + BEHAVIOR 면 접지 평가(목표 표시를 늘 끔 — 지시문과 칸 이름 벡터만으로 맞는 물체로 가나), 뒤에 설정 값으로 되돌림
     let grounding = c.stage >= 3 || c.beh != 0;
+    let eval_noflag = v.get("eval_noflag").and_then(|x| x.as_bool()).unwrap_or(true);
+    let eval_tdrive = v.get("eval_tdrive").and_then(|x| x.as_bool()).unwrap_or(false);
     let eval_s = |run: &mut Run, name: &str, results: &mut serde_json::Map<String, Value>| {
         eval(run, name, 1, results);
-        if grounding {
+        if eval_tdrive {   // 진단: 교사가 몰고(β 1) 학생은 앞 계산만 — 교사가 간 상태에서 학생 어긋남(BC_SLDIAG 표)
+            unsafe { bc_set_beta(run.h, 1.0) };
+            eval(run, &format!("{}_tdrive", name), 1, results);
+            unsafe { bc_set_beta(run.h, 0.0) };
+        }
+        if grounding && eval_noflag {
             unsafe { bc_set_goal_drop(run.h, 1.0) };
             eval(run, &format!("{}_noflag", name), 1, results);
             unsafe { bc_set_goal_drop(run.h, c.goal_drop) };
@@ -429,6 +463,12 @@ fn main() {
     run.phase = "record".into();
     let (_, cnt, gs) = record(&mut run, 0, r0, c.env_seed);
     println!("record: teacher {} rollouts -> {} samples ({:.2} s GPU)", r0, cnt, gs);
+    if v.get("keep_demos").and_then(|x| x.as_bool()).unwrap_or(false) {   // 교사 시연은 DAgger 자료에 밀려나지 않게(고리 앞 cnt 표본)
+        let r = unsafe { bc_set_keep(h, cnt) };
+        println!("keep_demos: first {} samples protected ({})", cnt, if r == 0 { "ok" } else { "buffer already full — not protected" });
+        let df = gf(&v, "demo_frac", 0.0) as f32;   // DAgger 갱신 미니배치의 시연 몫(0 = 균등)
+        if df > 0.0 && r == 0 { unsafe { bc_set_demo_frac(h, df) }; println!("demo_frac: {:.2} of each minibatch from the protected demos", df); }
+    }
     run.phase = "bc".into();
     let (l0, l1, gs) = train(&mut run, u0);
     println!("bc: {} updates x {} steps, loss {:.5} -> {:.5} ({:.2} s GPU)", u0, c.upd_steps, l0, l1, gs);
@@ -439,7 +479,11 @@ fn main() {
     if lr_decay != c.lr { unsafe { bc_set_lr(h, lr_decay); } }
     for i in 1..=nd {
         run.phase = format!("collect{}", i);
+        let beta = v.get("dagger_beta").and_then(|x| x.as_array()).and_then(|a| a.get(i - 1).or(a.last())).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+        if dagger { unsafe { bc_set_beta(h, beta) }; }
         let (dis, cnt, gs) = record(&mut run, if dagger { 1 } else { 0 }, rd, c.env_seed + i as u64);
+        unsafe { bc_set_beta(h, 0.0) };
+        if dagger { println!("dagger {}: beta {:.2} (teacher drives that share of episodes)", i, beta); }
         println!("{} {}: {} rollouts, student-vs-teacher disagreement {:.5} on visited states, data {} ({:.2} s GPU)",
             if dagger { "dagger" } else { "teacher-more" }, i, rd, dis, cnt, gs);
         run.phase = format!("train{}", i);

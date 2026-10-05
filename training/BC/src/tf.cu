@@ -124,42 +124,42 @@ static void gdw(const uint16_t* dZ, const uint16_t* X, int ldx, int M, const WT&
 }
 
 // ---- 키 유효: tv[b][t] ----
-__global__ void tv_k(const uint32_t* obj_mask, const uint32_t* grp_off, int B, uint8_t* tv) {
+__global__ void tv_k(const uint32_t* obj_mask, const uint32_t* grp_off, int B, int ni, uint8_t* tv) {
   const int q = blockIdx.x * blockDim.x + threadIdx.x;
-  if (q >= B * L_TOK) return;
-  const int b = q / L_TOK, t = q % L_TOK;
-  int g = 0;
-  while (g + 1 < N_GRP && t >= grp_tok0(g + 1)) ++g;
+  const int L = tok_L(ni);
+  if (q >= B * L) return;
+  const int b = q / L, t = q % L;
+  const int g = grp_at(t, ni);
   bool v = !(grp_off && ((grp_off[b] >> g) & 1u));
-  if (g == G_OBJ) v = v && ((obj_mask[b] >> (t - grp_tok0(G_OBJ))) & 1u);
+  if (g == G_OBJ) v = v && ((obj_mask[b] >> (t - tok0(G_OBJ, ni))) & 1u);
   tv[q] = v ? 1 : 0;
 }
 NDEV int type_of(int g, int t) { return grp_type_of(g, t); }
 // 토큰 놓기: X[b·L + tok0 + t][c] = E(묶음 순서)[b·n + t][c] + 종류[c]
 struct GT { long long o[N_GRP]; };
-__global__ void place_k(const float* E, const float* P, GT lay, int B, int d, float* X) {
+__global__ void place_k(const float* E, const float* P, GT lay, int B, int d, int ni, float* X) {
   const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-  if (q >= (long long)B * L_TOK * d) return;
+  const int L = tok_L(ni);
+  if (q >= (long long)B * L * d) return;
   const int c = (int)(q % d);
   const long long row = q / d;
-  const int b = (int)(row / L_TOK), tk = (int)(row % L_TOK);
-  int g = 0;
-  while (g + 1 < N_GRP && tk >= grp_tok0(g + 1)) ++g;
-  const int t = tk - grp_tok0(g);
-  const float e = E[((long long)B * grp_tok0(g) + (long long)b * grp_ntok(g) + t) * d + c];
+  const int b = (int)(row / L), tk = (int)(row % L);
+  const int g = grp_at(tk, ni);
+  const int t = tk - tok0(g, ni);
+  const float e = E[((long long)B * tok0(g, ni) + (long long)b * ntok(g, ni) + t) * d + c];
   X[q] = e + P[lay.o[g] + (long long)type_of(g, t) * d + c];
 }
 // 묶음 순서 bf16 dE = 표본 순서 dX0
-__global__ void gather_dE_k(const float* dR, int B, int d, uint16_t* dE) {
+__global__ void gather_dE_k(const float* dR, int B, int d, int ni, uint16_t* dE) {
   const long long q = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-  if (q >= (long long)B * L_TOK * d) return;
+  const int L = tok_L(ni);
+  if (q >= (long long)B * L * d) return;
   const int c = (int)(q % d);
   const long long row = q / d;
-  const int b = (int)(row / L_TOK), tk = (int)(row % L_TOK);
-  int g = 0;
-  while (g + 1 < N_GRP && tk >= grp_tok0(g + 1)) ++g;
-  const int t = tk - grp_tok0(g);
-  dE[((long long)B * grp_tok0(g) + (long long)b * grp_ntok(g) + t) * d + c] = f2bf(dR[q]);
+  const int b = (int)(row / L), tk = (int)(row % L);
+  const int g = grp_at(tk, ni);
+  const int t = tk - tok0(g, ni);
+  dE[((long long)B * tok0(g, ni) + (long long)b * ntok(g, ni) + t) * d + c] = f2bf(dR[q]);
 }
 
 // ---- LayerNorm(워프 하나 = 행 하나, 통계 FP32). 출력 bf16 [R][ldo](d 칸 = 1 은 미리 써 둠) ----
@@ -245,12 +245,12 @@ __global__ void colred_k(const float* cp, int nb, int d, float* out, float* out2
   }
 }
 // 종류 임베딩 기울기 조각: 묶음 g 종류 ty 의 토큰들(판 b, 토큰 t0..t1) — 블록 = 판 cb 개
-__global__ void temb_part_k(const float* dR, int B, int d, int tk0, int t0, int t1, int cb, float* cp) {
+__global__ void temb_part_k(const float* dR, int B, int d, int L, int tk0, int t0, int t1, int cb, float* cp) {
   for (int c = threadIdx.x; c < d; c += blockDim.x) {
     float a = 0.f;
     const int b1 = min(B, (int)(blockIdx.x + 1) * cb);
     for (int b = blockIdx.x * cb; b < b1; ++b)
-      for (int t = t0; t < t1; ++t) a = a + dR[((long long)b * L_TOK + tk0 + t) * d + c];
+      for (int t = t0; t < t1; ++t) a = a + dR[((long long)b * L + tk0 + t) * d + c];
     cp[(long long)blockIdx.x * d + c] = a;
   }
 }
@@ -559,6 +559,8 @@ void Tf::init(const TfCfg& cfg) {
     std::abort();
   }
   lay = tf_layout(c);
+  ni = c.img ? grp_ntok(G_IMG) : 0;   // 영상 토큰 없음(BEHAVIOR 판 — 렌더가 아직 상자 방만): 묶음 순서 그대로 영상 묶음만 빠짐
+  L = tok_L(ni);
   d1 = c.d + 16;
   KA = (c.A + TEMB + 1 + 15) / 16 * 16;
   const int d = c.d, B = c.Bmax, H = c.H, Lb = c.layers, Le = c.e_layers;
@@ -606,7 +608,7 @@ void Tf::init(const TfCfg& cfg) {
   dEb = alloc<uint16_t>(R * d); doh = alloc<uint16_t>((size_t)B * 16 * c.obj_hidden);
   long long wsn = 0;
   auto need = [&](const WT& w, long long rows) { const long long s = (rows + c.dw_chunk - 1) / c.dw_chunk; if (s * w.N * w.K > wsn) wsn = s * w.N * w.K; };
-  for (int g = 0; g < N_GRP; ++g) { need(lay.g_w1[g], (long long)B * kGrp[g].n_tok); if (lay.g_w2[g].N) need(lay.g_w2[g], (long long)B * kGrp[g].n_tok); }
+  for (int g = 0; g < N_GRP; ++g) { if (!ntok(g, ni)) continue; need(lay.g_w1[g], (long long)B * ntok(g, ni)); if (lay.g_w2[g].N) need(lay.g_w2[g], (long long)B * ntok(g, ni)); }
   for (auto& b : lay.blk) { need(b.qkv, R); need(b.wo, R); need(b.w1, R); need(b.w2, R); }
   for (auto& b : lay.eblk) { need(b.qkv, RA); need(b.kvp, R); need(b.wo, RA); need(b.w1, RA); need(b.w2, RA); }
   need(lay.e_in, RA); need(lay.e_out, RA);
@@ -689,10 +691,11 @@ static AttnP ex_attn(const Tf& t, int l) {
 void Tf::forward_prefix(const TfIn& in, int B, cudaStream_t st) {
   const int d = c.d;
   const long long R = (long long)B * L;
-  tv_k<<<nb_(R), 256, 0, st>>>(in.obj_mask, in.grp_off, B, tv);
+  tv_k<<<nb_(R), 256, 0, st>>>(in.obj_mask, in.grp_off, B, ni, tv);
   for (int g = 0; g < N_GRP; ++g) {
-    const int rows = B * kGrp[g].n_tok;
-    float* Eg = E + (long long)B * grp_tok0(g) * d;
+    if (!ntok(g, ni)) continue;
+    const int rows = B * ntok(g, ni);
+    float* Eg = E + (long long)B * tok0(g, ni) * d;
     if (lay.g_w2[g].N) {
       gfwd(in.g[g], kGrp[g].K, rows, Pb, lay.g_w1[g], oh, c.obj_hidden + 16, 1, st);
       gfwd(oh, c.obj_hidden + 16, rows, Pb, lay.g_w2[g], Eg, d, 2, st);
@@ -702,7 +705,7 @@ void Tf::forward_prefix(const TfIn& in, int B, cudaStream_t st) {
   }
   GT gt;
   for (int g = 0; g < N_GRP; ++g) gt.o[g] = lay.g_type[g];
-  place_k<<<nb_(R * d), 256, 0, st>>>(E, P, gt, B, d, Xs[0]);
+  place_k<<<nb_(R * d), 256, 0, st>>>(E, P, gt, B, d, ni, Xs[0]);
   const size_t xb = sizeof(float) * R * d;
   for (int l = 0; l < c.layers; ++l) {
     const auto& w = lay.blk[l];
@@ -840,17 +843,19 @@ void Tf::backward(const TfIn& in, int B, cudaStream_t st) {
   }
   // 묶음 임베딩
   for (int g = 0; g < N_GRP; ++g) {
+    if (!ntok(g, ni)) continue;
     for (int ty = 0; ty < kGrp[g].n_type; ++ty) {
-      const int n = kGrp[g].n_tok, nt = kGrp[g].n_type, t0 = ty * n / nt, t1 = (ty + 1) * n / nt;
+      const int n = ntok(g, ni), nt = kGrp[g].n_type, t0 = ty * n / nt, t1 = (ty + 1) * n / nt;
       const int cb = (t1 - t0) >= 256 ? 1 : 256 / (t1 - t0), nb = (B + cb - 1) / cb;
-      temb_part_k<<<nb, 256, 0, st>>>(dR, B, d, grp_tok0(g), t0, t1, cb, cpart);
+      temb_part_k<<<nb, 256, 0, st>>>(dR, B, d, L, tok0(g, ni), t0, t1, cb, cpart);
       colred_k<<<nb_(d), 256, 0, st>>>(cpart, nb, d, G + lay.g_type[g] + (long long)ty * d, nullptr);
     }
   }
-  gather_dE_k<<<nb_((long long)R * d), 256, 0, st>>>(dR, B, d, dEb);
+  gather_dE_k<<<nb_((long long)R * d), 256, 0, st>>>(dR, B, d, ni, dEb);
   for (int g = 0; g < N_GRP; ++g) {
-    const int rows = B * kGrp[g].n_tok;
-    const uint16_t* dEg = dEb + (long long)B * grp_tok0(g) * d;
+    if (!ntok(g, ni)) continue;
+    const int rows = B * ntok(g, ni);
+    const uint16_t* dEg = dEb + (long long)B * tok0(g, ni) * d;
     if (lay.g_w2[g].N) {
       gdw(dEg, oh, c.obj_hidden + 16, rows, lay.g_w2[g], ws, c.dw_chunk, G, st);
       gdx(dEg, rows, Pb, lay.g_w2[g], c.obj_hidden, doh, c.obj_hidden, 4, oh, c.obj_hidden + 16, st);

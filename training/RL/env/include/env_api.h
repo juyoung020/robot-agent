@@ -124,6 +124,10 @@ struct CpuEnv {
 // 잡기 가능 표(Entry::feas·gst·pst5·pst6·grel, SceneSet::has_feas)를 장치에서 계산해 호스트·장치 표에 씀(teacher.h feas_entry — 잡기 모형·교사 계획과 같은 코드).
 // upload 뒤에 한 번. 반환 = 잰 초. PF_FEAS 고르기·교사가 판 시작에 서는 자리를 바로 쓰는 데 필요
 double pnp_feasibility(bsc::SceneBuild& b, bool quiet = false);
+// 잡기 서는 자리 후보(teacher.h gcand_dir, 짝 × 방향마다 워프 하나)를 만들어 호스트·장치 SceneSet 에 둠 — pnp_feasibility 뒤에. 상태 없는 교사가 씀
+double pnp_stance_cands(bsc::SceneBuild& b, bool quiet = false);
+// 상태 없는 교사 단계 문턱(SceneSet::sl_tol, teacher_sl.h sl_tol) — 호스트·장치 SceneSet 둘 다
+void set_sl_tol(bsc::SceneBuild& b, int tol);
 // CPU 로 짝 하나(확인용 — 장치 값과 비트 비교)
 void pnp_feasibility_cpu(const bsc::SceneSet& host, int ent, FeasOut& o);
 

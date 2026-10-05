@@ -49,7 +49,7 @@ pub fn open(out: &Path, cfg_path: &str, v: &Value, c: &BcConfig, teacher: &str, 
         "rollout_T": c.horizon,
         "env_steps_per_rollout": c.n_env as i64 * c.horizon as i64,
         "log_envs": 0,
-        "skills": [skill],
+        "skills": [skill.clone()],
         "lr": c.lr, "max_grad_norm": c.max_grad_norm,
         "batch": c.mb, "upd_steps": c.upd_steps, "chunk_H": c.chunk, "denoise_steps": c.flow_steps,
         "head": if c.head != 0 { "flow" } else { "mse" },
@@ -77,7 +77,12 @@ pub fn open(out: &Path, cfg_path: &str, v: &Value, c: &BcConfig, teacher: &str, 
         }
     };
     w.every_s = v.get("progress_every_s").and_then(|x| x.as_f64()).unwrap_or(1.0);
-    Some(RunFolder { w, phase: String::new(), env_steps: 0.0, steps_per_rollout: c.n_env as f64 * c.horizon as f64, skill, adam_t: 0.0, hook: trainfmt::replay_hook::ReplayHook::from_config(v, "bc", out) })
+    let mut hook = trainfmt::replay_hook::ReplayHook::from_config(v, "bc", out);
+    if let Some(h) = hook.as_mut() {
+        // BEHAVIOR 집기·놓기(대본 교사): 체크포인트마다 학생 K 판 + 같은 씨앗 교사 K 판(record_bc --actor both, 교사 판 태그 "<이름>-teacher")
+        if c.teacher_script != 0 { h.set_extra(vec!["--actor".into(), "both".into()]); }
+    }
+    Some(RunFolder { w, phase: String::new(), env_steps: 0.0, steps_per_rollout: c.n_env as f64 * c.horizon as f64, skill, adam_t: 0.0, hook })
 }
 
 impl RunFolder {

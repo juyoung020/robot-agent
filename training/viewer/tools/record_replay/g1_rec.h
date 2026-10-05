@@ -44,6 +44,7 @@ struct G1Rec {
     std::vector<float> segs_prev;
     float last_m[3] = {0, 0, 0};   // 끝 프레임용 slam 자세
     std::vector<SgStep> sgs;       // sgview 판(진짜 scenemap)용 입력
+    std::string scene;             // scene_fn 이 판 시작에 만든 장면(BEHAVIOR 판 — 끝에서는 장치가 이미 새 판)
   };
   int N = 0;
   std::vector<int> tracked;
@@ -52,6 +53,9 @@ struct G1Rec {
   std::string driver, source_json, skill = "approach", home_prefix = "G1", tag;   // tag: 체크포인트 이름(it000200 / final) — 파일 이름·판 줄에
   double ckpt_iter = NAN;
   int max_success = 1 << 30;
+  // BEHAVIOR 판(stage 3, 2026-10-06): 장면 JSON 을 부르는 쪽이 만듦(env i → 창 좌표 정적 상자·집을 물체). 있으면 끝 프레임을 호스트에서 다시 돌리지 않음
+  // (env.h step_core 는 상자 방 식) — 스텝 전 마지막 프레임에 끝 표시만. sgview 판(진짜 scenemap)도 안 만듦(장면 광선 추적이 상자 방 식)
+  std::function<std::string(int)> scene_fn;
   // 덧붙임(BEHAVIOR 판, beh_rec.h): 스텝마다 그 판 기록에 섹션을 더함(판 i, 판 번호, 프레임) / 판을 쓰기 전(머리 더하기) / 쓴 뒤(경로 — OG 다시 돌리기 줄 세우기)
   std::function<void(int, long, uint32_t, TrpWriter*)> frame_hook;
   std::function<void(int, long, TrpWriter*)> pre_finish;
@@ -110,6 +114,7 @@ struct G1Rec {
         .raw("scene", scene_json(c, m, stage)).str("slot_z", "center").raw("source", source_json).b("synthetic", false)
         .raw("ev_bits", "{\"1\":\"collision\",\"8\":\"success\",\"32\":\"reset\"}").done();
     e.w = trp_new(kFrameCols, kSlotCols, gmap::KSLOT, head.c_str());
+    if (scene_fn) { e.scene = scene_fn(i); trp_set_head(e.w, "scene", e.scene.c_str()); }
     act[i] = std::move(e);
   }
 
@@ -222,6 +227,15 @@ struct G1Rec {
       e.frames++;
       for (int k = 0; k < 3; ++k) e.last_m[k] = (&mh.core[i].ex)[k];
       if (done[i] == env::kRunning) continue;
+      if (scene_fn) {   // BEHAVIOR: 끝 표시만(스텝 전 프레임 그대로)
+        const int ev = done[i] == env::kSuccess ? EV_SUCCESS : done[i] == env::kCollision ? EV_CONTACT : 0;
+        frame_row(c, mh.core[i], mh.met.data(), i, ai, 0.f, NAN, ev, e, row, sl);
+        trp_frame(e.w, row, sl);
+        env::StepOut so{};
+        finish(i, e, c, done[i], so, mh.core[i]);
+        act.erase(i);
+        continue;
+      }
       // 끝 프레임: 같은 스텝을 호스트에서 다시(env.h 같은 소스) — 장치 상태는 이미 새 판으로 리셋됨
       env::Core cc;
       env::load(hs, i, cc);
@@ -243,7 +257,7 @@ struct G1Rec {
     // 장면·처음 지도 단계는 판 끝의 지도 상태에서(판의 첫 프레임에는 지도가 아직 리셋되기 전일 수 있다 — 각 판 첫 판)
     e.init_stage = m.init_stage;
     e.init_conf = m.init_conf;
-    trp_set_head(e.w, "scene", scene_json(cc, m, e.stage).c_str());
+    trp_set_head(e.w, "scene", scene_fn ? e.scene.c_str() : scene_json(cc, m, e.stage).c_str());
     const char* oc = d == env::kSuccess ? "success" : d == env::kCollision ? "collision" : "timeout";
     (d == env::kSuccess ? n_success : d == env::kCollision ? n_coll : n_tout)++;
     const char* stg[3] = {"C0", "C1", "C2"};
@@ -262,7 +276,7 @@ struct G1Rec {
     (void)so;
     std::string path = out.rep + "/" + file;
     std::string sgdir;
-    if (sg && !e.sgs.empty()) {   // sgview 판: <판>.sg/ 안에 스트림·메모리·바탕·정책 지도(episode.trp)
+    if (sg && !scene_fn && !e.sgs.empty()) {   // sgview 판: <판>.sg/ 안에 스트림·메모리·바탕·정책 지도(episode.trp)
       std::string f2 = file;
       f2.replace(f2.size() - 4, 4, ".sg");
       sgdir = out.rep + "/" + f2;

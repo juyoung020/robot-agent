@@ -18,7 +18,8 @@ using namespace env;
 int main(int argc, char** argv) {
   int N = 2048, T = 900, kind = 0, pos = 0;
   uint64_t seed = 20261005;
-  bool all_eps = false, sl = false, agree = false;
+  bool all_eps = false, sl = false, agree = false, gcand = false;
+  int sltol = 0;
   bsc::BCurr cu = bsc::kBCurrDefault;
   gmap::MapCurr mc = gmap::kCurrEmpty;
   mc.p0 = 1.f; mc.p1 = 0.f;
@@ -31,6 +32,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--seed") && a + 1 < argc) seed = std::strtoull(argv[++a], nullptr, 10);
     else if (!std::strcmp(argv[a], "--all")) all_eps = true;
     else if (!std::strcmp(argv[a], "--sl")) sl = true;   // 상태 없는 교사(teacher_sl.h)
+    else if (!std::strcmp(argv[a], "--gcand")) gcand = true;
+    else if (!std::strcmp(argv[a], "--sltol")) sltol = 1;   // 상태 없는 교사 배울 수 있는 단계 문턱(teacher_sl.h sl_tol)   // 잡기 서는 자리 후보(상태 없는 교사가 로봇에 가까운 것을 고름)
     else if (!std::strcmp(argv[a], "--agree")) agree = true;   // 상태 있는 교사가 몰고, 같은 상태에서 상태 없는 교사 라벨을 견줌
     else if (pos == 0) { N = std::atoi(argv[a]); ++pos; }
     else if (pos == 1) { T = std::atoi(argv[a]); ++pos; }
@@ -43,6 +46,8 @@ int main(int argc, char** argv) {
   std::string err;
   if (!bsc::build_scenes(bsc::BuildOpt{}, sb, &err) || !bsc::upload(sb, &err)) { std::printf("scene build failed: %s\n", err.c_str()); return 1; }
   const double feas_s = env::pnp_feasibility(sb);
+  if (gcand) env::pnp_stance_cands(sb);
+  if (sltol) env::set_sl_tol(sb, sltol);
   if (!all_eps) cu.phys |= bsc::PF_FEAS;
   DeviceEnv env(N, kStageBeh, seed, true, sb.dev, cu);
   gmap::DeviceMap map(N, seed * 7919ull + 3ull, sb.dev);

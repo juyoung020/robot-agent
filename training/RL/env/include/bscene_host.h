@@ -111,6 +111,8 @@ struct SceneBuild {
   std::vector<uint32_t> rbits;
   std::vector<uint64_t> tocc;                // 교사 정적 점유 표(pnp_feasibility 가 채움 — host.tocc 가 가리킴)
   std::vector<int> toccix;                   // 짝 → 표 번호(host.toccix)
+  std::vector<float> gcand;                  // 잡기 서는 자리 후보(env pnp_stance_cands — host.gcand 가 가리킴)
+  std::vector<int> gcn;
   struct Combo { int16_t obj, src, dst, rel; };
   std::vector<Combo> combos;                 // 엔트리에 나온 (집을 것, 출발, 놓을 곳, 술어) — 정렬 순서 = combos.tsv
   int combo_missing = 0;                     // combos.tsv 에 없는 조합의 엔트리 수

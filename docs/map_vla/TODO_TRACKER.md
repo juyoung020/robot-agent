@@ -285,7 +285,7 @@
 
 **지금 상태 (10-06)**
 - 끝남·정함: 검출 = ObjectSAM + SigLIP 2 + objprob(`ac1b671`, behavior-2026 `26cbdc4`). 대본 교사 빠르게(`e5aea37`, N 4,096 B4 2.7·B5 5.2·B6 2.5 ms/스텝) + 상태 없는 교사(`teacher_sl.h`, `a17bfee`). RecallVLA 신경망 융합·다시 계산 줄이기(M5 `699bf6a`, 마지막 융합 `10d8c0b`) + 기억 요약 인코더(`e57acd7`). 커리큘럼 설계(CURRICULUM_BEHAVIOR2026 — 리모 집기·놓기 B0–B6, 환경 E0–E7). 학습 뷰어 trainview(V0–V5, `training/viewer`). VLA 실행기 접점(`d4e8bd7`). 지도 벤치마크 어댑터(`6790eda`). G6(`339bfb4`).
-- 안 됨: BC/DAgger 학생이 B4 를 아직 못 배움(0.00–0.04, CURRICULUM_BEHAVIOR2026 5.6.1) — 다른 에이전트가 작업 중.
+- 안 됨: BC/DAgger 학생 B4 — 큰 학생(폭 1,024)으로 BC 0.22 까지, DAgger 는 학생 상태 라벨로 떨어짐(CURRICULUM_BEHAVIOR2026 5.6.2). 10-06: GT 지도(C0) 판 그만두고 C2 3 단계 커리큘럼으로 바꿈(5.7).
 
 **진행 중(다른 에이전트, 손대지 않음)**: BC/DAgger 학생(`training/BC`·`training/RL`, CURRICULUM_BEHAVIOR2026 5.6·POLICY 4.8), README 영상·설명 다시 찍기. 예전 목록의 "LIMO SLAM 등록" 은 10-06 에 확인 못 함.
 

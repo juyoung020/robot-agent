@@ -483,3 +483,8 @@ X0 464(목표 칸 2 × 16, VLA_INPUT 2.1), 토큰마다 학생의 GOAL 묶음 16
 - `teacher_script: 2` = 상태 없는 대본 교사(env `teacher_sl.h`): B4–B6 라벨(그리고 교사가 몰 때 행동)이 지금 상태만의 함수 — DAgger 에서 학생이 간 상태에 물어도 다른 궤적의 교사 기억이 끼지 않음. `1` = 예전 상태 있는 교사. 버퍼는 환경 만들 때 잡음(그래프 안, 호스트 동기 없음). `BC_SLHIST=1` 이면 롤아웃마다 교사 단계 분포를 찍음(동기 — 진단만).
 - 잰 값(B4, student-lite, N 1,024, 지도 C0 — CURRICULUM_BEHAVIOR2026 5.6.1 표): 상태 없는 교사 평가 0.925, BC 0.024–0.041, DAgger 3 번 0.000–0.015(cap 0.6 M 이면 DAgger 둘째 판부터 교사 시연이 밀려남 → cap 1.4 M 으로도 같음), 대조 "교사가 더 모음" 0.021–0.042. 상태 있는 교사도 같은 모양(0.004 → 0.000). 학생-교사 어긋남은 줄어듦(3.99 → 1.20) — 라벨을 배우지만 학생이 서는 자리 근처에 못 감(교사 단계 nav 70–80 %). 지금 막는 것은 학생 쪽.
 - 설정 `config/bc_pnp_b4_dagger.json`(위 표의 cap 1.4 M 판). 긴 판 = `bc_updates` 1,500·`dagger_updates` 500, 대조 = `"dagger": false`, 상태 있는 교사 = `teacher_script` 1.
+
+## B4 큰 학생·β 섞기·시연 지키기(2026-10-06)
+- 설정 새 키: `mlp_w`(MLP 학생 몸통 폭, 0 = 256), `lr_sched: "cos"`·`lr_min`·`lr_warmup`(갱신 그래프마다 장치 값), `dagger_beta`(모으기 바퀴마다 β — 판마다 에피소드 번호 해시 < β 면 교사가 몲, 학생 앞 계산은 늘 함), `keep_demos`(교사 시연 고리 앞을 덮어쓰지 않음 — 고리는 [keep, cap)), `demo_frac`(미니배치의 시연 몫), `eval_tdrive`(교사가 몰고 학생 어긋남만 — 진단), `eval_noflag`(false 면 목표 감춘 평가 뺌), `beh.gcand`·`beh.sltol`(상태 없는 교사 서는 자리 후보·단계 문턱), arch 1 은 영상 없이도 됨(토큰 22, BEHAVIOR 판). 진단 환경 변수 `BC_SLDIAG`(단계별 표), `BC_SLDBG=n`(판 n 개 스텝 줄).
+- 재생 기록: `record_bc` 가 BEHAVIOR 판(stage 3, 창 안 정적 상자 + 집을 물체)과 `--actor teacher|both` 를 받음. 대본 교사 설정이면 `bc_run` 의 체크포인트 훅이 학생 K 판 + 같은 씨앗 교사 K 판(태그 `-teacher`)을 씀.
+- 잰 값(B4, 지도 C0): 폭 1,024 BC 0.214–0.222(student-lite 0.022), 폭 2,048 0.190, flow 0.020, DAgger(학생 상태 라벨) 0.19 → 0.01–0.03. 표·까닭은 CURRICULUM_BEHAVIOR2026 5.6.2. **10-06 사용자 결정: 처음 지도 C0(GT 지도) 학습은 그만두고 C2(빈 지도에서 자람) 3 단계 커리큘럼으로(5.7)**.

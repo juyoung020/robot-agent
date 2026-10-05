@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <chrono>
+#include <cstring>
 
 #include "bscene_host.h"
 #include "env_api.h"
@@ -215,6 +216,16 @@ __global__ void __launch_bounds__(128) feas_k(const bsc::SceneSet* ss, const int
   FeasOut o;
   feas_entry(*ss, idx[k], o, w);
   if (w.lane == 0) out[k] = o;
+}
+
+// 잡기 서는 자리 후보(짝 × 방향 하나 = 워프 하나)
+__global__ void __launch_bounds__(128) gcand_k(const bsc::SceneSet* ss, const int* idx, int n, float* out) {
+  const int k = (blockIdx.x * blockDim.x + threadIdx.x) >> 5;
+  const WCtx w{(int)(threadIdx.x & 31), 32, nullptr};
+  if (k >= n * GC_DIR) return;
+  float o[4];
+  const bool ok = gcand_dir(*ss, idx[k / GC_DIR], k % GC_DIR, o, w);
+  if (w.lane == 0) { out[(size_t)k * 5] = ok ? 1.f : 0.f; for (int a = 0; a < 4; ++a) out[(size_t)k * 5 + 1 + a] = o[a]; }
 }
 
 // 교사 정적 점유 표(짝 하나 = 워프 하나): 칸 성분·과제 물체·정적 상자를 미리 칠함(teacher.h tch_occ_static)
@@ -439,6 +450,73 @@ double pnp_feasibility(bsc::SceneBuild& b, bool quiet) {
     for (int k = 0; k < n; ++k) { ng += out[k].feas & 1; n5 += (out[k].feas >> 1) & 1; n6 += (out[k].feas >> 2) & 1; }
     std::fprintf(stderr, "pnp_feasibility: %d pick-and-place entries, B4 graspable %d, B5 placeable %d, B6 (grasp + place) %d — %.1f s\n", n, ng, n5, n6, secs);
   }
+  return secs;
+}
+
+void set_sl_tol(bsc::SceneBuild& b, int tol) {
+  b.host.sl_tol = tol;
+  bsc::SceneSet D;
+  CK(cudaMemcpy(&D, b.dev, sizeof D, cudaMemcpyDeviceToHost));
+  D.sl_tol = tol;
+  CK(cudaMemcpy(b.dev, &D, sizeof D, cudaMemcpyHostToDevice));
+}
+double pnp_stance_cands(bsc::SceneBuild& b, bool quiet) {
+  const auto t0 = std::chrono::steady_clock::now();
+  if (!b.host.has_feas || !b.host.toccix) { std::fprintf(stderr, "pnp_stance_cands: run pnp_feasibility first\n"); std::abort(); }
+  // 짝 번호 = tocc 짝 차례(물체 짝). 잡기가 되는 짝(B4 표 또는 B6)만 찾음
+  std::vector<int> all, idx, pos;
+  for (size_t k = 0; k < b.ent.size(); ++k) if (b.ent[k].list == bsc::L_OBJ) all.push_back((int)k);
+  const int n = (int)all.size();
+  for (int k = 0; k < n; ++k)
+    if (b.ent[all[k]].feas & (bsc::FE_GRASP | bsc::FE_PLACE6)) { idx.push_back(all[k]); pos.push_back(k); }
+  const int m = (int)idx.size();
+  std::vector<float> res((size_t)m * GC_DIR * 5, 0.f);
+  if (m) {
+    int* d_idx = nullptr;
+    float* d_out = nullptr;
+    CK(cudaMalloc(&d_idx, sizeof(int) * m));
+    CK(cudaMalloc(&d_out, sizeof(float) * res.size()));
+    CK(cudaMemcpy(d_idx, idx.data(), sizeof(int) * m, cudaMemcpyHostToDevice));
+    gcand_k<<<(m * GC_DIR * 32 + 127) / 128, 128>>>(b.dev, d_idx, m, d_out);
+    CK(cudaGetLastError());
+    CK(cudaMemcpy(res.data(), d_out, sizeof(float) * res.size(), cudaMemcpyDeviceToHost));
+    cudaFree(d_idx); cudaFree(d_out);
+  }
+  b.gcand.assign((size_t)(n ? n : 1) * GC_K * 4, 0.f);
+  b.gcn.assign(n ? n : 1, 0);
+  long long tot = 0;
+  auto bits = [](float v) { uint32_t u; std::memcpy(&u, &v, 4); return u; };
+  for (int q = 0; q < m; ++q) {
+    float* g = b.gcand.data() + (size_t)pos[q] * GC_K * 4;
+    int c = 0;
+    auto add = [&](const float* s) {
+      for (int a = 0; a < c; ++a)
+        if (bits(g[a * 4]) == bits(s[0]) && bits(g[a * 4 + 1]) == bits(s[1]) && bits(g[a * 4 + 2]) == bits(s[2]) && bits(g[a * 4 + 3]) == bits(s[3])) return;
+      for (int a = 0; a < 4; ++a) g[c * 4 + a] = s[a];
+      ++c;
+    };
+    for (int j = 0; j < GC_DIR; ++j) { const float* r = res.data() + ((size_t)q * GC_DIR + j) * 5; if (r[0] > 0.5f) add(r + 1); }
+    b.gcn[pos[q]] = c;
+    tot += c;
+  }
+  float* d_g = nullptr;
+  int* d_n = nullptr;
+  CK(cudaMalloc(&d_g, sizeof(float) * b.gcand.size()));
+  CK(cudaMalloc(&d_n, sizeof(int) * b.gcn.size()));
+  CK(cudaMemcpy(d_g, b.gcand.data(), sizeof(float) * b.gcand.size(), cudaMemcpyHostToDevice));
+  CK(cudaMemcpy(d_n, b.gcn.data(), sizeof(int) * b.gcn.size(), cudaMemcpyHostToDevice));
+  b.dbuf.push_back(d_g);
+  b.dbuf.push_back(d_n);
+  b.dev_bytes += sizeof(float) * b.gcand.size() + sizeof(int) * b.gcn.size();
+  b.host.gcand = b.gcand.data();
+  b.host.gcn = b.gcn.data();
+  bsc::SceneSet D;
+  CK(cudaMemcpy(&D, b.dev, sizeof D, cudaMemcpyDeviceToHost));
+  D.gcand = d_g;
+  D.gcn = d_n;
+  CK(cudaMemcpy(b.dev, &D, sizeof D, cudaMemcpyHostToDevice));
+  const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  if (!quiet) std::fprintf(stderr, "pnp_stance_cands: %d graspable objects, %lld stance candidates (%.2f per object) — %.1f s\n", m, tot, m ? (double)tot / m : 0.0, secs);
   return secs;
 }
 

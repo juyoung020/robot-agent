@@ -124,6 +124,11 @@ struct SceneSet {         // 장치 메모리에 하나(커널은 포인터로 �
   const uint64_t* tocc;   // 교사 정적 점유 표(env pnp_feasibility, 2026-10-06): 물체 짝마다 [좁은·넓은 판][WIN 행][낱말 2] = 칸 성분·과제 물체·정적 상자(물체·막는 물체 빼고).
                           // nullptr 이면 교사가 계획 때마다 칠함(같은 비트)
   const int* toccix;      // [nent] → tocc 안 짝 번호(물체 짝만, 나머지 −1)
+  // 잡기 서는 자리 후보(env pnp_stance_cands, 2026-10-06): 물체 짝마다 [GC_K][x, y, yaw, dp] + 수(tocc 와 같은 짝 번호). nullptr = 안 씀
+  // (상태 없는 교사가 물체가 처음 자리일 때 표 자리 하나 대신 로봇에서 가장 가까운 후보를 고름)
+  const float* gcand;
+  const int* gcn;
+  int sl_tol;             // 상태 없는 교사 단계 문턱: 0 = 정밀(상태 있는 교사와 같음), 1 = 배울 수 있는 값(teacher_sl.h sl_tol, env set_sl_tol)
 };
 
 // 커리큘럼(장치 값, 판 리셋 때 읽음 — 바꿔도 다시 컴파일·그래프 다시 잡기 없음)

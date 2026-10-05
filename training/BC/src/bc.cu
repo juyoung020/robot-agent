@@ -48,9 +48,11 @@ StudentNet student_net(const BcConfig& c) {
   s.L[SL_S1] = kLayers[L_S1];
   s.L[SL_S2] = kLayers[L_S2];
   s.L[SL_P1] = LayerDesc{vit::TOK_LD, IMG_D, IMG_D, vit::D, ACT_ELU, g2};
-  s.L[SL_A1] = LayerDesc{s.k1, 256, 272, X0_BIAS, ACT_ELU, g2, 1};   // fp8 1 = 몸통(G6 FP8 켤 수 있음): A1–A3, E2
-  s.L[SL_A2] = kLayers[L_A2];
-  s.L[SL_A3] = LayerDesc{272, 128, s.head ? E_IN : 144, 256, ACT_ELU, g2, 1};
+  // 몸통 폭 W(설정 mlp_w, 기본 256 = 예전 student-lite): A1 k1 → W, A2 W → W, A3 W → 128(머리 입력은 그대로)
+  const int W = c.mlp_w > 0 ? c.mlp_w : 256;
+  s.L[SL_A1] = LayerDesc{s.k1, W, W + 16, X0_BIAS, ACT_ELU, g2, 1};   // fp8 1 = 몸통(G6 FP8 켤 수 있음): A1–A3, E2
+  s.L[SL_A2] = W == 256 ? kLayers[L_A2] : LayerDesc{W + 16, W, W + 16, W, ACT_ELU, g2, 1};
+  s.L[SL_A3] = LayerDesc{W + 16, 128, s.head ? E_IN : 144, W, ACT_ELU, g2, 1};
   s.L[SL_A4] = kLayers[L_A4];
   s.L[SL_E1] = LayerDesc{E_IN, 256, 272, 128, ACT_ELU, g2};
   s.L[SL_E2] = LayerDesc{272, 256, 272, 256, ACT_ELU, g2, 1};
@@ -187,7 +189,10 @@ struct ActP {
 __global__ void __launch_bounds__(256) act_rec_k(ActP p) {
   const int i = blockIdx.x * 8 + threadIdx.x / 32, l = threadIdx.x % 32;
   if (i >= p.N) return;
-  const int actor = p.md->actor, rec = p.md->record;
+  // 누가 모나: actor 1(학생 그래프)이면 판마다 β 섞기 — 에피소드 번호 해시 < β(장치 값 pad0 = β·65536)면 그 판은 교사가 몲(DAgger β, 판 단위)
+  int actor = p.md->actor;
+  const int rec = p.md->record;
+  if (actor == 1 && p.md->pad0 > 0 && (int)(net::mix64((uint64_t)p.ep_uid[i] * 0x9E3779B97F4A7C15ull + 0xBE7Aull) & 0xffffu) < p.md->pad0) actor = 0;
   const uint32_t am = *p.amask;   // 커리큘럼 가림(장치 값): 꺼진 행동은 움직임·라벨 모두 0(= 팔 홈 자세)
   if (l < N_ACT) {
     const int k = l;
@@ -203,7 +208,7 @@ __global__ void __launch_bounds__(256) act_rec_k(ActP p) {
     p.dis[(size_t)p.t * p.N + i] = d;
   }
   if (!rec) return;
-  const long long slot = (p.dd->cursor + (long long)p.t * p.N + i) % p.cap;
+  const long long slot = ring_slot(p.dd->cursor + (long long)p.t * p.N + i, p.cap, p.dd->keep);
   for (int c = l; c < env::N_OBS; c += 32) p.d_obs[slot * env::N_OBS + c] = obs_rec(p.obs_col[(size_t)c * p.N + i]);
   if (p.d_top) {
     const uint4* src = reinterpret_cast<const uint4*>(p.top + i);
@@ -309,7 +314,7 @@ __global__ void __launch_bounds__(256) rollout_end_k(const float* dis, long long
   L.actor = md->actor;
   L.record = md->record;
   if (md->record) {
-    dd->cursor = (dd->cursor + (long long)N * T) % cap;
+    dd->cursor = ring_slot(dd->cursor + (long long)N * T, cap, dd->keep);
     const long long c = dd->count + (long long)N * T;
     dd->count = c < cap ? c : cap;
   }
@@ -360,6 +365,12 @@ __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
   long long idx = 0;
   if (r < g.MB) {
     idx = gather_index(g.seed, g.ts->iter, r, g.dd->count);
+    // 시연 몫(keep > 0, pad2 = 몫·65536): 행마다 그 확률로 지킨 시연 [0, keep) 에서, 아니면 그 뒤 [keep, count) 에서 — 자료가 커져도 시연 비율을 지킴
+    const long long kp = g.dd->keep, cnt = g.dd->count;
+    if (kp > 0 && g.dd->pad2 > 0 && cnt > kp) {
+      const uint64_t h = hash4(g.seed ^ 0xDE30ull, (uint64_t)g.ts->iter, (uint64_t)r, 0x44454d4full);
+      idx = (long long)(h & 0xffffu) < g.dd->pad2 ? (long long)((h >> 16) % (uint64_t)kp) : kp + (long long)((h >> 16) % (uint64_t)(cnt - kp));
+    }
     for (int c = lane; c < env::N_OBS; c += AS_L) so[rl][c] = bf2f(g.d_obs[idx * env::N_OBS + c]);
   }
   __syncthreads();
@@ -372,7 +383,7 @@ __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
   const uint32_t e0 = g.d_epi[idx];
   if (g.chunk) {
     const int h = lane;   // MAX_H = AS_L
-    const long long sh = (idx + (long long)h * g.N) % g.cap;
+    const long long sh = ring_slot(idx + (long long)h * g.N, g.cap, g.dd->keep);
     const bool ok = h < g.H && g.d_epi[sh] == e0 && (g.d_meta[sh] & 0xffffu) == ((g.d_meta[idx] & 0xffffu) + (uint32_t)h);
     for (int k = 0; k < N_LAB; ++k) g.chunk[((size_t)r * MAX_H + h) * N_LAB + k] = ok ? g.d_lab[sh * N_LAB + k] : 0.f;
     g.fm[(size_t)r * MAX_H + h] = ok ? 1.f : 0.f;
@@ -561,6 +572,10 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
   tab = alloc<unsigned long long>((size_t)3 * 2 * TAB_C * TAB_Q);
   dis = alloc<float>((size_t)T * N);
   bc_pend = alloc<int>(1);
+  sldiag = std::getenv("BC_SLDIAG") != nullptr && cfg.teacher_script == 2;
+  sld = alloc<unsigned long long>((size_t)env::SLD_N * (SLD_W + 3));
+  sld_prev = alloc<float>((size_t)2 * N);
+  { const char* e = std::getenv("BC_SLDBG"); sldbg = e ? std::atoi(e) : 0; }
   curr_d = alloc<gmap::MapCurr>(1);
   mode_d = alloc<Mode>(1);
   data_d = alloc<Data>(1);
@@ -584,6 +599,8 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
       std::string err;
       if (!bsc::build_scenes(bo, *scenes, &err) || !bsc::upload(*scenes, &err)) { std::fprintf(stderr, "bc: BEHAVIOR scene build failed: %s\n", err.c_str()); std::abort(); }
       if (cfg.b_feas || cfg.teacher_script) env::pnp_feasibility(*scenes);   // 잡기 가능 표(고르기 PF_FEAS·대본 교사 서는 자리)
+      if (cfg.b_gcand && cfg.teacher_script) env::pnp_stance_cands(*scenes);   // 잡기 서는 자리 후보(상태 없는 교사)
+      if (cfg.b_sltol) env::set_sl_tol(*scenes, cfg.b_sltol);   // 상태 없는 교사 단계 문턱
       dev_bytes += scenes->dev_bytes;
       if (b0.scene_mask == 0) b0.scene_mask = (1u << scenes->host.nsc) - 1u;
       if (b0.p1 == 0.f && b0.p2 == 0.f && b0.p4 + b0.p5 + b0.p6 == 0.f) { b0.p1 = bsc::kBCurrDefault.p1; b0.p2 = bsc::kBCurrDefault.p2; }   // 비율을 안 주면 env_verify 기본 섞음
@@ -669,7 +686,8 @@ Bc::Bc(const BcConfig& c) : cfg(c) {
     if (cfg.tf_mlp) tc.mlp = cfg.tf_mlp;
     if (cfg.tf_elayers) tc.e_layers = cfg.tf_elayers;
     tc.H = sn.H; tc.A = N_ACT; tc.Bmax = SM; tc.dw_chunk = cfg.dw_chunk; tc.seed = cfg.seed;
-    if (!sn.vision || !sn.head) { std::fprintf(stderr, "bc: arch 1 needs vision 1 and head 1 (flow)\n"); std::abort(); }
+    tc.img = sn.vision;   // 영상 없음(BEHAVIOR 판): 토큰 22(글 1 + 몸 3 + 물체 16 + 벽·방 2)
+    if (!sn.head) { std::fprintf(stderr, "bc: arch 1 needs head 1 (flow)\n"); std::abort(); }
     tf.init(tc);
     dev_bytes += tf.bytes;
     for (int g : {tfm::G_TXT, tfm::G_ARM, tfm::G_BASE, tfm::G_GOAL, tfm::G_WALL, tfm::G_ROOM}) tg[g] = alloc<uint16_t>((size_t)SM * tfm::kGrp[g].K);
@@ -865,7 +883,7 @@ static tfm::TfIn tf_in(Bc& b) {
 void Bc::student_trunk(int M, const RenderState* rs, const gmap::TopState* top, const uint8_t* hide) {
   auto W = [&](int l) { return Pb + sn.off[l]; };
   if (sn.arch == 1) {
-    vis_encode(rs, M, top, hide);
+    if (sn.vision) vis_encode(rs, M, top, hide);
     PackP pk{sb.x0, txt, sb.tid, M, {}};
     for (int g = 0; g < tfm::N_GRP; ++g) pk.g[g] = tg[g];
     tf_pack_k<<<M, 160>>>(pk);
@@ -1051,6 +1069,41 @@ int Bc::reseed(uint64_t env_seed) {
   return 0;
 }
 
+// 진단(BC_SLDIAG): 교사 단계(이 스텝 sl_act 가 정한 것)별 스텝 수·(움직인 행동 − 교사 라벨)² 칸별 합, 판이 끝난 스텝의 단계 × 결과
+__global__ void sldiag_k(const env::SlRec* rec, const float* tact, const float* meanS, const int* kind, const int* done, int N, const uint32_t* ep_uid, float* prev,
+                         unsigned long long* sld, int dbg, env::Soa es, const uint16_t* sx0) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= N || kind[i] < bsc::EK_B4) return;
+  if (dbg && i < dbg) {   // BC_SLDBG=n: 판 0..n-1 스텝마다 한 줄(진단만)
+    const env::SlRec& r = rec[i];
+    printf("sldbg %d ep %u mode %d xy %.3f %.3f yaw %.3f | st %.3f %.3f %.3f P %.3f %.3f ok %d | T v %.2f w %.2f q %.2f %.2f %.2f %.2f %.2f g %.2f | S v %.2f w %.2f q %.2f %.2f %.2f %.2f %.2f g %.2f\n",
+           i, ep_uid[i], r.mode, es.f[(size_t)env::F_X * N + i], es.f[(size_t)env::F_Y * N + i], es.f[(size_t)env::F_YAW * N + i], r.st.sx, r.st.sy, r.st.syaw, r.st.px,
+           r.st.py, r.st.ok, tact[i], tact[(size_t)N + i], tact[(size_t)2 * N + i], tact[(size_t)3 * N + i], tact[(size_t)4 * N + i], tact[(size_t)5 * N + i],
+           tact[(size_t)6 * N + i], tact[(size_t)7 * N + i], meanS[(size_t)i * N_ACT], meanS[(size_t)i * N_ACT + 1], meanS[(size_t)i * N_ACT + 2], meanS[(size_t)i * N_ACT + 3],
+           meanS[(size_t)i * N_ACT + 4], meanS[(size_t)i * N_ACT + 5], meanS[(size_t)i * N_ACT + 6], meanS[(size_t)i * N_ACT + 7]);
+    if (sx0) {   // 학생 X0 목표 칸 0(집을 것): 있음·꼴·앎·잃음, 위치 xyz·거리·sin·cos(정규화 값)
+      const uint16_t* g = sx0 + (size_t)i * net::X0_W + net::X0_GOAL;
+      printf("sldbg %d goal0 %.2f %.2f %.2f %.2f %.2f | pos %.3f %.3f %.3f d %.3f sin %.3f cos %.3f\n", i, net::bf2f(g[0]), net::bf2f(g[1]), net::bf2f(g[3]), net::bf2f(g[4]),
+             0.f, net::bf2f(g[5]), net::bf2f(g[6]), net::bf2f(g[7]), net::bf2f(g[8]), net::bf2f(g[9]), net::bf2f(g[10]));
+    }
+  }
+  {   // 교사 wz 라벨의 스텝 사이 |차|(같은 에피소드만) — 라벨이 떨리나
+    const float w = fminf(fmaxf(tact[(size_t)1 * N + i], -1.f), 1.f);
+    const int m0 = rec[i].mode >= 0 && rec[i].mode < env::SLD_N ? rec[i].mode : 0;
+    if (__float_as_uint(prev[2 * i + 1]) == ep_uid[i]) atomicAdd(sld + (size_t)m0 * SLD_W + 1 + N_LAB, (unsigned long long)(fabsf(w - prev[2 * i]) * 1e6f + 0.5f));
+    prev[2 * i] = w;
+    prev[2 * i + 1] = __uint_as_float(ep_uid[i]);
+  }
+  const int m = rec[i].mode >= 0 && rec[i].mode < env::SLD_N ? rec[i].mode : 0;
+  unsigned long long* q = sld + (size_t)m * SLD_W;
+  atomicAdd(q, 1ull);
+  for (int k = 0; k < N_LAB; ++k) {
+    const float d = meanS[(size_t)i * N_ACT + k] - fminf(fmaxf(tact[(size_t)k * N + i], -1.f), 1.f);
+    atomicAdd(q + 1 + k, (unsigned long long)(d * d * 1e6f + 0.5f));
+  }
+  const int d = done[i];
+  if (d != env::kRunning) atomicAdd(sld + (size_t)env::SLD_N * SLD_W + (size_t)(d == env::kSuccess ? 0 : d == env::kCollision ? 1 : 2) * env::SLD_N + m, 1ull);
+}
 // 대본 교사 행동(열 배치 act[k][N]) → 교사 라벨 행([i][8]), 잡기 물리 판(B4–B6)만
 __global__ void script_label_k(const float* tact, const int* kind, int N, float* mean) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1095,6 +1148,8 @@ void Bc::rollout_step(int t, bool student) {
   act_rec_k<<<(N + 7) / 8, 256>>>(p);
   ground_k<<<(N + 127) / 128, 128>>>(env->soa(), scenes ? scenes->dev : nullptr, gnd);
   env->step(act_env, obs_n, rew, done);
+  if (sldiag && env->slbuf().rec)
+    sldiag_k<<<(N + 127) / 128, 128>>>(env->slbuf().rec, sact, meanS, env->soa().iv + (size_t)env::I_B_KIND * N, done, N, ep_uid, sld_prev, sld, sldbg, env->soa(), meanS == nt.mean ? nullptr : sb.x0);
   epstat_k<<<(N + 127) / 128, 128>>>(done, met_init, gnd, env->soa().iv + (size_t)env::I_B_LKIND * N, N, cur_len, it_stat, it_out, tab);
   map->step(env->soa(), 0, 0, 0, tok->at(t + 1), curr_d);
   BCK(cudaGetLastError());
@@ -1208,7 +1263,7 @@ int bc_reset_env(void* h, uint64_t env_seed) {
 }
 int bc_set_mode(void* h, int32_t actor, int32_t record) {
   auto* b = static_cast<Bc*>(h);
-  const bc::Mode m{actor, record, 0, 0};
+  const bc::Mode m{actor, record, actor == 1 ? b->beta_q : 0, 0};
   b->set_dev(b->mode_d, &m, sizeof m);
   b->host_actor = actor;
   return 0;
@@ -1217,6 +1272,23 @@ int bc_set_map_curriculum(void* h, float p0, float p1, int32_t kmin, int32_t kma
   auto* b = static_cast<Bc*>(h);
   const gmap::MapCurr c{p0, p1, kmin, kmax, reveal_r, b->cfg.map_nav_k};
   b->set_dev(b->curr_d, &c, sizeof c);
+  return 0;
+}
+int bc_set_keep(void* h, int64_t keep) {
+  auto* b = static_cast<Bc*>(h);
+  const long long k = keep < 0 ? 0 : keep >= b->cap ? 0 : keep;   // 고리가 이미 다 찼으면(시연이 cap 넘음) 지키지 않음
+  b->set_dev(reinterpret_cast<uint8_t*>(b->data_d) + offsetof(bc::Data, keep), &k, sizeof k);
+  return k > 0 ? 0 : -1;
+}
+int bc_set_demo_frac(void* h, float frac) {
+  auto* b = static_cast<Bc*>(h);
+  const long long q = frac <= 0.f ? 0 : frac >= 1.f ? 65536 : (long long)(frac * 65536.f + 0.5f);
+  b->set_dev(reinterpret_cast<uint8_t*>(b->data_d) + offsetof(bc::Data, pad2), &q, sizeof q);
+  return 0;
+}
+int bc_set_beta(void* h, float beta) {
+  auto* b = static_cast<Bc*>(h);
+  b->beta_q = beta <= 0.f ? 0 : beta >= 1.f ? 65536 : (int)(beta * 65536.f + 0.5f);
   return 0;
 }
 int bc_set_lr(void* h, float lr) {
@@ -1304,6 +1376,30 @@ int64_t bc_device_bytes(void* h) {
   return (int64_t)(b->dev_bytes + b->map->bytes() + b->tok->bytes() + sizeof(float) * (env::NUM_F + 3) * (size_t)b->N);
 }
 int bc_sync(void*) { BCK(cudaDeviceSynchronize()); return 0; }
+// 진단 표(BC_SLDIAG) 찍고 지우기 — 동기
+int bc_sldiag(void* h, const char* tag) {
+  auto* b = static_cast<Bc*>(h);
+  if (!b->sldiag) return 0;
+  const int M = env::SLD_N;
+  std::vector<unsigned long long> v((size_t)M * (bc::SLD_W + 3));
+  BCK(cudaDeviceSynchronize());
+  BCK(cudaMemcpy(v.data(), b->sld, v.size() * 8, cudaMemcpyDeviceToHost));
+  BCK(cudaMemset(b->sld, 0, v.size() * 8));
+  static const char* nm[] = {"none", "fail", "nav", "app0", "rot", "armq0", "drive", "fine", "wait", "armg", "close", "reopen", "lift", "fold", "back", "armp", "open",
+                             "retreat", "done", "explore", "failarm", "backup"};
+  unsigned long long tot = 0;
+  for (int m = 0; m < M; ++m) tot += v[(size_t)m * bc::SLD_W];
+  std::fprintf(stderr, "sldiag %s: steps %llu\n  mode      frac   mse[vx wz j1 j2 j3 j4 j5 g]   |dwz_t|   end: succ coll tout\n", tag, tot);
+  const unsigned long long* e = v.data() + (size_t)M * bc::SLD_W;
+  for (int m = 0; m < M; ++m) {
+    const unsigned long long n = v[(size_t)m * bc::SLD_W];
+    if (!n && !e[m] && !e[M + m] && !e[2 * M + m]) continue;
+    std::fprintf(stderr, "  %-8s %6.3f  ", m < (int)(sizeof nm / sizeof nm[0]) ? nm[m] : "?", tot ? (double)n / tot : 0.0);
+    for (int k = 0; k < bc::N_LAB + 1; ++k) std::fprintf(stderr, " %.3f", n ? (double)v[(size_t)m * bc::SLD_W + 1 + k] * 1e-6 / n : 0.0);
+    std::fprintf(stderr, "   %llu %llu %llu\n", e[m], e[M + m], e[2 * M + m]);
+  }
+  return 1;
+}
 int bc_set_act_mask(void* h, uint32_t mask) {
   auto* b = static_cast<Bc*>(h);
   b->set_dev(b->amask_d, &mask, sizeof mask);

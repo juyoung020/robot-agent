@@ -29,9 +29,12 @@ namespace bcr { struct Renderer; }
 namespace bc {
 
 // 장치 값(그래프가 읽음): 누가 움직이나·기록하나
-struct Mode { int actor, record, pad0, pad1; };
+struct Mode { int actor, record, pad0, pad1; };   // pad0 = β·65536(actor 1 일 때 판마다 교사가 몰 확률)
+constexpr int SLD_W = 2 + N_LAB;   // 진단 표 한 줄(스텝 수 + 행동 8 칸 제곱 오차 + 교사 wz 라벨 스텝 사이 |차|)
 // 장치 값: 자료 버퍼 쓰기 자리·표본 수·롤아웃 번호
-struct Data { long long cursor, count, rollouts, pad; };
+struct Data { long long cursor, count, rollouts, pad, keep, pad2; };   // keep: 앞 keep 표본(교사 시연)은 덮어쓰지 않음 — 고리는 [keep, cap) 에서 돎. pad2 = 미니배치의 시연 몫 × 65536(0 = 균등)
+// 고리 자리: x < cap 이면 그대로, 넘으면 [keep, cap) 안에서 돎(keep 0 이면 예전 x % cap — x < 2·cap 일 때)
+NDEV long long ring_slot(long long x, long long cap, long long keep) { return x < cap ? x : keep + (x - cap) % (cap - keep); }
 
 // 교사 신경망(정책 사슬 A 와 칸 MLP)의 작업 버퍼(행 M)
 struct NetBufs {
@@ -155,6 +158,7 @@ struct Bc {
   gmap::MapCurr* curr_d = nullptr;
   Mode* mode_d = nullptr;
   Data* data_d = nullptr;
+  int beta_q = 0;             // DAgger β(판 단위로 교사가 몰 확률) × 65536 — 다음 bc_set_mode(actor 1) 부터 Mode::pad0
   int host_actor = 0;         // 호스트가 마지막으로 정한 actor(어느 롤아웃 그래프를 띄울지)
   int cur_t = 0;              // 롤아웃 스텝(잡을 때 고정되는 호스트 값 — arch 1 추론 잡음 열쇠)
   // 비동기 장치 값 바꾸기용 고정 호스트 링(칸마다 이벤트)
@@ -207,6 +211,12 @@ struct Bc {
                                //                  4 P1 dX(영상 칸)의 ELU' 빠뜨림, 5 E1 → 몸통 dX 의 ELU' 빠뜨림
   bool keep_slot_bufs = false; // 검증: 칸 MLP 뒤 묶음이 dZ S2·S1 도 전역에
   bool vis_skip = false;       // 측정용(bench 겹침 시험): vis_encode 를 건너뜀
+  // 진단(BC_SLDIAG=1, 상태 없는 교사만): 스텝마다 교사 단계별 수·행동 칸별 (학생 − 교사)² 합(고정 소수 1e-6, 정수 원자 — 순서 무관),
+  // 판 끝 결과(성공·충돌·시간 초과) × 끝 스텝 단계. 그래프 안 커널 하나, 읽기는 bc_sldiag(동기 — 진단만)
+  unsigned long long* sld = nullptr;   // [SLD_N][1 + 8] + [3][SLD_N]
+  bool sldiag = false;
+  int sldbg = 0;                       // BC_SLDBG=n: 판 0..n-1 스텝마다 printf(진단)
+  float* sld_prev = nullptr;           // [N][2] 지난 스텝 교사 wz 라벨, 그 판 에피소드 번호
 
   explicit Bc(const BcConfig& c);
   ~Bc();

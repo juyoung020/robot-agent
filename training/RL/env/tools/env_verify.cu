@@ -42,7 +42,8 @@ static const char* field_name(int k) {
 
 int main(int argc, char** argv) {
   int N = 2048, T = 400, stage = 1;
-  bool negative = false, arm = false, arm_zero = false, follow = false, teach = false, feas = false, neg_teach = false, tsl = false, sl_fresh = false;
+  int sltol = 0;
+  bool gcand = false, negative = false, arm = false, arm_zero = false, follow = false, teach = false, feas = false, neg_teach = false, tsl = false, sl_fresh = false;
   int pos = 0, nbug = 1;
   bsc::BuildOpt bo;
   bsc::BCurr cu = bsc::kBCurrDefault;
@@ -59,6 +60,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--sl-fresh")) { teach = true; tsl = true; sl_fresh = true; }   // CPU 는 스텝마다 캐시를 비우고 물음 → 라벨이 상태만의 함수인지(GPU 는 캐시 그대로)
     else if (!std::strcmp(argv[a], "--negative-teacher-sl")) { negative = true; neg_teach = true; teach = true; tsl = true; nbug = 0; }
     else if (!std::strcmp(argv[a], "--feas")) feas = true;
+    else if (!std::strcmp(argv[a], "--gcand")) gcand = true;
+    else if (!std::strcmp(argv[a], "--sltol")) sltol = 1;   // 상태 없는 교사 배울 수 있는 단계 문턱   // 잡기 서는 자리 후보(pnp_stance_cands) — 상태 없는 교사가 가까운 것을 고름
     else if (!std::strcmp(argv[a], "--negative-teacher")) { negative = true; neg_teach = true; teach = true; nbug = 0; }
     else if (!std::strcmp(argv[a], "--scenes") && a + 1 < argc) bo.dir = argv[++a];
     else if (!std::strcmp(argv[a], "--mix") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &cu.p1, &cu.p2);
@@ -82,7 +85,7 @@ int main(int argc, char** argv) {
   if (stage >= kStageBeh) {
     std::string err;
     if (!bsc::build_scenes(bo, sb, &err) || !bsc::upload(sb, &err)) { std::printf("scene build failed: %s\n", err.c_str()); return 1; }
-    if (feas) { pnp_feasibility(sb); cu.phys |= bsc::PF_FEAS; }
+    if (feas) { pnp_feasibility(sb); cu.phys |= bsc::PF_FEAS; if (gcand) pnp_stance_cands(sb); if (sltol) set_sl_tol(sb, sltol); }
     std::printf("BEHAVIOR scenes: %d, entries %d, device %.1f MB; mix B1 %.2f B2 %.2f B3 %.2f strict %d split %d; point goals p_point %.2f p_goto %.2f (instr blocks %d)\n",
                 sb.host.nsc, sb.host.nent, sb.dev_bytes / 1e6, cu.p1, cu.p2, 1.f - cu.p1 - cu.p2, cu.strict, cu.split, cu.p_point, cu.p_goto, sb.host.iblocks);
   }
