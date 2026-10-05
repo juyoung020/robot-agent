@@ -169,6 +169,7 @@ struct sm_ctx {
   JsonCache jcache;                   // scene.json 노드 조각(저장 스레드 하나 — save_mu)
   std::mutex save_mu;
   std::unordered_map<uint32_t, std::string> obj_meta;
+  std::string obj_kv;                 // sm_set_obj_params 로 준 매개변수(sm_set_robot 뒤에 다시 씀)
   // objprob(sm_set_object_model): 다음 영상의 검출 임베딩, 마지막 keyframe 의 통째 다시 담기 요청, 저장한 벡터 version
   std::vector<float> det_emb;
   int det_emb_n = -1, det_emb_dim = 0;
@@ -504,6 +505,7 @@ int sm_set_robot(sm_ctx* c, int32_t robot) {
     op.objprob = c->oparams.objprob;        // sm_set_object_model 도 둔다
     op.insp = c->oparams.insp;              // sm_set_inspect 도 둔다
     robotParams(robot, &sp, &op);
+    ObjectMap::applyParams(&op, c->obj_kv.c_str());   // sm_set_obj_params 도 둔다
     c->params = sp;
     c->oparams = op;
   }
@@ -1892,6 +1894,16 @@ int sm_snap_place_path(const sm_snapshot_t* s, const double from[2], const doubl
   for (int i = 0; i < int(path.size()) && i < cap && ids; ++i) ids[i] = path[i];
   if (length) *length = dist[g0 - a];
   return int(path.size());
+}
+
+int sm_set_obj_params(sm_ctx* c, const char* kv) {
+  if (!c) return -1;
+  std::lock_guard<std::mutex> g(c->mu);
+  if (kv && *kv) c->obj_kv += (c->obj_kv.empty() ? "" : ",") + std::string(kv);
+  const int bad = ObjectMap::applyParams(&c->oparams, kv);
+  ObjectMap::applyParams(&c->om.paramsMut(), kv);
+  ObjectMap::envOverrides(&c->om.paramsMut());   // 진단 변수가 이김(ObjectMap 을 새로 만들 때와 같은 순서)
+  return bad ? -2 : 0;
 }
 
 int sm_set_inspect(sm_ctx* c, int32_t on) {

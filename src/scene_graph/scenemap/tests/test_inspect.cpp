@@ -1,6 +1,6 @@
 // 살펴본 정도(inspect.hpp) 시험: 시점 세기(0.3 m·15° 안은 같은 시점, 한도), 가장 가까운 거리, 윗면 칸(광선 추적 합성 깊이 —
 // 위에서 본 탁자 = 거의 다, 낮은 카메라 = 앞 줄만·가까우면 앞 모서리에 가림, 가리는 벽 = 0, 2 m 밖 = 0), 상자 자람·합치기의 칸 옮김,
-// ObjectMap 통합(켜도 물체·사건이 꺼짐과 같음, 다가가며 거리·시점·윗면), CPU 시간
+// ObjectMap 통합(켜도 물체·사건이 꺼짐과 같음, 다가가며 거리·시점·윗면), CPU 시간. 덤: 물체 지도 매개변수 문자열(applyParams)
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -269,6 +269,13 @@ int main() {
     const double us = (ms() - t0) * 1000 / 100;
     std::printf("inspTop 100 objects: %.1f us/keyframe\n", us);
     CHECK(us < 2000, "slow %.1f us", us);
+  }
+  // 8. 매개변수 문자열(sm_set_obj_params·엔진별 매개변수 파일이 쓰는 길): 로지스틱·κ·문턱, 모르는 이름 셈
+  {
+    ObjParams q;
+    const int nb = ObjectMap::applyParams(&q, "ap_w0=-1.5,ap_wm7=2.25,kap_k0=1000,kap_d0=8,ap_same_p=0.55,inspect=1,bogus=3");
+    CHECK(nb == 1 && q.ap.w[0] == -1.5 && q.ap.wm[7] == 2.25 && q.kap.k0 == 1000 && q.kap.d0 == 8 && q.ap.same_p == 0.55 && q.insp.on,
+          "applyParams bad %d", nb);
   }
   std::printf(bad ? "FAILED %d\n" : "ok\n", bad);
   return bad ? 1 : 0;

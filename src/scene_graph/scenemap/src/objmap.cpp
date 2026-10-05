@@ -151,6 +151,11 @@ bool inSelfCaps(const Capsule* caps, int n, double pad, double px, double py, do
 void ObjectMap::envOverrides(ObjParams* p) {
   const char* e = std::getenv("SM_OBJ_PARAMS");
   if (!e || !*e) return;
+  applyParams(p, e, true);
+}
+
+int ObjectMap::applyParams(ObjParams* p, const char* e, bool log) {
+  if (!e || !*e) return 0;
   struct K { const char* n; double* d; int* i; bool* b; };
   const K keys[] = {{"floor_h", &p->floor_h, nullptr, nullptr},          {"name_vote", nullptr, nullptr, &p->name_vote},
                     {"name_share", &p->name_share, nullptr, nullptr},    {"name_switch", &p->name_switch, nullptr, nullptr},
@@ -193,7 +198,18 @@ void ObjectMap::envOverrides(ObjParams* p) {
                     {"ap_wallhug_w", &p->ap.wallhug_w, nullptr, nullptr},
                     {"ap_struct_look_block", nullptr, nullptr, &p->ap.struct_look_block},  {"ap_flat_max_w", &p->ap.flat_max_w, nullptr, nullptr},
                     {"ap_tall_h", &p->ap.tall_h, nullptr, nullptr},  {"ap_tall_w", &p->ap.tall_w, nullptr, nullptr},  {"ap_tall_ps", &p->ap.tall_ps, nullptr, nullptr},
-                    {"ap_tall_w_any", &p->ap.tall_w_any, nullptr, nullptr},  {"ap_big_vinl", &p->ap.big_vinl, nullptr, nullptr},  {"ap_so_dw_min", &p->ap.so_dw_min, nullptr, nullptr},  {"ap_so_hide_k", &p->ap.so_hide_k, nullptr, nullptr}};
+                    {"ap_tall_w_any", &p->ap.tall_w_any, nullptr, nullptr},  {"ap_big_vinl", &p->ap.big_vinl, nullptr, nullptr},  {"ap_so_dw_min", &p->ap.so_dw_min, nullptr, nullptr},  {"ap_so_hide_k", &p->ap.so_hide_k, nullptr, nullptr},
+                    // 같은 것 로지스틱 가중치(관측 ↔ 물체 ap_w0..7, 물체 ↔ 물체 ap_wm0..7 — ApParams::w·wm 순서)·κ(KappaParams) — 엔진별 매개변수 파일
+                    {"ap_w0", &p->ap.w[0], nullptr, nullptr}, {"ap_w1", &p->ap.w[1], nullptr, nullptr}, {"ap_w2", &p->ap.w[2], nullptr, nullptr},
+                    {"ap_w3", &p->ap.w[3], nullptr, nullptr}, {"ap_w4", &p->ap.w[4], nullptr, nullptr}, {"ap_w5", &p->ap.w[5], nullptr, nullptr},
+                    {"ap_w6", &p->ap.w[6], nullptr, nullptr}, {"ap_w7", &p->ap.w[7], nullptr, nullptr},
+                    {"ap_wm0", &p->ap.wm[0], nullptr, nullptr}, {"ap_wm1", &p->ap.wm[1], nullptr, nullptr}, {"ap_wm2", &p->ap.wm[2], nullptr, nullptr},
+                    {"ap_wm3", &p->ap.wm[3], nullptr, nullptr}, {"ap_wm4", &p->ap.wm[4], nullptr, nullptr}, {"ap_wm5", &p->ap.wm[5], nullptr, nullptr},
+                    {"ap_wm6", &p->ap.wm[6], nullptr, nullptr}, {"ap_wm7", &p->ap.wm[7], nullptr, nullptr},
+                    {"ap_cos0", &p->ap.cos0, nullptr, nullptr},  {"ap_bridge_drop", nullptr, nullptr, &p->ap.bridge_drop},
+                    {"kap_k0", &p->kap.k0, nullptr, nullptr}, {"kap_s0", &p->kap.s0, nullptr, nullptr}, {"kap_trunc", &p->kap.trunc, nullptr, nullptr},
+                    {"kap_d0", &p->kap.d0, nullptr, nullptr}};
+  int n_bad = 0;
   std::string s(e);
   size_t a = 0;
   while (a < s.size()) {
@@ -213,8 +229,10 @@ void ObjectMap::envOverrides(ObjParams* p) {
         if (x.b) *x.b = v != 0;
         ok = true;
       }
-    std::fprintf(stderr, "[objmap] SM_OBJ_PARAMS %s = %g%s\n", k.c_str(), v, ok ? "" : " (unknown key)");
+    if (!ok) ++n_bad;
+    if (log || !ok) std::fprintf(stderr, "[objmap] %s %s = %g%s\n", log ? "SM_OBJ_PARAMS" : "params", k.c_str(), v, ok ? "" : " (unknown key)");
   }
+  return n_bad;
 }
 
 double ObjectMap::nameShare(const MapObject& m, int cls) {
@@ -875,6 +893,7 @@ void ObjectMap::update(const ObjFrame& f) {
       for (int i = 0; i < nc; i += stp) sp.insert(sp.end(), {o.cxyz[3 * i], o.cxyz[3 * i + 1], o.cxyz[3 * i + 2]});
       double best = A.same_p;
       bool blocked = false;
+      int n_same = 0;   // P ≥ same_p 인 물체 수(둘 이상이면 두 물체에 걸친 덜 나뉜 마스크 — bridge_drop)
       for (int b = 0; b < int(objs_.size()); ++b) {
         MapObject& m = objs_[b];
         if (m.held_by >= 0 || !m.ap) continue;
@@ -896,8 +915,10 @@ void ObjectMap::update(const ObjFrame& f) {
         const ApPair q = pairFeatures(o.lo, o.hi, o.pos, sp.data(), int(sp.size() / 3), m.lo, m.hi, m.pos, apContactIdx(m), cs, A);
         if (q.f[0] >= 0.3 || q.p >= 0.2) touched[b] = 1;
         if (blk) { blocked = blocked || q.p >= A.same_p; continue; }
+        if (q.p >= A.same_p) ++n_same;
         if (q.p > best) { best = q.p; obs_to[a] = b; }
       }
+      if (A.bridge_drop && n_same >= 2 && obs_to[a] >= 0) { obs_to[a] = -2; ++aps_.n_bridge; continue; }   // 버림(두 물체 모두 '보임')
       if (obs_to[a] >= 0) { obj_hit[obs_to[a]] = 1; ++aps_.n_assoc; }
       else if (blocked) { obs_to[a] = -2; ++aps_.n_blocked; }   // 버림
     }

@@ -429,6 +429,11 @@ int sm_observe_object_name(sm_ctx*, uint32_t id, const char* name, float log_lr)
  * [9] 구조물 덩어리 지움 [10] 다시 담기 요청 [11] 다시 담기 받음 [12] 벽 너머(창 밖) 관측 버림 [13] 문·창·기둥 이름인데 그 모양보다 큰 벽 조각 [14] 벽 선 없이 높고 넓은 세운 평면(벽) [15] 벽 같은 조각·납작한 이름 크기 밖이라 버린 관측 */
 int sm_get_objprob_stats(sm_ctx*, int64_t out[16]);
 
+/* 물체 지도 매개변수 "key=val,key=val"(이름은 SM_OBJ_PARAMS 와 같음 — objmap.cpp applyParams: objprob 의 ap_*·로지스틱 ap_w0..7·ap_wm0..7·
+ * κ kap_k0·kap_s0·kap_trunc·kap_d0 …). 엔진별 매개변수 파일(realbag objprob_params/)을 싣는 길. sm_reset·sm_set_robot 뒤에도 남고(쌓임),
+ * 환경 변수 SM_OBJ_PARAMS 가 그 위에 이긴다. 판 중간에 부르면 다음 keyframe 부터. 0 성공, -2 모르는 이름 있음(나머지는 씀) */
+int sm_set_obj_params(sm_ctx*, const char* kv);
+
 /* ---- 살펴본 정도(inspection)(10-05, scenemap/inspect.hpp — README "살펴본 정도") ----
  * 물체마다: closest_view_m = 그 물체에 붙은 관측의 카메라 ↔ 관측 중심 거리 최소(m, -1 = 없음), n_views = 서로 다른 keyframe
  * 시점 수(0.3 m·15° 안은 같은 시점, 32 에서 멈춤), top_seen = 윗면 4 × 4 칸 중 윗면 위 5 cm 점이 2.0 m·시선–연직 80° 안에서

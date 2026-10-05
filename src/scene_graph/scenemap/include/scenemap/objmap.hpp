@@ -149,6 +149,7 @@ struct ApStats {
   long n_blocked = 0;     // 벽 같은 조각·납작한 이름 크기 밖이라 안 붙이고 버린 관측
   long n_wall_tall = 0;   // 벽 선 없이 높고 넓은 세운 평면이라 벽
   long n_so_big = 0;   // 문·창·기둥 이름 조각이지만 그 모양보다 커서 보호 안 함
+  long n_bridge = 0;   // 두 물체 이상에 P ≥ same_p 인 관측(덜 나뉜 마스크)이라 버림(ApParams::bridge_drop)
 };
 
 // objprob 통째 다시 담기 요청(검출 마스크 격자와 같은 배치의 마스크)
@@ -248,6 +249,8 @@ class ObjectMap {
   // 진단: 환경 변수 SM_OBJ_PARAMS="key=val,key=val"(바뀜 판정 매개변수 이름 — objmap.cpp kEnvKeys)이 있으면 덮어씀
   explicit ObjectMap(const ObjParams& p = {}) : p_(p) { envOverrides(&p_); }
   static void envOverrides(ObjParams* p);
+  // "key=val,key=val"(SM_OBJ_PARAMS 와 같은 이름)을 p 에 씀. 모르는 이름 수를 돌려줌(stderr 에 알림). log = 이름마다 한 줄
+  static int applyParams(ObjParams* p, const char* kv, bool log = false);
   void update(const ObjFrame& f);
   // 팔 끝·그리퍼만 바뀐 스텝(영상 없음)에도 들고 있는 물체를 따라가게
   void updateHands(double stamp, const double eef[2][3], const float grip[2], double base_yaw);
