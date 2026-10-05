@@ -7,7 +7,7 @@
 
 | 부품 | 선택 | 한 줄 이유 | 상태 |
 |---|---|---|---|
-| 위치 추정 (SLAM) | **실기는 아직 안 정함** — 후보: Cartographer(2D 라이다) / scenemap `slam2d`(바퀴 오도메트리 + 깊이 스캔 맞추기). 지금 시뮬·실제 bag 에서 도는 것은 `slam2d` | 리모에서 가볍게, 물체 높이는 깊이로 앎 | 미정 — 로봇을 받으면 둘을 같은 기록으로 비교 |
+| 위치 추정 (SLAM) | **Cartographer (2D 라이다)** | 리모 공식 데모 쪽이고 가볍다. 물체 높이는 깊이로 앎 | 결정 (09-30). 아직 우리 파이프라인에 안 붙음 — 지금 시뮬·bag 은 임시로 scenemap `slam2d` |
 | 물체 분할 | **ObjectSAM** — FastSAM-s 에서 증류한 YOLO26n 학생(물체만, 입력 416) | FastSAM-s 만큼 많이 잡으면서 벽·천장·바닥은 안 자르고, 계산은 약 1/10 | 결정 (10-05), 기본 엔진 |
 | 물체 이름·임베딩 | **SigLIP 2 B/32** (우리 C++/TensorRT 포팅) — 공간 하나 | 실제 로봇·학습·찾기가 같은 벡터 | 결정. 학습·이름표를 이 공간으로 옮기는 중 |
 | 물체 지도 기억 | **scenemap 확률 모드 (`objprob`)** — 직접 만듦 | 조각을 이름 없이 3D·벡터로 합치고, 이름·위치를 확률로 | 결정, 기본 켬 |
@@ -36,18 +36,16 @@
 
 ## 부품별 자세히
 
-### 위치 추정 (SLAM) — 실기는 미정 (Cartographer / `slam2d`)
+### 위치 추정 (SLAM) — Cartographer (2D 라이다)
 
-- **지금 도는 것**: scenemap 안의 2D SLAM `slam2d`(`src/scene_graph/scenemap/src/slam2d.cpp`, 바퀴 오도메트리 + 깊이 카메라 스캔 맞추기). 시뮬과 실제 공개 bag(OpenLORIS)에서 쓰고 있다. 지도 자세는 `SGRT_POSE`(`slam`·`odom`·`gt`), 성능은 늘 `slam` 으로 잰다.
-- **처음 계획**은 리모 공식 데모 쪽인 **Cartographer(2D 라이다)** 였다. 저장소에는 아직 없다.
-- **실기에서 무엇을 쓸지는 정하지 않았다.** 리모를 받으면 같은 기록으로 둘을 비교한다. 라이다를 쓰는 Cartographer 가 깊이 카메라만 쓰는 `slam2d` 보다 시야가 넓다는 장점이 있고, `slam2d` 는 지도 기억과 한 프로그램이라 붙이기 쉽다.
+- **결정**: Cartographer(2D 라이다)로 방 지도를 만들고, 평소에는 그 위에서 위치만 추정한다. 리모 공식 데모 쪽이고 Jetson 에서 가볍다.
 - 물체 위치는 SLAM 이 아니라 `로봇 자세 + 카메라 장착 위치 + 마스크의 깊이 점`으로 계산한다. 무거운 3D SLAM 은 필요 없다.
+- **지금 상태**: Cartographer 는 아직 우리 파이프라인에 붙지 않았다. 시뮬과 공개 bag 시험은 그동안 scenemap 안에 만든 임시 2D SLAM `slam2d`(바퀴 오도메트리 + 깊이 카메라 스캔 맞추기)로 돌았다. 이건 결정이 아니라 시뮬을 먼저 돌리려고 들어간 것이다 — Cartographer 로 바꿔야 한다(scenemap 은 외부 자세를 받을 수 있다: `SGRT_POSE`).
 
-| 후보 | 장점 | 단점 |
-|---|---|---|
-| Cartographer (2D 라이다) | 리모 공식 데모, 라이다라 360° | 저장소에 없음, 지도 기억과 따로 돌아 연결 필요 |
-| scenemap `slam2d` | 이미 돌고 있음, 지도 기억과 한 몸 | 깊이 카메라 시야만, 실제 bag 에서 자세 떠밀림 4–22 cm |
-| RTAB-Map (3D) | — | Jetson Nano 에 무거움 |
+| 다른 후보 | 안 고른 이유 |
+|---|---|
+| RTAB-Map (3D) | Jetson Nano 에 무거움 |
+| slam_toolbox (2D) | 리모 공식 데모는 Cartographer 쪽 |
 
 잴 것: 리모 CPU·메모리, 한 바퀴 돌고 왔을 때 어긋난 거리(ATE).
 
@@ -189,4 +187,4 @@
 | 2026-10-03 | LLM = 수업 KAU API. 분할 YOLO-seg → FastSAM-s + SigLIP 2(SAM + CLIP 구조). 물체 찾기(임베딩 + 이름)·방 나누기 절 추가. 시뮬 = 2026 BEHAVIOR Challenge | 물체마다 임베딩이 필요, FastSAM 은 클래스가 없어 방 이름에 SigLIP 2 이름 사용 |
 | 2026-10-04 | VLA π0.5 버림 → 우리 VLA. SLAM 은 시뮬에서 자체 `slam2d` | 지도 기억을 넣을 자리, 리모 크기 |
 | 2026-10-05 | 분할 비교(FastSAM-s / YOLO26s-seg / YOLOE) 뒤 FastSAM-s + scenemap 확률 모드로 방향, 그다음 **ObjectSAM(YOLO26n 학생)** 으로 결정·기본 엔진. DA 를 이름 없는 확률 DA 로. 찾기를 에이전트·RecallVLA 공용 색인으로. VLA = RecallVLA | FastSAM 조각·벽 문제, Jetson 에 맞는 계산량 |
-| 2026-10-06 | 임베딩 공간을 SigLIP 2 하나로(옛 PE-L 투영 경로 버림). 학습 중 인지 = 검출 흉내 + GPU 확률 모드. 판정·합치기 계산식 공용 헤더. 정답 지도 학습 금지·새 커리큘럼. 시뮬은 BEHAVIOR-1K 장면 + GPU 환경(대회 저장소 분리). SLAM 은 실기 미정으로 다시 적음(지금 도는 것은 `slam2d`). sgview 를 학습 리플레이에도 | 학습과 실제가 같은 입력, 저장소 하나 |
+| 2026-10-06 | 임베딩 공간을 SigLIP 2 하나로(옛 PE-L 투영 경로 버림). 학습 중 인지 = 검출 흉내 + GPU 확률 모드. 판정·합치기 계산식 공용 헤더. 정답 지도 학습 금지·새 커리큘럼. 시뮬은 BEHAVIOR-1K 장면 + GPU 환경(대회 저장소 분리). SLAM 은 Cartographer 그대로(지금 도는 `slam2d` 는 임시, 바꿀 것). sgview 를 학습 리플레이에도 | 학습과 실제가 같은 입력, 저장소 하나 |
