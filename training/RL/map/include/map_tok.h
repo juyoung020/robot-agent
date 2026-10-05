@@ -742,9 +742,11 @@ DEV void make_tokens_n(const MapCore& m, const Slot* ob, const uint32_t* occ, co
       v[T_SCORE] = f2h(S.score);
       v[T_NOBS] = f2h((float)S.n_obs);
       v[T_SRC] = live ? (uint16_t)0x3c00u : (uint16_t)0u;
-      {  // 마지막 본 뒤 믿는 오도메트리 이동·회전에 오도메트리 잡음 규칙을 곱함(가정: σ = odo_t·Δs + (odo_rr·Δθ + odo_rt·Δs)·거리)
+      {  // 마지막 본 뒤 믿는 이동·회전에 Cartographer 걸음 오차(drift_params.h): σ = √(앞·옆 분산) + yaw σ·거리 (되돌림 빼고 — 위쪽 어림)
         const float dl = m.plen - S.seen_len, dr = m.prot - S.seen_rot;
-        v[T_UNC] = f2h(S.held ? 0.f : MP::odo_t * dl + (MP::odo_rr * dr + MP::odo_rt * dl) * dist);
+        const float vxy = (CartoDrift::long_cd + CartoDrift::lat_cd) * dl + (CartoDrift::long_cr + CartoDrift::lat_cr) * dr;
+        const float vyaw = CartoDrift::yaw_cd * dl + CartoDrift::yaw_cr * dr;
+        v[T_UNC] = f2h(S.held ? 0.f : sqrtf(fmaxf(vxy, 0.f)) + sqrtf(fmaxf(vyaw, 0.f)) * dist);
       }
       const int ok = beh ? broom_local(*bxp, S.pos[0], S.pos[1]) : room_of(m, S.pos[0], S.pos[1]);
       v[T_SAMEROOM] = (rrk >= 0 && ok == rrk) ? (uint16_t)0x3c00u : (uint16_t)0u;

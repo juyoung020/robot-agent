@@ -14,36 +14,12 @@
 #include <cstring>
 #include "env.h"
 #include "env_soa.h"
+#include "drift_params.h"   // Cartographer 자세 오차 흉내 값(생성: ../map_calib/tools/carto_drift_header.py ← src/scene_graph/slam_carto/calib/carto_drift.json)
 // objprob 계산 하나(scenemap 과 같은 헤더 — 같은 것 로지스틱·이름 사후·상위어·κ·칼만·이름 분포 겹침). 저장소 안 상대 경로(빌드마다 include 경로를 안 더하게)
 #include "../../../../src/scene_graph/scenemap/include/scenemap/objprob_math.h"
 // 잡음·맞춤 값의 기본(MP 가 씀). 기본은 LIMO 탐색 기록 보정(../map_calib/limo, calib_limo.json) + 이 모형에 다시 맞춘 값(README "LIMO 보정").
-// odo_t·kf_corr_xy 는 옛 LIMO SLAM(slam2d — 보관됨, SLAM 은 이제 Cartographer: GPU_MAP_PORT 0.3)의 기록 넷(data/datasets/limo_rec r1–r3·r4live)에 맞춘 값
-// (2026-10-04, map_drift kind 5 — ../map_calib/limo/README.md "새 SLAM"). 옛 값(옛 SLAM 둘째 판에 맞춤): odo_t 0.10, kf_corr_xy 0.001.
+// 자세 오차는 Cartographer 흉내(drift_params.h, GPU_MAP_PORT 0.3). 옛 slam2d 맞춤 값(odo_t 0.015·kf_corr_xy 등, map_drift kind 5)은 ../map_calib/README.md 기록.
 // map_drift 로 다시 맞출 때만 -D 로 바꾼다. R1 값(예전 기본)은 ../map_calib/README.md 에 기록으로 남김
-#ifndef ODO_T_V
-#define ODO_T_V 0.015f
-#endif
-#ifndef ODO_RR_V
-#define ODO_RR_V 0.04f
-#endif
-#ifndef ODO_RT_V
-#define ODO_RT_V 0.02f
-#endif
-#ifndef ODO_BT_V
-#define ODO_BT_V 0.0082f
-#endif
-#ifndef ODO_BR_V
-#define ODO_BR_V 0.0121f
-#endif
-#ifndef ODO_BW_V
-#define ODO_BW_V 0.0f
-#endif
-#ifndef KF_CORR_XY_V
-#define KF_CORR_XY_V 0.003f
-#endif
-#ifndef KF_CORR_YAW_V
-#define KF_CORR_YAW_V 0.15f
-#endif
 #ifndef P_CONF_V
 #define P_CONF_V 0.08f
 #endif
@@ -167,14 +143,7 @@ struct MP {
   static constexpr float grip_settle_eps = 0.01f;
   static constexpr float grasp_off = -0.0119f;                   // 잡는 점 = omx_end_effector_link 에서 링크 x 로 −0.0119 m(E0, URDF grasp_point)
   static constexpr float self_r = 0.05f, self_pad = 0.01f;       // 팔 캡슐 반경(OMX 링크, capi robotBody 0.05) + 거르기 여유
-  // ---- 오도메트리·slam ---- (LIMO 탐색 기록 보정 — ../map_calib/limo. 단서: 기록 하나(탐색 판 094010 + limo3), 카메라 FK 1 cm 오차가 든 판)
-  // 걸음마다 랜덤워크: 이동 σ = odo_t·거리, 회전 σ = odo_rr·|dθ| + odo_rt·거리. 원 오도메트리에는 걸음 잡음이 없어 SLAM 잔차에 맞춘 유효 값
-  static constexpr float odo_t = ODO_T_V, odo_rr = ODO_RR_V, odo_rt = ODO_RT_V;
-  // 판마다 뽑는 배율 치우침(판 리셋 때 가우스, 판 안에서 고정): 이동 배율 σ 0.82 %, 회전 배율 σ 1.21 %, 직진 중 yaw 0
-  // (LIMO 탐색 기록 보정: limo3 원 오도메트리 대 GT — 직진 0.80 m 에서 +0.82 %, 제자리 363° 에서 +1.21 %/rad. 표본 하나라 σ = |측정값|, 부호는 ± 대칭)
-  static constexpr float odo_bt = ODO_BT_V, odo_br = ODO_BR_V, odo_bw = ODO_BW_V;
-  // keyframe 맞추기가 되돌리는 오차 비율, xy 와 yaw 따로 (LIMO 탐색 기록 보정 — 이 모형에서 map_drift kind 2 로 맞춤)
-  static constexpr float kf_corr_xy = KF_CORR_XY_V, kf_corr_yaw = KF_CORR_YAW_V;
+  // ---- 오도메트리·slam ---- Cartographer 흉내: drift_params.h(CartoDrift), map.h phase_begin
   // ---- 검출 ----
   // TODO: R1/COCO-era — to be re-measured with ObjectSAM pipeline (GPU_MAP_PORT)
   // 놓침 확률, 카메라–물체 중심 거리별 계단(R1 시뮬 기록 보정: < 1.5 m 0.15, 1.5–2.5 m 0.10, ≥ 2.5 m 0.79. LIMO 기록으로는 맞추지 못해 그대로)
@@ -192,7 +161,6 @@ struct MP {
   static constexpr int img_w = 640, img_h = 400;                 // 깊이 영상 640×400 (Dabai 데이터시트), 정사각 화소(가정: 세로 FOV 45.6°, 사양 45.3°)
   static constexpr float wall_h = 2.5f;                          // 벽 높이(가정)
   static constexpr bool noise = MAP_NOISE_V != 0;                // 잡음 켬(기본). 0 이면 위 잡음·실수가 모두 꺼짐(map_cmp 비교용)
-  static constexpr int min_hits = 5;                             // 맞추기 최소 맞은 열 (가정: min_inliers 50 / 720 칸 × 64 열 ≈ 5)
   static constexpr float cup_h = 2.f * env::K::tgt_z;            // 컵 높이 0.10 m (가정: tgt_z 를 중심 높이로 봄)
   // ---- 벽 상태 56 (walls.hpp, scenemap) ----
   // 점유 = export8 값 ≥ kOccMin 65. grid.cpp 표: lround(100·σ(L/256)) ≥ 65 ⇔ L ≥ 153 (map_realcheck 가 진짜 OccGrid 로 확인)
@@ -874,9 +842,7 @@ DEV void reset_core(MapCore& m, const EnvView& e, const bsc::SceneSet* ss = null
   if (beh) make_scene_beh(m, e, *ss, *bm); else make_scene(m, e);
   m.init_pad = beh ? 1 : 0;   // BEHAVIOR 판 표시(종류 = 이름 표 행)
   // 이 판의 오도메트리 치우침(판 안에서 고정): 이동 배율, 회전 배율, 직진 중 yaw 표류
-  m.bt = (MP::noise ? gauss(m.rng) : 0.f) * MP::odo_bt;
-  m.br = (MP::noise ? gauss(m.rng) : 0.f) * MP::odo_br;
-  m.bw = (MP::noise ? gauss(m.rng) : 0.f) * MP::odo_bw;
+  m.bt = 0.f; m.br = 0.f; m.bw = 0.f;   // 판마다 오도메트리 치우침 없음(Cartographer 흉내 — 치우침은 drift_params.h 걸음 치우침)
   // 유령 자리: 방 안 아무 데나, 높이·크기·이름은 예전 가짜 물체와 같은 범위(가정)
   for (int g = 0; g < MP::n_ghost; ++g) {
     Ghost& G = m.ghost[g];
@@ -1396,7 +1362,7 @@ DEV int phase_begin(MapCore& m, const EnvView& e, int force_kf, Slot* ob, const 
     reset_core(m, e, ss, bm);
     reset = B_RESET;
   } else {
-    // 참 증분(지난 참 자세 기준 몸 좌표) → 이 판의 배율 치우침 + 걸음마다 잡음 → 믿는 자세에 붙임 (slam2d pushVelocity 적분의 오차 흉내)
+    // 참 증분(지난 참 자세 기준 몸 좌표) + Cartographer 걸음 오차 → 믿는 자세, 그 뒤 오차 되돌림(GPU_MAP_PORT 0.3, drift_params.h)
     float s0, c0;
     sincosf_d(m.pyaw, &s0, &c0);
     const float dxw = e.x - m.px, dyw = e.y - m.py;
@@ -1404,14 +1370,25 @@ DEV int phase_begin(MapCore& m, const EnvView& e, int force_kf, Slot* ob, const 
     const float dth = wrap_pi(e.yaw - m.pyaw);
     const float dist = sqrtf(dxb * dxb + dyb * dyb);
     const float n1 = MP::noise ? gauss(m.rng) : 0.f, n2 = MP::noise ? gauss(m.rng) : 0.f, n3 = MP::noise ? gauss(m.rng) : 0.f;
-    const float sx = MP::odo_t * dist, st = 1.f + m.bt;
-    const float nxb = dxb * st + n1 * sx, nyb = dyb * st + n2 * sx;
-    const float nth = dth * (1.f + m.br) + m.bw * dist + n3 * (MP::odo_rr * absf(dth) + MP::odo_rt * dist);
+    const float ar = absf(dth);
+    const float u = MP::noise ? fmaxf(dist / CartoDrift::step_d, ar / CartoDrift::step_r) : 0.f;   // 움직임 양(keyframe 평균 걸음 단위)
+    const float sl = sqrtf(CartoDrift::long_c0 * u + CartoDrift::long_cd * dist + CartoDrift::long_cr * ar);
+    const float sa = sqrtf(CartoDrift::lat_c0 * u + CartoDrift::lat_cd * dist + CartoDrift::lat_cr * ar);
+    const float sy = sqrtf(CartoDrift::yaw_c0 * u + CartoDrift::yaw_cd * dist + CartoDrift::yaw_cr * ar);
+    const float nxb = MP::noise ? dxb + n1 * sl + CartoDrift::bias_long * u : dxb;
+    const float nyb = MP::noise ? dyb + n2 * sa + CartoDrift::bias_lat * u : dyb;
+    const float nth = MP::noise ? dth + n3 * sy + CartoDrift::bias_yaw * u : dth;
     float se, ce;
     sincosf_d(m.eyaw, &se, &ce);
     m.ex = m.ex + (ce * nxb - se * nyb);
     m.ey = m.ey + (se * nxb + ce * nyb);
     m.eyaw = wrap_pi(m.eyaw + nth);
+    if (u > 0.f) {   // 전역 최적화(되돌아옴)가 오차를 묶음: 믿는 자세 − 참 자세를 ρ^u 배로(AR(1))
+      const float kxy = expf_d(CartoDrift::ln_rho_xy * u), kyaw = expf_d(CartoDrift::ln_rho_yaw * u);
+      m.ex = e.x + (m.ex - e.x) * kxy;
+      m.ey = e.y + (m.ey - e.y) * kxy;
+      m.eyaw = wrap_pi(e.yaw + wrap_pi(m.eyaw - e.yaw) * kyaw);
+    }
     m.plen = m.plen + sqrtf(nxb * nxb + nyb * nyb);
     m.prot = m.prot + absf(nth);
     m.t += 1;

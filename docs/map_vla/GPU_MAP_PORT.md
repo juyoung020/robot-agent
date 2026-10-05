@@ -125,6 +125,9 @@ N = 4,096 이면 189 MB. keyframe 블록은 이번 시야 근처 물체(상자�
 ### 0.3 SLAM = Cartographer(10-06 결정, 코디네이터 전달)
 - GPU 지도의 자세 오차 흉내는 slam2d(깊이 가상 스캔 맞추기)가 아니라 **Cartographer(2D 라이다 + 바퀴 오도메트리)** 의 오차를 흉내 낸다: keyframe 걸음 오차(앞·옆·yaw, 분산 = c0 + c_d·Δd + c_r·|Δθ| + 치우침),
   되돌아옴(전역 최적화)의 갑작스런 고침, yaw 오차. 맞춤 값 = `src/scene_graph/slam_carto/calib/carto_drift.json`(openloris·sim·all, `slam_carto/tools/carto_drift.py` 로 다시 만듦) → 헤더로 생성해 씀.
+- **했음(10-06)**: `training/RL/map/include/drift_params.h`(생성 `training/RL/map_calib/tools/carto_drift_header.py --set all`). 걸음 오차는 움직임 양 u = max(Δd/평균 걸음, |Δθ|/평균 회전)에 비례(서 있으면 오차 그대로),
+  되돌림 ρ 는 growth 의 4 m 넘는 칸 중앙값(xy 3.4 cm·yaw 0.32°)에 맞춘 AR(1). `map_drift` kind 1(16.8 m·939°·65 s, 256 판): rms 3.6 cm / 0.33°, 판 최대 평균 7.5 cm / 0.99° — json growth 중앙값 3–5 cm·p90 8–16 cm 와 같은 크기.
+  되돌아옴의 갑작스런 뜀은 아직 따로 안 냄(AR 이 부드럽게 당김 — 뜀 크기 분포가 json 에 오면 더함). 위치 불확실도 토큰(T_UNC)도 같은 걸음 모형.
 - 지우는 slam2d 가정: keyframe 맞추기 되돌림 `kf_corr_xy/yaw` 와 "깊이 열이 min_hits 이상 맞아야 맞춤", 옛 기록 넷(limo_rec)에 맞춘 `odo_t·odo_rr·odo_rt`·판 치우침.
 
 ## 2. 인지 잡음 모형(ObjectSAM + SigLIP 2) — 맞출 값

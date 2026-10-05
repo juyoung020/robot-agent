@@ -75,17 +75,9 @@ DEV void pe_labels(Det& D, uint64_t& rng, int nlab, const int16_t sim[3], int na
   D.llrest = nr > 0 ? lnf_d(rest_all / (float)nr) : -30.f;
 }
 
-// keyframe 맞추기(slam 쪽, 흉내가 아님): 맞은 줄이 충분하고 제자리가 아니면 오차를 xy 는 kf_corr_xy, yaw 는 kf_corr_yaw 만큼 되돌림(slam2d keyframe 흉내).
-// 카메라 회전 빠르기(움직임 근거)도 여기서
+// keyframe 카메라 방향·회전 빠르기(움직임 근거). 자세 고침은 Cartographer 흉내(map.h phase_begin, 스텝마다) — slam2d 의 깊이 열 맞추기 되돌림(kf_corr·min_hits)은 없앰(GPU_MAP_PORT 0.3)
 DEV void slam_kf_correct(MapCore& m, Scratch& sh, const EnvView& e, int nt) {
-  const int n_hits = sum_part(sh, nt);
-  const bool still = !m.first && m.vmax < MP::still_v && m.wmax < MP::still_w;
-  if (!m.first && !still && n_hits >= MP::min_hits) {
-    const float kxy = 1.f - MP::kf_corr_xy, kyaw = 1.f - MP::kf_corr_yaw;
-    m.ex = e.x + (m.ex - e.x) * kxy;
-    m.ey = e.y + (m.ey - e.y) * kxy;
-    m.eyaw = wrap_pi(e.yaw + wrap_pi(m.eyaw - e.yaw) * kyaw);
-  }
+  (void)e; (void)nt;
   float es, ec;
   sincosf_d(m.eyaw, &es, &ec);
   sh.ec = ec; sh.es = es;
