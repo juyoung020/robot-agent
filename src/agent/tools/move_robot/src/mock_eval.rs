@@ -1,5 +1,5 @@
 //! 가짜 집 평가(LLM 에게 안 보임): 정답 바닥 PGM + `gt.json` 으로 [`Mock`] 을 만들고, 덮음(`_m.gt_cov`)을 잴 정답 기준을 넣는다.
-//! 옛 스킬 explore `src/bin/explore.rs` 에서 옮김(10-06). 시뮬 판의 기준은 behavior-2026 `src/sim/explore/gt_trav.py`·`run_explore.py` 가 만든다.
+//! 옛 스킬 explore `src/bin/explore.rs` 에서 옮김(10-06). 시뮬 판의 기준은 `src/sim/explore/gt_trav.py`·`run_explore.py` 가 만든다.
 
 use crate::link::{Mock, MockWorld};
 use crate::map::Grid;

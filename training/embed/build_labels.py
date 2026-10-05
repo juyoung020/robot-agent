@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import WORK
 
 D = f'{WORK}/data'; OUT = f'{WORK}/labels'
-B1K = '/home/juyoung/robot-agent/src/behavior-2026/BEHAVIOR-1K/asset_pipeline/metadata/category_mapping.csv'
+B1K = os.path.join(os.environ.get('B1K_ROOT', os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../third_party/BEHAVIOR-1K')), 'asset_pipeline/metadata/category_mapping.csv')
 CFG = '/home/juyoung/robot-agent/src/scene_graph/ovdet/config'
 ROOTS = ['artifact.n.01', 'food.n.01', 'food.n.02', 'plant.n.02', 'animal.n.01', 'natural_object.n.01', 'plant_part.n.01']
 

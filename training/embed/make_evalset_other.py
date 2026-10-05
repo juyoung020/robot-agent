@@ -9,7 +9,7 @@ Default episodes: task 9 putting_up_Christmas_decorations_inside in house_single
 """
 import os, sys, json, random, argparse, collections, numpy as np
 from PIL import Image
-B = '/home/juyoung/robot-agent/src/behavior-2026'
+B = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..')   # robot-agent
 sys.path.insert(0, B + '/src/scene_graph/ovdet/tools'); sys.path.insert(0, B + '/src/scene_graph/scenemap/eval')
 import ovdet_eval as oe
 import demo_data as dp, gt_scene

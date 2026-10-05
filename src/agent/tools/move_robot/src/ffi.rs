@@ -127,7 +127,7 @@ pub extern "C" fn mr_tool_definition() -> *const c_char {
 
 // ---------------------------------------------------------------- 지도(탐사)
 
-/// `sgrt_map_view`(behavior-2026 src/scene_graph/runtime/include/sgrt.h)와 같은 배치. 평가기 접착부는 sgrt_map 이 채운
+/// `sgrt_map_view`(src/scene_graph/runtime/include/sgrt.h)와 같은 배치. 평가기 접착부는 sgrt_map 이 채운
 /// 구조체 포인터를 그대로 [`mr_set_map`] 에 넘긴다(파이썬은 바이트를 만지지 않음).
 #[repr(C)]
 pub struct SgrtMapView {

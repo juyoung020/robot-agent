@@ -309,12 +309,12 @@ impl HttpLlm {
         HttpLlm { base: base.trim_end_matches('/').to_string(), model: model.to_string(), key_env: key_env.map(|s| s.to_string()), timeout: Duration::from_secs(timeout_s) }
     }
 
-    /// KAU API: KAU_BASE_URL / KAU_MODEL / KAU_API_KEY 환경변수(`~/.config/behavior-2026/kau.env`).
+    /// KAU API: KAU_BASE_URL / KAU_MODEL / KAU_API_KEY 환경변수(`~/.config/robot-agent/kau.env`).
     pub fn kau(timeout_s: u64) -> Result<HttpLlm, String> {
         let base = std::env::var("KAU_BASE_URL").unwrap_or_else(|_| "https://agent.kau.ac.kr/v1".into());
         let model = std::env::var("KAU_MODEL").unwrap_or_else(|_| "qwen3.5-9b".into());
         if std::env::var("KAU_API_KEY").map(|k| k.trim().is_empty()).unwrap_or(true) {
-            return Err("KAU_API_KEY 환경변수가 비었다 (set -a; . ~/.config/behavior-2026/kau.env; set +a)".into());
+            return Err("KAU_API_KEY 환경변수가 비었다 (set -a; . ~/.config/robot-agent/kau.env; set +a)".into());
         }
         Ok(HttpLlm::new(&base, &model, Some("KAU_API_KEY"), timeout_s))
     }

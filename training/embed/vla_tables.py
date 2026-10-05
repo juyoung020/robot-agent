@@ -22,7 +22,7 @@ import numpy as np, torch, torch.nn.functional as F
 from common import WORK, Enc, l2, TPL
 
 LAB = f'{WORK}/labels/objects-v1'
-B1K = os.path.expanduser('~/robot-agent/src/behavior-2026/BEHAVIOR-1K')   # read only
+B1K = os.environ.get('B1K_ROOT', os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../third_party/BEHAVIOR-1K'))   # read only
 HEAD = f'{WORK}/runs/sb32_pe_300k/head.pt'
 KO_RUN = f'{WORK}/runs/ko_small_v2'
 

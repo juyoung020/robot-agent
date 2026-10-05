@@ -8,7 +8,7 @@
 //! - `--skill <이름>` = `src/agent/skills/<이름>/`(또는 `--skill-dir`). 프롬프트(system.md·task.md·도구 설명)와 skill.json 을 실행할 때 읽는다.
 //!   공통 조각은 `<skill dir>/../../prompts/common.md`(또는 `--common`).
 //! - `--policy baseline` 은 skill.json `baseline` 호출(LLM 없음). 그 이름(explore 는 `frontier`)도 받는다.
-//! - LLM: KAU (KAU_BASE_URL / KAU_MODEL / KAU_API_KEY 환경변수 — `set -a; . ~/.config/behavior-2026/kau.env; set +a`).
+//! - LLM: KAU (KAU_BASE_URL / KAU_MODEL / KAU_API_KEY 환경변수 — `set -a; . ~/.config/robot-agent/kau.env; set +a`).
 //! - `--mock`: 가짜 집(LLM 에게 안 보이는 덮음 기준은 `move_robot::mock_eval`).
 
 use agent_runtime::{run, Config, Policy, Prompts, SkillSpec};

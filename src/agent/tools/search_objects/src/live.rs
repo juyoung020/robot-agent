@@ -1,4 +1,4 @@
-//! 실시간 기억 — scenemap C ABI(`sm_snapshot` · `sm_snap_*` · `sm_observe_object_name`, behavior-2026
+//! 실시간 기억 — scenemap C ABI(`sm_snapshot` · `sm_snap_*` · `sm_observe_object_name`,
 //! `src/scene_graph/scenemap/include/scenemap.h`) 위의 [`Memory`]. 시뮬(sgrt, `sgrt_scenemap`)과 실제 로봇이 같은 길.
 //!
 //! - 도구 호출마다 새 스냅숏(참조 카운트, 어느 스레드든 됨)을 잡아 물체·자세·방을 복사하고 바로 놓는다 → 자리·상태·자세는 지금 지도 그대로.

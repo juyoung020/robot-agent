@@ -1,7 +1,7 @@
 //! `search_objects` · `confirm_object` — LLM 이 물체 기억에서 물건을 찾고, 확인되면 이름을 고치는 도구 두 개.
 //!
 //! LLM(Qwen3.5-9B, KAU API)은 글만 주고받으므로 벡터는 도구 **안에서만** 쓴다. 찾기·이름 확률·속성 낱말은 공용 물체 색인
-//! (behavior-2026 `src/scene_graph/clip` 의 `sgsearch.h`, C++ — RecallVLA 실행기도 자기 질의 벡터로 같은 색인을 씀)이 하고,
+//! (`src/scene_graph/clip` 의 `sgsearch.h`, C++ — RecallVLA 실행기도 자기 질의 벡터로 같은 색인을 씀)이 하고,
 //! 이 크레이트는 그 결과에 기억의 자리 정보(방·기준물·상태·마지막으로 본 때·로봇까지 거리)를 붙여 짧은 JSON 글로 만든다.
 //!
 //! 3 단계(plan.md 3.3, docs/map_vla/MAPVLA_SPEC.md "공용 물체 찾기"):

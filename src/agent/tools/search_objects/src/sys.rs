@@ -1,4 +1,4 @@
-//! 공용 물체 색인 C ABI(behavior-2026 `src/scene_graph/clip/include/sgclip.h`·`sgsearch.h`)의 날 선언과 얇은 안전 덮개.
+//! 공용 물체 색인 C ABI(`src/scene_graph/clip/include/sgclip.h`·`sgsearch.h`)의 날 선언과 얇은 안전 덮개.
 //!
 //! 이 크레이트는 벡터를 만지지 않는다. 라벨 표·글 인코더(SigLIP 2 글 탑, TensorRT)·영상 인코더(대체 벡터용)·색인을 열고,
 //! 찾기·확인은 색인이 돌려주는 JSON 을 그대로 받는다. RecallVLA 실행기는 같은 색인을 `sgs_search_vec` 로(자기 질의 벡터) 쓴다.
@@ -202,7 +202,7 @@ impl Index {
         call_json(|out, cap| unsafe { sgs_confirm(idx, id, n.as_ptr(), s.as_ptr(), q.as_ptr(), out, cap) })
     }
 
-    /// 확인 + 기록 한 줄에 덧붙일 칸(`extra` JSON 객체). 새 색인(`sgs_confirm_ex`, behavior-2026 objsearch-live)이 없으면
+    /// 확인 + 기록 한 줄에 덧붙일 칸(`extra` JSON 객체). 새 색인(`sgs_confirm_ex`, objsearch-live)이 없으면
     /// 옛 `sgs_confirm`(덧붙임 없이) — 이때 지도가 받은 확인도 색인이 한 번 더 셀 수 있다(README "실시간 기억").
     pub fn confirm_ex(&mut self, id: u32, name: &str, source: &str, query: &str, extra: &str) -> Result<String, String> {
         type F = unsafe extern "C" fn(*mut c_void, u32, *const c_char, *const c_char, *const c_char, *const c_char, *mut c_char, i32) -> i32;
