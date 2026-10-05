@@ -6,7 +6,7 @@ namespace limo_omx {
 enum JointKind { kFixed = 0, kRevolute = 1, kContinuous = 2 };
 struct JointConst { int kind; float R[9]; float t[3]; float axis[3]; float lower, upper, vel_max; };   // names: see the J_* indices below
 
-constexpr int kNumJoints = 21;
+constexpr int kNumJoints = 24;
 #define LIMO_OMX_JOINT_TABLE \
     { \
     /* base_joint */ {kFixed, {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.15f}, {0.0f, 0.0f, 1.0f}, 0.0f, 0.0f, 0.0f}, \
@@ -26,8 +26,11 @@ constexpr int kNumJoints = 21;
     /* omx_joint5 */ {kRevolute, {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f}, {0.0287f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, -4.712389f, 4.712389f, 4.8f}, \
     /* omx_gripper_joint_1 */ {kRevolute, {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f}, {0.0295f, 0.0075f, 0.0f}, {0.0f, 0.0f, 1.0f}, 0.0f, 1.745329f, 4.8f}, \
     /* omx_gripper_joint_2 */ {kRevolute, {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f}, {0.0295f, -0.0108f, 0.0f}, {0.0f, 0.0f, 1.0f}, -1.745329f, 0.0f, 4.8f}, \
+    /* depth_camera_lens_joint */ {kFixed, {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f}, {0.01f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, 0.0f, 0.0f, 0.0f}, \
+    /* depth_camera_lens_optical_joint */ {kFixed, {2.6794897e-8f, 2.6794897e-8f, 1.0f, -1.0f, 0.0f, 2.6794897e-8f, 0.0f, -1.0f, 2.6794897e-8f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, 0.0f, 0.0f, 0.0f}, \
     /* omx_mount_joint */ {kFixed, {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f}, {-0.04f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, 0.0f, 0.0f, 0.0f}, \
     /* omx_end_effector_joint */ {kFixed, {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f}, {0.09193f, -0.0016f, 0.0f}, {0.0f, 0.0f, 1.0f}, 0.0f, 0.0f, 0.0f}, \
+    /* grasp_point_joint */ {kFixed, {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f}, {0.08003f, -0.0016f, 0.0f}, {0.0f, 0.0f, 1.0f}, 0.0f, 0.0f, 0.0f}, \
     /* wrist_cam_joint */ {kFixed, {0.7886906f, 0.0f, 0.61479026f, 0.0f, 1.0f, 0.0f, -0.61479026f, 0.0f, 0.7886906f}, {0.0498f, 0.0f, 0.0351f}, {0.0f, 0.0f, 1.0f}, 0.0f, 0.0f, 0.0f}, \
     /* wrist_cam_optical_joint */ {kFixed, {2.6794897e-8f, 2.6794897e-8f, 1.0f, -1.0f, 0.0f, 2.6794897e-8f, 0.0f, -1.0f, 2.6794897e-8f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, 0.0f, 0.0f, 0.0f}, \
     }
@@ -67,9 +70,12 @@ constexpr int J_OMX_JOINT4 = 13;   // omx_link3 -> omx_link4 (revolute)
 constexpr int J_OMX_JOINT5 = 14;   // omx_link4 -> omx_link5 (revolute)
 constexpr int J_OMX_GRIPPER_JOINT_1 = 15;   // omx_link5 -> omx_link6 (revolute)
 constexpr int J_OMX_GRIPPER_JOINT_2 = 16;   // omx_link5 -> omx_link7 (revolute)
-constexpr int J_OMX_MOUNT_JOINT = 17;   // base_link -> omx_link0 (fixed)
-constexpr int J_OMX_END_EFFECTOR_JOINT = 18;   // omx_link5 -> omx_end_effector_link (fixed)
-constexpr int J_WRIST_CAM_JOINT = 19;   // omx_link5 -> wrist_cam_link (fixed)
-constexpr int J_WRIST_CAM_OPTICAL_JOINT = 20;   // wrist_cam_link -> wrist_cam_optical_frame (fixed)
+constexpr int J_DEPTH_CAMERA_LENS_JOINT = 17;   // depth_camera_link -> depth_camera_lens_link (fixed)
+constexpr int J_DEPTH_CAMERA_LENS_OPTICAL_JOINT = 18;   // depth_camera_lens_link -> depth_camera_lens_optical_frame (fixed)
+constexpr int J_OMX_MOUNT_JOINT = 19;   // base_link -> omx_link0 (fixed)
+constexpr int J_OMX_END_EFFECTOR_JOINT = 20;   // omx_link5 -> omx_end_effector_link (fixed)
+constexpr int J_GRASP_POINT_JOINT = 21;   // omx_link5 -> grasp_point (fixed)
+constexpr int J_WRIST_CAM_JOINT = 22;   // omx_link5 -> wrist_cam_link (fixed)
+constexpr int J_WRIST_CAM_OPTICAL_JOINT = 23;   // wrist_cam_link -> wrist_cam_optical_frame (fixed)
 
 }  // namespace limo_omx
