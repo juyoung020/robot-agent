@@ -130,7 +130,7 @@ struct Rig {
   }
   ~Rig() { sm_destroy(c); }
   // 시각 t 에 proprio + 영상(장면 rs) 하나. 돌려줌: sm_push_image_ex 시간 ms
-  double kf(double t, const std::vector<Rect>& rs, float bg = 3.0f, bool with_rgb = true, bool with_dets = true) {
+  double kf(double t, const std::vector<Rect>& rs, float bg = 2.8f, bool with_rgb = true, bool with_dets = true) {   // 배경 벽 2.8 m: 깊이 한계 3 m(DaBai) 안
     render(f, rs, bg, uint32_t(t * 1000) + 7);
     sm_proprio p{t, q.data(), 12};
     sm_push_proprio(c, &p);
@@ -350,7 +350,7 @@ static void testBestView() {
       CHECK(c[0] == 40 && c[1] == 100 && c[2] == 200, "centre rgb %u %u %u", c[0], c[1], c[2]);
       CHECK(v.rgb[0] == 40 && v.rgb[1] == 40, "margin rgb %u", v.rgb[0]);
     }
-    if (v.depth_mm) CHECK(v.depth_mm[36 * 72 + 36] == 1500 && v.depth_mm[0] == 3000, "depth %u %u", v.depth_mm[36 * 72 + 36], v.depth_mm[0]);
+    if (v.depth_mm) CHECK(v.depth_mm[36 * 72 + 36] == 1500 && v.depth_mm[0] == 2800, "depth %u %u", v.depth_mm[36 * 72 + 36], v.depth_mm[0]);
     CHECK(std::fabs(v.depth_m - 1.5f) < 1e-3, "depth_m %.3f", v.depth_m);
     CHECK(v.mask_area > 2000 && v.mask_area <= 3600, "mask area %.0f", v.mask_area);
   }

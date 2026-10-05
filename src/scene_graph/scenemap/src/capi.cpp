@@ -267,15 +267,19 @@ BodyState robotBody(int robot, const float* q, BodyFk* fk) {
 void robotParams(int robot, MapperParams* sp, ObjParams* op) {
   (void)robot;
   ScanParams& s = sp->scan;
-  s.self_r = 0.22f;            // 몸통 반대각선 0.19 m + 여유(R1 0.55)
-  s.eef_r = 0.08f;             // 팔 끝 둘레(R1 0.35)
+  // 머리 깊이 카메라 Orbbec DaBai: 0.3–3 m(데이터시트 refs/datasheets). 지도·물체 모두 3 m 까지(GPU 학습 지도와 같은 값)
+  s.zmin = 0.3f;
+  s.zmax = 3.0f;
+  op->zmax = 3.0f;             // zmin 은 기본 0.15 m 그대로 — 손목 카메라(가까이 봄)도 같은 물체 지도에 들어감
+  s.self_r = 0.22f;            // 몸통 반대각선 0.19 m + 여유
+  s.eef_r = 0.08f;             // 팔 끝 둘레
   s.arm_r = 0.06f;             // 캡슐이 없을 때만 쓰는 어깨–팔 끝 선분
   for (int k = 0; k < 2; ++k) { s.shoulder[k][0] = -0.05f; s.shoulder[k][1] = 0.f; s.shoulder[k][2] = 0.25f; }   // omx_joint2 근처
-  s.band_lo = 0.05f;           // 5 cm 넘는 턱이면 못 넘음(R1 0.10)
-  s.band_hi = 0.50f;           // 팔 접은 키 ≈ 0.35 m: 탁자 상판(≈ 0.7 m) 밑으로는 지나감(R1 1.80)
-  sp->attach.radius = 0.6f;    // 로봇에 붙어 같이 움직이는 것 판정 반경(R1 1.3)
-  op->hand_r = 0.10f;          // 손에 든 것 거르기(R1 0.40)
-  op->grasp_r = 0.12f;         // 그리퍼가 닫힐 때 이 안 물체를 듦(R1 0.25)
+  s.band_lo = 0.05f;           // 5 cm 넘는 턱이면 못 넘음
+  s.band_hi = 0.50f;           // 팔 접은 키 ≈ 0.35 m: 탁자 상판(≈ 0.7 m) 밑으로는 지나감
+  sp->attach.radius = 0.6f;    // 로봇에 붙어 같이 움직이는 것 판정 반경
+  op->hand_r = 0.10f;          // 손에 든 것 거르기
+  op->grasp_r = 0.12f;         // 그리퍼가 닫힐 때 이 안 물체를 듦
   op->cloud_hand_r = 0.05;
   op->body_r = 0.22;
   op->n_hands = 1;
@@ -1668,9 +1672,9 @@ uint32_t sm_snap_object_room(const sm_snapshot_t* s, uint32_t id) {
 // ---- 자세 원천·넣기 정책·단계 시간(추가 ABI) ----
 
 int sm_set_pose_mode(sm_ctx* c, int32_t mode) {
-  if (!c || mode < SM_POSE_SLAM || mode > SM_POSE_EXT) return -1;
+  if (!c || mode < SM_POSE_ODOM || mode > SM_POSE_EXT) return -1;
   std::lock_guard<std::mutex> g(c->mu);
-  c->pose_mode = mode == SM_POSE_SLAM ? SM_POSE_EXT : mode;   // SM_POSE_SLAM(옛 값) = EXT
+  c->pose_mode = mode;
   return 0;
 }
 

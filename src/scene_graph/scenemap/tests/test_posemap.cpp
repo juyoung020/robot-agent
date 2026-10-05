@@ -122,17 +122,17 @@ static int cellAt(sm_ctx* c, double x, double y, uint64_t* ver = nullptr) {
 static void testGtPose() {
   Run r;
   sm_set_pose_mode(r.c, SM_POSE_GT);
-  const double pose[3] = {1.0, 0.5, 30 * M_PI / 180}, v0[3] = {0, 0, 0};
+  const double pose[3] = {2.2, 0.5, 30 * M_PI / 180}, v0[3] = {0, 0, 0};   // 벽(x = 4)까지 약 2 m — 깊이 한계 3 m 안
   for (int k = 0; k < 13; ++k) r.stepTo(pose, v0, {}, k % 6 == 0);
   sm_snapshot_t* s = nullptr;
   sm_snapshot(r.c, &s);
   const sm_pose2 p = sm_snap_pose(s);
   sm_snapshot_release(s);
-  CHECK(std::fabs(p.x - 1.0) < 1e-9 && std::fabs(p.y - 0.5) < 1e-9 && std::fabs(p.yaw - pose[2]) < 1e-9, "gt pose %f %f %f", p.x, p.y, p.yaw);
+  CHECK(std::fabs(p.x - 2.2) < 1e-9 && std::fabs(p.y - 0.5) < 1e-9 && std::fabs(p.yaw - pose[2]) < 1e-9, "gt pose %f %f %f", p.x, p.y, p.yaw);
   // 머리가 보는 방향(30°)의 벽 x = 4: 벽 칸 점유, 그 앞 칸 빈칸
-  const double yw = 0.5 + std::tan(pose[2]) * (4.0 - 1.0);
+  const double yw = 0.5 + std::tan(pose[2]) * (4.0 - pose[0]);
   const int wall = std::max(cellAt(r.c, 4.0 - 0.02, yw), cellAt(r.c, 4.0 - 0.07, yw));
-  const int free = cellAt(r.c, 3.0, 0.5 + std::tan(pose[2]) * 2.0);
+  const int free = cellAt(r.c, 3.2, 0.5 + std::tan(pose[2]) * (3.2 - pose[0]));
   CHECK(wall >= 65, "GT wall cell %d", wall);
   CHECK(free >= 0 && free < 50, "GT free cell %d", free);
   std::printf("  GT 자세: 스냅숏 자세 = 정답, 벽(x=4) 칸 %d, 앞 빈칸 %d\n", wall, free);
@@ -205,8 +205,7 @@ static void testDiag(int mode, const char* name) {
 static void testExt() {
   Run r;
   CHECK(sm_get_pose_mode(r.c) == SM_POSE_EXT, "default pose mode %d (want EXT)", sm_get_pose_mode(r.c));
-  sm_set_pose_mode(r.c, SM_POSE_SLAM);   // 옛 값 = EXT
-  CHECK(sm_get_pose_mode(r.c) == SM_POSE_EXT, "SLAM alias -> %d", sm_get_pose_mode(r.c));
+  CHECK(sm_set_pose_mode(r.c, 0) == -1 && sm_get_pose_mode(r.c) == SM_POSE_EXT, "mode 0 rejected, still %d", sm_get_pose_mode(r.c));
   const double vel[3] = {0.25, 0, 0.2};
   const double off[3] = {0.5, -0.2, 10 * M_PI / 180};
   double pose[3] = {-1.0, 0.2, 0.1}, ext[3] = {0, 0, 0};

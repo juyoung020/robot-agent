@@ -104,7 +104,7 @@ sm_ctx* sgrt_scenemap(sgrt*);
 
 /* ---- 자세 원천·단계 시간·기록(추가 ABI, 10-03) ----
  * 자세 원천: 3 ext = Cartographer(기본, 아래 "2D 라이다"), 1 odom(적분만), 2 gt(외부·정답 베이스 자세 — 시뮬 진단·시각화 전용,
- *   실제 실행에는 쓰지 않음). 0 은 3 과 같다(옛 값 호환). 환경 변수 SGRT_POSE=carto|odom|gt 가 sgrt_create 때 기본값을 정한다.
+ *   실제 실행에는 쓰지 않음). 환경 변수 SGRT_POSE=carto|odom|gt 가 sgrt_create 때 기본값을 정한다.
  *   gt 면 map = 시뮬 world 프레임.
  * sgrt_push_pose: 이번 스텝의 외부 베이스 자세(map/world: x, y, yaw rad). 같은 stamp 의 sgrt_step 앞에 부른다.
  *   gt 가 아닌 모드에서도 넣으면 떠밀림 진단(sgrt_get_pose_diag)과 기록에 쓴다.

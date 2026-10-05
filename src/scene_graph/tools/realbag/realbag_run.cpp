@@ -4,7 +4,7 @@
 //   realbag_run <stream dir>[,<stream dir>…] <out dir> [옵션]
 //     --robot limo_omx         scenemap 로봇(limo_omx 하나 — 우리 로봇의 SLAM·몸 크기 설정)
 //     --pose carto|odom|gt     자세 원천(기본 carto = Cartographer(../../slam_carto): 2D 라이다 scans.bin + 바퀴 오도메트리(bag2stream.py
-//                              --scan-only) → 영상마다 sm_push_ext_pose(SM_POSE_EXT). slam = carto(옛 이름).
+//                              --scan-only) → 영상마다 sm_push_ext_pose(SM_POSE_EXT).
 //                              스트림에 scans.bin 이 없으면 경고하고 odom. --carto-config <lua>(기본 openloris → openloris_hokuyo.lua),
 //                              끝에 <out>/carto_map.pgm·metrics.json "carto". gt = 정답 베이스 자세(여러 판을
 //                              한 지도에 이을 때 — 판 사이 재위치 추정이 없으므로). slam·odom 에서도 정답은 진단(sm_get_pose_diag)에만 넣는다
@@ -584,7 +584,6 @@ int main(int argc, char** argv) {
     }
   }
   if (inspect) sm_set_inspect(c, 1);
-  if (pose == "slam") pose = "carto";
   if (pose == "carto" && streams.size() == 1 && !(streams[0].have_bl && std::filesystem::exists(streams[0].dir + "/scans.bin"))) {
     std::fprintf(stderr, "[carto] %s has no 2D lidar (scans.bin/T_bl, bag2stream.py --scan-only) -> --pose odom\n", streams[0].dir.c_str());
     pose = "odom";

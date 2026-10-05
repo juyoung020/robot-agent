@@ -218,7 +218,7 @@ class LimoMapPolicy:
         rows = [r.split(",") for r in open(self.out / "poses.csv").read().splitlines()[1:]]
         path = sum(math.hypot(float(b[1]) - float(a[1]), float(b[2]) - float(a[2])) for a, b in zip(rows, rows[1:]))
         rot = sum(abs(wrap(float(b[3]) - float(a[3]))) for a, b in zip(rows, rows[1:]))
-        summ = {"steps": self.i, "sim_s": self.i / 30.0, "pose_mode": os.environ.get("SGRT_POSE", "slam"), "gt_path_m": path,
+        summ = {"steps": self.i, "sim_s": self.i / 30.0, "pose_mode": os.environ.get("SGRT_POSE", "carto"), "gt_path_m": path,
                 "gt_rot_deg": math.degrees(rot), "pose_diag": diag, "map": sc, "objects": self.mem.stats(),
                 "cam0_fk": self.cam_checks, "timing": {k: {a: round(b, 1) if isinstance(b, float) else b for a, b in v.items()}
                                                        for k, v in self.mem.timing().items()}}

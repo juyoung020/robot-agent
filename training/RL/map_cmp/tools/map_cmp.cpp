@@ -210,11 +210,11 @@ double median_i(const std::vector<int>& v) {
 
 int main(int argc, char** argv) {
   int shuffle = 0;   // > 0: 바뀜 규칙 비교(옮겨짐·사라짐·움직임 따라가기)
-  int N = 50, policy = 0, pose_mode = SM_POSE_SLAM, trace = -1, stage = 1, T = 2000;
+  int N = 50, policy = 0, pose_mode = SM_POSE_EXT, trace = -1, stage = 1, T = 2000;
   uint64_t seed = 20261004, mseed = 99;
   int pos = 0;
   for (int a = 1; a < argc; ++a) {
-    if (!std::strcmp(argv[a], "--mode") && a + 1 < argc) { ++a; pose_mode = !std::strcmp(argv[a], "odom") ? SM_POSE_ODOM : SM_POSE_SLAM; }
+    if (!std::strcmp(argv[a], "--mode") && a + 1 < argc) { ++a; pose_mode = !std::strcmp(argv[a], "odom") ? SM_POSE_ODOM : SM_POSE_EXT; }
     else if (!std::strcmp(argv[a], "--policy") && a + 1 < argc) policy = std::atoi(argv[++a]);
     else if (!std::strcmp(argv[a], "--seed") && a + 1 < argc) { seed = std::strtoull(argv[++a], nullptr, 10); mseed = seed * 7 + 1; }
     else if (!std::strcmp(argv[a], "--trace") && a + 1 < argc) trace = std::atoi(argv[++a]);
@@ -225,7 +225,7 @@ int main(int argc, char** argv) {
   const gmap::Cam K = gmap::cam_consts();
   const float fx = K.fx, cx = 0.5f * (W - 1), cy = 0.5f * (H - 1);   // 화소 u 의 중심 = (u − cx)/fx, 좌우 대칭
   std::printf("map_cmp: N=%d episodes, stage %d, real scenemap mode %s, map update policy %d, depth %dx%d fx=fy=%.3f (H-FOV %.1f deg), range %.1f-%.1f m\n",
-              N, stage, pose_mode == SM_POSE_SLAM ? "SLAM" : "ODOM", policy, W, H, fx, 2 * std::atan(0.5 * W / fx) * 180 / M_PI,
+              N, stage, pose_mode == SM_POSE_EXT ? "EXT" : "ODOM", policy, W, H, fx, 2 * std::atan(0.5 * W / fx) * 180 / M_PI,
               gmap::MP::zmin, gmap::MP::zmax);
 
   DeviceEnv genv(N, stage, seed);

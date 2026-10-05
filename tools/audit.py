@@ -14,7 +14,7 @@ import os, re, subprocess, sys, collections
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 KW = re.compile(r"behavior-2026|\bR1 ?Pro\b|\br1pro\b|R1Pro|\bslam2d\b|YOLOE|\byoloe|FastSAM-s-416-obj|sgviz|\bpi05\b|π0\.5|"
-                r"SGRT_OBJPROB|--no-objprob|name_vote|mergeDuplicates|SM_POSE_SLAM|두 팔|torso")
+                r"SGRT_OBJPROB(?!_)|--no-objprob|name_vote|mergeDuplicates|SM_POSE_SLAM|두 팔|torso")
 OUT = re.compile(r"(?<![\w$])~/(?!\.cache|\.config)|\$HOME/(?!\.cache|\.config|miniconda3)|\$\{HOME\}|/home/[a-z][\w-]*/|Path\.home\(\)|expanduser\(['\"]~/")
 ALLOW = [  # (경로 정규식, 줄 정규식) — 확인한 예외
     (r"^tools/(check_paths\.sh|audit\.py|git-hooks/)", r"."),
@@ -35,7 +35,7 @@ ALLOW = [  # (경로 정규식, 줄 정규식) — 확인한 예외
     (r"^docs/(map_vla/|model_selection|plan|known_bugs|terms|clip_candidates|perception_model)", r"."),  # 설계·결정 기록
 ]
 CODE_EXT = (".py", ".sh", ".cpp", ".hpp", ".h", ".cu", ".cuh", ".rs", ".js", ".html", ".toml", ".txt", ".json", ".yaml", ".lua", ".cmake")
-SKIP = re.compile(r"^(archive|refs|third_party)/|^src/scene_graph/spark_dsg/|\.(png|jpg|gif|pdf|glb|stl|dae|obj|npz|bin|f16|onnx|pt)$")
+SKIP = re.compile(r"^(archive|refs|third_party)/|^docs/cleanup_checklist\.md$|^src/scene_graph/spark_dsg/|\.(png|jpg|gif|pdf|glb|stl|dae|obj|npz|bin|f16|onnx|pt)$")
 
 
 def allowed(path, line):

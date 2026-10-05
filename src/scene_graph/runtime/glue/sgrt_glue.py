@@ -13,8 +13,8 @@ src/scene_graph/tools/realbag/objprob_params/<engine>.json. The teacher FastSAM-
 
 The head RGB stays on the GPU (ovdet reads device memory); depth is copied to host only on keyframe steps.
 
-Pose source (env SGRT_POSE, read by libsgrt): carto (default: Cartographer 2D lidar + wheel odometry, src/scene_graph/slam_carto;
-"slam" is the same), odom, gt. The old scenemap depth scan matcher (slam2d) is archived (archive/src/scene_graph/scenemap).
+Pose source (env SGRT_POSE, read by libsgrt): carto (default: Cartographer 2D lidar + wheel odometry, src/scene_graph/slam_carto),
+odom, gt.
 Sim 2D lidar (env SGRT_LIDAR, default 1 for LIMO): the glue ray-casts the LIMO X2L lidar (src/sim/lidar/limo_lidar.py, 6 Hz,
 500 rays, 0.12-8 m, URDF laser_link) and hands each scan to libsgrt (sgrt_push_scan) before the step; SGRT_LIDAR=0 turns it off.
 The glue pushes the simulator's ground-truth robot base pose (robot.get_position_orientation(), world frame) every step
@@ -471,7 +471,7 @@ class SceneMemory:
                 self.clip_report()
             except Exception as e:  # report only
                 print(f"[sgrt] clip report failed: {e}", flush=True)
-            print(f"[sgrt] pose diag (slam vs GT): {self.pose_diag()}", flush=True)
+            print(f"[sgrt] pose diag (SLAM vs GT): {self.pose_diag()}", flush=True)
             for k, v in self.timing().items():
                 print(f"[sgrt] timing {k}: " + " ".join(f"{a}={b:.1f}" if isinstance(b, float) else f"{a}={b}" for a, b in v.items()),
                       flush=True)
