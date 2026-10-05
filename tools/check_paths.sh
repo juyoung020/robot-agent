@@ -9,7 +9,7 @@
 cd "$(git rev-parse --show-toplevel)" || exit 2
 PAT='(~|\$HOME|\$\{HOME\}|/home/[a-z][a-z0-9_-]*)/|behavior-2026|(^|[^A-Za-z0-9_])(ra_[a-z0-9_]+|realbag_build[a-z0-9_]*|sgrt_build[a-z0-9_]*)(/|$|[[:space:]"'\''])'
 OKPAT='paths-ok|(~|\$HOME|\$\{HOME\})/(miniconda3|\.config/|\.cache/|\.cargo|\.local/bin)'
-SKIP='^(docs/|refs/|config/|training/fastsam/publish_objectsam\.sh|tests/sandbox/|CLAUDE\.md|tools/check_paths\.sh|tools/audit\.py|tools/git-hooks/)|\.(md|pdf|png|jpg|glb|lock|npy|f16|f32|bin|jsonl)$'
+SKIP='^(docs/|refs/|config/|training/fastsam/publish_objectsam\.sh|CLAUDE\.md|tools/check_paths\.sh|tools/audit\.py|tools/git-hooks/)|\.(md|pdf|png|jpg|glb|lock|npy|f16|f32|bin|jsonl)$'
 if [ "${1:-}" = "--staged" ]; then
   hits=$(git diff --cached -U0 --no-color --diff-filter=ACMR | awk '/^\+\+\+ b\//{f=substr($0,7);next} /^\+[^+]/ || /^\+$/{print f":"substr($0,2)}' \
     | grep -Ev "^($SKIP)" | grep -E "$PAT" | grep -Ev "$OKPAT")

@@ -34,3 +34,5 @@ python3 src/robot/tools/build_viewer_assets.py map_vla.urdf src/robot src/scene_
 - 뷰어에서 관절 움직임: 브라우저 콘솔 `setJoints({omx_joint2: 0.5, omx_joint3: -0.6})`. 스트림의 관절 벡터를 쓰려면 `robot.json` 의 `joint_order`(관절 이름 순서)를 채우면 된다.
 
 - 확인용 도구 `tools/open_in_isaac.py`: LIMO+OMX URDF 를 Isaac Sim GUI 에서 열어 실제 크기를 눈으로·수치로 확인(`conda activate behavior; python tools/open_in_isaac.py [flat.urdf]`, DISPLAY 필요).
+
+- `og/view_scene_with_limo.sh <장면>`: OmniGibson 장면에 리모를 놓고 눈으로 확인(GUI).
