@@ -1,7 +1,7 @@
 # search_objects · confirm_object · list_place — 물체 기억 찾기, 이름 고치기, 자리 목록
 
 LLM(Qwen3.5-9B, KAU API)은 글만 주고받으므로 **벡터는 도구 안에서만** 쓴다. 찾기·이름 확률·속성 낱말은 공용 물체 색인
-(behavior-2026 [`src/scene_graph/clip`](../../../behavior-2026/src/scene_graph/clip/README.md) `sgsearch.h`, C++)이 하고,
+(behavior-2026 [`src/scene_graph/clip`](../../../scene_graph/clip/README.md) `sgsearch.h`, C++)이 하고,
 이 크레이트는 그 결과에 기억의 자리 정보(방·기준물·상태·마지막으로 본 때·map 좌표·크기·위치 불확실도·로봇 기준 좌표)를 붙여 짧은 JSON 글로 돌려준다.
 기억은 오프라인 `view.json`(`ViewJson`) 또는 **실시간 scenemap 스냅숏**(`LiveMem`, 10-05) — 같은 `Memory` trait.
 설계 기록: [plan.md 3.3](../../plan.md), [MAPVLA_SPEC 공용 물체 찾기](../../../../docs/map_vla/MAPVLA_SPEC.md#공용-물체-찾기-10-05).
@@ -127,7 +127,7 @@ LLM ── tool_call ──▶ ObjectSearch::run_tool (src/lib.rs) ── 인자
 
 ```bash
 # 공용 색인(C++) — behavior-2026 서브모듈에서(엔진 만들기는 그쪽 README "만들기"·"글 인코더")
-cmake -S ../../../behavior-2026/src/scene_graph/clip -B ~/sgclip_build && cmake --build ~/sgclip_build -j4 && ctest --test-dir ~/sgclip_build
+cmake -S ../../../scene_graph/clip -B ~/sgclip_build && cmake --build ~/sgclip_build -j4 && ctest --test-dir ~/sgclip_build
 cd src/agent/tools/search_objects
 cargo test --release                     # 시험 9개(GPU 없이; 끝까지 시험은 라벨 표가 있어야)
 # 실시간: 진짜 scenemap(libsgrt.so 안)에 합성 LIMO 스트림 → 도구 끝까지(GPU 안 씀). SO_LIVE_OBJPROB=1 이면 확률 모드(objprob) 켜고 확인이 지도에 들어가는지까지
@@ -158,7 +158,7 @@ set -a; . ~/.config/behavior-2026/kau.env; set +a
 
 ## 측정 (10-05)
 
-공용 색인 평가(behavior-2026 `clip/tools/eval_objsearch.py`, 자세한 표는 [clip README "물체 찾기"](../../../behavior-2026/src/scene_graph/clip/README.md)):
+공용 색인 평가(behavior-2026 `clip/tools/eval_objsearch.py`, 자세한 표는 [clip README "물체 찾기"](../../../scene_graph/clip/README.md)):
 BEHAVIOR 집 LIMO 탐사 기억(FastSAM + SigLIP 2, 283 물체, 확률 모드 전이라 best view 사진 한 장), 정답 종류 질의 18 개, 없는 물체 질의 40 개.
 
 | | R@1 | R@5 | 이름으로 못 찾는 물체 R@5 | 없는 물체: 뭐라도 나옴 / 묻지 않고 행동 | 지연(물체 ≈ 300) |

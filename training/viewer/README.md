@@ -185,10 +185,10 @@ cmake -S training/viewer/tools/og2sg -B ~/ra_og2sg && cmake --build ~/ra_og2sg -
 
 ## 장면 그래프 소스를 따라가는 규칙 (build_deps.sh)
 
-인지(scenemap·objprob·ObjectSAM·SigLIP 2·libsgrt)와 sgview 는 **behavior-2026 `src/scene_graph` 가 원본**이고, 학습 뷰어·OG 다시 돌리기는 그걸 그대로 쓴다 — 복사·갈래·옛 빌드 없음.
+인지(scenemap·objprob·ObjectSAM·SigLIP 2·libsgrt)와 sgview 는 **robot-agent `src/scene_graph` 가 원본**이고, 학습 뷰어·OG 다시 돌리기는 그걸 그대로 쓴다 — 복사·갈래·옛 빌드 없음.
 
 - 진입점: **`training/viewer/build_deps.sh`** — libsgrt·sgview·sgs_play·og2sg·trainview 를 robot-agent 소스에서 `-j4` 로 빌드해 `$TRAINVIEW_DEPS`(기본 `~/trainview_work/deps`)에 링크한다. `og_replay.py`/`og_replay.sh`/trainview 는 거기서만 찾는다(개인 빌드 경로 박지 않음). 엔진·objprob 기본값은 `runtime`(`objprob_front.hpp` kDefaultEngine · `sgrt_glue.py` ENGINE)에서 읽고 여기서 정하지 않는다.
-- 소스를 고친 뒤: behavior-2026 에서 고침 → 서브모듈 포인터 올림 → `tools/sync_scene_graph.sh` → `build_deps.sh` → trainview 다시 띄움. 그 뒤 재생 화면은 새 sgview 로, 새로 도는 OG 판은 새 인지로 나온다.
+- 소스를 고친 뒤: `src/scene_graph` 를 고침 → `build_deps.sh` → trainview 다시 띄움. 그 뒤 재생 화면은 새 sgview 로, 새로 도는 OG 판은 새 인지로 나온다.
 - 각 `_og.sg/meta.json` 의 `pipeline` 에 만든 소스(git 해시, scenemap·runtime·ovdet·clip·da 트리 해시), 엔진, objprob 매개변수 파일·해시, libsgrt 시각을 적는다. 재생 화면 HUD 에 표시하고, 지금 소스와 트리 해시가 다르거나 기록이 없으면 **"stale pipeline — re-run"** 단추: 눌러 og_queue 맨 앞에 다시 넣는다(옛 판은 `*.sg.prev` 로 비켜 둠).
 - 손목 카메라: `og_replay.py` 가 LIMO RGB(`cam/NNNNNN.jpg`, `meta.cams`)와 OMX-F 손목 RGB(`cam/wNNNNNN.jpg`, `meta.wcams`, 로봇 모델의 `wrist_eye` 센서 = URDF `wrist_cam_link`, 화각은 모델 기본값)를 2 Hz 로 함께 기록한다. Replay 에서 `LIMO RGB`·`wrist RGB` 그림 위 그림(켜고 끔, 모서리 끌어 크기 조절).
 

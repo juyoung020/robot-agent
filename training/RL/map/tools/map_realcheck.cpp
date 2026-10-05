@@ -1,4 +1,4 @@
-// 진짜 scenemap 코드(읽기 전용, src/behavior-2026/src/scene_graph/scenemap)와 근사판을 같은 입력으로 맞춰 본다(CPU, 학습 경로 아님).
+// 진짜 scenemap 코드(읽기 전용, src/scene_graph/scenemap)와 근사판을 같은 입력으로 맞춰 본다(CPU, 학습 경로 아님).
 //   map_realcheck [N=64] [steps=600]
 // 1) 점유 문턱: 진짜 OccGrid 한 칸을 맞음·빈칸으로 흔들며 export8 ≥ 65(kOccMin) 와 근사의 L ≥ MP::q_occ 가 늘 같은지.
 // 2) 격자: CPU 참조판 지도로 G1 판을 몰면서 keyframe 마다 같은 가상 스캔(열 끝)을 같은 믿는 자세로 진짜 OccGrid::insert 에 넣고,

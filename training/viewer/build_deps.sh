@@ -3,16 +3,16 @@
 #   training/viewer/build_deps.sh            # 바뀐 것만 다시 빌드(make/cargo 가 판단), -j4
 #   TRAINVIEW_DEPS=<폴더>                      # 결과 링크 폴더(기본 ~/trainview_work/deps)
 # 만드는 것(결과는 $DEPS 에 링크 — og_replay.py·og_replay.sh·trainview 가 거기서만 찾는다):
-#   libsgrt.so  = src/behavior-2026/src/scene_graph/runtime (ObjectSAM + SigLIP 2 + scenemap objprob. 엔진·objprob 기본값은 그 소스의 것 — 여기서 따로 정하지 않음)
+#   libsgrt.so  = src/scene_graph/runtime (ObjectSAM + SigLIP 2 + scenemap objprob. 엔진·objprob 기본값은 그 소스의 것 — 여기서 따로 정하지 않음)
 #   sgview      = src/scene_graph/sgview (진짜 뷰어 — 실시간에 쓰는 같은 바이너리)
-#   sgs_play    = src/behavior-2026/src/scene_graph/tools/realbag/sgs_play.cpp (재생 보내는 쪽, --ctl)
+#   sgs_play    = src/scene_graph/tools/realbag/sgs_play.cpp (재생 보내는 쪽, --ctl)
 #   og2sg       = training/viewer/tools/og2sg (underlay 만드는 데만)
-# 장면 그래프 소스(behavior-2026 서브모듈 src/scene_graph)를 고치거나 서브모듈 포인터를 올린 뒤: tools/sync_scene_graph.sh → 이 스크립트 → 끝.
+# 장면 그래프 소스(src/scene_graph, 원본 하나)를 고친 뒤: 이 스크립트 → 끝.
 # 판 폴더(.sg)의 meta.json pipeline 에 만든 소스의 해시가 있어, 지금 소스와 다르면 재생 화면이 "stale pipeline" 으로 표시한다.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
-SG26=$REPO/src/behavior-2026/src/scene_graph
+SG26=$REPO/src/scene_graph
 DEPS=${TRAINVIEW_DEPS:-$HOME/trainview_work/deps}
 BLD=${TRAINVIEW_BUILD:-$HOME/trainview_work/build}
 mkdir -p "$DEPS" "$BLD"

@@ -14,7 +14,7 @@ from common import WORK
 
 D = f'{WORK}/data'; OUT = f'{WORK}/labels'
 B1K = '/home/juyoung/robot-agent/src/behavior-2026/BEHAVIOR-1K/asset_pipeline/metadata/category_mapping.csv'
-CFG = '/home/juyoung/robot-agent/src/behavior-2026/src/scene_graph/ovdet/config'
+CFG = '/home/juyoung/robot-agent/src/scene_graph/ovdet/config'
 ROOTS = ['artifact.n.01', 'food.n.01', 'food.n.02', 'plant.n.02', 'animal.n.01', 'natural_object.n.01', 'plant_part.n.01']
 
 

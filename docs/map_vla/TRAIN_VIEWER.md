@@ -630,5 +630,5 @@ trainfmt/             (쓰는 쪽과 같이 쓰는 형식 크레이트, 4.6)
 
 - 전투기 뷰어: `~/aircombat-rl-private/student/viewer/{README.md, 계획.md, 조사자료.md, server.py, static/index.html, static/app.js, static/replay.js, static/style.css, fetch_vendor.py}`, `student/my_runlog.py`, `student/wrappers.py`(`Shaped`), `student/gpu/vec.py`(`EP_COLS`, `REPLAY_COLS`, `seat_bnd`, `exp_replay_env`), `student/gpu/train_gpu.py`(`_meta`).
 - sgview: `src/scene_graph/sgview/{README.md, Cargo.toml, build.rs, src/main.rs, assets/index.html, assets/robot/robot.json}`, `src/robot/tools/build_viewer_assets.py`.
-- scenemap 스트림: `src/behavior-2026/src/scene_graph/scenemap/{include/scenemap/stream.hpp, src/stream.cpp}`.
+- scenemap 스트림: `src/scene_graph/scenemap/{include/scenemap/stream.hpp, src/stream.cpp}`.
 - 우리 설계: [GPU_TRAINING.md](GPU_TRAINING.md), [POLICY.md](POLICY.md), [VLA_INPUT.md](VLA_INPUT.md), [training/README.md](../../training/README.md).

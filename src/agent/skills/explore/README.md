@@ -135,7 +135,7 @@ set -a; . ~/.config/behavior-2026/kau.env; set +a              # 키는 환경�
 ../../devtools/mock_eval.sh <tag> [--style compact]                          # → behavior-2026/outputs/explore_mock_<tag>/ (POLS=frontier 면 기준선만)
 ../../runtime/target/release/run-skill --skill explore --policy frontier --mock <gt.pgm> --gt <gt.json> --out <dir>   # 한 판
 # 시뮬(OmniGibson, 머리 RGB-D, VRAM ≥ 9 GB·RAM ≥ 16 GB 될 때까지 기다림)
-cmake -S ../../../behavior-2026/src/scene_graph/runtime -B ~/sgrt_build_explore && cmake --build ~/sgrt_build_explore -j
+cmake -S ../../../scene_graph/runtime -B ~/sgrt_build_explore && cmake --build ~/sgrt_build_explore -j
 ../../../behavior-2026/src/sim/explore/run_explore.sh frontier bringing_water <tag>    # 또는 llm
 ../../../behavior-2026/src/sim/explore/viewer_8080.sh <run dir>                        # 8080 sgview 를 이 판으로(파일 모드, 하나만)
 # 실시간 뷰어(소켓 → SSE): 저장소 루트에서 tools/run_explore_live.sh frontier bringing_water <tag>  (LIMO: SGRT_ROBOT=limo_omx)

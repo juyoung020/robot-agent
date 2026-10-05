@@ -18,7 +18,7 @@
 ## 2. 단계별 판단
 **① GT 지도** — 가능. `objects.csv`+`object_poses.csv`로 프레임별 "정답 지도"가 나온다. 단, 전체 GT는 안 본 물체까지 다 담는다. 학습 state의 GT는 "그 프레임까지 인스턴스 마스크에서 충분히 보인 물체만"으로 걸러야 업데이터가 실제로 낼 수 있는 값과 맞는다(벤치마크도 `>= 400 px in >= 10 frames`를 "well seen"으로 쓴다).
 
-**② 우리 지도 업데이터** — 팀 `scenemap`(`~/behavior-2026/src/scene_graph/scenemap`, CPU C++)이 이미 물체 상태 SEEN/GONE/MOVED/HELD와 `map_timeline.csv` 출력 도구(`tools/map_timeline.cpp`)를 갖고 있다. 다만 그 도구는 BEHAVIOR 에피소드(`ep_*.bin`, R1 Pro proprio)만 읽는다. **벤치마크 시퀀스를 읽는 어댑터가 필요하다**: RGB/깊이/자세 → `sm_push_image`(`depth_m`, `fx fy cx cy`)와 `sm_push_pose`(GT 자세 모드). 검출은 처음엔 인스턴스 마스크(= '완벽한 검출')로 넣어 업데이터 로직만 따로 채점하고, 그다음 FastSAM + SigLIP2로 바꾼다.
+**② 우리 지도 업데이터** — 팀 `scenemap`(`~/src/scene_graph/scenemap`, CPU C++)이 이미 물체 상태 SEEN/GONE/MOVED/HELD와 `map_timeline.csv` 출력 도구(`tools/map_timeline.cpp`)를 갖고 있다. 다만 그 도구는 BEHAVIOR 에피소드(`ep_*.bin`, R1 Pro proprio)만 읽는다. **벤치마크 시퀀스를 읽는 어댑터가 필요하다**: RGB/깊이/자세 → `sm_push_image`(`depth_m`, `fx fy cx cy`)와 `sm_push_pose`(GT 자세 모드). 검출은 처음엔 인스턴스 마스크(= '완벽한 검출')로 넣어 업데이터 로직만 따로 채점하고, 그다음 FastSAM + SigLIP2로 바꾼다.
 
 **③ 지도를 state 수치로** — 가능. 아래 §3. 단, 이 단계는 벤치마크 밖의 데이터가 필요하다(§4).
 

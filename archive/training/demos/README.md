@@ -20,7 +20,7 @@ Python 은 데이터셋이 Python 도구만 주는 오프라인 형식 바꾸기
 ## 쓰는 법
 
 ```bash
-cmake -S training/demos -B ~/ra_demos_build -DSCENEMAP_DIR=$HOME/robot-agent/src/behavior-2026/src/scene_graph/scenemap && cmake --build ~/ra_demos_build -j4
+cmake -S training/demos -B ~/ra_demos_build -DSCENEMAP_DIR=$HOME/robot-agent/src/scene_graph/scenemap && cmake --build ~/ra_demos_build -j4
 P=~/miniconda3/envs/behavior/bin/python
 # 거르기(주석: git sparse clone — 파일별 HF 받기는 20,000 요청이라 429)
 GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --filter=blob:limit=200k --no-checkout https://huggingface.co/datasets/behavior-1k/2026-challenge-demos ~/datasets/b1k_ann_git

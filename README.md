@@ -83,7 +83,7 @@ robot-agent/
 ├── docs/            # 계획(plan.md), 모델 선택, 후보 조사, Map_Vla 설계(map_vla/) (목록은 docs/README.md)
 ├── src/             # 코드 (ROS 2 패키지)
 │   ├── robot/       # 리모 + 매니퓰레이터(OMX-F) 로봇 설명(URDF·RViz)
-│   ├── scene_graph/ # ① 물체 기억 (scenemap·da·spark_dsg·sgview·runtime·ovdet·clip, behavior-2026 에서 tools/sync_scene_graph.sh 로 맞춤)
+│   ├── scene_graph/ # ① 물체 기억 (scenemap·da·spark_dsg·sgview·runtime·ovdet·clip·tools/realbag — 유일한 원본)
 │   ├── agent/       # ② 큰 계획·대화 (LLM)·실패 복구
 │   │   ├── skills/  #   스킬(한 가지 일을 끝까지 하는 단위, 지금은 explore)
 │   │   ├── tools/   #   LLM 에게 보이는 도구(move_robot, Rust)
@@ -98,7 +98,7 @@ robot-agent/
 │       └── archive/ #   지금 안 쓰는 모듈 (지우지 않고 옮겨 둠)
 ├── training/        # 모델 학습 (embed/: 영상–글 임베딩 증류, RL/·BC/: 교사·작은 학생, vla/: RecallVLA, fastsam/: ObjectSAM 분할, viewer/: 학습 뷰어, model/: 베이스 모델)
 ├── scripts/         # 설치·실행 스크립트
-├── tools/           # sync_scene_graph.sh (behavior-2026 → src/scene_graph 동기화)
+├── tools/           # 실행·점검 도구
 ├── tests/           # 테스트 (sandbox/ 는 AI·사람 실험 공간)
 └── refs/            # 참고 논문·코드 목록
 ```
@@ -108,7 +108,7 @@ robot-agent/
 - [docs/README.md](docs/README.md) — 이 저장소 문서 목록
 - [docs/clip_candidates.md](docs/clip_candidates.md) — CLIP 류 임베딩 모델 후보·측정
 - [docs/map_vla/README.md](docs/map_vla/README.md) — Map_Vla(리모 + 매니퓰레이터 VLA) 설계 문서
-- [src/scene_graph/README.md](src/scene_graph/README.md) — 물체 기억 코드(실제 로봇 쪽)·동기화·빌드
+- [src/scene_graph/README.md](src/scene_graph/README.md) — 물체 기억 코드(원본)·빌드
 - [src/robot/README.md](src/robot/README.md) — 리모 + 매니퓰레이터 로봇 설명(URDF·RViz)
 - [training/README.md](training/README.md) — 모델 학습(교사·학생·RecallVLA·분할·학습 뷰어)
 - [scenemap 설계](https://github.com/juyoung020/behavior-2026/blob/main/docs/scenemap_설계.md) — 물체 기억(2D SLAM·물체 지도·계획기 질의) 설계 (서브모듈)

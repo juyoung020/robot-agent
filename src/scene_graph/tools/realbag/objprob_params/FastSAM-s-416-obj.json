@@ -1,0 +1,6 @@
+{
+ "engine": "FastSAM-s-416-obj.plan",
+ "fit": "objprob_fit.py radio r3 (sim ground truth) with this engine at conf 0.25, 10-05; thresholds 0.5/0.7 chosen by objprob_refit.sh. Not the default engine (see README).",
+ "obj_params": "ap_w0=-4.539,ap_w1=5.142,ap_w2=-2.967,ap_w3=-0.6652,ap_w4=6.124,ap_w5=1.369,ap_w6=0.8739,ap_w7=0,ap_wm0=-1.866,ap_wm1=0.42,ap_wm2=-3.371,ap_wm3=-0.9096,ap_wm4=2.24,ap_wm5=2.221,ap_wm6=-0.5984,ap_wm7=1.496,ap_same_p=0.5,ap_merge_p=0.7,ap_cos0=0.75,kap_k0=4369,kap_s0=40,kap_trunc=1,kap_d0=100",
+ "label_prior": "FastSAM-s-416-obj.label_prior.json"
+}

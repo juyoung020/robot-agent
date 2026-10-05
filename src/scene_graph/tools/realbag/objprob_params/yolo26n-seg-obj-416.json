@@ -1,0 +1,6 @@
+{
+ "engine": "yolo26n-seg-obj-416.plan",
+ "fit": "objprob_fit.py radio r3 (sim ground truth) with this engine at conf 0.25, 10-05; thresholds 0.5/0.7 chosen by objprob_refit.sh. Engine = ObjectSAM YOLO26n student v0.2 (under-segmentation-weighted, t 0.03). Default engine since 10-05 (ObjectSAM + SigLIP 2 + objprob).",
+ "obj_params": "ap_w0=-4.235,ap_w1=5.063,ap_w2=-5.289,ap_w3=-0.3241,ap_w4=5.02,ap_w5=1.417,ap_w6=-0.013,ap_w7=0,ap_wm0=-2.671,ap_wm1=1.209,ap_wm2=-4.964,ap_wm3=-0.3121,ap_wm4=6.248,ap_wm5=1.648,ap_wm6=-0.5892,ap_wm7=2.04,ap_same_p=0.5,ap_merge_p=0.7,ap_cos0=0.75,kap_k0=4369,kap_s0=40,kap_trunc=1,kap_d0=100",
+ "label_prior": "yolo26n-seg-obj-416.label_prior.json"
+}

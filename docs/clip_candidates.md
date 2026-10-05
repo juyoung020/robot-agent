@@ -373,7 +373,7 @@ memory/
 
 | 부분 | 어디 | 내용 |
 |---|---|---|
-| 내보내기 | `src/behavior-2026/src/scene_graph/clip/tools/export_siglip2.py` | 영상 탑 → opset 13 ONNX. 입력 `images` N×3×256×256 + `wpatch` N×64, 출력 `emb` N×768(L2). 마스크 = MAP 주의집중 logit 에 `log(max(w, 0.01))`. w = 1 이면 원래 임베딩과 코사인 1.000000 |
+| 내보내기 | `src/scene_graph/clip/tools/export_siglip2.py` | 영상 탑 → opset 13 ONNX. 입력 `images` N×3×256×256 + `wpatch` N×64, 출력 `emb` N×768(L2). 마스크 = MAP 주의집중 logit 에 `log(max(w, 0.01))`. w = 1 이면 원래 임베딩과 코사인 1.000000 |
 | 엔진 | `clip/tools/build_engine.py` | FP16 + 이름에 `norm`·`mlp/act` 든 층 FP32 고정, 배치 칸 1·2·4·8 프로필, INT8 PTQ 선택. 엔진·ONNX 는 `~/ovdet_models/x86_sm120/siglip2_b32/`(git 밖) |
 | 실행 | `clip/src/{crop.cu,encoder.cpp}` | CUDA 커널 하나(정사각 상자 + 10 % 둘레, 원본 RGB 양선형 256², 정규화 FP16, 8 × 8 마스크 비율), TensorRT 자기 스트림, 칸 2개 비동기 고리, 배치 칸별 CUDA graph, 결과 자리 풀. TRT 8.2 / 10 분기 |
 | 라벨 찾기 | `clip/src/labels.cpp` | 표 = training/embed `labels/objects-v1`(30,533 줄, 영·한, WordNet 상위어, 구조물, main/tail). IVF 256 + 128-d FP16 1단계(+ 선택 128-bit 해밍) + 768-d 다시 매김, AVX2 / NEON / 일반 |
@@ -381,7 +381,7 @@ memory/
 | 글 쪽 | `clip/tools/text_query.py` | SigLIP 2 글 탑(로봇 밖, CPU): 글 → 768-d, 기억 폴더 찾기, HTTP `/encode`·`/search` |
 | 시험 | `ctest`(clip 4 개) | 커널 = CPU 기준, 엔진 = PyTorch FP32, 찾기 = 전부 훑기, 캐시 규칙 |
 
-- 자세한 배치·ABI 는 서브모듈 [docs/scenemap_설계.md](../src/behavior-2026/docs/scenemap_설계.md) 3.7, [clip/README.md](../src/behavior-2026/src/scene_graph/clip/README.md).
+- 자세한 배치·ABI 는 서브모듈 [docs/scenemap_설계.md](../src/behavior-2026/docs/scenemap_설계.md) 3.7, [clip/README.md](../src/scene_graph/clip/README.md).
 
 ### 8.2 정확도 맞춤 (PC, TRT 10.16)
 

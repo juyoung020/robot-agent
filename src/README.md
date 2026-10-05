@@ -16,7 +16,7 @@
 
 ## 물체 기억 (`scene_graph/`)
 
-실제 로봇 쪽 코드가 이 저장소 `scene_graph/` 에 있다. 원본은 서브모듈의 `behavior-2026/src/scene_graph/` 이고, 거기서 고친 뒤 `tools/sync_scene_graph.sh` 로 여기에 맞춘다(`--check` 로 어긋남 확인).
+실제 로봇 쪽 코드가 이 저장소 `scene_graph/` 에 있다. 여기가 유일한 원본이다(옛 behavior-2026 서브모듈 사본 방식은 10-06 에 끝냄).
 
 | 폴더 | 역할 |
 |---|---|
@@ -28,4 +28,4 @@
 | `sgview/` | **장면 그래프 뷰어 = sgview** (Spark-DSG 장면 그래프 보기, Rust 서버 + three.js, 실시간). 실행: `tools/run_sgview.sh <memory_dir> [--live]`, 탐사 + 뷰어 `tools/run_explore_live.sh`. [sgview/README.md](scene_graph/sgview/README.md) |
 | `spark_dsg/` | Spark-DSG 우리 사본(BSD-3, 바꾼 것은 `OUR_CHANGES.md`) |
 
-옛 파이썬 뷰어 sgviz(Spark-DSG + viser, 서브모듈 `behavior-2026/src/scene_graph/viewer/`)는 파일 폴링이라 실시간이 아니고 **쓰지 않는다**(기록용). 뷰어는 sgview 하나다.
+옛 파이썬 뷰어 sgviz(Spark-DSG + viser, 서브모듈 `src/scene_graph/viewer/`)는 파일 폴링이라 실시간이 아니고 **쓰지 않는다**(기록용). 뷰어는 sgview 하나다.

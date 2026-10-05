@@ -6,7 +6,7 @@
 
 - CLIP 류 임베딩(FastSAM-s 마스크 → 이름·임베딩, Nano 단독) 후보·측정: [CLIP 후보](clip_candidates.md) (10-03).
 - 자체 임베딩 머리(SigLIP 2 B/32 위 128-d MLP, PE-L 증류) + 한국어 질의 학생 + 라벨 표 형식: [training/embed](../training/embed/README.md) (10-03, 시범).
-- 이 문서를 쓸 때 쓰던 것(코드에는 아직 있음, 지금은 보관 엔진): `src/behavior-2026/src/scene_graph/ovdet` = **YOLOE-11 text-prompt seg**, TensorRT FP16, C API, 어휘 272개.
+- 이 문서를 쓸 때 쓰던 것(코드에는 아직 있음, 지금은 보관 엔진): `src/scene_graph/ovdet` = **YOLOE-11 text-prompt seg**, TensorRT FP16, C API, 어휘 272개.
   - 그 뒤 방향: **FastSAM-s(입력 416) 마스크 → SigLIP 2 B/32 임베딩으로 이름**으로 바꿨고, 10-05 에 ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, [github.com/juyoung020/ObjectSAM](https://github.com/juyoung020/ObjectSAM) v1.0) + SigLIP 2 + objprob(scenemap 확률 모드, 기본 켬, 매개변수 `objprob_params/yolo26n-seg-obj-416.json`) 로 정했다(까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼). 근거·측정은 [CLIP 후보](clip_candidates.md). 아래 YOLOE·YOLO-seg 추천은 그 전 판단으로 남긴다.
   - 비교 기록: `src/behavior-2026/docs/ovdet_검출기.md`. 숫자는 10-02 에 "다시 잴 것" 표시가 붙어 있다. 그래서 방향 참고로만 쓴다.
 - 표기
@@ -446,4 +446,4 @@ Orbbec DaBai RGB-D ──▶ [GPU] YOLOE-26n-seg 416 FP16 (5 Hz) ── 마스�
 27. apple-amlr 라이선스(연구 전용) — https://huggingface.co/apple/mobileclip2_coca_dfn2b_s13b_context77/blob/main/README.md
 28. NVIDIA TAO SigLIP 2 — https://catalog.ngc.nvidia.com/orgs/nvidia/teams/tao/models/siglip_v2
 29. Recognize Anything (RAM++, Apache-2.0) — https://github.com/xinyu1205/recognize-anything
-30. 우리 측정: `src/behavior-2026/docs/ovdet_검출기.md`, `src/behavior-2026/src/scene_graph/ovdet/README.md`
+30. 우리 측정: `src/behavior-2026/docs/ovdet_검출기.md`, `src/scene_graph/ovdet/README.md`

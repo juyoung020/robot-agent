@@ -27,7 +27,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, '..', '..', '..'))
-SM_EVAL_DEFAULT = os.path.expanduser('~/robot-agent/src/behavior-2026/src/scene_graph/scenemap/eval')
+SM_EVAL_DEFAULT = os.path.expanduser('~/robot-agent/src/scene_graph/scenemap/eval')
 
 
 def main():

@@ -521,7 +521,7 @@
 | 에이전트 도구 [`search_objects`·`confirm_object`](../../src/agent/tools/search_objects/README.md) | 글(영·한) → 라벨 표 이름 또는 SigLIP 2 글 인코더(TensorRT, 0.8 ms) | `sgs_search_json` → 도구가 방·기준물·상태·경과·거리를 붙여 **글** |
 | RecallVLA 실행기(9절 실행기 접점 뒤) | 몸통이 낸 질의 벡터 q(768, SigLIP 2 글 공간) | `sgs_search_vec(q, K)` → 상위 K `{id, score = P_app(q\|물체), cos}` → 물체 칸 |
 
-**색인 형식**(기억 폴더 안, 상세 [clip README "물체 찾기"](../../src/behavior-2026/src/scene_graph/clip/README.md))
+**색인 형식**(기억 폴더 안, 상세 [clip README "물체 찾기"](../../src/scene_graph/clip/README.md))
 - 물체 벡터(원본): 확률 모드(`objprob`) `objects/O<id>_views.f16`(n × 768 FP16) · `objects/O<id>_emb.f16`(μ). 확률 모드 전 기억은 best view 사진을 영상 엔진으로 뽑아 `cache/objsearch/O<id>_view.f16`.
 - 이름: view.json `name`(등록), 확률 모드 `name_post`(들어오면). 확인 `confirmations.jsonl`(원본, 보정 데이터). `cache/objsearch/names.json` 은 다시 셀 수 있는 캐시.
 - 물체 안 상대 확률 `P_app(c|o) = softmax_c 평균_v log softmax_c(t · cos(z_v, 글_c))`(라벨 = main synset 3,244 + 이 기억의 이름), 이름 사후 = 바탕 × 등록 우도비 3 × 확인 우도비(user 50, close_look 10).

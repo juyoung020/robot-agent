@@ -148,7 +148,7 @@ OpenLORIS office1-1·1-5 노드 120 → 120, 107 → 111. 솔직히 랜색은 �
 - **SigLIP 2 B/32** 가 물체 조각(원본 RGB 에서 상자 + 10 % 둘레, 정사각)마다 768-d 영상 임베딩을 낸다. 새 물체 / best view 가 바뀐 물체만, 묶어서, 비동기로 돈다.
 - 이름은 그 임베딩과 미리 계산한 **라벨 표**(글 임베딩)의 코사인으로 고른다. 확신이 낮으면 WordNet 상위어로 올린다. 벽·바닥 같은 구조물은 표시만 하고 agent 목록에서 뺀다.
 - 저장: 물체 벡터는 **원본 임베딩 그대로**(`objects/O<id>_emb.f16`), 이름은 다시 만들 수 있는 **캐시**(기억 폴더 `cache/names.json`).
-- 코드는 서브모듈 `src/behavior-2026/src/scene_graph/clip`. (10-05 갱신: 시뮬 검출기도 ObjectSAM + SigLIP 2 + objprob — YOLOE 는 보관.) 후보·측정: [CLIP 후보](clip_candidates.md), [물체 인식 모델 후보](perception_model_candidates.md).
+- 코드는 서브모듈 `src/scene_graph/clip`. (10-05 갱신: 시뮬 검출기도 ObjectSAM + SigLIP 2 + objprob — YOLOE 는 보관.) 후보·측정: [CLIP 후보](clip_candidates.md), [물체 인식 모델 후보](perception_model_candidates.md).
 
 **왜 SAM + CLIP 으로 돌아왔나 (YOLO-seg → FastSAM-s + SigLIP 2)**
 
@@ -214,7 +214,7 @@ OpenLORIS office1-1·1-5 노드 120 → 120, 107 → 111. 솔직히 랜색은 �
 - **임베딩 벡터 찾기**: 질의 글("빨간 컵", 한국어도)을 SigLIP 2 B/32 글 공간의 벡터로 바꾸고, 기억 속 물체 벡터(물체 조각의 원본 영상 임베딩)와 **코사인 유사도**(L2 정규화한 벡터의 내적)로 비교해 가까운 순으로 고른다. 이름표에 없는 말("물 마시는 거")로도 찾을 수 있다.
 - **이름(의미) 찾기**: 물체마다 라벨 표에서 고른 이름·상위어(기억 폴더 `cache/`)를 붙여 두고, 이름이나 상위어("컵" ⊂ "식기")로 찾는다. 빠르고 결과를 설명하기 쉽다.
 - 찾은 물체(이름·위치·상태)를 LLM 프롬프트에 넣어 답·계획을 만들게 하는 구조가 **RAG**(Retrieval-Augmented Generation, 검색 증강 생성)다. 우리 agent 는 물체 기억을 도구로 찾아 그 결과로 답하므로 이 방식에 해당한다.
-- 임베딩·라벨 표·한국어 질의 모델은 [`training/embed`](../training/embed/README.md), 실행 쪽은 서브모듈 `src/behavior-2026/src/scene_graph/clip`.
+- 임베딩·라벨 표·한국어 질의 모델은 [`training/embed`](../training/embed/README.md), 실행 쪽은 서브모듈 `src/scene_graph/clip`.
 
 ### 방 나누기·이름 — 직접 만듦 (CLIP + SAM 구조로)
 

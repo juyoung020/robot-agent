@@ -98,7 +98,7 @@ state_out   float[nworld][S]          // 정규화 완료된 학습 입력
 
 ---
 
-## 5. 팀 프로젝트의 지도 인터페이스 (`refs/code/behavior-2026/src/scene_graph/scenemap/include/scenemap.h` — 지금 경로는 서브모듈 `src/behavior-2026/src/scene_graph/scenemap/include/scenemap.h`)
+## 5. 팀 프로젝트의 지도 인터페이스 (`refs/code/src/scene_graph/scenemap/include/scenemap.h` — 지금 경로는 서브모듈 `src/scene_graph/scenemap/include/scenemap.h`)
 시뮬레이션이 내보내는 값과 지도가 받는 값을 같은 형식으로 맞춘다.
 - 입력 영상 `sm_image`: `cam`(0 머리, 1 왼손목, 2 오른손목), `rgba` (w×h×4 u8), **`depth_m` (w×h float, 미터)**, `fx, fy, cx, cy`. 우리 depth 버퍼 정의(미터, float)와 같다.
 - 입력 proprio: 스텝마다 f32 배열(`n_proprio`). 지금 팀 코드는 R1 Pro용 61개다. 우리 로봇(LIMO + OMX)의 구성은 새로 정해야 한다. **(정해짐)** scenemap `limo_omx` 매개변수에 LIMO + OMX 순기구학이 들어갔다(서브모듈 `7219187`, 올림 `a2abc45`).

@@ -1,0 +1,6 @@
+{
+ "engine": "FastSAM-s-416.plan",
+ "fit": "objprob_fit.py radio r3 (sim ground truth), 10-05 - the built-in defaults of objprob.hpp/bestview.hpp",
+ "obj_params": "ap_w0=-5.116,ap_w1=4.553,ap_w2=-4.976,ap_w3=0.376,ap_w4=8.814,ap_w5=1.824,ap_w6=-0.186,ap_w7=0,ap_wm0=-4.265,ap_wm1=1.094,ap_wm2=-3.378,ap_wm3=0.627,ap_wm4=8.823,ap_wm5=3.205,ap_wm6=-2.5,ap_wm7=1.717,ap_same_p=0.6,ap_merge_p=0.7,kap_k0=4369,kap_s0=40,kap_trunc=1,kap_d0=100",
+ "label_prior": "FastSAM-s-416.label_prior.json"
+}

@@ -210,7 +210,7 @@ B 24, L 337(실제 344), 기억 요약 인코더 켬: **30.4–30.8 표본/s**(�
 | 층 | 무엇 | 바뀌는 방식 |
 |---|---|---|
 | ① 입력 형식 | 정책이 받는 것: 물체 칸·기억 표, 벽, 방 항목, 방향 구역, 위에서 본 지도 그림, 몸 상태. 정의는 `VLA_INPUT.md`, 코드 짝은 `map_tok.h`(GPU) ↔ `sm_tok.h`(실제) | **하나로 고정.** ②와 ③ 모두 이 형식을 낸다. 형식을 바꿀 때는 두 쪽을 함께 바꾸고 문서를 먼저 고친다 |
-| ② 진짜 파이프라인 | behavior-2026 `src/scene_graph`: ObjectSAM(ovdet) + SigLIP 2(clip) + scenemap 확률 모드(objprob) + libsgrt + sgview | **원본 하나.** 실시간 로봇, 학습 리플레이(OmniGibson 재현 → `_og.sg`), 학습 뷰어(trainview)가 같은 빌드를 쓰고 **자동으로 따라간다.** 흉내 내거나 베낀 코드는 두지 않는다. sgview 화면은 그대로 쓰고, 재생 제어·학습용 레이아웃만 바깥에 더한다 |
+| ② 진짜 파이프라인 | robot-agent `src/scene_graph`: ObjectSAM(ovdet) + SigLIP 2(clip) + scenemap 확률 모드(objprob) + libsgrt + sgview | **원본 하나.** 실시간 로봇, 학습 리플레이(OmniGibson 재현 → `_og.sg`), 학습 뷰어(trainview)가 같은 빌드를 쓰고 **자동으로 따라간다.** 흉내 내거나 베낀 코드는 두지 않는다. sgview 화면은 그대로 쓰고, 재생 제어·학습용 레이아웃만 바깥에 더한다 |
 | ③ GPU 학습 지도 | `training/RL/map`(정책 지도 G2): 학습 속도를 위한 우리 포팅 | **자동으로 따라가지 않는다.** 속은 달라도 되고 ①의 형식만 지킨다. 코드는 그대로 둔다 |
 
 **②가 바뀌면 ③은 이렇게 다룬다**

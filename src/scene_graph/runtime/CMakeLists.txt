@@ -27,9 +27,9 @@ add_library(sgrt SHARED src/sgrt.cpp src/sgrt_clip.cpp)
 target_include_directories(sgrt PUBLIC include PRIVATE ../clip/src)
 target_link_libraries(sgrt PRIVATE sgrt_crop scenemap ovdet sgclip)
 target_compile_options(sgrt PRIVATE -Wall -Wextra)
-# objprob 엔진별 매개변수 폴더: behavior-2026 안이면 ../tools/realbag/objprob_params, robot-agent 사본(src/scene_graph)이면 서브모듈 쪽
+# objprob 엔진별 매개변수 폴더: ../tools/realbag/objprob_params (원본은 robot-agent src/scene_graph 하나. DIR2 는 sgrt.cpp 의 두 번째 후보 칸 — 같은 폴더)
 target_compile_definitions(sgrt PRIVATE SGRT_PARAMS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tools/realbag/objprob_params"
-                                        SGRT_PARAMS_DIR2="${CMAKE_CURRENT_SOURCE_DIR}/../../behavior-2026/src/scene_graph/tools/realbag/objprob_params")
+                                        SGRT_PARAMS_DIR2="${CMAKE_CURRENT_SOURCE_DIR}/../tools/realbag/objprob_params")
 
 # best view 장치 자르기 시험(작은 GPU 시험): 호스트 식과 같은지, 시간
 enable_testing()

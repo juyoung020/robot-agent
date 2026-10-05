@@ -30,5 +30,5 @@ src/robot/tools/build_urdf.sh map_vla.urdf   # 저장소 xacro → 펼친 URDF(�
 python3 src/robot/tools/build_viewer_assets.py map_vla.urdf src/robot src/scene_graph/sgview/assets/robot   # pip: trimesh numpy pycollada fast-simplification
 ```
 - LIMO 본체 75.6만 → 8.6만 면(1.5 MB), 바퀴 14만 → 1.2만 면, OMX 8개 링크는 STL 을 mm → m 로 굽고 2.5만 면 상한(0.05~0.45 MB).
-- 이 자산은 `robot-agent` 에만 있다(`behavior-2026` 의 뷰어는 없으면 상자 모양으로 대체). `tools/sync_scene_graph.sh` 가 이 폴더를 지우지 않는다.
+- 이 자산은 `robot-agent` 에만 있다(없으면 뷰어는 상자 모양으로 대체).
 - 뷰어에서 관절 움직임: 브라우저 콘솔 `setJoints({omx_joint2: 0.5, omx_joint3: -0.6})`. 스트림의 관절 벡터를 쓰려면 `robot.json` 의 `joint_order`(관절 이름 순서)를 채우면 된다 — 지금 시뮬의 로봇은 R1 Pro 라서 비어 있다.

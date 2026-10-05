@@ -40,7 +40,7 @@ set_target_properties(trpc PROPERTIES IMPORTED_LOCATION ${TRPC_LIB})
 add_dependencies(trpc trpc_build)
 set(TRPC_LINK trpc pthread dl m)
 # 진짜 scenemap(GPU 판 → sgview 판, sg_feed.h): behavior-2026 서브모듈 소스를 읽기만 해서 빌드
-set(SCENEMAP_DIR "${TR}/../src/behavior-2026/src/scene_graph/scenemap" CACHE PATH "scenemap source (read only)")
+set(SCENEMAP_DIR "${TR}/../src/scene_graph/scenemap" CACHE PATH "scenemap source (read only)")
 add_subdirectory(${SCENEMAP_DIR} scenemap EXCLUDE_FROM_ALL)
 
 if(WITH_PPO)
