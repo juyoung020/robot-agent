@@ -25,7 +25,7 @@ LLM 이 골라 부르는 도구 중 **코드가 있는 것**만 여기 적는다
 
 인자
 ```json
-search_objects {"query": "라디오", "k": 5, "room": "kitchen", "state": "seen|moved|held|gone", "near": "O12", "max_age_s": 60, "seen_after_s": 120}   (query 만 필수)
+search_objects {"query": "라디오", "k": 5, "room": "kitchen", "state": "seen|moved|held|gone", "max_age_s": 60, "seen_after_s": 120}   (query 만 필수; 좌표·시간 필터만 — 옛 `near`(물체 기준 1.5 m)는 물체 간 관계라 10-06 에 뺌)
 confirm_object {"id": "O27", "name": "radio", "source": "user|close_look"}                                       (셋 다 필수)
 list_place     {"place": "kitchen" | "R2" | "O12"}
 ```
@@ -122,7 +122,7 @@ list_place     {"place": "kitchen" | "R2" | "O12"}
 - 전역 경로: 바뀐 칸이 경로 통로(몸통 + 0.3 m)에 걸리고 실제로 막혔을 때, 또는 3 s 마다 다시 계획(ms 단위).
 - 몸통: 반지름 0.37 m 원(시뮬 base_link AABB 0.743 × 0.732 m). 사각형 0.57 × 0.54 m 로 했을 때 시뮬에서 바퀴가 소파·탁자에
   12 번 닿았고, 원으로 바꾼 뒤 0 번(같은 집·같은 출발). 계획 부풀림 0.40 m.
-- 로봇별 몸 크기: 환경 변수 `MOVE_ROBOT_FOOTPRINT` — 없거나 `r1pro` 면 위 값, `limo_omx` 면 LIMO 사각형 0.36 × 0.22 m·계획 부풀림 0.241 m,
+- 로봇별 몸 크기: 환경 변수 `MOVE_ROBOT_FOOTPRINT` — 없거나 `limo_omx`(10-06 부터 기본)면 LIMO 사각형 0.36 × 0.22 m·계획 부풀림 0.241 m, `r1pro` 면 위 값(옛 R1 기록·시험 전용),
   `rect:<길이>x<폭>`·`circle:<반경>` 도 된다(`nav::Body`). behavior-2026 `run_explore.sh` 가 `SGRT_ROBOT=limo_omx` 일 때 넣는다.
 - 지역 제어: 매 스텝 DWA(앞 속도 6 + 뒤 2 × 회전 13 × 옆 속도 3 표본, 1.2 s 굴림, 몸통 둘레 44 점 검사, 여유 2 cm + 0.2·v)
   + 전방향 미끄러지기 7 방향 + 막혔을 때 16 방향 빠져나오기. 가야 할 쪽이 30° 넘게 옆이면 제자리 돌기.
@@ -175,4 +175,4 @@ python3 ../../../behavior-2026/src/sim/move_robot/test_move_robot_sim.py   # 시
 - 베이스 덜 감 고침: 허용 1 cm·1°, 최소 접근 속도 3 cm/s·3°/s, 멈춘 뒤 다시 접근. 가짜 로봇 0.2 m → 오차 < 12 mm, 30° → < 1.2°.
 - 시간(시뮬, 1 층 집): 지도 받기 2–5 ms/keyframe, 관측 만들기 1–2.5 ms/호출, 다시 계획 0.4–1.4 ms, 닫힌 고리 한 스텝 0.2–5 ms(DWA 중). 평가기 한 스텝 130–165 ms 의 3 % 안팎.
 - 탐사(스킬 [`explore`](../skills/explore/README.md)): 시뮬 두 집에서 go_to·probe 로 접촉 0, 덮음 0.94–0.95(LLM). 모드 `explore`(프런티어 탐사, `max_steps` 1 씩)는
-  가짜 집 6 출발(`mock_eval.sh`)에서 접촉 0, 덮음 0.940–0.994, 호출 7–17 — 옮기기 전 기준선과 decisions·timeline·summary 가 벽시계·시각 칸 말고 모두 같음(10-06).
+  가짜 집 6 출발(`devtools/mock_eval.sh`)에서 접촉 0, 덮음 0.940–0.994, 호출 7–17 — 옮기기 전 기준선과 decisions·timeline·summary 가 벽시계·시각 칸 말고 모두 같음(10-06).

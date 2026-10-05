@@ -292,7 +292,7 @@ impl Default for Footprint {
 // ---------------------------------------------------------------- 로봇별 몸 크기
 
 /// 로봇별 몸 크기: DWA·회전·안전 정지의 몸통 모양([`Footprint`])과 전역 계획의 부풀림 원([`NavParams`] 의 robot_r,
-/// start_free_r, start_min_clear). 환경 변수 `MOVE_ROBOT_FOOTPRINT` 로 고른다([`Body::from_env`]), 없으면 R1Pro(옛 값 그대로).
+/// start_free_r, start_min_clear). 환경 변수 `MOVE_ROBOT_FOOTPRINT` 로 고른다([`Body::from_env`]), 없으면 LIMO + OMX-F(10-06 부터; `r1pro` 는 옛 R1 기록·시험용으로 이름을 줘야 함).
 #[derive(Clone, Debug)]
 pub struct Body {
     pub name: String,
@@ -351,14 +351,14 @@ impl Body {
             }
         }
     }
-    /// 환경 변수 `MOVE_ROBOT_FOOTPRINT`(없으면 R1Pro). 모르는 값이면 경고하고 R1Pro
+    /// 환경 변수 `MOVE_ROBOT_FOOTPRINT`(없으면 LIMO + OMX-F — 우리 로봇 하나). 모르는 값이면 경고하고 LIMO
     pub fn from_env() -> Body {
         match std::env::var("MOVE_ROBOT_FOOTPRINT") {
             Ok(v) if !v.trim().is_empty() => Self::parse(&v).unwrap_or_else(|| {
-                eprintln!("[move_robot] MOVE_ROBOT_FOOTPRINT={v:?} 모름 (r1pro | limo_omx | rect:LxW | circle:R) — R1Pro 로");
-                Self::r1pro()
+                eprintln!("[move_robot] MOVE_ROBOT_FOOTPRINT={v:?} 모름 (limo_omx | r1pro | rect:LxW | circle:R) — LIMO 로");
+                Self::limo_omx()
             }),
-            _ => Self::r1pro(),
+            _ => Self::limo_omx(),
         }
     }
 }

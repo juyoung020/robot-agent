@@ -594,10 +594,11 @@ impl Robot {
         Robot { safety: Safety::default(), dt: 1.0 / hz, hold: [0.0; ACTION_DIM], state: None, active: None, result: None, ticks: 0, nav: robot_nav::NavState::with_body(&Self::body()), gt_pose: None, vla: vla::VlaCtx::default() }
     }
 
-    /// 몸 크기: `MOVE_ROBOT_FOOTPRINT`(r1pro 기본 | limo_omx | rect:LxW | circle:R). R1Pro 가 아니면 한 번 알린다.
+    /// 몸 크기: `MOVE_ROBOT_FOOTPRINT`(limo_omx 기본 | r1pro(옛 기록용) | rect:LxW | circle:R). 알린다.
     fn body() -> nav::Body {
-        let b = nav::Body::from_env();
-        if b.name != "r1pro" {
+        // 단위 시험은 가짜 R1Pro 시뮬(link.rs MockWorld)·R1 몸 크기 값으로 쓰여 있다 — 환경 변수가 없을 때만 r1pro 로(실행 기본은 limo_omx)
+        let b = if cfg!(test) && std::env::var("MOVE_ROBOT_FOOTPRINT").is_err() { nav::Body::r1pro() } else { nav::Body::from_env() };
+        {
             eprintln!("[move_robot] body {}: footprint {:.3} x {:.3} m{}, plan radius {:.3} m", b.name, 2.0 * b.fp.hl, 2.0 * b.fp.hw,
                       if b.fp.round { " (circle)" } else { "" }, b.robot_r);
         }

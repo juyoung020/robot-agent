@@ -230,12 +230,12 @@ impl MockWorld {
     }
     pub fn new(floor: crate::map::Grid) -> MockWorld {
         let n = floor.w * floor.h;
-        MockWorld { floor, logodds: vec![0.0; n], seen: vec![false; n], body_r: 0.36, fov: 49.6f64.to_radians(), range: 6.0, min_range: 0.4, kf_every: 6, contacts: 0, events: vec![], last_scan_hits: 0, map_us: 0, contact_log: vec![], in_contact: false, contact_steps: 0 }
+        MockWorld { floor, logodds: vec![0.0; n], seen: vec![false; n], body_r: 0.22, fov: 49.6f64.to_radians(), range: 6.0, min_range: 0.4, kf_every: 6, contacts: 0, events: vec![], last_scan_hits: 0, map_us: 0, contact_log: vec![], in_contact: false, contact_steps: 0 }
     }
     pub fn is_floor(&self, x: f64, y: f64) -> bool {
         self.floor.at(x, y) == 1
     }
-    /// 몸통 원(반지름 body_r, R1Pro 베이스 약 0.36 m)이 바닥만 덮나
+    /// 몸통 원(반지름 body_r 0.22 m = LIMO 0.36 × 0.22 m 사각형의 외접원 0.211 m 에 여유; 10-06 전에는 R1Pro 베이스 0.36 m)이 바닥만 덮나
     pub fn body_ok(&self, x: f64, y: f64, _yaw: f64) -> bool {
         let r = self.body_r;
         let k = (r / self.floor.res).ceil() as i64;
