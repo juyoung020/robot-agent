@@ -27,3 +27,10 @@
 |---|---|---|---|
 | `explore-v3` (+ 코드: 두 번 실패한 방 목표는 id 를 빼고 `note: go_to failed twice`) | "blocked·timeout 이면 같은 target 을 다시 보내지 말 것, 방은 visited=false 이고 path_m 이 숫자일 때만" | 시뮬 v2 판(`explore_20261003_082657_…llm_c37`): 프런티어가 다 떨어진 뒤 못 가는 방 R5 로 go_to 를 **15 번** 되풀이(전부 timeout, 덮음 0.654 에서 멈춤, 시뮬 300 s 낭비) | 시뮬 같은 집·같은 출발(`…085903_…llm_v3`): 덮음 **0.950**(기준선 0.867), 접촉 0, 실패 방은 두 번 뒤 포기. 가짜 집 6 판 덮음 평균 0.980(v2 0.979), 경로 합 320 m(v2 293 m) |
 | `explore-v4` | "status 가 no reachable frontier left 이고 갈 방이 없으면 곧바로 done — 더 probe 해도 벽·닫힌 문은 못 지남" | v3 시뮬 판: 덮음 0.95 에 닿은 뒤(호출 13) 못 가는 방 2 번 + probe 5 번(덮음 증가 0)을 더 하다 사람이 끊음 | 시뮬 2 층 집 아래층(`…092910_turning_on_radio_llm_v4`): 프런티어가 0 이 되자 go_to R2(오류) → probe 1 번 → **스스로 done**(LLM 9 번, 2.2 만 토큰, 덮음 0.941 / 기준선 0.925) |
+
+## 10-06 코드 옮김 (프롬프트 판 그대로)
+
+이 폴더의 Rust 크레이트(`explore-skill`)를 없앴다 — 스킬은 지시문만. 루프·프롬프트 읽기·맥락 접기·기록 → 에이전트 런타임 `src/agent/runtime`(`run-skill --skill explore`),
+기준선(프런티어 탐사) → `move_robot` 베이스 모드 `explore`(`tools/move_robot/src/frontier.rs`), 결과 줄이기·결정 기록 칸 → `tools/move_robot/src/llm_view.rs`,
+가짜 집 정답 기준 → `tools/move_robot/src/mock_eval.rs`, `decisions-agg` → `src/agent/devtools`. 스킬 설정은 `skill.json`(데이터).
+같은 조건 확인: `mock_eval.sh`(기준선 6 출발)의 decisions·timeline·summary 가 옛 바이너리와 벽시계·시각 칸 말고 모두 같고, LLM 짧은 판(2 층 집 s0, 6 호출)도 같은 프롬프트 지문 `3b1ee39244394fa6`·같은 고름·같은 토큰(13 655 + 312).

@@ -1,0 +1,19 @@
+[package]
+name = "agent-devtools"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+description = "개발용 명령(LLM 도구 아님): decisions-agg — 결정 기록 집계"
+publish = false
+
+[[bin]]
+name = "decisions-agg"
+path = "src/bin/decisions_agg.rs"
+
+[dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

@@ -19,4 +19,20 @@
 | `confirm_object` | 확인된 물체 이름 고치기(이름 사후 베이즈 갱신, 확인 기록 = 보정 데이터) | [`tools/search_objects`](tools/search_objects/) |
 | `move_robot` | 로봇 한 부분(베이스·몸통·팔·그리퍼) 직접 움직이기, 탐사 베이스 모드, VLA 실행기 | [`tools/move_robot`](tools/move_robot/) |
 
-전체 도구 설계(계획 포함)는 [`tools/README.md`](tools/README.md), [`plan.md`](plan.md) 3.3.
+- `move_robot` 의 베이스 모드 `explore` = 프런티어 탐사(옛 스킬 explore 기준선 코드, 10-06) — 새 도구가 아니라 모드라 LLM 에 보이는 도구 수는 그대로.
+
+도구 설명은 [`tools/README.md`](tools/README.md), 계획만 있는 도구까지 전체 설계는 [`plan.md`](plan.md) 3.3.
+
+## 폴더 — 코드는 도구·런타임에, 스킬은 지시문만
+
+| 폴더 | 무엇 | LLM 에게 보이나 |
+|---|---|---|
+| [`tools/`](tools/README.md) | 도구(실행되는 코드, 크레이트마다 하나) | 보임(스킬이 고른 것만) |
+| [`runtime/`](runtime/README.md) | 에이전트 런타임: 원형 도구 호출 루프, 프롬프트 읽기·판 지문, 결과 줄이기·16k 맥락 접기, 결정·시간·LLM 기록, 명령 `run-skill` | — |
+| [`skills/`](skills/README.md) | 스킬 = 프롬프트(`system.md`·`task.md`·`tool.md`)·`skill.json`(도구·끝 조건·지표 데이터)·CHANGELOG·결과 표. 코드 없음 | 프롬프트로 |
+| [`prompts/`](prompts/) | 모든 스킬 공통 프롬프트 조각 `common.md` | 프롬프트로 |
+| [`devtools/`](devtools/README.md) | 개발 명령(`decisions-agg`) — LLM 도구 아님 | 안 보임 |
+
+```bash
+(cd runtime && cargo build --release -j4) && runtime/target/release/run-skill --skill explore --policy frontier|llm --mock <gt.pgm> --gt <gt.json> --out <dir>
+```

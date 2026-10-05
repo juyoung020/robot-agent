@@ -2,13 +2,13 @@
 
 LLM(또는 기준선)이 도구를 한 번 고를 때마다 한 줄. 목적: "무엇을 보고 → 어떤 실행기·모드를 골랐고 → 어떻게 됐나"를 쌓아,
 실행기 고르기(π0.5 VLA 문장 vs `move_robot` 직접 제어, `go_to` vs `probe`)와 프롬프트 판을 데이터로 판단한다.
-쓰는 곳: `skills/explore/src/lib.rs`(`DecisionLog`, `obs_features`, `label`). 저장: `outputs/<run>/decisions.jsonl`.
+쓰는 곳: 에이전트 런타임 `runtime/src/lib.rs`(`DecisionLog`, 줄 조립 — 실제 도구 실행 하나에 한 줄, 묶음 호출이면 `_calls` 하나하나), 도구 쪽 칸은 `tools/move_robot/src/llm_view.rs`(`obs_features`, `label`, `outcome`, `target_space`), 측정 칸은 스킬 `skill.json` `metrics`. 저장: `outputs/<run>/decisions.jsonl`.
 
 ## 필드
 
 | 필드 | 뜻 |
 |---|---|
-| `run`, `task`, `skill`, `policy` | 판 이름, BEHAVIOR 과제, 스킬(`explore`), 정책(`llm` / `frontier` 기준선) |
+| `run`, `task`, `skill`, `policy` | 판 이름, BEHAVIOR 과제, 스킬(`explore`), 정책(`llm` / 기준선 이름 — explore 는 `frontier` = move_robot 모드 `explore`) |
 | `step`, `t`, `sim_s` | 판 안 결정 번호, 벽시계, 결과 시점 시뮬 시각(s) |
 | `prompt.version`, `prompt.sha` | 프롬프트 판 이름들(`common-v1+explore-v2+…`)과 파일 바이트 FNV-64 지문 |
 | `obs` | 결정 직전 관측 특징: `free_m2`, `n_frontiers`, `best`(첫 프런티어 id·path_m·new_area_m2), `nearest`(경로 가장 짧은 것), `in_room`, `front`(앞 방향 여유 글), `last_status` |
@@ -28,7 +28,7 @@ LLM(또는 기준선)이 도구를 한 번 고를 때마다 한 줄. 목적: "�
 ## 집계
 
 ```bash
-src/agent/skills/explore/target/release/decisions-agg outputs/explore_*/ --by mode     # 실행기/모드별
+src/agent/devtools/target/release/decisions-agg outputs/explore_*/ --by mode     # 실행기/모드별 (개발 명령, LLM 도구 아님)
 decisions-agg <dirs> --by policy    # 정책 × 모드
 decisions-agg <dirs> --by prompt    # 프롬프트 판 × 정책
 ```

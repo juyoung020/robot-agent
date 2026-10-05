@@ -4,7 +4,6 @@ LLM(Qwen3.5-9B, KAU API)은 글만 주고받으므로 **벡터는 도구 안에�
 (behavior-2026 [`src/scene_graph/clip`](../../../behavior-2026/src/scene_graph/clip/README.md) `sgsearch.h`, C++)이 하고,
 이 크레이트는 그 결과에 기억의 자리 정보(방·기준물·상태·마지막으로 본 때·map 좌표·크기·위치 불확실도·로봇 기준 좌표)를 붙여 짧은 JSON 글로 돌려준다.
 기억은 오프라인 `view.json`(`ViewJson`) 또는 **실시간 scenemap 스냅숏**(`LiveMem`, 10-05) — 같은 `Memory` trait.
-같은 색인을 RecallVLA 실행기는 자기 질의 벡터로 쓴다(`sgs_search_vec`) — 에이전트가 넘기는 물체 id 는 VLA 에 **힌트**다.
 설계 기록: [plan.md 3.3](../../plan.md), [MAPVLA_SPEC 공용 물체 찾기](../../../../docs/map_vla/MAPVLA_SPEC.md#공용-물체-찾기-10-05).
 
 ## 3 단계
@@ -14,7 +13,7 @@ LLM(Qwen3.5-9B, KAU API)은 글만 주고받으므로 **벡터는 도구 안에�
  ① 이름 검색   등록·확인된 이름 / 동의어 / 상위어("chair" → 등록 "straight chair"), 한국어 이름 전부   → 라디오 없음
  ② 생김새 재검색(자동: 이름 후보가 없거나 약할 때)  물체마다 저장된 시점 벡터로 P(질의어 | 모습)을 라벨 표 안에서
     등록 이름과 견줌(물체 안 상대 확률)  → O234: 등록 "fire extinguisher", p_query 0.15 vs p_registered 0.06
- ③ LLM 이 되묻거나(ask_user) O234 를 VLA 에 힌트로 → 확인되면 confirm_object(O234, radio, user)
+ ③ LLM 이 되묻거나(ask_user) O234 로 일을 이어감 → 확인되면 confirm_object(O234, radio, user)
     → 이름 사후에 강한 관측(베이즈 갱신) → 다음 "라디오" 는 ① 에서 바로. 확인은 모두 기록(보정 데이터)
 ```
 
@@ -44,7 +43,7 @@ list_place     {"place": string (필수 — 방 이름·"R2" 또는 가구 id "O
 
 | 칸 | 뜻 |
 |---|---|
-| `id` | 물체 id(`set_plan`·VLA 호출에 그대로) |
+| `id` | 물체 id(다른 도구 호출에 그대로) |
 | `name`, `name_p`, `alt` | 이름 사후(생김새 + 등록 이름 + 확인)의 1 위와 확률, 다른 이름 ≤ 3 개(p ≥ 0.03). 등록 이름과 그 아래말은 한 묶음으로 셈 |
 | `registered` | 기억에 등록된 이름이 `name` 과 다를 때만 |
 | `match_type` | `name`(등록·확인 이름이 질의와 맞음) / `appearance`(이름은 안 맞는데 생김새가 맞음) |
@@ -63,8 +62,7 @@ list_place     {"place": string (필수 — 방 이름·"R2" 또는 가구 id "O
 | `hint`(맨 위) | 다음에 할 일 한 줄(사라진 물체면 "was seen there but is gone now") |
 | `now_s`(맨 위) | 기억 시계 지금 시각(s) — 다음 찾기의 `seen_after_s` 에 그대로 넣으면 "그 뒤에 본 것만" |
 
-좌표 규칙(plan.md 3.3, 10-05): LLM 은 좌표를 보고 숫자로 추론해도 되지만 **계획·실행 호출에는 id 로** 말한다. map 좌표는 VLA 에 들어가지 않는다 —
-실행기(move_robot `vla`)가 매 스텝 지도에서 id 를 풀어 로봇 기준 값으로 바꾼다(VLA_INPUT 0절).
+좌표는 LLM 이 숫자로 추론(어느 쪽이 가까운지, 높이 차)하는 데 쓰고, 물체를 가리킬 때는 **id 로** 말한다(plan.md 3.3).
 
 틀린 인자·없는 id·없는 방은 `{"status":"error","message",…,"hint"}` 관찰값(예외로 루프를 죽이지 않음).
 `confirm_object` 결과: `{"status":"ok","id":"O234","name":"radio","p_before":0.13,"p_after":0.88,"registered":"fire extinguisher"}`,
@@ -190,7 +188,6 @@ result │ {"ask_user":"nothing is registered as '라디오'; O234 is registered
   call │ confirm_object {"id":"O234","name":"라디오","source":"user"}
 result │ {"id":"O234","name":"radio","p_after":0.884,"p_before":0.132,"registered":"fire extinguisher","status":"ok"}
  agent │ O234 를 라디오(으)로 기억할게요. 가져올게요.
-  (VLA) │ {"executor":"vla","max_s":30,"objects":["O234"],"skill":"pick up radio"}
   user │ 라디오 어디 있어?
   call │ search_objects {"query":"라디오"}
 result │ {"hint":"O234 was seen there but is gone now","matches":[{"id":"O234","name":"radio","name_p":0.88,"match_type":"name",

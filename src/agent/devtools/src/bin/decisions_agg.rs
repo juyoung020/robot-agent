@@ -1,4 +1,5 @@
 //! `decisions-agg` — decisions.jsonl 여러 개를 실행기·모드별로 묶어 표(마크다운)로.
+//! 개발용 명령이다(LLM 도구 아님 — LLM 에게 보이지 않고 판이 끝난 뒤 사람이 돌린다). 옛 스킬 explore 에서 옮김(10-06).
 //!
 //! ```text
 //! decisions-agg <run dir 또는 decisions.jsonl>... [--by policy|mode|prompt|executor]

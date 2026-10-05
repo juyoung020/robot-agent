@@ -187,7 +187,7 @@
 | 3.4 상태 기계·복구 표, `verify.rs` | 안 함 | `machine.rs`·`verify.rs` 없음(move_robot 안 재계획·후진만) | 실행기 접점과 함께 | robot |
 | 3.5 방 이름 | 일부 | scenemap `rooms.cpp` 규칙표·`sm_set_room_name`. 투표·제로샷 없음 | SigLIP 이름이 방 규칙에 들어가는지 확인 | map |
 | 5 평가 `ragent eval --gate`·골든 세트, 5.5 `gate.rs` | 안 함 | — | P1 뒤 | robot |
-| decision_log(decisions.jsonl) | 완료 | `skills/explore/src/lib.rs`, `decisions-agg` — `4ad1781`, `f82dc18` | `label.vla_better` 는 VLA 실행기 생긴 뒤 | robot |
+| decision_log(decisions.jsonl) | 완료 | `src/agent/runtime/src/lib.rs`(10-06 에 `skills/explore/src/lib.rs` 에서 옮김), `src/agent/devtools` `decisions-agg` — `4ad1781`, `f82dc18` | `label.vla_better` 는 VLA 실행기 생긴 뒤 | robot |
 | 8 Qwen 도구 호출 안정성 | 일부 | explore 프롬프트 v2–v4, 429 재시도 | — | robot |
 | 8 열린 질문 1–5 | 결정 필요 | Q4(팔)는 OMX-F 로 사실상 정해짐 | 사용자 | robot |
 

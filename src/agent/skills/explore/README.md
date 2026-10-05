@@ -7,16 +7,17 @@
 |---|---|
 | 시스템 프롬프트 | `../../prompts/common.md` + `system.md`(판 `explore-vN`), 과제 `task.md`, 이 스킬에서 보일 도구 설명 `tool.md` — 실행할 때 읽음, 판·FNV-64 지문을 `summary.json`·`decisions.jsonl` 에 남김 |
 | 도구 | `move_robot` 하나(base `go_to`·`probe`, 나머지 부분은 쓰지 않음) — [`../../tools/README.md`](../../tools/README.md) |
-| 끝 조건 | LLM 이 글로 끝냄(지도 요약 `status` 가 "no reachable frontier left") / 실행기: 호출 80 번, 시뮬 880 s(15 분 안), 벽시계 1 시간. 프런티어가 남았는데 끝내면 한 번 되물음(`nudges`) |
+| 끝 조건 | LLM 이 글로 끝냄(지도 요약 `status` 가 "no reachable frontier left") / 런타임: 호출 80 번, 시뮬 880 s(15 분 안), 벽시계 1 시간. 프런티어가 남았는데 끝내면 한 번 되물음(`nudges`) — 데이터는 `skill.json` `end`·`limits` |
 | 성공 지표 | 접촉 수(0 이어야), 정답 바닥 덮음(`gt_cov`), 덮음 50/80/90/95 % 에 닿은 경로 m·시뮬 s·호출 수, 총 경로 m, LLM 호출·토큰·지연, 벽시계 |
-| 기준선 | LLM 없는 Yamauchi 프런티어 탐사(같은 도구·같은 관측에서 `path_m` 가장 짧은 프런티어로 `go_to`) |
+| 기준선 | LLM 없는 Yamauchi 프런티어 탐사(같은 도구·같은 관측에서 `path_m` 가장 짧은 프런티어로 `go_to`) = `move_robot` 모드 `explore`(`max_steps` 1, 도구 코드 `tools/move_robot/src/frontier.rs`) — `skill.json` `baseline`, 기록 이름 `frontier` |
+| 설정 | `skill.json`(데이터): 도구 `move_robot` 과 LLM 에게 보일 mode(`go_to`·`probe`·`delta`·`absolute` — `explore` 는 숨김), 첫 관측, 기준선, 끝 조건·되묻기, 지표 칸(`_m` 의 `gt_cov` 등), 한도 |
 
 ## 구조
 
 ```
-explore (Rust, 이 폴더)                         평가기 프로세스 (behavior-2026/src/sim/explore/run_explore.py, 파이썬은 바이트만)
- ├ 원형 도구 호출 루프 / 기준선                   ├ SceneMemory(libsgrt): ObjectSAM + SigLIP 2 + objprob(10-05 기본, 전엔 YOLOE) + scenemap 격자·물체, memory/ 에 1 s 마다 저장
- ├ 결과 줄이기(compact), 오래된 쌍 한 줄 요약       ├ keyframe(6 스텝)마다 sgrt_map(view) → mr_set_map(robot, &view)  (포인터만 넘김)
+런타임 run-skill --skill explore                평가기 프로세스 (behavior-2026/src/sim/explore/run_explore.py, 파이썬은 바이트만)
+ ├ 원형 도구 호출 루프 / 기준선(src/agent/runtime) ├ SceneMemory(libsgrt): ObjectSAM + SigLIP 2 + objprob(10-05 기본, 전엔 YOLOE) + scenemap 격자·물체, memory/ 에 1 s 마다 저장
+ ├ 결과 줄이기(move_robot llm_view), 쌍 접기       ├ keyframe(6 스텝)마다 sgrt_map(view) → mr_set_map(robot, &view)  (포인터만 넘김)
  ├ decisions.jsonl · timeline.jsonl · trace.jsonl  ├ libmove_robot(Rust): 매 스텝 닫힌 고리(go_to / probe / delta / 관절)
  └ TCP 줄 JSON ───────────────────────────────▶  ├ 정답 바닥 기준(gt_trav.py) → mr_set_reference, 접촉(RigidContactAPI) → mr_set_contacts
                                                   └ memory/explore.json(뷰어 겹침: 지나온 길·계획 경로·목표·프런티어 id)
@@ -89,7 +90,7 @@ explore (Rust, 이 폴더)                         평가기 프로세스 (behav
 | LLM `explore-v2` | 0.976 | 0 | 48.9 | 38.1 (기준선의 1.01 배) | 12.7 | 13.7 | 34.8 k | 82 |
 | LLM `explore-v3` | 0.980 | 0 | 53.4 | 39.5 | 13.3 | 14.3 | 37.0 k | 93 |
 
-### 결정 기록 집계(시뮬 판 전부, `decisions-agg --by policy`)
+### 결정 기록 집계(시뮬 판 전부, `decisions-agg --by policy` — 개발 명령, [`../../devtools/`](../../devtools/README.md))
 
 | 정책·모드 | 결정 | reached | blocked | error | 그 밖(timeout) | 평균 이동 m | 평균 새 빈칸 m² | m² / m |
 |---|---|---|---|---|---|---|---|---|
@@ -124,17 +125,20 @@ LLM go_to 의 timeout 대부분은 v2 판의 R5 되풀이(15 번)와 지도가 �
 ## 돌리는 법
 
 ```bash
-cd src/agent/skills/explore && cargo build --release           # explore, decisions-agg (move_robot·planner llm.rs 경로 의존)
-(cd ../../tools/move_robot && cargo build --release && cargo test --release)   # libmove_robot.so, 시험 29 개
+# 이 폴더에는 코드가 없다: 루프는 런타임, 기준선·관측은 move_robot, 집계는 devtools
+(cd ../../runtime && cargo build --release -j4 && cargo test --release -j4)    # run-skill (move_robot·planner llm.rs 경로 의존)
+(cd ../../devtools && cargo build --release -j4)                              # decisions-agg (개발 명령, LLM 도구 아님)
+(cd ../../tools/move_robot && cargo build --release -j4 && cargo test --release -j4)   # libmove_robot.so, 시험 60 개
 set -a; . ~/.config/behavior-2026/kau.env; set +a              # 키는 환경변수로만
 # 가짜 집(정답 바닥 + 카메라 흉내), Isaac Sim 없이 몇 분
 (cd ../../../behavior-2026/src/sim/explore && python gt_trav.py --task bringing_water && python gt_trav.py --task turning_on_radio)
-./mock_eval.sh <tag> [--style compact]                          # → behavior-2026/outputs/explore_mock_<tag>/
+./mock_eval.sh <tag> [--style compact]                          # → behavior-2026/outputs/explore_mock_<tag>/ (POLS=frontier 면 기준선만)
+../../runtime/target/release/run-skill --skill explore --policy frontier --mock <gt.pgm> --gt <gt.json> --out <dir>   # 한 판
 # 시뮬(OmniGibson, 머리 RGB-D, VRAM ≥ 9 GB·RAM ≥ 16 GB 될 때까지 기다림)
 cmake -S ../../../behavior-2026/src/scene_graph/runtime -B ~/sgrt_build_explore && cmake --build ~/sgrt_build_explore -j
 ../../../behavior-2026/src/sim/explore/run_explore.sh frontier bringing_water <tag>    # 또는 llm
 ../../../behavior-2026/src/sim/explore/viewer_8080.sh <run dir>                        # 8080 sgview 를 이 판으로(파일 모드, 하나만)
 # 실시간 뷰어(소켓 → SSE): 저장소 루트에서 tools/run_explore_live.sh frontier bringing_water <tag>  (LIMO: SGRT_ROBOT=limo_omx)
-./target/release/decisions-agg ../../../behavior-2026/outputs/explore_*/ --by policy
+../../devtools/target/release/decisions-agg ../../../behavior-2026/outputs/explore_*/ --by policy
 ```
 시뮬 판 기본은 `SGRT_POSE=slam`(실제 로봇과 같음 — 오도메트리 + 스캔 맞추기, 위치 오차까지 시험, 10-03 부터). 시뮬은 실제 로봇과 같은 방식으로 돌아야 하므로 성능·점수는 `slam` 판에서 잰다([계획](../../../../docs/plan.md)). 정답 자세(map = world)는 지도·탐사를 떼어 보는 확인용으로 `SGRT_POSE=gt` 를 줄 때만.

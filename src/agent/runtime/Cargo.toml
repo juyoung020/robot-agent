@@ -1,0 +1,25 @@
+[package]
+name = "agent-runtime"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+description = "에이전트 런타임: 스킬과 무관한 원형 도구 호출 루프(프롬프트 읽기·결과 줄이기·16k 맥락 접기·결정/시간/LLM 기록) + 스킬 실행 명령 run-skill"
+publish = false
+
+[lib]
+name = "agent_runtime"
+path = "src/lib.rs"
+
+[[bin]]
+name = "run-skill"
+path = "src/bin/run_skill.rs"
+
+[dependencies]
+serde_json = "1"
+move_robot = { path = "../tools/move_robot" }
+bagent = { package = "behavior-agent", path = "../../behavior-2026/src/agent/planner" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

@@ -14,11 +14,14 @@
 //! 그리퍼 = smooth [-1,1] → 손가락 0…0.05 m). 머리(카메라)는 NullJointController 라 움직일 수 없다.
 
 pub mod ffi;
+pub mod frontier;
 pub mod goal;
 pub mod limo;
 pub mod limo_mock;
 pub mod link;
+pub mod llm_view;
 pub mod map;
+pub mod mock_eval;
 pub mod nav;
 pub mod robot_nav;
 mod robot_vla;
@@ -276,18 +279,29 @@ pub fn definition() -> Value {
 
 /// 설명만 바꾼 도구 정의(에이전트가 프롬프트 폴더의 도구 설명을 쓸 때)
 pub fn definition_with(desc: &str) -> Value {
-    json!({"type": "function", "function": {"name": TOOL_NAME, "description": desc, "parameters": {
+    definition_modes(desc, &["go_to", "probe", "delta", "absolute"])
+}
+
+/// 설명과 LLM 에게 보일 mode enum 을 고른 도구 정의. 스킬 설정(`skill.json` 의 `tools[].modes`)이 정한다 —
+/// 에이전트 쪽 모드 `explore`(프런티어 탐사, [`frontier`])는 이 목록에 넣어야 보인다.
+pub fn definition_modes(desc: &str, modes: &[&str]) -> Value {
+    let mut d = json!({"type": "function", "function": {"name": TOOL_NAME, "description": desc, "parameters": {
         "type": "object",
         "properties": {
             "part": {"type": "string", "enum": PARTS},
-            "mode": {"type": "string", "enum": ["go_to", "probe", "delta", "absolute"]},
+            "mode": {"type": "string", "enum": modes},
             "target": {"type": "string", "description": "go_to only: id from the last map summary, e.g. F1 or R2"},
             "values": {"type": "array", "items": {"type": "number"}, "minItems": 1, "maxItems": 7,
                        "description": "probe 2, go_to 2 (if no target), base delta 3, torso 4, arm 7, gripper 1"},
             "duration_s": {"type": "number", "description": "optional; slower if too fast for safe speed"}
         },
         "required": ["part", "mode"]
-    }}})
+    }}});
+    if modes.contains(&frontier::MODE) {
+        d["function"]["parameters"]["properties"]["max_steps"] =
+            json!({"type": "integer", "minimum": 1, "maximum": frontier::MAX_STEPS, "description": "explore only: frontier go_to moves in this call (default 1)"});
+    }
+    d
 }
 
 /// 도구 인자 → 명령. 인자는 객체 또는 JSON 문자열(OpenAI `arguments`). 오류는 모델이 고칠 수 있게 짧게.

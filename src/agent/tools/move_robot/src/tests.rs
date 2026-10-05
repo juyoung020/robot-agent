@@ -505,3 +505,42 @@ fn body_footprint_per_robot() {
     assert!(Body::parse("circle:0.3").unwrap().fp.round);
     assert!(Body::parse("rect:0.5").is_none() && Body::parse("rect:x").is_none() && Body::parse("tank").is_none() && Body::parse("circle:9").is_none());
 }
+
+// ---------------------------------------------------------------- 베이스 모드 explore (frontier.rs, 에이전트 쪽)
+
+#[test]
+fn explore_mode_picks_shortest_frontier_and_logs_calls() {
+    let mut m = Mock::with_world(two_rooms(), [1.5, 3.0, 0.0]);
+    let last = exec(&mut m, r#"{"part":"base","mode":"delta","values":[0,0,0]}"#);
+    let want = crate::frontier::pick(&last).expect("a reachable frontier");
+    let r = crate::frontier::run_tool_ctx(&args(r#"{"part":"base","mode":"explore"}"#), &mut m, &last);
+    let calls = r["_calls"].as_array().unwrap();
+    assert_eq!(calls.len(), 1, "{r}");
+    assert_eq!(calls[0]["args"], json!({"part":"base","mode":"go_to","target": want}));
+    assert_eq!(r["explore"]["steps"], 1);
+    assert_eq!(m.world.as_ref().unwrap().contacts, 0);
+}
+
+#[test]
+fn explore_mode_runs_until_no_frontier() {
+    let mut m = Mock::with_world(two_rooms(), [1.5, 3.0, 0.0]);
+    let last = exec(&mut m, r#"{"part":"base","mode":"delta","values":[0,0,0]}"#);
+    let r = crate::frontier::run(&json!({"part":"base","mode":"explore","max_steps":50}), &mut m, &last);
+    assert_eq!(r["explore"]["end"], "no_frontier", "{}", r["explore"]);
+    assert_eq!(m.world.as_ref().unwrap().contacts, 0);
+    // 더 갈 곳이 없으면 바로 done(실행 없음)
+    let r2 = crate::frontier::run(&json!({"part":"base","mode":"explore"}), &mut m, &crate::llm_view::next_obs(&r, &last));
+    assert_eq!(r2["status"], "done", "{r2}");
+    assert_eq!(r2["_calls"].as_array().unwrap().len(), 0);
+    let e = crate::frontier::run(&json!({"part":"base","mode":"explore","max_steps":0}), &mut m, &last);
+    assert_eq!(e["status"], "error");
+}
+
+#[test]
+fn definition_modes_hides_explore_by_default() {
+    assert_eq!(definition_with("x"), definition_modes("x", &["go_to", "probe", "delta", "absolute"]));
+    assert!(definition()["function"]["parameters"]["properties"].get("max_steps").is_none());
+    let d = definition_modes("x", &["go_to", "explore"]);
+    assert_eq!(d["function"]["parameters"]["properties"]["mode"]["enum"], json!(["go_to", "explore"]));
+    assert!(d["function"]["parameters"]["properties"]["max_steps"].is_object());
+}

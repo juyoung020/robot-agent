@@ -2,7 +2,7 @@
 # 탐사 한 판 + 실시간 뷰어를 한 번에 — 경로·라이브러리·뷰어 폴더를 스크립트가 맞춘다(사람이 틀릴 자리를 없앰).
 #   tools/run_explore_live.sh [policy=frontier] [task=turning_on_radio] [tag=live] [--port 8080] [--pose slam|odom|gt]
 # 검출 기본 = ObjectSAM(YOLO26n 학생) + SigLIP 2 + objprob(behavior-2026 run_explore.sh·sgrt_glue.py), 살펴본 정도 켬. 원래 FastSAM-s 는 SGRT_ENGINE=…/FastSAM-s-416.plan
-# 하는 일: ① libsgrt 증분 빌드(-j4) + SGRT_STREAM·objprob 지원 확인(없으면 중단) ② explore 에이전트 바이너리 확인
+# 하는 일: ① libsgrt 증분 빌드(-j4) + SGRT_STREAM·objprob 지원 확인(없으면 중단) ② 에이전트 런타임 바이너리(run-skill) 확인
 #          ③ 시뮬 판을 robot-agent/src/behavior-2026 에서 실행(자세 기본 slam, 지도는 매 갱신 전송)
 #          ④ 판의 memory/ 가 생기면 뷰어를 그 폴더로 켠다(예전 뷰어는 PID 로만 끈다)
 set -euo pipefail
@@ -24,8 +24,8 @@ cmake --build "$BUILD" -j"${BUILD_JOBS:-4}" --target sgrt >/dev/null   # -j4: �
 grep -aqF sgrt_objprob_enabled "$BUILD/libsgrt.so" || { echo "[live] libsgrt 에 objprob 앞단이 없다(옛 빌드): $BUILD"; exit 1; }
 grep -aqF SGRT_STREAM "$BUILD/libsgrt.so" ||  # strings|grep -q 는 pipefail 에서 SIGPIPE(141)로 항상 실패
   { echo "[live] libsgrt 에 SGRT_STREAM 이 없다(옛 빌드): $BUILD"; exit 1; }
-AG=$ROOT/src/agent/skills/explore/target/release/explore
-[ -x "$AG" ] || { echo "[live] explore 에이전트 없음: (cd $ROOT/src/agent/skills/explore && cargo build --release)"; exit 1; }
+AG=$ROOT/src/agent/runtime/target/release/run-skill   # 에이전트 런타임(스킬 explore 는 --skill explore)
+[ -x "$AG" ] || { echo "[live] 에이전트 런타임 없음: (cd $ROOT/src/agent/runtime && cargo build --release -j4)"; exit 1; }
 SV=$ROOT/src/scene_graph/sgview/target/release/sgview
 [ -x "$SV" ] || (cd "$ROOT/src/scene_graph/sgview" && cargo build --release)
 

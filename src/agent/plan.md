@@ -176,6 +176,11 @@ skillspec (Rust, 순수 함수, 의존성 0)
   2. `describe_object` → 접기: 크기·자리·불확실도는 이미 찾기·목록 줄에 있음. 남는 것(관측 수·처음 자리에서 움직인 거리·best view 사진)은 `search_objects` 에 `detail: true`(k = 1)로. −1.
   3. (선택) `confirm_object` 의 `close_look` 은 `check` 결과에서 자동으로 부르고, LLM 은 사용자 확인 때만 부름 — 도구 수는 그대로지만 호출이 줆.
   1 + 2 면 8 개.
+- **프런티어 탐사(10-06)**: 옛 스킬 explore 의 LLM 없는 기준선 코드(경로 가장 짧은 프런티어로 go_to)를 도구로 옮기면서 새 도구 `explore_frontier` 로 두지 않고
+  `move_robot` 의 베이스 모드 `explore`(`max_steps`, 에이전트 쪽 `tools/move_robot/src/frontier.rs`)로 넣었다 — 도구 수 10 그대로(새 도구면 11).
+  스킬이 `skill.json` `tools[].modes` 로 이 모드를 보일지 고른다(explore 스킬은 LLM 에게 숨기고 기준선으로만). 권고: 위 1 + 2 합치기로 8 개를 맞추고, 탐사가 필요한 스킬은 이 모드를 보이게.
+- **코드 자리(10-06)**: 스킬 폴더는 지시문만(프롬프트·`skill.json`). 루프·프롬프트 읽기·맥락 접기·기록은 에이전트 런타임 `runtime/`(`run-skill`), 실행 코드는 `tools/`, 개발 명령(`decisions-agg`)은 `devtools/`.
+  위 3.2 의 `ctx.rs`·`trace.rs` 는 `runtime/` 에 먼저 생겼다(지금은 explore 의 16k 접기·decisions/timeline/trace 기록).
 - 이동·스킬 실행 도구는 **LLM 에 주지 않는다**. `set_plan` 으로 계획을 넘기면 `TaskMachine` 이 실행한다. 복구 한도를 넘었을 때만 LLM 이 다시 불려 `set_plan`(남은 단계 교체) / `ask_user` / `report(failed)` 중 하나를 고른다.
 - `set_plan` 예(컵 → 쓰레기통):
 

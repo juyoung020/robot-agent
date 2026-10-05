@@ -1,11 +1,13 @@
 #!/bin/bash
 # 가짜 집(정답 바닥 + 카메라 흉내)에서 LLM 과 기준선을 같이 돌려 비교. Isaac Sim 없이 몇 분.
-#   mock_eval.sh <tag> [explore 인자...]    → behavior-2026/outputs/explore_mock_<tag>/<집>_<정책>[_s<k>]/
+#   mock_eval.sh <tag> [run-skill 인자...]    → behavior-2026/outputs/explore_mock_<tag>/<집>_<정책>[_s<k>]/
+# 실행은 에이전트 런타임(src/agent/runtime, run-skill --skill explore). 기준선 frontier = skill.json baseline(move_robot 모드 explore).
 # 출발: 과제 instance 시작 자세(s0)와 같은 자리에서 방향만 120°, 240° 돌린 것(s1, s2). STARTS=1 이면 s0 만.
 set -a; . ~/.config/behavior-2026/kau.env; set +a
 TAG=$1; shift
 HERE=$(cd "$(dirname "$0")" && pwd)
-BIN=$HERE/target/release/explore
+BIN=$HERE/../../runtime/target/release/run-skill
+[ -x "$BIN" ] || { echo "런타임 없음: (cd $HERE/../../runtime && cargo build --release -j4)"; exit 1; }
 GT=$HERE/../../../behavior-2026/src/sim/explore/gt
 O=$HERE/../../../behavior-2026/outputs/explore_mock_$TAG
 STARTS=${STARTS:-3}; POLS=${POLS:-"llm frontier"}
@@ -16,7 +18,7 @@ for H in house_single_floor__bringing_water house_double_floor_lower__turning_on
     for P in $POLS; do
       while [ $(jobs -r | wc -l) -ge ${PAR:-2} ]; do wait -n; done
       D=$O/${H%%__*}_${P}_s$k; rm -rf $D
-      $BIN --policy $P --mock $GT/$H.pgm --gt $GT/$H.json --out $D --task ${H##*__} --max-calls 60 --start $ST "$@" > $D.log 2>&1 &
+      $BIN --skill explore --policy $P --mock $GT/$H.pgm --gt $GT/$H.json --out $D --task ${H##*__} --max-calls 60 --start $ST "$@" > $D.log 2>&1 &
     done
   done
 done

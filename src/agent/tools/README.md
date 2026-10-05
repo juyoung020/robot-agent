@@ -1,70 +1,87 @@
 # agent/tools
 
-LLM 이 골라 부르는 도구를 둔다. 설계는 [`../plan.md`](../plan.md) 3.3절.
+LLM 이 골라 부르는 도구 중 **코드가 있는 것**만 여기 적는다. 도구 = 실행되는 코드(크레이트 하나), 스킬([`../skills/`](../skills/README.md)) = 지시문뿐,
+루프는 에이전트 런타임([`../runtime/`](../runtime/README.md)).
 
-원칙: 계획·실행 호출은 id 로 말한다(결과의 좌표는 LLM 이 숫자로 추론하는 데만 — map 좌표는 VLA 에 넣지 않음, 10-05), 인자는 enum·필수로 좁힌다, 결과는 짧은 JSON + `hint`, 실패는 오류 관찰값(예외로 루프를 죽이지 않음). LLM 에 보이는 도구는 8개 이하가 원칙인데 지금 10 개 — 합치는 안은 plan.md 3.3 메모(결정 대기).
+원칙: 대상은 id 로 말한다(`O12`·`R2`·`F1`), 인자는 enum·필수로 좁힌다, 결과는 짧은 JSON + `hint`, 실패는 오류 관찰값
+`{"status":"error","message","hint"}`(예외로 루프를 죽이지 않음). LLM 이 못 보는 측정값은 결과의 `_m` 에 두고 런타임이 지운다.
 
-| 도구 | 하는 일 |
-|---|---|
-| `search_objects` | 물체 기억에서 찾기: ① 이름·동의어·상위어 → 없거나 약하면 ② 이름 무시 생김새 재검색(벡터는 도구 안, 결과는 글) — [`search_objects/`](search_objects/) |
-| `confirm_object` | 확인된 물체의 이름 고치기(이름 사후 베이즈 갱신 + 확인 기록) — [`search_objects/`](search_objects/) |
-| `describe_object` | 물체 크기·관측 수·움직인 거리, 선택하면 best view 사진 |
-| `list_place` | 방의 물체, 또는 가구 id 상자에서 1.5 m 안 물체(거리·높이 숫자, 관계말 없음), 최대 15 — [`search_objects/`](search_objects/) |
-| `set_plan` | 스킬 단계 계획을 검증하고 VLA(RecallVLA)에게 줄 문장으로 바꾸기 |
-| `check` | 보이는지·잡았는지·놓였는지·도착했는지 확인 |
-| `ask_user` | 사용자에게 되묻기 (턴 끝냄) |
-| `report` | 진행·완료·실패 알리기 (턴 끝냄) |
+| 도구 | 하는 일 | 폴더 |
+|---|---|---|
+| `search_objects` | 물체 기억에서 찾기: ① 이름·동의어·상위어 → 없거나 약하면 ② 이름 무시 생김새 재검색(벡터는 도구 안, 결과는 글) | [`search_objects/`](search_objects/) |
+| `confirm_object` | 확인된 물체의 이름 고치기(이름 사후 베이즈 갱신 + 확인 기록) | [`search_objects/`](search_objects/) |
+| `list_place` | 방의 물체, 또는 가구 id 상자에서 1.5 m 안 물체(거리·높이 숫자, 관계말 없음), 최대 15 | [`search_objects/`](search_objects/) |
+| `move_robot` | 로봇 한 부분(베이스·몸통·팔·그리퍼)을 움직이고 멈출 때까지 기다리기. 베이스 모드 `go_to`·`probe`·`delta`, 에이전트 쪽 모드 `explore`(프런티어 탐사) | [`move_robot/`](move_robot/) |
 
-- 코드가 있는 것(10-06): `search_objects`·`confirm_object`·`list_place`([`search_objects/`](search_objects/)), `move_robot`. `describe_object`·`set_plan`·`check`·`ask_user`·`report` 는 설계만(plan.md 3.3).
-| `move_robot` | 로봇 한 부분(베이스·몸통·팔·그리퍼)을 직접 움직이고 멈출 때까지 기다리기 — [`move_robot/`](move_robot/) |
+- LLM 에 보이는 도구 수: 코드가 있는 것 4 개. 계획만 있는 도구와 전체 수(원칙 8 개, 계획까지 10 개)·합치는 안은 [plan.md 3.3](../plan.md).
+- 프런티어 탐사(옛 스킬 explore 의 기준선 코드, 10-06)는 새 도구로 늘리지 않고 `move_robot` 의 베이스 모드 `explore` 로 넣었다 — 도구 수 그대로.
+  스킬은 `skill.json` 의 `tools[].modes` 로 LLM 에게 보일 모드를 고른다(explore 스킬은 이 모드를 LLM 에게 숨기고 기준선으로만 씀).
+- 도구가 아닌 것: 평가용 정답 기준(`move_robot::mock_eval`, LLM 에게 안 보임), 개발 명령 `decisions-agg`([`../devtools/`](../devtools/README.md)).
 
-## `search_objects` · `confirm_object` — 물체 찾기와 이름 고치기 (10-05)
+## `search_objects` · `confirm_object` · `list_place` — 물체 찾기, 이름 고치기, 자리 목록
 
 자세한 것: [`search_objects/README.md`](search_objects/README.md). LLM 은 글만 받으므로 벡터 찾기는 도구 안의 공용 물체 색인
-(behavior-2026 `src/scene_graph/clip/include/sgsearch.h`, RecallVLA 도 같은 색인)이 하고, 도구는 색인된 이름·속성과 기억의 자리 정보를 글로 준다.
+(behavior-2026 `src/scene_graph/clip/include/sgsearch.h`)이 하고, 도구는 색인된 이름·속성과 기억의 자리 정보를 글로 준다.
 
+인자
 ```json
 search_objects {"query": "라디오", "k": 5, "room": "kitchen", "state": "seen|moved|held|gone", "near": "O12", "max_age_s": 60, "seen_after_s": 120}   (query 만 필수)
 confirm_object {"id": "O27", "name": "radio", "source": "user|close_look"}                                       (셋 다 필수)
 list_place     {"place": "kitchen" | "R2" | "O12"}
 ```
-- 결과 한 후보: `id, name, name_p, alt[{name,p}], match_type(name|appearance), registered?, p_query·p_registered(appearance 일 때), attrs[색·재질·크기],
+결과
+- 찾기 후보 하나: `id, name, name_p, alt[{name,p}], match_type(name|appearance), registered?, p_query·p_registered(appearance 일 때), attrs[색·재질·크기],
   room, landmark{id,name,dist_m,dz_m}, state, last_seen_ago_s, pos[x,y,z], size[x,y,z], pos_sd?, rel{x,y,z,dist_m,bearing_deg}, match`.
   맨 위 `ask_user`(있으면 행동 전에 묻기)·`hint`·`searched`·`now_s`.
-- 기억: 오프라인 `view.json` 또는 실시간 scenemap 스냅숏(`so_open_live` — 호출마다 새 스냅숏, 확인은 `sm_observe_object_name` 까지).
-  물체 사이 관계말(on/in)은 계산하지 않는다 — 기준물은 가장 가까운 고정 가구의 거리·높이 차이만.
-- 측정(BEHAVIOR 집 FastSAM 기억 283 물체): 이름만 R@5 0.22 → 이름 + 생김새 0.56, 이름으로 못 찾는 물체 R@5 0 → 0.33, 없는 물체 질의에 묻지 않고 행동할 만큼 나오는 것 0.03, 질의 ≈ 0.1 ms(자유 글 ≈ 1 ms).
-- `cargo test --release`(9개), `search-objects live-check libsgrt.so MEM`(진짜 scenemap 합성 스트림), `search-objects demo MEM 라디오`(각본), `search-objects llm MEM "라디오 가져와"`(KAU).
+- `confirm_object`: `{"status":"ok","id","name","p_before","p_after","registered"}`(실시간이면 + `map`). `list_place`: 같은 줄 형식 + 가구면 `dist_m`·`dz_m`.
+- 기억: 오프라인 `view.json` 또는 실시간 scenemap 스냅숏(`so_open_live` — 호출마다 새 스냅숏). 물체 사이 관계말(on/in)은 계산하지 않는다.
+
+만들기·시험: `cd search_objects && cargo test --release`(9개), `search-objects live-check libsgrt.so MEM`(진짜 scenemap 합성 스트림),
+`search-objects demo MEM 라디오`(각본), `search-objects llm MEM "라디오 가져와"`(KAU).
+
+측정(BEHAVIOR 집 FastSAM 기억 283 물체): 이름만 R@5 0.22 → 이름 + 생김새 0.56, 이름으로 못 찾는 물체 R@5 0 → 0.33,
+없는 물체 질의에 묻지 않고 행동할 만큼 나오는 것 0.03, 질의 ≈ 0.1 ms(자유 글 ≈ 1 ms).
 
 ## `move_robot` — 관절·베이스 직접 움직이기
 
-VLA 를 거치지 않고 LLM 이 로봇을 직접 움직이는 도구 하나(π0.5 는 10-04 에 버림, 우리 VLA 는 RecallVLA). 하는 일은 이것뿐이다: 한 부분을 목표까지 안전하게 움직이고 결과를 짧게 돌려준다.
-(plan.md 3.3 은 "이동·스킬 실행 도구는 LLM 에 주지 않는다"가 기본이다. 이 도구는 시연·디버깅·VLA 가 못 하는 작은 보정용이고, 본 경로에 넣을지는 결정 필요.)
+한 부분을 목표까지 안전하게 움직이고 결과를 짧게 돌려준다. 닫힌 고리 실행기(검증·자르기·보간·판정)는 Rust 한 곳(`move_robot/src/lib.rs`,
+주행은 `nav.rs`·`robot_nav.rs`·`map.rs`)이고, 시뮬에서는 같은 코드가 `libmove_robot.so` 로 평가기 안에서 돈다.
 
-### 스키마 (9B 모델용으로 작게, 정의 JSON 약 2 KB — `move_robot::definition()`, `move-robot schema`)
+### 인자 (9B 모델용으로 작게, 정의 JSON 약 1.5 KB — `move_robot::definition()`, `move-robot schema`)
 
 ```json
 {"part": "base | torso | left_arm | right_arm | left_gripper | right_gripper",
- "mode": "go_to | probe | delta | absolute",
+ "mode": "go_to | probe | delta | absolute",            (에이전트 쪽 "explore" 는 스킬이 고를 때만 보임 — 아래)
  "target": string (선택, go_to 만: 지난 지도 요약의 id "F1"·"R2"),
  "values": [number, ...] (1..7 개),
- "duration_s": number (선택, 0 보다 큼)}
+ "duration_s": number (선택, 0 보다 큼),
+ "max_steps": int (explore 만, 1..50, 기본 1)}
 ```
 필수: `part`, `mode`. `values` 는 go_to 에 `target` 을 줄 때 말고는 있어야 하고, 개수는 모드·부분마다 정해져 있다(probe 2, target 없는 go_to 2, base delta 3, torso 4, 팔 7, 그리퍼 1).
-`go_to`·`probe` 는 베이스 전용, 베이스에 `absolute` 는 없다(`error`).
+`go_to`·`probe`·`explore` 는 베이스 전용, 베이스에 `absolute` 는 없다(`error`).
 
 | part | values (순서·단위) | 행동 벡터 칸 (R1Pro 23) | 제어기 (`omnigibson/eval/r1pro.yaml`) |
 |---|---|---|---|
-| `base` | delta `[앞 m, 왼쪽 m, 왼쪽으로 돌기 °]` — 호출할 때의 로봇 기준 / probe `[왼쪽으로 돌기 °, 앞 m]` / go_to `target` 또는 `[앞 m, 왼쪽 m]` (아래 2026-10-03 절) | 0..3 `vx, vy, wz` | 속도, [-1,1] → ±0.75 m/s, ±0.75 m/s, ±1 rad/s |
+| `base` | delta `[앞 m, 왼쪽 m, 왼쪽으로 돌기 °]` — 호출할 때의 로봇 기준 / probe `[왼쪽으로 돌기 °, 앞 m]` / go_to `target` 또는 `[앞 m, 왼쪽 m]` | 0..3 `vx, vy, wz` | 속도, [-1,1] → ±0.75 m/s, ±0.75 m/s, ±1 rad/s |
 | `torso` | `[j1..j4]` ° (delta·absolute) | 3..7 | 절대 관절 위치 (rad) |
 | `left_arm` | `[j1..j7]` ° (어깨 → 손목) | 7..14 | 절대 관절 위치 |
 | `left_gripper` | `[벌림]` 0 = 닫힘 … 1 = 열림 (absolute 권장) | 14 | smooth, [-1,1] → 손가락 0…0.05 m |
 | `right_arm` | `[j1..j7]` ° | 15..22 | 절대 관절 위치 |
 | `right_gripper` | `[벌림]` | 22 | smooth |
 
-- 행동·관측 칸은 BEHAVIOR-1K `eval_utils.py` 의 `ACTION_QPOS_INDICES` / `PROPRIOCEPTION_INDICES` 그대로. 머리(카메라)는 평가 설정에서 `NullJointController` 라 움직일 수 없어 enum 에 없다.
-- `delta` 는 지금 측정값에 더하기(베이스는 지금 자리에서 그만큼), `absolute` 는 그 값으로 가기(관절·그리퍼만). **`delta` 에 0 만 주면 움직이지 않고 상태만 읽는다**(도구를 늘리지 않으려고).
+- 행동·관측 칸은 BEHAVIOR-1K `eval_utils.py` 의 `ACTION_QPOS_INDICES` / `PROPRIOCEPTION_INDICES` 그대로. 머리(카메라)는 평가 설정에서 `NullJointController` 라 enum 에 없다.
+- `delta` 는 지금 측정값에 더하기, `absolute` 는 그 값으로 가기(관절·그리퍼만). **`delta` 에 0 만 주면 움직이지 않고 상태만 읽는다**(도구를 늘리지 않으려고).
 - 한 번에 한 부분. 그동안 나머지 부분은 마지막 목표를 유지하고 베이스는 0 속도.
+
+| 베이스 모드 | values / target | 하는 일 |
+|---|---|---|
+| `go_to` | `target`: 지난 지도 요약의 `F1`(프런티어)·`R2`(방) — 또는 values `[앞 m, 왼쪽 m]`(아는 빈칸이어야 함) | **아는 빈칸만** 지나는 경로(부풀린 격자 Dijkstra)를 지역 제어기(DWA)가 따라감. 도착하면 프런티어의 모르는 쪽을 봄. 모르는 점·장애물 점이면 `error` + 고칠 문장 |
+| `probe` | `[왼쪽으로 돌기 °, 앞 m]`(앞 ≤ 1.5 m) | 제자리에서 돌고 0.25 m/s 로 천천히 앞으로. 깊이 프레임·지도 장애물 앞(몸통 + 12 cm)에서 멈춤 → `blocked` + `stopped_by`, `clear_m`. 앞 0 = 돌아보기만 |
+| `delta` | `[앞, 왼쪽, 돌기°]` | 직진·돌기 + 지도가 있으면 진행 방향 안전 정지(지도 장애물·카메라 밖 모르는 곳·깊이) |
+| `explore` (10-06) | `max_steps` | 프런티어 탐사(Yamauchi): 지난 지도 요약에서 `path_m` 가장 짧은 프런티어로 `go_to` 를 `max_steps` 번까지, 닿을 수 있는 프런티어가 없으면 멈춤 — `src/frontier.rs` |
+
+`explore` 는 지난 관측이 필요해 시뮬 접착부(`mr_command`)가 아니라 에이전트 쪽(`frontier::run_tool_ctx`, 런타임이 부름)에서만 돈다.
+기본 정의(`definition()`, `mr_tool_definition`)의 enum 에는 없고, 스킬이 `skill.json` `tools[].modes` 에 넣으면 `definition_modes` 가 보인다.
 
 ### 결과 (짧은 JSON)
 
@@ -73,11 +90,16 @@ VLA 를 거치지 않고 LLM 이 로봇을 직접 움직이는 도구 하나(π0
 {"status":"blocked","part":"right_gripper","state":[0.4],"error":0.6,"hint":"gripper stopped before closing: probably holding an object",…}
 {"status":"error","message":"left_arm needs exactly 7 values (deg), got 2","hint":"fix the arguments and call move_robot again"}
 ```
-- `status`: `reached`(허용 오차 안) / `blocked`(멈췄는데 목표 못 감: 접촉·물체·장애물) / `timeout`(아직 가는 중) / `error`(인자 틀림 — 예외가 아니라 관찰값).
-- `clamped`: 한계 밖이라 잘린 칸 번호, 관절이면 `limits`(그 칸의 허용 범위 °)도 — 부호를 고칠 수 있게. `slowed`: 요청한 `duration_s` 가 안전 속도보다 빨라서 늘렸다.
+- `status`: `reached`(허용 오차 안) / `blocked`(멈췄는데 목표 못 감: 접촉·물체·장애물) / `timeout`(아직 가는 중) / `error`(인자 틀림 — 관찰값).
+- `clamped`: 한계 밖이라 잘린 칸 번호, 관절이면 `limits`(그 칸의 허용 범위 °)도. `slowed`: 요청한 `duration_s` 가 안전 속도보다 빨라서 늘렸다.
 - `error`: 관절·그리퍼는 가장 큰 남은 차이 하나(°·비율). 베이스 delta `state` 는 이번 호출 동안 움직인 양(base_qvel 적분 오도메트리), `error` 는 `[남은 m, 남은 °]`.
-- 베이스 go_to·probe 결과는 `state` 대신 `mode`, `target`(id 나 `[앞, 왼쪽]`·`probe [..]`), `moved_m`, `turned_deg`, `time_s`, go_to 면 `planned_m`·`replans`(있을 때). 안전 정지면 `stopped_by`, `clear_m`.
-  지도를 받은 뒤의 베이스 결과(delta 포함)에는 `map`(LLM 관측)과 `_m`(측정) — 아래 2026-10-03 절.
+- 베이스 go_to·probe 결과는 `state` 대신 `mode`, `target`, `moved_m`, `turned_deg`, `time_s`, go_to 면 `planned_m`·`replans`. 안전 정지면 `stopped_by`, `clear_m`.
+- 지도를 받은 뒤의 베이스 결과에는 `map`(LLM 관측): `free_m2`, `new_free_m2`, `frontiers`[`id`, `path_m`(아는 빈칸 경로 길이), `dir`, `new_area_m2`(둘레 2.5 m 모르는 넓이), `room`],
+  `around`(8 방향 "known 2.1m then wall|unknown, depth clear 1.8m"), `rooms`[`id`, `visited`, `path_m`], `in_room`, `status`.
+  그리고 `_m`(측정, 런타임이 LLM 에게서 뺌): `gt_cov`, `free_m2`, `path_m`, `sim_s`, `contacts`, `stalls`, `blocked`, `replans`, `min_clear_m`, `obs_us`, `plan_us`, `costmap_us`, `pose`.
+- `explore` 결과: 마지막 go_to 결과 + `explore{steps, targets, end: no_frontier|max_steps|link_down}` + `_calls[{args, result}]`(실제 go_to 하나하나 — 런타임이 결정 기록을 하나씩 남김).
+  한 번도 못 가면 `{"status":"done","mode":"explore","end":"no_frontier","message":"no reachable frontier left",…}`.
+- 결과 → LLM 관측 줄이기·결정 기록 칸(`compact`, `obs_features`, `label`, …)은 도구 쪽 `src/llm_view.rs` 에 있고 런타임이 이름으로 부른다.
 
 ### 안전 한계 (`Safety::default`, `src/lib.rs`)
 
@@ -93,32 +115,54 @@ VLA 를 거치지 않고 LLM 이 로봇을 직접 움직이는 도구 하나(π0
 
 그리퍼가 닫다가 막히면(물체를 쥠) 지령은 그대로 둔다(계속 쥔다). 팔이 막히면 측정 위치로 지령을 바꿔 더 밀지 않는다.
 
+### 주행 층 (`src/nav.rs`, `src/robot_nav.rs`, Nav2 와 같은 층 구조, ROS 없음)
+
+- 비용 지도 = scenemap 2D 점유 격자 하나(로그 오즈라 치운 물체는 광선이 비움). 바뀐 칸은 scenemap 의 바뀐 영역(`sgrt_map_view.dirty_box`) 안에서만 비교,
+  거리장은 장애물이 바뀔 때만 다시. 물체 기억의 옮길 수 있는 물체 둘레는 계획 벌점.
+- 전역 경로: 바뀐 칸이 경로 통로(몸통 + 0.3 m)에 걸리고 실제로 막혔을 때, 또는 3 s 마다 다시 계획(ms 단위).
+- 몸통: 반지름 0.37 m 원(시뮬 base_link AABB 0.743 × 0.732 m). 사각형 0.57 × 0.54 m 로 했을 때 시뮬에서 바퀴가 소파·탁자에
+  12 번 닿았고, 원으로 바꾼 뒤 0 번(같은 집·같은 출발). 계획 부풀림 0.40 m.
+- 로봇별 몸 크기: 환경 변수 `MOVE_ROBOT_FOOTPRINT` — 없거나 `r1pro` 면 위 값, `limo_omx` 면 LIMO 사각형 0.36 × 0.22 m·계획 부풀림 0.241 m,
+  `rect:<길이>x<폭>`·`circle:<반경>` 도 된다(`nav::Body`). behavior-2026 `run_explore.sh` 가 `SGRT_ROBOT=limo_omx` 일 때 넣는다.
+- 지역 제어: 매 스텝 DWA(앞 속도 6 + 뒤 2 × 회전 13 × 옆 속도 3 표본, 1.2 s 굴림, 몸통 둘레 44 점 검사, 여유 2 cm + 0.2·v)
+  + 전방향 미끄러지기 7 방향 + 막혔을 때 16 방향 빠져나오기. 가야 할 쪽이 30° 넘게 옆이면 제자리 돌기.
+- 얇은 안전 정지: 마지막 깊이 프레임 장애물 점 중 **지도에 아직 없는** 것으로 앞 속도를 줄이고 멈춤.
+- 회복: 다시 계획 → 35° 돌아보기 → 되짚기(지나온 자리 0.7 m 를 거꾸로) → `blocked`. 밀었는데 안 움직이면(접촉) 0.15 m 물러난 뒤 `blocked`.
+  두 번 실패한 목표 둘레 프런티어는 다음 관측에서 뺌(`skipped_failed`).
+
 ### 실행 경로
 
 ```
-LLM (Qwen3.5-9B, raw tool loop) ── tool_call ──▶ move_robot::link::run_tool ── 먼저 인자 검사(왕복 없이 오류 돌려줌)
+런타임(run-skill) ── 도구 호출 ──▶ move_robot::frontier::run_tool_ctx (explore 면 go_to 를 되풀이) → link::run_tool ── 먼저 인자 검사(왕복 없이 오류)
      │                                              │
      │                                              └─ TcpSim ─ JSON 한 줄 ─▶ [평가기 프로세스]
      │                                                   behavior-2026/src/sim/move_robot/move_robot_sim.py (ctypes)
      │                                                   매 스텝: proprio 61 → mr_tick (libmove_robot.so, 같은 Rust 실행기) → 행동 23
      ◀──────────────────── 결과 JSON 한 줄 ◀─────────────────┘
 ```
-- 닫힌 고리 실행기(검증·자르기·보간·판정)는 Rust 한 곳(`move_robot/src/lib.rs`, 주행은 `nav.rs`·`robot_nav.rs`·`map.rs`). 시뮬 쪽 파이썬은 바이트만 옮긴다(numpy·torch 없어도 됨).
 - C ABI(`move_robot/include/move_robot.h`, `src/ffi.rs`): `mr_new`, `mr_free`, `mr_tick`(0 대기 / 1 움직이는 중 / 2 이번에 끝남 / -1 proprio 이상 / -2 인자 이상), `mr_command`(0 시작 / 1 바로 끝남 / -2),
-  `mr_busy`, `mr_reset`, `mr_take_result`(쓴 길이 / 0 없음 / -필요 길이), `mr_tool_definition`, 지도용 `mr_set_map`·`mr_set_reference`·`mr_set_contacts`·`mr_overlay_json`,
-  `mr_set_gt_pose(r, x, y, yaw)`(map 틀 정답 자세, rad. 다음 `mr_tick` 한 번에서 base_qvel 적분 대신 지도·go_to·probe 자세와 이동 거리에 쓰임, 0 / -2).
-  `SGRT_POSE=gt` 일 때 behavior-2026 `src/sim/move_robot/move_robot_sim.py`·`src/sim/explore/run_explore.py` 가 매 스텝 `mr_tick` 앞에 부른다. 베이스 delta 의 도착 판정·`state`·`error` 는 그래도 base_qvel 적분 — **의도**다. 실제 로봇에는 정답 자세가 없어 delta 를 오도메트리로 판정하므로, 시뮬도 실제와 같게 둔다([계획](../../../docs/plan.md) "시뮬은 실제 로봇과 같은 방식으로 돈다").
+  `mr_busy`, `mr_reset`, `mr_take_result`, `mr_tool_definition`, 지도용 `mr_set_map`·`mr_set_reference`·`mr_set_contacts`·`mr_overlay_json`,
+  `mr_set_gt_pose(r, x, y, yaw)`(`SGRT_POSE=gt` 일 때 평가기가 매 스텝 부름. 베이스 delta 의 도착 판정은 그래도 오도메트리 — 실제 로봇과 같게).
 - 에이전트 쪽 의존성: `serde_json` 하나. `--features llm` 일 때만 기존 계획기 `llm.rs`(KAU HTTPS, curl)를 경로 의존성으로 쓴다.
+- 가짜 집 `link::MockWorld`(정답 바닥 PGM + 머리 카메라 흉내 ±49.6°, 6 m, 로그 오즈 격자, 몸통 원 접촉). 덮음을 잴 정답 기준은
+  `mock_eval::{mock_from_gt, reachable_reference}`(평가용, LLM 에게 안 보임 — 옛 스킬 explore `bin/explore.rs` 에서 옮김).
 
-### 쓰는 법
+### `executor: "vla"` 호출 (코드: `src/vla.rs`·`robot_vla.rs`·`goal.rs`·`limo.rs`·`verify.rs`)
+
+- 호출 `{"executor":"vla","skill":"pick up cup","goal":{"pick":{"id":"O12"},"place":{"id":"O3"} | {"point":[x,y(,z)]}},"max_s":30}` →
+  결과 `{"status":"done|failed|timeout|handback","reason","evidence","steps","min_clear_m","contacts",…}`. `run_tool` 이 먼저 나눔(이동·탐사는 `route:"move_robot"` 로 거절)·물체 id·지점을 검사한다.
+- 지점 검사(`goal.rs check_point`): 아는 빈 바닥 또는 0.05–0.52 m 윗면, 몸통이 서는 칸에서 닿음, 아니면 1.0 m 안 가장 가까운 맞는 자리 → `point.snap_m`, 없으면 `error(invalid_point)`.
+- C ABI: `mr_vla_start`, `mr_vla_tick`, `mr_vla_tick_ext`, `mr_filter`, `mr_vla_set_objects(_json)`, `mr_vla_goal_entries`, `mr_vla_contacts`, `mr_vla_stop`, `mr_vla_busy`.
+  안의 정책은 대역(`scripted` 기본, `replay:<jsonl>`, `external`). 설계는 [POLICY.md](../../../docs/map_vla/POLICY.md) 1.2–1.4.
+
+### 만들기·시험
 
 ```bash
 cd src/agent/tools/move_robot
-cargo test --release                      # 단위 시험 29개 (Isaac Sim 없이)
-cargo build --release --features llm      # libmove_robot.so + move-robot 명령
+cargo test --release -j4                  # lib 시험 60개 (Isaac Sim 없이; explore 모드 3개 포함)
+cargo build --release -j4 --features llm  # libmove_robot.so + move-robot 명령
 ./target/release/move-robot schema
 ./target/release/move-robot mock '{"part":"left_arm","mode":"delta","values":[0,20,0,-30,0,0,0]}'   # 가짜 로봇
-# 시뮬: 평가기 안에서 도구 호출을 받는다 (behavior-2026)
 python ../../../behavior-2026/src/sim/move_robot/run_eval_move.py --listen 127.0.0.1:8771 -- --task-name turning_on_radio --max-steps 6000 --headless
 ./target/release/move-robot call '{"part":"base","mode":"delta","values":[0.3,0,0]}'
 set -a; . ~/.config/behavior-2026/kau.env; set +a   # 키는 환경변수로만
@@ -126,59 +170,9 @@ set -a; . ~/.config/behavior-2026/kau.env; set +a   # 키는 환경변수로만
 python3 ../../../behavior-2026/src/sim/move_robot/test_move_robot_sim.py   # 시뮬 접착부 시험 (Isaac Sim 없이)
 ```
 
-## 2026-10-03 변경: 탐사용 베이스 모드·지도 관측·안전 정지 (스킬 [`explore`](../skills/explore/))
+### 측정
 
-스키마(약 1.5 KB): `mode` enum 이 `go_to | probe | delta | absolute`, `target`(go_to 의 id) 추가, 필수는 `part`, `mode` 만.
-
-| 베이스 모드 | values / target | 하는 일 |
-|---|---|---|
-| `go_to` | `target`: 지난 지도 요약의 `F1`(프런티어)·`R2`(방) — 또는 values `[앞 m, 왼쪽 m]`(아는 빈칸이어야 함) | **아는 빈칸만** 지나는 경로(부풀린 격자 Dijkstra)를 지역 제어기(DWA)가 따라감. 도착하면 프런티어의 모르는 쪽을 봄. 모르는 점·장애물 점이면 `error` + 고칠 문장 |
-| `probe` | `[왼쪽으로 돌기 °, 앞 m]`(앞 ≤ 1.5 m) | 제자리에서 돌고 0.25 m/s 로 천천히 앞으로. 지금 깊이 프레임·지도 장애물 앞(몸통 원 + 12 cm)에서 멈춤 → `blocked` + `stopped_by`, `clear_m`. 앞 0 = 돌아보기만 |
-| `delta` | `[앞, 왼쪽, 돌기°]` | 예전과 같음 + 지도가 있으면 진행 방향 안전 정지(지도 장애물·카메라 밖 모르는 곳·깊이) |
-
-주행 층(`src/nav.rs`, `src/robot_nav.rs`, Nav2 와 같은 층 구조, ROS 없음)
-- 비용 지도 = scenemap 2D 점유 격자 하나(로그 오즈라 치운 물체는 광선이 비움). 바뀐 칸은 scenemap 의 바뀐 영역(`sgrt_map_view.dirty_box`) 안에서만 비교,
-  거리장은 장애물이 바뀔 때만 다시. 물체 기억의 옮길 수 있는 물체 둘레는 계획 벌점.
-- 전역 경로: 바뀐 칸이 경로 통로(몸통 + 0.3 m)에 걸리고 실제로 막혔을 때, 또는 3 s 마다 다시 계획(ms 단위).
-- 몸통: 반지름 0.37 m 원(시뮬 base_link AABB 0.743 × 0.732 m @ yaw 148.6°, 바퀴 y ±0.31 m 에서). 사각형 0.57 × 0.54 m 로 했을 때 시뮬에서 바퀴가 소파·탁자에
-  12 번 닿았고, 원으로 바꾼 뒤 0 번(같은 집·같은 출발). 거리는 칸 중심 거리장에서 반대각(3.5 cm)을 빼 보수적으로 잰다. 계획 부풀림 0.40 m.
-- 로봇별 몸 크기: 환경 변수 `MOVE_ROBOT_FOOTPRINT` — 없거나 `r1pro` 면 위 R1 값 그대로, `limo_omx` 면 LIMO 사각형 0.36 × 0.22 m(시뮬 충돌 모양: 몸통 0.322 · 바퀴 폭 0.217 · 홈 자세 팔이 뒤로 0.18 까지 → 앞뒤 대칭 0.18)·계획 부풀림 = 외접원 0.211 + 0.03 = 0.241 m(출발 둘레 +0.05, 최소 여유 −0.07 — R1 과 같은 규칙), `rect:<길이>x<폭>`·`circle:<반경>` 도 된다(`nav::Body`). 탐색의 LIMO 경로(behavior-2026 `run_explore.sh`, `SGRT_ROBOT=limo_omx`)가 `limo_omx` 를 넣는다.
-- 지역 제어: 매 스텝 DWA(앞 속도 6 + 뒤 2 × 회전 13 × 옆 속도 3 표본, 1.2 s 굴림, 몸통 둘레 44 점 검사, 여유 2 cm + 0.2·v — 0.5 m/s 면 12 cm)
-  + 몸을 돌리지 않는 전방향 미끄러지기 7 방향 + 막혔을 때 16 방향 빠져나오기. 가야 할 쪽이 30° 넘게 옆이면 제자리 돌기(돌 수 있을 때).
-- 얇은 안전 정지: 마지막 깊이 프레임 장애물 점 중 **지도에 아직 없는** 것(새로 나타남·발밑·움직임)으로 앞 속도를 줄이고 멈춤.
-- 회복: 다시 계획 → 35° 돌아보기 → 되짚기(지나온 자리 0.7 m 를 몸 방향 그대로 거꾸로, Nav2 backup) → `blocked`("path blocked (…)"). 밀었는데 안 움직이면(접촉) 0.15 m 물러난 뒤 `blocked`. 지도 밖 장애물이 몸 둘레에 보이면 돌지 않고 물러남.
-  두 번 실패한 목표 둘레 프런티어는 다음 관측에서 뺌(`skipped_failed`).
-
-베이스 결과에 붙는 것
-- `map`(LLM 관측): `free_m2`, `new_free_m2`, `frontiers`[`id`, `path_m`(아는 빈칸 경로 길이), `dir`(`ahead`·`40L`·`75R`·`back`), `new_area_m2`(둘레 2.5 m 모르는 넓이), `room`],
-  `around`(8 방향 `F, FL, L, BL, B, BR, R, FR`: "known 2.1m then wall|unknown, depth clear 1.8m"), `rooms`[`id`, `visited`, `path_m`], `in_room`, `status`.
-- `_m`(측정, 에이전트가 LLM 에게서 뺌): `gt_cov`, `free_m2`, `path_m`(오도메트리 누적), `sim_s`, `contacts`, `stalls`, `blocked`, `replans`, `min_clear_m`, `obs_us`, `plan_us`, `costmap_us`, `pose`.
-
-베이스 덜 감 고침: 허용 오차 2 cm·2° → 1 cm·1°, 남은 거리가 있으면 최소 접근 속도(3 cm/s, 3°/s), 도착 뒤 0 지령으로 멈출 때까지 기다려 실제 자리를 재고
-2 배 오차 밖이면 다시 접근(최대 2 번). 가짜 로봇 시험: 0.2 m → 오차 < 12 mm, 30° → < 1.2°.
-
-속도: go_to 0.5 m/s·50°/s, probe 0.25 m/s, delta 0.3 m/s(예전 그대로). 가감속 0.6 m/s²·90°/s².
-
-C ABI 추가(`include/move_robot.h`): `mr_set_map(r, &sgrt_map_view)`(평가기 접착부가 sgrt 구조체 포인터를 그대로 넘김), `mr_set_reference`(정답 바닥, 측정용),
-`mr_set_contacts`, `mr_overlay_json`(뷰어 겹침). 가짜 집 `link::MockWorld`(정답 바닥 PGM + 머리 카메라 흉내 ±49.6°, 6 m, 로그 오즈 격자, 몸통 원 접촉).
-시험 26개(`cargo test --release`): 지도 요약, 프런티어 go_to 무접촉, probe 벽 앞 정지, 모르는 점 go_to 거절, 옆(안 보이는 곳) delta 정지, 덜 감, 길에 나타나는 장애물(1.5 m 앞에 0.25 m 물체가 갑자기 생김 → 접촉 0, 치우면 다시 열림).
-
-시간(시뮬, 1 층 집 판): 지도 받기(격자 복사·거리장·바뀐 칸) 2–5 ms/keyframe, 관측 만들기 1–2.5 ms/호출, 다시 계획 0.4–1.4 ms, 닫힌 고리 한 스텝 평균 0.2 ms(서 있을 때)–5 ms(DWA 중). 평가기 한 스텝 130–165 ms 라 실행기 몫은 3 % 안팎.
-
-## 2026-10-04 변경: VLA 실행기(리모 + OMX-F) — [POLICY.md](../../../docs/map_vla/POLICY.md) 1.2·1.3·1.4·7.1·7.2
-
-- 호출 `{"executor":"vla","skill":"pick up cup","objects":["O12"],"max_s":30}` → 결과 `{"status":"done|failed|timeout|handback","reason","evidence","steps","min_clear_m","contacts",…}`.
-  `run_tool` 이 먼저 나눔(`move to`·탐사는 `route:"move_robot"` 로 거절)·`objects` 를 검사한다. `TcpSim` 은 VLA 호출이면 예산만큼 기다린다.
-- 코드: `src/limo.rs`(부분 base 2·arm 5·gripper 1, 한계 = `src/robot/real_limits.json`, 순기구학), `src/verify.rs`(자동 확인), `src/vla.rs`(나눔·시작 조건·물체 칸 `is_goal`·정책 접점·안전 거르개·끝 판정),
-  `src/robot_vla.rs`, `src/limo_mock.rs`(가짜 LIMO), 시험 `src/tests_vla.rs`(19).
-- C ABI: `mr_vla_start`, `mr_vla_tick`(안의 대역 정책), `mr_vla_tick_ext`(밖의 엔진 행동·끝 신호·확신), `mr_filter`(거르개만), `mr_vla_set_objects`(scenemap `sm_object` 배열 포인터)·`mr_vla_set_objects_json`,
-  `mr_vla_contacts`(몸통/팔), `mr_vla_stop`, `mr_vla_busy`. VLA 단계 중에는 `mr_tick` 대신 `mr_vla_tick` 만.
-- 정책은 아직 학습된 VLA 가 없어 대역(`scripted` 기본, `replay:<jsonl>`, `external`)이다. 손으로: `move-robot vla-mock '<call>' …`.
-
-## 2026-10-05 변경: VLA 통합 목표 지정(집을 것·놓을 곳 = 물체 id 또는 지점) — [POLICY.md](../../../docs/map_vla/POLICY.md) 1.3
-
-- 호출 `"goal":{"pick":{"id":"O12"},"place":{"id":"O3"} | {"point":[x,y(,z)]}}`(옛 `objects` 도 됨). `"skill":"go here"` + `place.point` = 지점까지 마지막 다가가기(1.5 m 안).
-- 지점 검사·옮기기(`src/goal.rs check_point`): 아는 빈 바닥 또는 0.05–0.52 m 윗면, 몸통이 서는 칸에서 닿음(낮은 곳 0.38 m·높은 면 0.31 m), 아니면 1.0 m 안 가장 가까운 맞는 자리 → 결과 `point.snap_m`, 없으면 `error(invalid_point)`.
-- 매 스텝 목표 칸 2 × 16(있음·물체·지점·앎·잃음·x·y·z·거리·sin·cos·손끝 기준 xyz, base_link) + 정규화 32(`tok_norm.h` 를 include_str! 로 읽음, ln 은 시뮬 `lnf_d` 그대로) → `VlaObs::goal`, C ABI `mr_vla_goal_entries(r, raw32, norm32)`.
-  id 풀기는 `goal::resolve`(지금은 `mr_vla_set_objects` 기억 스냅숏) 한 곳 — 실시간 기억 id 풀이가 move_robot 에 들어오면 이 함수만 바꾼다.
-- 지점 놓기 done = 놓임 + 수평 0.05 m + 바닥 ± 0.02 m(학습 쪽과 같은 수). 시험 7 개 더함(`cargo test --release` lib 57).
+- 베이스 덜 감 고침: 허용 1 cm·1°, 최소 접근 속도 3 cm/s·3°/s, 멈춘 뒤 다시 접근. 가짜 로봇 0.2 m → 오차 < 12 mm, 30° → < 1.2°.
+- 시간(시뮬, 1 층 집): 지도 받기 2–5 ms/keyframe, 관측 만들기 1–2.5 ms/호출, 다시 계획 0.4–1.4 ms, 닫힌 고리 한 스텝 0.2–5 ms(DWA 중). 평가기 한 스텝 130–165 ms 의 3 % 안팎.
+- 탐사(스킬 [`explore`](../skills/explore/README.md)): 시뮬 두 집에서 go_to·probe 로 접촉 0, 덮음 0.94–0.95(LLM). 모드 `explore`(프런티어 탐사, `max_steps` 1 씩)는
+  가짜 집 6 출발(`mock_eval.sh`)에서 접촉 0, 덮음 0.940–0.994, 호출 7–17 — 옮기기 전 기준선과 decisions·timeline·summary 가 벽시계·시각 칸 말고 모두 같음(10-06).

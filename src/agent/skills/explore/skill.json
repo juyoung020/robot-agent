@@ -1,0 +1,28 @@
+{
+  "skill": "explore",
+  "tools": [
+    {"name": "move_robot", "desc": "tool.md", "modes": ["go_to", "probe", "delta", "absolute"]}
+  ],
+  "observe": {"tool": "move_robot", "args": {"part": "base", "mode": "delta", "values": [0, 0, 0]}},
+  "baseline": {"name": "frontier", "tool": "move_robot", "args": {"part": "base", "mode": "explore", "max_steps": 1}},
+  "end": {
+    "name": "no_frontier",
+    "when_empty": "map.frontiers",
+    "nudge": "The map still shows {n} reachable frontier(s). Continue exploring with go_to, or reply done again if you are sure.",
+    "max_nudges": 1
+  },
+  "metrics": {
+    "coverage": {"key": "gt_cov", "marks": [0.5, 0.8, 0.9, 0.95], "fields": ["sim_s", "path_m"]},
+    "timeline": {
+      "sim_s": "sim_s", "gt_cov": "gt_cov", "free_m2": "free_m2", "path_m": "path_m", "contacts": "contacts", "stalls": "stalls",
+      "blocked": "blocked", "min_clear_m": "min_clear_m", "frontiers": "frontiers_all", "obs_us": "obs_us", "plan_us": "plan_us", "costmap_us": "costmap_us"
+    },
+    "timeline_raw": {"pose": "pose"},
+    "summary": {
+      "sim_s": "sim_s", "gt_cov": "gt_cov", "free_m2": "free_m2", "path_m": "path_m", "contacts": "contacts", "stalls": "stalls",
+      "blocked": "blocked", "replans": "replans", "min_clear_m": "min_clear_m", "frontiers_left": "frontiers_all"
+    },
+    "decision": ["contacts", "stalls", "min_clear_m"]
+  },
+  "limits": {"max_calls": 80, "max_sim_s": 900, "max_wall_s": 3600, "keep_pairs": 3, "max_tokens": 400, "temperature": 0}
+}
