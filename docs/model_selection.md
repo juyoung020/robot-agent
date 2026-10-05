@@ -113,7 +113,7 @@
 
 - GPU 학습 환경은 수천 판을 동시에 돌려서 실제 렌더 + ObjectSAM + SigLIP 2 를 매번 돌릴 수 없다. 그래서 **검출 단계만 흉내 내고**(정답 물체 + 카메라 자세 → 진짜 파이프라인이 냈을 검출 목록: 놓침·가짜·붙음·이름 헷갈림·임베딩·위치 오차, 놓침은 키프레임을 넘어 이어짐), 그 뒤 합치기는 **진짜와 같은 확률 모드 규칙을 GPU 로** 돌린다.
 - 흉내 값은 OmniGibson 에서 진짜 파이프라인을 돌린 결과로 맞추고, 파이프라인이 바뀌면 맞추는 스크립트만 다시 돌린다. 통계형으로 시작하고, 검증을 못 넘으면 학습형으로 올린다.
-- 자율주행의 인지 오차 모델(PEM)과 같은 틀이다 — 조사 [PERCEPTION_EMULATION_SURVEY](map_vla/PERCEPTION_EMULATION_SURVEY.md), 설계 [GPU_MAP_PORT](map_vla/GPU_MAP_PORT.md).
+- 자율주행의 인지 오차 모델(PEM)과 같은 틀이다 — 조사 PERCEPTION_EMULATION_SURVEY, 설계 [GPU_MAP_PORT](map_vla/GPU_MAP_PORT.md).
 - 진짜 파이프라인은 학생 DAgger 일부와 마지막 미세 조정에 쓴다.
 
 ### 시뮬·학습 환경 — BEHAVIOR-1K 장면 + GPU 환경
@@ -193,7 +193,7 @@
 
 - 리모: [AgileX LIMO 사양](https://www.wevolver.com/specs/agilex-limo), [LIMO ROS2 매핑·내비게이션](https://www.hackster.io/agilexrobotics/ros2-mapping-and-navigation-with-limo-ros2-1936a9), [LIMO Pro](https://global.agilex.ai/products/limo-pro)
 - 분할·임베딩: [ObjectSAM](https://github.com/juyoung020/ObjectSAM), [CLIP 후보 측정](clip_candidates.md), FastSAM(Zhao 외 2023), SigLIP 2(Tschannen 외 2025)
-- 학습 중 인지: [PERCEPTION_EMULATION_SURVEY](map_vla/PERCEPTION_EMULATION_SURVEY.md)
+- 학습 중 인지: PERCEPTION_EMULATION_SURVEY
 - NPU: [DEEPX DX-M1](https://wiki.dfrobot.com/SKU_DFR1252_DX-M1%20AI%20Accelerator)
 - 장면: [BEHAVIOR](https://behavior.stanford.edu/)
 

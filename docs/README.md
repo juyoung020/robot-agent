@@ -6,7 +6,6 @@
 |---|---|
 | [plan.md](plan.md) | 계획: 무엇을, 어디서, 어떤 순서로 |
 | [model_selection.md](model_selection.md) | 모델 선택: 부품마다 무엇을 골랐고 왜 골랐나 |
-| [perception_model_candidates.md](perception_model_candidates.md) | 물체 인식 모델 후보 (① 물체 기억, 추천만) |
 | [clip_candidates.md](clip_candidates.md) | CLIP 류 임베딩 모델 후보·측정 (분할 마스크 → 이름·임베딩, 측정 때 분할은 FastSAM-s — 지금은 ObjectSAM) |
 | [terms.md](terms.md) | 용어 정리: stuff·things, 확률론적 물체 수준 매핑, DA·과분할 병합·라벨 융합, PCA 와 랜색(RANSAC) — 우리 코드 위치와 함께 |
 | [known_bugs.md](known_bugs.md) | 알려진 버그(코드) |
@@ -20,7 +19,6 @@
 | [training/README.md](../training/README.md) | 모델 학습 (embed/: 영상–글 임베딩 증류, RL/·BC/: 교사·작은 학생, vla/: RecallVLA, fastsam/: ObjectSAM 분할, viewer/: 학습 뷰어, model/: 베이스 모델) |
 | [src/scene_graph/README.md](../src/scene_graph/README.md) | 물체 기억 코드(실제 로봇 쪽)·빌드 |
 | [src/robot/README.md](../src/robot/README.md) | 리모 + 매니퓰레이터 로봇 설명(URDF·RViz) |
-| [archive/README.md](../archive/README.md) | 지금 안 쓰는 코드: 왜 옮겼나 |
 | [tools/](../tools/) | 빌드(`build_all.sh`)·실행·점검(`check_paths.sh`, `audit.py`) 도구 |
 
 ## 정한 것

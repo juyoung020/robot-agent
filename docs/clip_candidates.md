@@ -2,7 +2,7 @@
 
 작성 2026-10-03. 처음엔 조사·측정 문서였다. **2026-10-03 결정: SigLIP 2 B/32-256 을 쓴다.** C++/CUDA·TensorRT 포팅과 모델 자체 효율 측정은 [8절](#8-포팅-결과와-모델-효율-2026-10-03).
 
-- 앞 문서: [물체 인식 모델 후보](perception_model_candidates.md) Nano 단독안. 거기서는 "별도 CLIP 은 기본에서 뺌"이었다.
+- 앞 문서: 물체 인식 모델 후보 Nano 단독안. 거기서는 "별도 CLIP 은 기본에서 뺌"이었다.
   - 이 문서는 **새 방향**(FastSAM-s 로 이름 없는 마스크 → CLIP 으로 이름·임베딩)을 전제로 다시 본다.
   - 10-05: 분할은 ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만, 엔진 `yolo26n-seg-obj-416`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 + objprob 로 정했다. 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. 아래 FastSAM-s 숫자는 그 전 측정 기록이다.
 - 표기

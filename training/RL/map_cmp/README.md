@@ -21,12 +21,12 @@ GPU 지도 근사판(`../map`)과 진짜 scenemap(behavior-2026 서브모듈 `sr
 
 ## 빌드·실행
 ```
-cmake -S training/RL/map_cmp -B ~/ra_mapcmp && cmake --build ~/ra_mapcmp -j --target map_cmp
-~/ra_mapcmp/map_cmp 50                    # 기본: SLAM, 넣기 정책 0, 씨앗 20261004
-~/ra_mapcmp/map_cmp 50 --mode odom        # 진짜 쪽 자세 = 적분만(맞추기 없음)
-~/ra_mapcmp/map_cmp 50 --policy 1         # 진짜 쪽 넣기 정책 1(사건 기반, scenemap 기본값)
-~/ra_mapcmp/map_cmp 50 --seed 7           # 다른 장면·궤적
-~/ra_mapcmp/map_cmp 10 --trace 3          # 판 3 의 keyframe 마다 검출·확정 물체 목록
+tools/build_all.sh map_cmp --target map_cmp
+build/map_cmp/map_cmp 50                    # 기본: SLAM, 넣기 정책 0, 씨앗 20261004
+build/map_cmp/map_cmp 50 --mode odom        # 진짜 쪽 자세 = 적분만(맞추기 없음)
+build/map_cmp/map_cmp 50 --policy 1         # 진짜 쪽 넣기 정책 1(사건 기반, scenemap 기본값)
+build/map_cmp/map_cmp 50 --seed 7           # 다른 장면·궤적
+build/map_cmp/map_cmp 10 --trace 3          # 판 3 의 keyframe 마다 검출·확정 물체 목록
 ```
 scenemap 소스는 서브모듈에서 읽기만 하고 빌드 폴더 안에 빌드한다(`SCENEMAP_DIR`). `RL_DIR` 로 env·map 소스 폴더를 바꿀 수 있다. 다른 작업이 `map/` 를 고치는 중이면 커밋된 판을 `git archive HEAD training/RL/env training/RL/map | tar -x -C <dir>` 로 꺼내 `-DRL_DIR=<dir>/training/RL` 로 빌드한다. 아래 결과는 이렇게 빌드한 커밋 af9730c 의 `map/`로 냈고, 작업 트리 빌드와 출력이 바이트까지 같았다. N = 50 한 번에 3.0 s 걸리고(RTX 5070 Ti, CPU 32 스레드), 최대 메모리는 0.66 GB 다.
 
@@ -56,7 +56,7 @@ scenemap 소스는 서브모듈에서 읽기만 하고 빌드 폴더 안에 빌�
 같은 판 5.2 표: 정밀도 0.951 / 재현율 0.950, 확정 시점 차 0.0(같음 0.924), 위치 차 0.016 / 0.029 m, 격자 0.984 — 통과. 음성 대조(확정 규칙 끔)는 정밀도 0.894 와 확정 시점이 실패(정상). 실행 시간 N 50 약 50 s(CPU 32 스레드, 진짜 scenemap 이 새 규칙으로 더 무거움).
 
 ```
-~/ra_mapcmp/map_cmp 100 --shuffle 30     # 바뀜 규칙(옮겨짐·사라짐·움직임 따라가기) 비교
+build/map_cmp/map_cmp 100 --shuffle 30     # 바뀜 규칙(옮겨짐·사라짐·움직임 따라가기) 비교
 ```
 
 ## 결과 — 근사판 고친 뒤(기록) (map 커밋 "5.2 비교로 고침", 카메라 렌즈 0.094 m, scenemap 서브모듈 cdf55ae 소스, N = 50, 씨앗 20261004, keyframe 1,907)

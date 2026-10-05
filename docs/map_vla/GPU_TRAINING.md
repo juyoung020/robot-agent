@@ -2,7 +2,7 @@
 
 작성 2026-10-03. **설계 문서**다. 구현: G0–G6 끝(`training/RL`·`training/BC`, 11절 표와 [TODO_TRACKER.md](TODO_TRACKER.md) 1절), G7 은 RecallVLA 학습기 `training/vla` 로 바뀜(MAPVLA_SPEC).
 - 아래에서 본보기로 드는 팀 코드 `pi05_native/`·`pi05_train/`·`fasttrain/`(behavior-2026 `src/vla/`)와 `docs/학습환경_가속.md` 는 10-06 π0.5 와 함께 지웠다. 보려면 behavior-2026 커밋 `a1ddf1d`(지우기 바로 앞).
-- 입력·출력은 [VLA_INPUT.md](VLA_INPUT.md), 시뮬 범위는 [SIM_PORTING.md](SIM_PORTING.md), 팀 엔진 검토는 [BEHAVIOR_ENGINE_REVIEW.md](BEHAVIOR_ENGINE_REVIEW.md), 학습 흐름은 [training/README.md](../../training/README.md).
+- 입력·출력은 [VLA_INPUT.md](VLA_INPUT.md), 시뮬 범위는 SIM_PORTING.md, 팀 엔진 검토는 BEHAVIOR_ENGINE_REVIEW.md, 학습 흐름은 [training/README.md](../../training/README.md).
 - 표기: **(추정)** = 재지 않았거나 원문으로 확인하지 못한 숫자·판단. 표시 없는 숫자는 코드·문서·NVIDIA 자료에서 확인한 것이다.
 - 팀 코드 경로는 `src/behavior-2026/` 아래 기준이다. JSBSim 포팅은 `~/juyoung020/jsbsim-f16-cuda` 이다.
 

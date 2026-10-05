@@ -8,7 +8,7 @@
 - GPU 학습 지도(`training/RL/map`, 정책 지도 G2)와 토큰·관측 만들기를 **지금 진짜 파이프라인 구조**로 다시 옮긴다:
   ObjectSAM(`yolo26n-seg-obj-416`) 분할 → SigLIP 2 이름·벡터 → scenemap 확률 모드(objprob: vMF 벡터 합치기, 이름 베이즈 합치기,
   이름 없는 베이즈 같은 것 판정, 칼만 자리, RANSAC 평면 구조물 지우기, 문·창 크기 확인, 벽 높이 규칙, 살펴본 정도 3).
-- 옛 규칙 잔재(objmap 이름 규칙, 16 칸 가까운 순, 교사 전용 격자, C0/C1, 고정 창)를 지운다(`archive/`).
+- 옛 규칙 잔재(objmap 이름 규칙, 16 칸 가까운 순, 교사 전용 격자, C0/C1, 고정 창)를 지운다((git 태그 `pre-clean-2026-10-06`)).
 - **입력 하나**: RL 교사 입력 = BC·RecallVLA 학생 입력 = 실제 로봇 입력. 예외는 RL 교사의 카메라 RGB 뿐(속도).
   PPO 행위자 = 그 입력에서 카메라 빼고, 비평자만 특권 값. 예전 RL 체크포인트는 다시 쓰지 않는다.
 - GPU 포팅 유지(학습 고리 안에 CPU scenemap 없음). 속도: 지금 환경 + 지도 한 스텝의 **+10 % 안**(nsys 로 잼).
@@ -32,7 +32,7 @@
 | P4 | PPO 길 바꾸기: 행위자 = 통일 입력(카메라 뺌), 비평자 = 특권, 참 벽 광선 16·참 목표 자세 뺌, 대본 교사 믿음 지도 | 대기 |
 | P5 | 벡터 공간 하나(SigLIP 2 768 → 저장 고정 투영 128), 이름 표 다시 만들기, 생김새·확신도 한 정의 | 대기 |
 | P6 | 고정 창 → 집 전체(집 좌표, 로봇 따라 움직이는 고운 창 + 집 전체 거친 층) | 대기 |
-| P7 | 옛 것 `archive/`, 설정(C2·집 나누기), 기록 도구 가드 | 대기 |
+| P7 | 옛 것 (git 태그 `pre-clean-2026-10-06`), 설정(C2·집 나누기), 기록 도구 가드 | 대기 |
 | P8 | 잡음 맞춤(다른 에이전트의 입력 단위 비교 BASELINE) + nsys 속도 표 + 교사 C2 B4/B5 다시 잼 | 대기 |
 
 ### 0.2 결정(10-06, 사용자 — 코디네이터 전달)
@@ -81,7 +81,7 @@ N = 4,096 이면 189 MB. keyframe 블록은 이번 시야 근처 물체(상자�
 
 ### 1.1 P1 상태(2026-10-06, 잰 값) — 물체 칸 16 그대로, 검출원 = 과제 물체 prim + 유령
 
-- 코드: `training/RL/map/include/percept.h`(흉내 층), `objprob_gpu.h`(합치기), `map.h`(Slot 에 objprob·살펴본 정도 값, 옛 이름 규칙 뺌 → `archive/training/RL/map/include/map_objmap_rules.h`).
+- 코드: `training/RL/map/include/percept.h`(흉내 층), `objprob_gpu.h`(합치기), `map.h`(Slot 에 objprob·살펴본 정도 값, 옛 이름 규칙 뺌 → (git 태그 `pre-clean-2026-10-06`)).
   목표 칸·완성도의 "참 물체 짝" 은 이름 대신 **주 출처 꼬리표**(앱·에이전트가 물체 id 를 준 것과 같은 뜻 — 이름 혼동과 무관). 토큰 이름 = objprob 이름 사후(모름 −1), 이름 확신도 2 = 고른 이름 사후·1위 − 2위.
 - `map_verify`(CPU == GPU 비트 동일, 모든 스텝): 상자 방 512 × 300 OK, BEHAVIOR `--stage 3 --curr 0.34,0.33` 512 × 300 OK, `--arm` OK. 음성 대조 모두 실패(정상):
   `--negative`(확정 규칙) 30,248, `--negative-name`(같은 것 판정에서 생김새 cos 끔) 19,215, `--negative-merge`(병합에서 생김새 cos 끔) 16,317 낱말 다름(256 × 200, BEHAVIOR).
@@ -194,7 +194,7 @@ N = 4,096 이면 189 MB. keyframe 블록은 이번 시야 근처 물체(상자�
 - **방향 구역 8**(W2): 로봇 기준 45° 칸마다 안 본 넓이(거친 층 0.4 m 칸, 집 전체 — P6), 가장 가까운 안 본 칸 경로 거리, 닿음, 문·열린 곳 보임, 덜 살펴본 가구 점수(칸 안 가구의 1 − top_seen 최대), sin·cos.
 - **방 종류 = 예측 + 잡음**(점검 8절): 진짜 쪽은 `sm_room.type` 하나 + `name_conf`. 한 정의: 6 칸 = type 칸에 conf, "모름" 칸에 1 − conf(type 없음이면 모름 1).
   GPU 는 참 종류를 바로 쓰지 않고 방마다 리셋 때 예측(맞을 확률 p_rt, 틀리면 혼동 표, conf ~ 분포)을 뽑아 판 안에서 고정 — 방을 더 볼수록 conf 가 오르게(본 비율 따라). 값은 BASELINE 의 방 이름 정확도로 맞춤.
-- 옛 16 칸·방 토큰 1·안 본 곳 광선 8·교사 전용 격자 16 × 16 × 2 는 이 표로 바꾸고 `archive/` 로(P7).
+- 옛 16 칸·방 토큰 1·안 본 곳 광선 8·교사 전용 격자 16 × 16 × 2 는 이 표로 바꾸고 (git 태그 `pre-clean-2026-10-06`) 로(P7).
 
 ## 4. 입력 만들기 하나(P3·P4)
 
@@ -219,14 +219,14 @@ N = 4,096 이면 189 MB. keyframe 블록은 이번 시야 근처 물체(상자�
 - **공간 = SigLIP 2 B/32**(진짜 파이프라인이 쓰는 것): 이름 = SigLIP 2 글 탑(768, `sgc_text_encode` — 어떤 이름이든 그때 계산하고 캐시), 생김새 = 물체 μ(SigLIP 2 영상 768,
   objprob 이 이미 저장 `O<id>_emb.f16`), 지시(영·한) = SigLIP 2 글 탑(다국어 — 한국어 학생 인코더 불필요).
 - **작게**: 고정 투영 768 → 128(PCA, SigLIP 2 글 + 영상 표본으로 한 번 계산, `training/data/siglip2_proj/pca128.f16` 레포에 저장, 두 쪽 같은 파일). 학습된 머리 `h` 는 버림
-  (`training/embed` 의 PE-L·P·`h`·한국어 학생 길은 `archive/`). RecallVLA φ 입력 폭(304) 그대로.
+  (`training/embed` 의 PE-L·P·`h`·한국어 학생 길은 (git 태그 `pre-clean-2026-10-06`)). RecallVLA φ 입력 폭(304) 그대로.
 - **이름 확신도 2 의 한 정의**: conf1 = objprob 이름 사후 확률(고른 이름), conf2 = 1위 − 2위 사후. GPU 는 R9 사후에서, 실제는 스냅숏에서 —
   scenemap 에 물체별 이름 사후 상위 둘을 꺼내는 C ABI 가 필요(behavior-2026 별도 클론에서 `sm_snap_objprob`(id, name_p, second_p, K, n_whole) 더함 → 포인터 올림 → `sync_scene_graph.sh`).
 - **생김새의 한 정의**: 투영(μ). 실제 = `O<id>_emb.f16` 의 μ, GPU = R7 모형의 μ(같은 투영). 출처 원형 a(src) = 그 종류의 SigLIP 2 영상 원형:
   (1) og_replay 진짜 파이프라인이 낸 μ 를 정답 종류로 묶은 평균(BEHAVIOR 물체, OmniGibson 렌더 — 다른 에이전트 도구 결과를 읽기만), (2) 없으면 글 벡터 + 영상–글 평균 차(모달리티 차) **(가정)**.
 - **실제 런타임도 같이 바꿈**(코디네이터 10-06): 지금 실제 이름도 PE-L 길이다(`src/scene_graph/runtime/src/sgrt_clip.cpp`·`sgrt.cpp` 가 `embed_work/labels/objects-v1`(P 공간 라벨) + 머리 `h` 를 읽음).
   P5 는 두 쪽을 함께: 라벨 표 = SigLIP 2 글 탑 + 레포의 고정 PCA(자료는 `config/paths.env` 변수 아래), 실제 이름 = SigLIP 2 영상 대 SigLIP 2 글, 학습 표(`vla_vocab.h`·`vec_tab.h`·`net.h`·BC `app_head.h`).
-  순서: ① 바꾼 뒤 실제 이름 품질 확인(OpenLORIS office1-5 `realbag_run` + `objprob_eval`: 찾음·중복·이름 정확도를 지금 값과) ② 그 뒤에만 PE-L 길을 `archive/`(training/embed 머리·P·한국어 학생 스크립트, 런타임 머리 `h` 코드). 가중치·작업 파일은 data/embed_work 에 둠(지우지 않음).
+  순서: ① 바꾼 뒤 실제 이름 품질 확인(OpenLORIS office1-5 `realbag_run` + `objprob_eval`: 찾음·중복·이름 정확도를 지금 값과) ② 그 뒤에만 PE-L 길을 (git 태그 `pre-clean-2026-10-06`)(training/embed 머리·P·한국어 학생 스크립트, 런타임 머리 `h` 코드). 가중치·작업 파일은 data/embed_work 에 둠(지우지 않음).
 - **objprob 계산 하나**(사용자 결정 10-06): scenemap `objprob.cpp` 와 `objprob_gpu.h` 가 같은 헤더 `src/scene_graph/scenemap/include/scenemap/objprob_math.h`(`__host__ __device__`, STL 없음)의
   같은 것 로지스틱·이름 사후·상위어·κ·칼만·이름 분포 겹침을 부른다(자료 배치·묶음만 다름). 확인: realbag_run OpenLORIS office1-5 출력 바이트 같음(바꾸기 전후), 합성 검출 열로 CPU 대 GPU 맞춤 시험.
 - **이름 표**: `kVocab`·`kApLabels`(진짜 64 라벨) + BEHAVIOR 과제 synset 이름 → 표 행 하나로(빠진 24 개 포함). 레포 밖 `~/embed_work/labels/objects-v1` 의존은 표를 레포(`training/data/names_v2`)로 옮기고 만드는 스크립트를 레포 안에서 돌게.
@@ -244,7 +244,7 @@ N = 4,096 이면 189 MB. keyframe 블록은 이번 시야 근처 물체(상자�
 
 | 옛 것 | 자리 | 처리 |
 |---|---|---|
-| objmap 이름 규칙(`name_share`·`name_switch`·`name_key`·`name_merge_iou`, `vote*`, `name_ok`, `obj_keys` 탐욕) | `map.h` | objprob 길로 바꾸고 옛 함수는 `archive/training/RL/map/include/map_objmap_rules.h` 로 |
+| objmap 이름 규칙(`name_share`·`name_switch`·`name_key`·`name_merge_iou`, `vote*`, `name_ok`, `obj_keys` 탐욕) | `map.h` | objprob 길로 바꾸고 옛 함수는 (git 태그 `pre-clean-2026-10-06`) 로 |
 | 16 칸 가까운 순 `MapTok::slot`·`name_id`·`app_id`, 방 토큰 10, 완성도, 안 본 곳 광선 `front`, 교사 격자 `tv` | `map_tok.h`, `obs.h`, `net.h`, BC `tf.h`, `trainer.cu` | 새 입력으로 바꾸고 옛 배치는 archive |
 | 처음 지도 C0/C1(`MapCurr p0/p1`, `curr_slots`·`curr_grid`) | `map.h` | 디버그 깃발 뒤에만 남기지 않고 지움(설정은 이미 archive) — `--debug-gt-map` 길도 함께 뺌 **(결정 필요 없음: 10-06 결정)** |
 | 고정 창 | `bscene.h WIN`, `map.h GW` 의미 | 6절 |

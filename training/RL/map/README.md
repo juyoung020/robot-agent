@@ -6,7 +6,7 @@ G1 환경(`../env`)과 같은 방식: CPU 참조판과 GPU 커널이 **같은 �
 > **2026-10-06 objprob 포트(P1, docs/map_vla/GPU_MAP_PORT.md)**: 물체 층을 진짜 파이프라인(ObjectSAM + SigLIP 2 + scenemap objprob) 구조로 다시 옮겼다.
 > `include/percept.h` = 인지 흉내 층(통계판, 검출 목록 `Det` 이 인터페이스), `include/objprob_gpu.h` = objprob 합치기(같은 것 로지스틱 — 엔진 json 무게, 조각 여럿 → 물체 하나,
 > frame_group, 이름 상위 6 베이즈 + 상위어, vMF κ 합, 칼만, 물체끼리 병합 + 이름 분포 겹침, 살펴본 정도 closest·n_views). 옛 objmap 이름 규칙(투표·같은 이름 탐욕 짝·IoU 병합)은
-> `archive/training/RL/map/include/map_objmap_rules.h`. 아래 절들의 "이름 표·name_share·병합(IoU)" 설명과 해시·잰 값은 그 앞 판의 기록이다. 새 잰 값은 GPU_MAP_PORT.md 1.1.
+> (git 태그 `pre-clean-2026-10-06`). 아래 절들의 "이름 표·name_share·병합(IoU)" 설명과 해시·잰 값은 그 앞 판의 기록이다. 새 잰 값은 GPU_MAP_PORT.md 1.1.
 
 ## 구성
 - `include/map.h`: 상수(`MP`), 판마다 상태(`MapCore`), 광선, 시작 단계 `phase_begin` + 나머지 `map_rest`(CPU·GPU 공용). CPU 는 둘을 이어 부르는 `map_block`

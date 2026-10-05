@@ -4,7 +4,7 @@
 사용자 결정 두 가지를 따른다: ① 커리큘럼은 **BEHAVIOR Challenge 2026** 을 따른다. ② 학습을 더 돌리기 전에 **학습 환경부터** 고친다.
 
 > **범위 확정 (2026-10-04, 사용자):** 대회에는 나가지 않는다. 목표는 **리모 + OMX-F 의 집기·놓기(pick & place)** 하나이고, [VLA_INPUT.md](VLA_INPUT.md) 설계대로 **지도를 관측(지도 토큰)으로 주면서** 학습한다. BEHAVIOR 2026 의 장면·물체는 **학습 무대**로만 쓴다. 그래서 아래에서 q_score·100 과제 상한·대회 전략(0절 일부, 8절 질문 1·2), B6(관절체·버튼)·B7(전체 과제), E5(관절체)는 **범위 밖**이다. 커리큘럼은 B0–B5(이동 → 찾기 → 다가가기 → 집기 → 놓기)만 쓰고, 집기·놓기 대상은 E1 변환기가 뽑는 "팔이 닿는 작은 물체 × 닿는 높이의 받침" 표에서 고른다. 높이 때문에 안 되는 배치는 학습 장면에서 빼거나 낮은 받침으로 옮긴다(8절 질문 3 → 예).
-앞 문서: 이동 커리큘럼 [CURRICULUM_APPROACH.md](CURRICULUM_APPROACH.md)(A0–A5), GPU 학습 [GPU_TRAINING.md](GPU_TRAINING.md), 입력 [VLA_INPUT.md](VLA_INPUT.md), 정책 [POLICY.md](POLICY.md), 팀 엔진 검토 [BEHAVIOR_ENGINE_REVIEW.md](BEHAVIOR_ENGINE_REVIEW.md), 시뮬 포팅 [SIM_PORTING.md](SIM_PORTING.md).
+앞 문서: 이동 커리큘럼 CURRICULUM_APPROACH.md(A0–A5), GPU 학습 [GPU_TRAINING.md](GPU_TRAINING.md), 입력 [VLA_INPUT.md](VLA_INPUT.md), 정책 [POLICY.md](POLICY.md), 팀 엔진 검토 BEHAVIOR_ENGINE_REVIEW.md, 시뮬 포팅 SIM_PORTING.md.
 환경 코드: [training/RL/env](../../training/RL/env/README.md)(G1), [training/RL/map](../../training/RL/map/README.md)(자라는 지도), [training/RL/ppo](../../training/RL/ppo/README.md), [training/BC](../../training/BC/README.md).
 
 표기: 사실은 출처를 붙인다. **(추정)** = 재지 않은 판단. 서브모듈 경로는 `src/behavior-2026/` 를 줄여 `B26/` 로 쓴다.
@@ -698,7 +698,7 @@ RASC v1  (little endian, 64 B 정렬, 머리에 구조체 크기 — 빌드가 �
 ### 5.7 GT 지도 없이: 자라는 지도(C2) 3 + 1 단계 커리큘럼 (2026-10-06 사용자 결정 — 5.5–5.6.2 의 "B4 를 C0 로" 를 대신함)
 
 **규칙(모든 학습·평가·교사 자료)**
-- **GT 지도 학습 없음**: 지도는 빈 지도(C2)에서 로봇 자기 관측으로 스텝마다 자람(GPU 지도 근사 `training/RL/map` — 시야·가림 광선, keyframe objprob 규칙, slam 표류, 놓침·가짜·이름 헷갈림; 잡음 값·출처는 `map.h MP` 주석, LIMO 기록 보정). 처음 지도 C0/C1 은 `--debug-gt-map` 디버그 깃발로만(`bc_run`·`ppo_run` 은 깃발 없으면 멈춤, `5a16f13`), 예전 설정은 `archive/`(`7492568`).
+- **GT 지도 학습 없음**: 지도는 빈 지도(C2)에서 로봇 자기 관측으로 스텝마다 자람(GPU 지도 근사 `training/RL/map` — 시야·가림 광선, keyframe objprob 규칙, slam 표류, 놓침·가짜·이름 헷갈림; 잡음 값·출처는 `map.h MP` 주석, LIMO 기록 보정). 처음 지도 C0/C1 은 `--debug-gt-map` 디버그 깃발로만(`bc_run`·`ppo_run` 은 깃발 없으면 멈춤, `5a16f13`), 예전 설정은 (git 태그 `pre-clean-2026-10-06`)(`7492568`).
 - **GT 새는 곳 없음**: 목표·놓을 곳은 학생이 만든 지도 칸으로만 앎. 교사 특권은 **로봇 지도에 이미 확정된 물체**만(상태 없는 교사 `sl_tol` 비트 2 `--slknown` — B4–B6 모두, 아니면 탐사), 길 찾기는 믿는 지도(본 점유 + 부풀림), 서는 자리·앞 물러난 자리도 지도로 아는 기하에서(5.6.2 의 DAgger 떨어짐 까닭 = 학생이 못 보는 특권 기하).
 - **RL 교사도 같은 조건**(사용자 결정 10-06): PPO 행위자 입력 = 학생과 같은 관측(같은 관측 코드·정규화·C2 지도·같은 집·인스턴스·판 종류·시작 분포·성공·충돌 규칙). 비평자만 특권(GT 지도·참 자세·덮은 넓이 — 비대칭 행위자-비평자, Pinto 외 2017). 까닭: 모방 차이(imitation gap — Warrington 외 2021, Swamy 외 2022). 구조: `bc_run`·`ppo_run` 이 함께 읽는 단계 설정 `config/stage_*.json` + 시작 때 교사 체크포인트와 학생 실행의 환경·관측·지도 설정 해시 비교(다르면 멈춤), run.json·trainview 에 해시.
 - **집 나누기**: 학습·DAgger = house_single_floor·house_double_floor_lower·restaurant_diner·office_cubicles_right, 평가 = Rs_int·hotel_suite_large·house_double_floor_upper(평가 집은 공개 평가 인스턴스 포함). `bc_run` 이 평가를 두 줄로(`<이름>` = 평가 집, `<이름>_trainhouses`), run.json `house_split`(`5a16f13`).

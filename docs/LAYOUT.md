@@ -6,7 +6,7 @@ src/        실행 코드: scene_graph(유일한 원본: scenemap·da·spark_dsg
 training/   학습: RL(env·map·ppo·map_cmp)·BC·vla·embed·fastsam·viewer(학습 뷰어·og_replay)
 tools/      build_all.sh(빌드 한 진입점)·check_env.sh·run_explore_live.sh·run_sgview.sh
 config/     paths.env(외부 경로 기본값, git) · paths.local.env(내 PC, git 밖) · paths.py
-docs/ archive/ refs/ tests/ scripts/
+docs/ refs/ tests/ scripts/
 build/      (git 밖) 모든 빌드 결과 — cmake 폴더 build/<이름>, cargo build/cargo/<이름>, 실행 파일 링크 build/bin/
 models/     (git 밖) 로봇·파이프라인이 실행할 때 쓰는 엔진·가중치 (OVDET_MODELS = models/ovdet)
 training/model/ (git 밖) 학습할 때 불러오는 베이스 가중치 — Qwen3.5-0.8B·SigLIP 2(쓰는 것), Qwen3.5-2B·smolvla_base(나중을 위해 보관)

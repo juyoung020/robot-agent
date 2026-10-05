@@ -23,9 +23,9 @@ FastSAM-s 416(TensorRT, `src/scene_graph/ovdet`)을 다시 학습한다.
 ## 결과 요약
 
 **설치한 엔진**
-- `FastSAM-s-416-obj`: FastSAM-s 재학습 v2 — 버림(엔진 지움), 문턱 0.05 보정. `.pt`·`.onnx` 는 `models/ovdet/archive/pt/`(`models/ovdet/archive/README.md`). 옛 학습 판은 `data/datasets/fastsam_obj/archive/`.
+- `FastSAM-s-416-obj`: FastSAM-s 재학습 v2 — 버림(엔진 지움), 문턱 0.05 보정. `.pt`·`.onnx` 는 (지움)((지움)). 옛 학습 판은 `data/datasets/fastsam_obj/archive/`.
 - `models/ovdet/x86_sm120/yolo26n-seg-obj-416.plan`: **ObjectSAM** — YOLO26n 학생(`n26_uw`, 덜 나눔 벌점), 문턱 0.03 보정. **기본 엔진(10-05)**. 공개판 ObjectSAM v1.0(`ObjectSAM-416.*`).
-  - 앞 학생(v0, t 0.04)은 `models/ovdet/archive/x86_sm120/yolo26n-seg-obj-416-v0.plan` 으로 보관했다.
+  - 앞 학생(v0, t 0.04)은 (지움).
 - 옛 엔진 `FastSAM-s-416.plan` 은 `models/ovdet/x86_sm120/` 에 그대로 있다(라벨 선생·평가 기준, `--engine`/`SGRT_ENGINE` 으로 고름). 기본값은 ObjectSAM 이다.
 
 **게이트(검출 단계, 버킷마다 옛 엔진보다 뚜렷이 나쁘지 않음)**

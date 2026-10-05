@@ -124,9 +124,9 @@ GPU 학습 시스템(커널 합치기, FP8, GPU 환경 안에서 지도 만들�
   학생을 BC 로 학습해도 **교사 가중치는 건드리지 않는다.** 교사는 데이터를 만들고 정답을 붙이는 도구로 끝까지 남는다(DAgger 에서도 씀).
 - **처음부터 VLA 에 RL 을 하지 않는 이유**
   - RL 은 시행 수억 스텝이 필요하다(추정). 스텝마다 카메라 2장 렌더 + 큰 망 추론·역전파를 하면 RTX 5070 Ti 한 장(16 GB)으로는 너무 느리다.
-    팀 엔진 렌더는 판 64 × 카메라 3(720², 480²) 에서 56 판·프레임/초였다([BEHAVIOR_ENGINE_REVIEW.md](BEHAVIOR_ENGINE_REVIEW.md) 2절). 영상 없는 교사는 렌더가 필요 없다.
+    팀 엔진 렌더는 판 64 × 카메라 3(720², 480²) 에서 56 판·프레임/초였다(BEHAVIOR_ENGINE_REVIEW.md 2절). 영상 없는 교사는 렌더가 필요 없다.
   - 무작위로 시작한 행동 전문가는 탐색만으로 집기 같은 성공을 거의 못 본다. 보상이 드물면 학습이 시작되지 않는다.
-  - 큰 망에 RL 기울기를 바로 넣으면 사전학습 지식(말 따르기, 처음 보는 물체)이 잘 망가진다([PI05_TRAINING.md](PI05_TRAINING.md) 4절 지식 격리의 이유와 같다).
+  - 큰 망에 RL 기울기를 바로 넣으면 사전학습 지식(말 따르기, 처음 보는 물체)이 잘 망가진다(PI05_TRAINING.md 4절 지식 격리의 이유와 같다).
 - **BC 전에 시연이 있어야 하는 이유**: BC 는 (관측, 행동) 짝이 있어야 한다. 리모 + OMX 시연은 지금 0 이다. 사람 텔레옵으로 수천 판을 모으기는 어렵다. 그래서 교사가 시뮬에서 시연을 대량으로 만든다.
 - **사용자 생각(같은 모델에 RL)은 3단계로 들어간다**: BC 로 이미 쓸 만한 학생에 RL 을 조금 더한다(5.4). 이때는 잊지 않게 묶는다.
 
@@ -147,7 +147,7 @@ GPU 학습 시스템(커널 합치기, FP8, GPU 환경 안에서 지도 만들�
 
 - 성공 판정은 [에이전트_설계.md](../../src/agent/README.md) 1.7 의 자동 증거 임계값(집기 = 0.1 m 들림, 0.005 m 아래로 닫히면 실패)과 맞춘다. 같은 판정을 실행 때 확인에도 쓴다.
 - 시간 예산: 스킬마다 교사 성공 판 길이 p90 × 1.5(plan.md 3.4 와 같은 규칙).
-- `approach` 의 자세한 성공 조건·보상·커리큘럼 단계(A0–A5)·지표는 [CURRICULUM_APPROACH.md](CURRICULUM_APPROACH.md). 이것이 첫 커리큘럼이다.
+- `approach` 의 자세한 성공 조건·보상·커리큘럼 단계(A0–A5)·지표는 CURRICULUM_APPROACH.md. 이것이 첫 커리큘럼이다.
 
 ### 3.2 관측·행동
 
@@ -390,7 +390,7 @@ GPU 학습 시스템(커널 합치기, FP8, GPU 환경 안에서 지도 만들�
 
 | 단계 | 하는 것 | 데이터 | 끝난 기준(추정) |
 |---|---|---|---|
-| 0 | 시뮬 준비: 리모 + OMX-F 를 엔진에 올림, GPU 안 지도 만들기 | [BEHAVIOR_ENGINE_REVIEW.md](BEHAVIOR_ENGINE_REVIEW.md) 6절, [GPU_TRAINING.md](GPU_TRAINING.md) | 같은 URDF 로 순기구학이 실제 TF 와 맞음(SIM_PORTING M0) |
+| 0 | 시뮬 준비: 리모 + OMX-F 를 엔진에 올림, GPU 안 지도 만들기 | BEHAVIOR_ENGINE_REVIEW.md 6절, [GPU_TRAINING.md](GPU_TRAINING.md) | 같은 URDF 로 순기구학이 실제 TF 와 맞음(SIM_PORTING M0) |
 | 1 | **RL 교사** 스킬별 → 잇기 | 시뮬만 | 스킬마다 커리큘럼 4단계 통과 |
 | 2a | **학생 BC** | 교사 성공 판을 학생 관측(영상 렌더 + 같은 지도 토큰)으로 다시 기록. 판마다 단계 경계·문장 기록(HL 데이터처럼) | 교사 대비 성공률 70 % 이상 |
 | 2b | **DAgger** | 학생이 몰고(처음엔 교사와 섞어 β 를 1 → 0), 교사가 그 상태에서 정답 행동을 붙임. 3–5 바퀴 | 학생 성공률이 더 오르지 않을 때 |
@@ -438,7 +438,7 @@ GPU 학습 시스템(커널 합치기, FP8, GPU 환경 안에서 지도 만들�
 
 ### 6.4 실제 로봇 미세조정
 
-- 텔레옵: OMX-F 리더 팔 + 베이스 조이스틱(추정 — ROBOTIS physical_ai_tools 에 OMX-F 설정 `omx_f_config.yaml` 이 있다는 것만 [SIM_PORTING.md](SIM_PORTING.md) 2.4.1 에 적혀 있고, 리더 팔 구성은 확인 안 함).
+- 텔레옵: OMX-F 리더 팔 + 베이스 조이스틱(추정 — ROBOTIS physical_ai_tools 에 OMX-F 설정 `omx_f_config.yaml` 이 있다는 것만 SIM_PORTING.md 2.4.1 에 적혀 있고, 리더 팔 구성은 확인 안 함).
 - 주석: 텔레옵 중 스킬 시작·끝을 찍고 같은 `skillspec annotate` 로 문장(plan.md 7절). 처음엔 `pick`·`place on`·`place in` × 50 판(plan.md 추정 값).
 - 학습: 행동 전문가(+ 안 B 몸통 위쪽 층) 작은 학습률. 시뮬 데이터를 절반쯤 계속 섞는다(추정). 리모 데이터만으로 하면 시뮬에서 배운 일반화를 잃는다.
 - 실제 지도는 `slam` 자세 + 실제 scenemap 출력이다. 학습 때와 같은 변환기로 칸을 만든다.
@@ -509,4 +509,4 @@ GPU 학습 시스템(커널 합치기, FP8, GPU 환경 안에서 지도 만들�
 - Flow-GRPO: [arXiv 2505.05470](https://arxiv.org/abs/2505.05470) — 글 → 이미지 생성 대상
 - ResiP(잔차 RL, 조립): [arXiv 2407.16677](https://arxiv.org/abs/2407.16677)
 - 잔차 off-policy RL 로 BC 정책 미세조정: [arXiv 2509.19301](https://arxiv.org/abs/2509.19301)
-- π0.5·지식 격리·FAST: [PI05_TRAINING.md](PI05_TRAINING.md) 출처
+- π0.5·지식 격리·FAST: PI05_TRAINING.md 출처

@@ -72,7 +72,7 @@ cmake -S src/scene_graph/scenemap -B build/scenemap && cmake --build build/scene
 
 ### 채점 (`eval/`, 파이썬, 로봇 밖)
 
-정답은 채점에만 쓴다. BEHAVIOR R1 시연 채점 도구(export_episode·score_slam·score_objmap …)는 10-06 `archive/src/scene_graph/scenemap/eval`.
+정답은 채점에만 쓴다. BEHAVIOR R1 시연 채점 도구(export_episode·score_slam·score_objmap …)는 10-06 (git 태그 `pre-clean-2026-10-06`).
 
 | 파일 | 하는 일 |
 |---|---|
@@ -119,7 +119,7 @@ sgrt 쪽 `SGRT_*` 변수는 [../runtime/README.md](../runtime/README.md).
 
 ## 물체 바뀜 규칙 (10-04, dynamic-object-mapping-benchmark 로 고침)
 
-벤치마크 어댑터(`dom_bench`·`dom_bench_det`, 지금은 `archive/src/scene_graph`)로 진단한 실패를 objmap 규칙에서 고쳤다. 모든 값은 `ObjParams` 기본값이라 sgrt·sm_bench 도
+벤치마크 어댑터(`dom_bench`·`dom_bench_det`, 지금은 (git 태그 `pre-clean-2026-10-06`))로 진단한 실패를 objmap 규칙에서 고쳤다. 모든 값은 `ObjParams` 기본값이라 sgrt·sm_bench 도
 같은 규칙을 쓴다(벤치마크 전용 설정 없음). 규칙 요약은 `include/scenemap/objmap.hpp` 머리말.
 
 | 고친 것 | 전 | 후 |
@@ -400,6 +400,6 @@ python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py /tmp/map_vla.urdf   # �
 이 값들은 실측 전 추정이다(실제 로봇 기록으로 맞출 것). 나머지(격자·objmap 확정/사라짐 규칙)는 기본값 그대로다.
 
 **LIMO SLAM**: 10-06 부터 Cartographer(2D 라이다 + 바퀴 오도메트리, `../slam_carto`, libsgrt 가 `sm_push_ext_pose` 로 넣음). 옛 scenemap
-slam2d(깊이 가상 스캔 맞추기 — LIMO 가중 고침 10-04, 시뮬 기록 4 개 표)는 `archive/src/scene_graph/scenemap`(slam2d.cpp·.hpp, slam2d_eval·objmap_eval·
+slam2d(깊이 가상 스캔 맞추기 — LIMO 가중 고침 10-04, 시뮬 기록 4 개 표)는 (git 태그 `pre-clean-2026-10-06`)(slam2d.cpp·.hpp, slam2d_eval·objmap_eval·
 stage_bench·capi_replay)로 옮겼고, 그 맞춤 기록은 git 이력(이 README 10-04 판)에 남는다. Cartographer 대 slam2d 비교는 `../slam_carto/README.md`.
 

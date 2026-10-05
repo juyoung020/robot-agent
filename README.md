@@ -90,7 +90,6 @@ robot-agent/
 ├── config/          # 경로 설정(paths.env)
 ├── tools/           # 빌드·실행·점검(build_all.sh, check_env.sh, run_sgview.sh …)
 ├── docs/            # 계획·모델 선택·설계 문서(목록은 docs/README.md)
-├── archive/         # 지금 안 쓰는 코드(지우지 않고 옮겨 둠)
 ├── tests/ · scripts/ · refs/
 └── build/ · models/ · data/ · third_party/   # git 밖 — 빌드 결과·가중치·데이터·외부 코드(BEHAVIOR-1K, Cartographer)
 ```

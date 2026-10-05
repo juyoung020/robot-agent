@@ -1,7 +1,7 @@
 # slam_carto — Cartographer 2D(ROS 없이)를 우리 파이프라인의 SLAM 으로
 
 SLAM 결정은 Cartographer(2D 라이다)다(`docs/model_selection.md` "위치 추정"). 10-06 부터 이것만 쓴다. 시뮬을 먼저 돌리려고 넣었던 scenemap
-`slam2d`(깊이 가상 스캔 맞추기)는 `archive/src/scene_graph/scenemap` 으로 옮겼다.
+`slam2d`(깊이 가상 스캔 맞추기)는 (git 태그 `pre-clean-2026-10-06`) 으로 옮겼다.
 
 - 코어: Cartographer(Apache-2.0) `third_party/cartographer`, rev 877157a. `tools/build_all.sh cartographer` 가 받아서 `build/cartographer/install` 에
   정적 라이브러리로 설치한다. 의존성(abseil·ceres·protobuf·lua 5.2·eigen·cairo·glog·boost)은 apt 판을 쓴다. 자체 단위 시험 80 개가 통과했다.
