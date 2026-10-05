@@ -2,6 +2,7 @@
 //   env::Soa / Core / load / step_core / fk (env.h·env_soa.h), gmap::MapHost / MapCore / Slot / Prim (map_api.h·map.h).
 // 호출하는 쪽(record_ppo·record_bc)은 스텝마다 [환경·지도 내려받기 → 정책 한 스텝 → 행동·보상·끝 내려받기] 뒤 step() 을 부른다.
 #pragma once
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -118,23 +119,37 @@ struct G1Rec {
     act[i] = std::move(e);
   }
 
-  void frame_row(const env::Core& c, const gmap::MapCore& m, const float* met, int i, const float* a, float r, float value, int ev, Ep& e, float* row, float* sl) {
+  void frame_row(const env::Core& c, const gmap::MapCore& m, const gmap::Slot* ob, const float* met, int i, const float* a, float r, float value, int ev, Ep& e, float* row, float* sl) {
     env::Fk f;
     env::fk(c.q, c.qd, f);
     const float sn = std::sin(c.yaw), cs = std::cos(c.yaw);
     const float ex = c.x + cs * f.ee_p[0] - sn * f.ee_p[1], ey = c.y + sn * f.ee_p[0] + cs * f.ee_p[1], ez = gmap::MP::base_z + f.ee_p[2];
+    // 그릴 물체 KSLOT 개: 저장소(ob[NOBJ], 쓰는 칸 = m.objv)에서 확정 목표(컵) 먼저, 그다음 확정, 그다음 믿는 자세에서 가까운 순(토큰 고르기와 같은 뜻)
+    int pick[gmap::KSLOT], np = 0;
+    {
+      std::vector<std::pair<float, int>> cand;
+      for (int g = 0; g < gmap::NOBJ; ++g) {
+        if (!((m.objv[g >> 5] >> (g & 31)) & 1u)) continue;
+        const gmap::Slot& s = ob[g];
+        const float d = std::hypot(s.pos[0] - m.ex, s.pos[1] - m.ey);
+        const float pri = (s.confirmed && s.cls == gmap::C_CUP) ? 0.f : s.confirmed ? 1000.f : 2000.f;
+        cand.push_back({pri + d, g});
+      }
+      std::sort(cand.begin(), cand.end());
+      for (const auto& q : cand) { if (np == gmap::KSLOT) break; pick[np++] = q.second; }
+    }
     int tslot = -1;
-    for (int k = 0; k < gmap::KSLOT; ++k) if (m.slot[k].valid && m.slot[k].confirmed && m.slot[k].cls == gmap::C_CUP) tslot = k;
+    for (int k = 0; k < np; ++k) if (ob[pick[k]].confirmed && ob[pick[k]].cls == gmap::C_CUP) tslot = k;
     e.ret += r;
     const float v[kNC] = {c.step * 0.1f, c.x, c.y, c.yaw, m.ex, m.ey, m.eyaw, c.v, c.w, c.wl, c.wr, c.q[0], c.q[1], c.q[2], c.q[3], c.q[4], c.q[5], ex, ey, ez,
                           a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], r, (float)e.ret, value, (float)ev, (float)tslot, c.tx, c.ty, env::K::tgt_z,
                           met[gmap::M_OBJ * N + i], met[gmap::M_SEEN * N + i], met[gmap::M_TASK * N + i]};
     for (int k = 0; k < kNC; ++k) row[k] = v[k];
     for (int k = 0; k < gmap::KSLOT; ++k) {
-      const gmap::Slot& s = m.slot[k];
       float* o = sl + k * kNSC;
       for (int q = 0; q < kNSC; ++q) o[q] = 0.f;
-      if (!s.valid) continue;
+      if (k >= np) continue;
+      const gmap::Slot& s = ob[pick[k]];
       float px = s.pos[0], py = s.pos[1], pz = s.pos[2];
       if (s.src >= 0 && s.src < gmap::N_PRIM) {
         const gmap::Prim& p = m.prim[s.src];
@@ -198,7 +213,7 @@ struct G1Rec {
       for (int k = 0; k < env::N_ACT; ++k) ai[k] = a[(size_t)k * N + i];
       float row[kNC], sl[gmap::KSLOT * kNSC];
       const uint32_t fr = (uint32_t)e.frames;
-      frame_row(c, mh.core[i], mh.met.data(), i, ai, rew[i], val.empty() ? NAN : val[i], fr == 0 ? EV_RESET : 0, e, row, sl);
+      frame_row(c, mh.core[i], mh.objs.data() + (size_t)i * gmap::NOBJ, mh.met.data(), i, ai, rew[i], val.empty() ? NAN : val[i], fr == 0 ? EV_RESET : 0, e, row, sl);
       trp_frame(e.w, row, sl);
       map_rec(i, mh, e, fr);
       if (frame_hook) frame_hook(i, e.ep, fr, e.w);
@@ -229,7 +244,7 @@ struct G1Rec {
       if (done[i] == env::kRunning) continue;
       if (scene_fn) {   // BEHAVIOR: 끝 표시만(스텝 전 프레임 그대로)
         const int ev = done[i] == env::kSuccess ? EV_SUCCESS : done[i] == env::kCollision ? EV_CONTACT : 0;
-        frame_row(c, mh.core[i], mh.met.data(), i, ai, 0.f, NAN, ev, e, row, sl);
+        frame_row(c, mh.core[i], mh.objs.data() + (size_t)i * gmap::NOBJ, mh.met.data(), i, ai, 0.f, NAN, ev, e, row, sl);
         trp_frame(e.w, row, sl);
         env::StepOut so{};
         finish(i, e, c, done[i], so, mh.core[i]);
@@ -243,7 +258,7 @@ struct G1Rec {
       env::step_core(cc, ai, so, false, env::NoHook{});
       const int ev = done[i] == env::kSuccess ? EV_SUCCESS : done[i] == env::kCollision ? EV_CONTACT : 0;
       const float zero[env::N_ACT] = {0, 0, 0, 0, 0, 0, 0, 0};
-      frame_row(cc, mh.core[i], mh.met.data(), i, zero, 0.f, NAN, ev, e, row, sl);
+      frame_row(cc, mh.core[i], mh.objs.data() + (size_t)i * gmap::NOBJ, mh.met.data(), i, zero, 0.f, NAN, ev, e, row, sl);
       row[4] = e.last_m[0]; row[5] = e.last_m[1]; row[6] = e.last_m[2];
       trp_frame(e.w, row, sl);
       e.path += std::hypot(cc.x - e.lx, cc.y - e.ly);

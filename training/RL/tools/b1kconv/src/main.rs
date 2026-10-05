@@ -41,7 +41,7 @@ fn args() -> Args {
         cmd: String::new(),
         out: String::new(),
         scenes: vec![],
-        b1k: format!("{root}/src/behavior-2026/BEHAVIOR-1K"),
+        b1k: std::env::var("B1K_ROOT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| format!("{root}/third_party/BEHAVIOR-1K")),   // config/paths.env B1K_ROOT
         doc: format!("{root}/docs/map_vla/CURRICULUM_BEHAVIOR2026.md"),
         check: None,
         outer: String::new(),

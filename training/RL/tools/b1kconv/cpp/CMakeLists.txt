@@ -5,7 +5,12 @@ set(CMAKE_CXX_STANDARD 17)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
-set(RASC_DIR "$ENV{HOME}/ra_b1k" CACHE PATH "directory with <scene>.rasc + <scene>.expect")
+if(DEFINED ENV{RA_B1K_SCENES})
+  set(_rasc_def "$ENV{RA_B1K_SCENES}")
+else()
+  set(_rasc_def "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../data/b1k_scenes")   # config/paths.env RA_B1K_SCENES
+endif()
+set(RASC_DIR "${_rasc_def}" CACHE PATH "directory with <scene>.rasc + <scene>.expect")
 
 add_executable(rasc_test rasc_test.cpp)
 target_compile_options(rasc_test PRIVATE -Wall -Wextra -Wno-unused-variable)

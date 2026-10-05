@@ -8,7 +8,7 @@
 1. **기록이 하나뿐이다.** SLAM 잔차는 탐색 판 하나(`explore_20261004_094010_turning_on_radio_frontier_limo`)로 맞췄다. 원 오도메트리와 검출 하나하나는 14 초짜리 지도 시험 판 하나(scratchpad `limo3`)에서 쟀다. 표본 분산은 모른다.
 2. **카메라 FK 1 cm 오차가 들어 있다.** 세 LIMO 판 모두 커밋 391c04b(eyes 를 렌즈 위치 +x 0.010 m 로 옮김) 전에 찍었다. 그래서 SLAM 잔차 목표(rms 3.1 cm)에 이 오차가 섞여 있다. 고친 카메라로 다시 재면 `kf_corr`·`odo_*` 잡음이 조금 더 작아질 수 있다.
 
-## 새 LIMO SLAM(behavior-2026 84b373c)으로 다시 맞춤 — 지금 `map.h` 기본값 (2026-10-04, 잰 값)
+## 옛 LIMO SLAM(slam2d, 보관)으로 다시 맞춤 — 지금 `map.h` 는 Cartographer 흉내(`drift_params.h`)라 지난 기록 (2026-10-04, 잰 값)
 
 scenemap slam2d 가 LIMO 에서 오도메트리 가중 맞추기로 바뀌었다(점 σ 10 cm, 사전항 5 mm + 3 %·0.2° + 3 %, 받기 문턱 3 cm·1.5°). 옛 목표(아래 "요약" — 둘째 탐색 판 rms 9.9 cm, keyframe 튐 4–10 cm)는 더 이상 실제 SLAM 이 아니다.
 **목표** = 새 SLAM 으로 다시 재생한 기록 넷(`~/datasets/limo_rec`, rec.bin): `sm_bench <r>.bin --robot limo_omx --pose slam --no-dets --traj`(서브모듈 d58c978 소스를 CPU 빌드), keyframe 자세 − 외부 GT(첫 keyframe 에서 맞춤).
@@ -86,7 +86,7 @@ scenemap slam2d 가 LIMO 에서 오도메트리 가중 맞추기로 바뀌었다
 탐색 판에는 `base_qvel` 도 rec.bin 도 남지 않는다(sim.log 에는 proprio 배치와 t=900 의 pose diag 한 줄만 있다). 그래서 원 오도메트리와 검출 하나하나는 limo3 에서 쟀다. 세 판 모두 장면(turning_on_radio)과 시작 자세(4.902, 3.832, 0.858)가 같아서 탐색 판의 GT 물체 목록을 limo3·limo4 채점에도 썼다.
 
 ## 1. 오도메트리 치우침 (limo3, 원 오도메트리 vs GT)
-`sm_bench <limo3>/rec.bin --robot limo_omx --pose odom --no-dets --traj`(`~/behavior-2026-limo` scenemap 빌드)로 `base_qvel` 적분만 다시 만들고, 기록의 외부 GT 자세('G')와 keyframe 마다 비교했다(첫 keyframe 에서 두 틀을 맞춤).
+`sm_bench <limo3>/rec.bin --robot limo_omx --pose odom --no-dets --traj`(그때 scenemap 빌드)로 `base_qvel` 적분만 다시 만들고, 기록의 외부 GT 자세('G')와 keyframe 마다 비교했다(첫 keyframe 에서 두 틀을 맞춤).
 - 회전: GT yaw 에 대한 yaw 오차의 직선 기울기는 **+1.21 %**(제자리 6.34 rad 동안, keyframe 52 개)다. 잔차 σ 는 3e-5 rad 로, 걸음 잡음이 없는 순수 치우침이다. R1 의 +13 % 보다 10 배 작다.
 - 이동: 회전이 끝난 뒤 직진 구간(10.77 s~)에서 오도메트리는 0.8084 m, GT 는 0.8018 m 로 **+0.82 %** 다. 직진 중 yaw 변화는 없다(< 5e-5 rad/m).
 - 판 끝 오차는 6.4 cm / 4.4° 이고, 거의 다 회전 치우침에서 온다. 같은 기록을 `--pose slam` 으로 재생하면 끝 오차는 0.4 cm / 0.14° 다.
@@ -144,9 +144,9 @@ R1(`../README.md` 3.1)과 같은 방법을 썼다. 카메라 자세는 기록의
 ## 재현
 ```
 # 1. 원 오도메트리 / SLAM 재생 (CPU)
-<behavior-2026-limo scenemap 빌드>/sm_bench limo3/rec.bin --robot limo_omx --pose odom --no-dets --traj l3_odom.csv
+<scenemap 빌드>/sm_bench limo3/rec.bin --robot limo_omx --pose odom --no-dets --traj l3_odom.csv
 # 3. 검출·확정 물체 채점 (numpy; GT = 탐색 판 gt_poses.csv.objects.json)
-python tools/det_score.py limo3/rec.bin <explore>/gt_poses.csv.objects.json
+# (COCO-80 검출 채점 det_score.py 는 archive/training/RL/map_calib/limo/tools — 검출기가 ObjectSAM 으로 바뀜)
 python tools/confirmed_score.py <explore> <explore>/gt_poses.csv.objects.json [frame.json]
 # 2. map_drift: map/ 를 빌드 폴더에 복사해 tools/map_drift_limo.patch 를 적용한 뒤
 cmake -S <copy>/map -B b -DCMAKE_CXX_FLAGS="$F" -DCMAKE_CUDA_FLAGS="$F" && cmake --build b --target map_drift && b/map_drift 2 1024

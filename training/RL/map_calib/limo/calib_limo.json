@@ -158,7 +158,7 @@
   },
   "raw_odom_limo3": {
    "run": "scratchpad limo3 rec.bin (14 s: spin 363 deg + 0.8 m straight)",
-   "tool": "sm_bench --robot limo_omx --pose odom --no-dets (behavior-2026-limo build)",
+   "tool": "sm_bench --robot limo_omx --pose odom --no-dets (그때 scene_graph 서브모듈 LIMO 빌드)",
    "rot_scale_bias": 0.0121,
    "trans_scale_bias": 0.0082,
    "yaw_drift_straight_rad_per_m": 0.0,
@@ -340,7 +340,7 @@
   "base_map_h": "working tree map.h md5 75b599971599101d4b56025a7777e2bd (HEAD fbae36a + uncommitted), patched copy in scratch build, see tools/map_drift_limo.patch"
  },
  "slam_v2_84b373c": {
-  "_doc": "새 LIMO SLAM(behavior-2026 84b373c, 오도메트리 가중 맞추기)으로 다시 맞춘 값(2026-10-04) — map.h 기본값. README '새 LIMO SLAM' 절",
+  "_doc": "옛 LIMO SLAM(slam2d, 오도메트리 가중 맞추기 — 보관됨)으로 다시 맞춘 값(2026-10-04) — 지금 map.h 는 Cartographer 흉내(drift_params.h)라 안 씀. README '새 LIMO SLAM' 절",
   "targets_sm_bench_slam": {
    "r1": {
     "rms_xy_cm": 1.45,
