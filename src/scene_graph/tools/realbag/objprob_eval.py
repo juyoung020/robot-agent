@@ -139,7 +139,7 @@ def struct_objects(stream, run, cache_dir):
 
 def retrieval(e, run, labels_dir):
     """글 질의 R@1: 정답 종류마다 맞는 이름 낱말 하나(OK_NAMES 첫 낱말, 사전 순)로 질의 → 노드 순위.
-    objprob(물체 벡터 objects/O<id>_emb.f16 = μ, _views.f16): cos(μ, 글) 와 max(모습들, 글) 두 가지. 벡터가 없는 판(옛 규칙 FastSAM-s-416·YOLO26s-seg·YOLOE-11L)은 이름 같음
+    objprob(물체 벡터 objects/O<id>_emb.f16 = μ, _views.f16): cos(μ, 글) 와 max(모습들, 글) 두 가지. 벡터가 없는 옛 기록은 이름 같음
     (같은 이름 노드 중 관측 많은 것). 맞음 = 1 위 노드가 그 종류 정답에 짝(objects_eval.csv)"""
     import csv
     from objprob_fit import vocab_text

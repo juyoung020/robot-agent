@@ -79,7 +79,7 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 
 시뮬 확인: `src/sim/limo/run_limo_map.sh [task] [steps]` — 평가기를 LIMO 로 띄우고(robot-agent `eval_with_limo.py`) 제자리 한 바퀴 + 앞이 비면 직진·막히면 왼쪽으로 꺾기, 끝에 지도 ↔ 정답 바닥 지도(`src/sim/explore/gt/`)·자세 오차·몸통 카메라 외부 파라미터 ↔ scenemap 순기구학을 `summary.json`·`overlay.png` 로. 탐색은 아래 "LIMO 탐색".
 
-**LIMO 시뮬 확인 — Cartographer**(10-06, turning_on_radio 인스턴스 0, `run_limo_map.sh … 2400`, `SGRT_POSE=carto`, 시뮬 X2L 라이다): 정답 경로 12.4 m·회전 1008°, 자세 ↔ 정답 keyframe 400 개 rms 2.9 cm / 0.31°, 최대 5.6 cm / 0.89°. 지도 53 m², 점유의 97.5 % 가 정답 비바닥 ±10 cm 안, 빈칸의 90 % 가 정답 바닥, 정답 벽 경계의 94.7 % 점유. frontier 탐색(`run_explore.sh frontier turning_on_radio`, 130 s, 28.6 m): rms 2.1 cm / 0.28°, 최대 5.4 cm / 1.18°, 빈칸 58.6 m², 막힘·접촉 0. 같은 기록 slam2d 대 Cartographer 비교는 `../slam_carto/README.md`. 아래 10-04 판들은 옛 slam2d 로 잰 것.
+**LIMO 시뮬 확인 — Cartographer**(10-06, turning_on_radio 인스턴스 0, `run_limo_map.sh … 2400`, `SGRT_POSE=carto`, 시뮬 X2L 라이다): 정답 경로 12.4 m·회전 1008°, 자세 ↔ 정답 keyframe 400 개 rms 2.9 cm / 0.31°, 최대 5.6 cm / 0.89°. 지도 53 m², 점유의 97.5 % 가 정답 비바닥 ±10 cm 안, 빈칸의 90 % 가 정답 바닥, 정답 벽 경계의 94.7 % 점유. frontier 탐색(`run_explore.sh frontier turning_on_radio`, 130 s, 28.6 m): rms 2.1 cm / 0.28°, 최대 5.4 cm / 1.18°, 빈칸 58.6 m², 막힘·접촉 0. 다른 방식과의 비교는 `../slam_carto/README.md`.
 
 **LIMO 시뮬 확인**(10-04, turning_on_radio 인스턴스 0, headless, `SGRT_POSE=slam`, 엔진 yolo26s-seg, 1200 스텝 = 40 s): 정답 경로 5.0 m·회전 662°, slam ↔ 정답 자세 keyframe 200 개 rms 1.3 cm / 0.21°, 최대 2.7 cm / 0.37°. 지도 50 m² 알려짐, 점유 칸의 95 %(±5 cm)가 정답 바닥 밖(벽·가구), 빈칸의 90 % 가 정답 바닥, 아는 영역 안 정답 바닥 경계(벽)의 95 % 가 ±10 cm 안에서 점유. 물체 19 개. 몸통 카메라 외부 파라미터: 시뮬 센서 ↔ scenemap 순기구학 cam 0 위치 차 2e-7 m, 회전 0.02°. 내부 파라미터 720×720 fx = fy = 306, cx = cy = 360. 기록(`SGRT_RECORD`)을 `sm_bench --robot limo_omx` 로 재생하면 실시간과 같은 자세·물체 수.
 
@@ -100,10 +100,6 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 
 그 밖: `MOVE_ROBOT_LIB` 기본 = `build/bin/libmove_robot.so`(`tools/build_all.sh agent`), 정답 바닥 지도는 `src/sim/explore/gt`(`gt_trav.py` 가 만듦). libsgrt 는 `sgrt_set_robot` 이 있는 빌드여야 함(없으면 멈춤). `SGRT_ROBOT` 은 `limo_omx` 하나(없어도 같다).
 
-**LIMO 탐색 결과**(10-04, turning_on_radio 인스턴스 0 = house_double_floor_lower, headless, frontier, `SGRT_POSE=slam`, robot-agent 391c04b 자산 — `LIMO_NEAR_CLIP` 우회 안 씀(이미 0.05), 엔진 기본 yoloe-11l): `no_frontier` 로 끝, go_to 5 번, 시뮬 58.4 s(벽 62 s). 경로 정답 13.1 m(move_robot `path_m` 11.0 — base_qvel 적분, 약 16 % 짧음), 빈칸 53.3 m², 닿을 수 있는 정답 바닥의 88.7 %. slam ↔ 정답 keyframe 291 개 rms 3.1 cm / 0.26°, 최대 5.3 cm / 0.66°, 끝 4.1 cm / 0.49°. 막힘·멈춤·접촉 0, 최소 여유 0.10 m. 지도: 빈칸의 90 % 가 정답 바닥, 점유 칸의 96 % 가 정답 비바닥 ±10 cm 안. 물체 16 개 모두 정답 물체 AABB 10 cm 안, 범주로 보면 13 개 맞음(radio·sofa·shelf·coffee/breakfast table·조명), 3 개 틀림(lamp→stairs, picture frame→hall_tree, radio receiver→downlight).
-
-**LIMO 탐색 결과 2**(10-04, 같은 조건 + 렌즈 프레임 cam 0(scenemap FK = OmniGibson eyes, 차 2.6e-7 m), eyes 수평 화각 67.9°(Dabai 깊이, fx 534.7 @ 720), move_robot 몸 0.36 × 0.22 m, path_m 고침): `no_frontier`, go_to 15 번, 시뮬 157.4 s(벽 183 s). move_robot `path_m` 38.35 m 대 정답 38.15 m(+0.5 %, 전 −16 %). 빈칸 59.2 m², 정답 바닥의 95.0 %. slam ↔ 정답 keyframe 786 개 rms 9.9 cm / 0.30°, 최대 12.6 cm / 1.75°, 끝 11.2 cm / 0.43°(경로가 3 배 길고 화각이 좁아짐). 막힘·멈춤·접촉 0, 최소 여유 0.05 m. 판: `data/outputs/explore_20261004_100358_turning_on_radio_frontier_limo`.
-
 ## 환경 변수
 
 `src/sgrt.cpp`·`src/sgrt_clip.cpp`(라이브러리)와 `glue/sgrt_glue.py`(글루)가 읽는 것 전부.
@@ -112,7 +108,7 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 |---|---|---|
 | `SGRT_ROBOT` | 없음(limo_omx) | 로봇: `limo_omx`(위 "로봇"). 글루도 읽는다 |
 | `SGRT_SM_CONFIG` | 없음 | scenemap `sm_create` config_json 그대로(예: `{"robot": "limo_omx", "odom": "twist"}`). 있으면 `SGRT_ROBOT` 무시 |
-| `SGRT_POSE` | `carto` | 자세 원천. `carto`(Cartographer: 2D 라이다 + 바퀴 오도메트리, `../slam_carto` — `slam` 도 같은 뜻) · `odom`(적분만) · `gt`(외부 정답 베이스 자세, map = 시뮬 world — 진단·시각화용, 대회 제출 금지). 옛 scenemap `slam2d` 는 10-06 archive. 스캔이 안 오면 오도메트리만(경고 한 번). 시뮬은 실제 로봇과 같게 `carto` 로 재고, `gt` 는 확인용으로만 |
+| `SGRT_POSE` | `carto` | 자세 원천. `carto`(Cartographer: 2D 라이다 + 바퀴 오도메트리, `../slam_carto`) · `odom`(적분만) · `gt`(외부 정답 베이스 자세, map = 시뮬 world — 진단·시각화 전용). 스캔이 안 오면 오도메트리만(경고 한 번). 시뮬은 실제 로봇과 같게 `carto` 로 재고, `gt` 는 확인용으로만 |
 | `SGRT_CARTO_CONFIG` | `limo_x2l.lua` | Cartographer lua(`../slam_carto/config`, `SLAM_CARTO_CONFIG_DIR` 로 다른 폴더) |
 | `SGRT_LASER` | `0.103,0,-0.034,0` | base ← 라이다 `x,y,z,yaw`(URDF `laser_link`) |
 | `SLAM_CARTO_LOG` | `0` | `1` = Cartographer glog INFO(맞추기 통계)를 stderr 에 |

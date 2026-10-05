@@ -27,7 +27,8 @@ ALLOW = [  # (경로 정규식, 줄 정규식) — 확인한 예외
     (r"(tf\.h|model\.h)$", r"π0\.5 꼴"),                                         # 구조 이름
     (r"^config/", r"."),
     (r"slam_carto/README\.md$", r"slam2d"),                                     # Cartographer 대 slam2d 비교(결정 근거)
-    (r"training/fastsam/README\.md$", r"FastSAM-s-416-obj"),                    # 재학습 실험 기록(결정 근거)
+    (r"training/fastsam/README\.md$", r"FastSAM-s-416-obj"),
+    (r"scene_graph/scenemap/README\.md$", r"FastSAM-s-416-obj|YOLOE|slam2d"),       # objprob 맞추기 실험 표·slam2d 보관 기록(결정 근거)                    # 재학습 실험 기록(결정 근거)
     (r"(CHANGELOG|decision_log)\.md$", r"."),                                  # 바뀐 기록(역사)
     (r"move_robot/src/tests\.rs$|move_robot/.*\.py$", r"torso|R1"),           # 옛 부분 이름이 거부되는지 보는 시험
     (r"training/vla/README\.md$", r"π0\.5 꼴"),

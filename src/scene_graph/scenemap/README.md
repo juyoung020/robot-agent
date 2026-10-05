@@ -19,7 +19,7 @@
 | `include/scenemap/fk.hpp` · `src/fk.cpp` · `limo_omx_fk_table.hpp` | 순기구학(proprio 관절값 + URDF 표) — LIMO + OMX-F. 카메라·팔 끝 자세는 이것으로만 만든다. 표는 `tools/gen_limo_fk_table.cpp` 가 만든다(손으로 고치지 말 것) |
 | `scan.*` | 깊이 → 베이스 기준 가상 2D 스캔. 높이 띠 안 점 = 장애물(방위 칸마다 가장 가까운 것), 띠 아래 바닥 점 = 빈 광선 끝. 로봇 몸·팔은 뺀다 |
 | `grid.*` | 2D 점유 격자(로그 오즈), 필요하면 넓어짐. 보이는 값(−1 모름, 0..100 %)을 늘 고쳐 두고, 바뀐 영역(dirty)을 추적 |
-| `mapper2d.*` | 자세는 밖에서(SM_POSE_EXT = Cartographer 기본·GT·ODOM): keyframe 사이·외부 자세가 없을 때 `base_qvel` 적분, keyframe 깊이 가상 스캔을 그 자세로 격자에 넣기(넣기 정책), 마지막 스캔. 옛 `slam2d.*`(깊이 스캔 맞추기로 자세를 고치던 것)는 10-06 `archive/src/scene_graph/scenemap` |
+| `mapper2d.*` | 자세는 밖에서(SM_POSE_EXT = Cartographer 기본·GT·ODOM): keyframe 사이·외부 자세가 없을 때 `base_qvel` 적분, keyframe 깊이 가상 스캔을 그 자세로 격자에 넣기(넣기 정책), 마지막 스캔. |
 | `objmap.*` | 검출 마스크 + 깊이 + 자세 → 물체 3D 위치·크기 → 같은 물체 판단(objprob 하나) → 갱신. 확정·옮겨짐·사라짐·들기·받침 따라가기. 이름 종류(옮길 수 있음 / 구조물 — 노드 안 됨 / 고정 가구 / 구조 물체 — 문·창·계단). 다음 keyframe 앞 `apMergePass` 가 이름 없이 같은 것 병합 |
 | `objprob_math.h` | objprob 계산 한 곳(10-06): 같은 것 로지스틱·기하 특징·κ(viewKappa)·이름 사후 정규화·상위어 고르기·이름 분포 겹침·칼만 — `__host__ __device__` 인라인, STL 없음. scenemap(double, `OpmStd`)과 GPU 학습 지도(`training/RL/map`, float 결정적 수학)가 같이 부름. 규칙을 바꾸면 여기를 고침(두 쪽이 함께 바뀜). 맞춤 시험 `training/RL/map/tools/objprob_parity.cpp` |
 | `objprob.*` | 확률 물체 모델(아래 "scenemap 확률 모드"): vMF 임베딩 사후(r = Σκz)·상위 K 모습·이름 범주 사후(상위어로 올림·엔트로피·바깥 관측)·같은 것 로지스틱 특징·평면 맞춤(PCA)·접촉 칸. 물체 지도의 유일한 규칙 |
@@ -277,7 +277,7 @@ swapped 는 여전히 0: 같은 이름 쌍(의자 ↔ 의자, 스탠드 둘 ↔ 
   - FastSAM-s-416-obj 0.5/0.7(128 / 124 노드, 찾음 28 / 27, OL 120 · 135)보다 노드는 적고, 찾음은 1 낮거나 같다.
   - **10-05: decided ObjectSAM — 기본 엔진 = ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 + objprob(매개변수 = 이 파일).** 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞음 — 기기 위 시간은 아직 안 잼. `realbag_run`(`--engine` 없이, objprob 기본 켬)·
     libsgrt(`SGRT_ENGINE` 기본, 분할 엔진이면 objprob 자동 — runtime README "objprob 앞단")·LIMO/explore 시작 스크립트 모두. 원래 FastSAM-s(`FastSAM-s-416.plan`)와
-    버린 FastSAM-s 재학습(보관 `models/ovdet/archive/x86_sm120/FastSAM-s-416-obj.plan`)은 `--engine`·`SGRT_ENGINE` 으로 고를 수 있고 각자 매개변수 파일이 자동으로 실린다.
+    버린 FastSAM-s 재학습 엔진과 그 매개변수는 지웠다.
     위 "기본 엔진은 그대로"(FastSAM-s-416-obj 표)는 그때 판단이다.
 - scenemap 확률 모드 CPU: gt 판 731 keyframe 18.2 s vs 옛 규칙 11.9 s(keyframe 당 약 +8.6 ms, 통째 다시 담기 GPU 포함).
 

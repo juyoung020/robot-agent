@@ -1,7 +1,7 @@
 # da — 물체 합치기 도구
 
 objprob 의 `apMergePass`(scenemap `src/objmap.cpp`, 다음 keyframe 앞)가 **같은 물체**(이름 없이 SigLIP 2 임베딩 vMF + 위치·접촉 로지스틱)로 판정한 두 물체를
-하나로 합치는 `absorbObject` 와 상자 겹침 비율 `boxOverlap`. 같은 것 판정은 여기 없다(objprob 하나). 옛 이름 기반 `mergeDuplicates`·`MergeParams` 는 `archive/` 로 옮김.
+하나로 합치는 `absorbObject` 와 상자 겹침 비율 `boxOverlap`. 같은 것 판정은 여기 없다(objprob 하나).
 
 따로 빌드하지 않는다. `scenemap` 정적 라이브러리에 같이 들어간다(`../scenemap/CMakeLists.txt`).
 
