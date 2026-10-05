@@ -19,7 +19,7 @@ flowchart LR
         direction LR
         S["카메라 · 라이다"] --> M["① 물체 기억<br/>SLAM · ObjectSAM + SigLIP 2<br/>물체 무게중심 xyz 기록 · 2D 지도"]
         M --> A["② 큰 계획·대화 (LLM agent)<br/>기억 풀어 주기 · 다시 계획"]
-        A --> V["③ 작은 계획·행동 (VLA)<br/>이동 · 우리 작은 VLA"]
+        A --> V["③ 작은 계획·행동 (VLA)<br/>RecallVLA · 기억에서 찾기·탐색·집기·놓기"]
     end
     Q["KAU API (AI agent 수업)<br/>Qwen3.5-9B"]
     APP <-->|"명령 / 진행 상황"| A
@@ -33,7 +33,8 @@ flowchart LR
 | **학교 4090** | π0.5 학습(LoRA)만 하려던 자리. π0.5 를 버려서(10-04) 무엇에 쓸지는 아직 안 정함. 로봇 코드는 돌리지 않음 |
 | **시뮬 작업 PC** | `jy-desktop` (RTX 5070 Ti 16GB) — 시뮬 평가, 우리 VLA 학습(RL 교사·BC 학생, `training/`), 물체 기억 시험 |
 | **휴대폰** | 채팅 앱 — 로봇에게 명령하고 진행 상황을 받음 |
-| **시뮬레이션** | 2026 BEHAVIOR Challenge 벤치마크 — 실제 로봇 전에 개발·평가 (참고 코드는 2025 상위 팀 것) |
+| **시뮬레이션** | BEHAVIOR-1K 집 장면(OmniGibson, `third_party/BEHAVIOR-1K`) + 우리 GPU 일괄 환경(`training/RL`) — 리모 집기·놓기 학습장. 대회 점수는 목표가 아님, 옛 대회 저장소는 10-06 분리 |
+| **저장소** | robot-agent 하나 — 코드는 git, 빌드 `build/`·모델 `models/`·데이터 `data/`·외부 `third_party/` 는 폴더 안(git 밖), 경로는 `config/paths.env` ([LAYOUT](LAYOUT.md)) |
 
 ## 준비물
 
@@ -90,7 +91,7 @@ flowchart LR
 
 | 할 일 | 내용 | 담당 |
 |---|---|---|
-| 물체 인식 | **ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, [github.com/juyoung020/ObjectSAM](https://github.com/juyoung020/ObjectSAM) v1.0: `ObjectSAM-416.pt`·`.onnx`·`-int8-qdq.onnx`) + SigLIP 2 B/32 + objprob(scenemap 확률 모드, 기본 켬, 매개변수 `objprob_params/yolo26n-seg-obj-416.json`)** (10-05 결정, 입력 416). 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. ObjectSAM 이 이름 없는 물체 조각 → SigLIP 2 가 조각마다 768-d 벡터(찾기용) + 라벨 표로 이름. 확률 모드: 벽·천장·바닥은 **기하로** 거르고(지도 벽선과 겹치는 수직 평면, 천장·바닥 높이 수평면), 조각은 이름 없이 3D·벡터로 합친다. YOLO26s-seg·YOLOE 는 같은 BEHAVIOR 기록에서 비교한 뒤 보관(`~/ovdet_models/archive`) — 비교 결과 `~/datasets/sim_detcmp/README.md`. 시뮬 sgrt·LIMO 지도 시험도 ObjectSAM + 확률 모드가 기본(behavior-2026 `26cbdc4`) | |
+| 물체 인식 | **ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, [github.com/juyoung020/ObjectSAM](https://github.com/juyoung020/ObjectSAM) v1.0: `ObjectSAM-416.pt`·`.onnx`·`-int8-qdq.onnx`) + SigLIP 2 B/32 + objprob(scenemap 확률 모드, 기본 켬, 매개변수 `objprob_params/yolo26n-seg-obj-416.json`)** (10-05 결정, 입력 416). 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. ObjectSAM 이 이름 없는 물체 조각 → SigLIP 2 가 조각마다 768-d 벡터(찾기용) + 라벨 표로 이름. 확률 모드: 벽·천장·바닥은 **기하로** 거르고(지도 벽선과 겹치는 수직 평면, 천장·바닥 높이 수평면), 조각은 이름 없이 3D·벡터로 합친다. YOLO26s-seg·YOLOE 는 같은 BEHAVIOR 기록에서 비교한 뒤 보관(`models/ovdet/archive`). 시뮬 sgrt·LIMO 지도 시험도 ObjectSAM + 확률 모드가 기본. **10-06**: 이름·임베딩은 SigLIP 2 공간 하나로 통일 중(옛 PE-L 투영 경로 버림), 같은 물체 판정·합치기 계산식은 scenemap 과 GPU 학습 지도가 공용 헤더를 씀 | |
 | 물체 위치 (xyz) | 분할 모델이 물체 영역(마스크)과 그 **무게중심**을 찾아 준다 → 무게중심 + depth → 월드 좌표 **xyz** 로 기록. 물체마다 위치 하나 | |
 | 같은 물체 판단 (DA) | 새로 본 물체가 이미 아는 물체인지 — **직접 만든다**. 10-05 부터 **이름 없는 확률 DA(`objprob`)**: 같은 물체 대 다른 물체의 베이지안 가설 검정(3D 맞닿음·겹침 + 벡터 일치 vMF). 물체마다 벡터 = vMF 사후(r ← r + κ·z, 상위 5 시점 벡터 저장), 이름 = 베이지안 범주 사후(SigLIP 점수 + 크기 + 방, 낮으면 상위어), 위치 = 칼만. 처음 설계(같은 이름끼리 위치로 비교)는 FastSAM 조각이 안 합쳐져 바꿈 — 실행 중 | |
 | 물체 찾기 | **임베딩 벡터 찾기** + **이름(의미) 찾기** 둘 다, **공용 물체 색인 하나**를 agent 와 RecallVLA 가 함께 쓴다(10-05). 3 단계: 이름·동의어·상위어 → 없거나 약하면 **이름 무시 생김새 재검색**(예: "라디오" 가 "소화기" 로 잘못 등록돼도 찾음) → 확인되면 이름 고치기. agent 에는 글(이름·속성·방·상태)로, VLA 는 자기 질의 벡터로 — [모델 선택](model_selection.md) | |
@@ -113,6 +114,7 @@ flowchart LR
 
 > **10-04 바뀜**: π0.5 는 버렸다(가중치도 지움). 작은 VLA(`training/BC`, G5)를 거쳐, 공개할 우리 지도 + VLA 파운데이션 모델 **RecallVLA** 를 만든다 — Qwen3.5-0.8B 전부 학습 + SigLIP 2 B/32(학습함), π0.5 꼴로 **다음 단계 문장 + flow matching 행동**, 지도 토큰은 몸통 안에, Apache-2.0. 주 시연 출처는 GPU 시뮬 RL 교사(→ BC·DAgger). 사양 [MAPVLA_SPEC](map_vla/MAPVLA_SPEC.md), 코드 `training/vla`.
 > **10-05 더함**: **검색도 RecallVLA 가 한다** — 몸통이 질의 벡터를 내 공용 물체 색인에서 상위 K 개를 16 칸에 불러온다(단계가 바뀔 때마다 다시). agent 의 후보 id 는 힌트일 뿐. 학습 때 힌트 지우기·일부러 틀린 이름을 섞어 생김새를 믿게 한다.
+> **10-06 바뀜**: (1) **정답 지도로 학습하지 않는다** — 모든 단계가 빈 지도에서 로봇이 본 만큼 자라는 지도. (2) 커리큘럼: ① 탐색해서 찾기 → ② 앞에서 집고 놓기 → ③ 둘 다 → ④ OmniGibson + 진짜 인지로 마지막 DAgger. 명령에는 **탐색으로 찾을 수 있는 물체만**. (3) 교사도 학생과 같은 입력(강화학습 행동 결정은 학생 입력, 특권은 critic 만, 대본 교사는 지도에 확인된 물체만). (4) 학습 중 인지 = 검출 흉내 + GPU 로 옮긴 확률 모드(실제 파이프라인 결과로 맞춤). (5) 학습 집 4 채 / 평가 집 3 채. 자세히 [CURRICULUM_BEHAVIOR2026](map_vla/CURRICULUM_BEHAVIOR2026.md) 5.7, [TRAINING_DESIGN](map_vla/TRAINING_DESIGN.md) 6.1, [GPU_MAP_PORT](map_vla/GPU_MAP_PORT.md).
 > 아래 π0.5·LoRA 행은 기록으로 남긴다(대체됨).
 
 | 할 일 | 내용 | 담당 |
@@ -146,7 +148,7 @@ flowchart LR
 | 시뮬레이션에서 | BEHAVIOR 에서 물체 기억 → 계획 → 행동 전체 흐름. 정답 위치(`SGRT_POSE=gt`)로 먼저 흐름을 확인하고, 성능·점수는 실제 로봇과 같은 `slam` 으로 잰다 | |
 | 리모 시뮬에서 | 리모 + 팔 모델로 같은 흐름 — 시뮬에서 학습한 리모용 VLA 로 | |
 | 실제 리모에서 | 같은 흐름을 리모에서, 앱으로 명령 | |
-| 점수 | BEHAVIOR 점수를 대회 상위 팀과 비교, 지도 갱신은 변화 탐지 정확도로 | |
+| 점수 | 리모 집기·놓기 성공률(학습 집 / 처음 보는 집), 탐색해서 찾기 성공률, 지도 갱신은 변화 탐지 정확도로. 대회 점수는 쓰지 않음(10-06) | |
 
 ---
 

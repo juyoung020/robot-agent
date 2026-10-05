@@ -3,21 +3,25 @@
 로봇의 각 부품에 **무엇을 골랐고, 왜 골랐는지** 정리한 문서.
 할 일과 전체 구조는 [계획](plan.md), 참고 논문·코드는 [참고 자료](../refs/README.md).
 
+> **10-06 갱신**: 저장소는 robot-agent 하나(인지·뷰어 원본 `src/scene_graph`, 옛 시뮬 저장소는 분리), 임베딩은 SigLIP 2 공간 하나로 통일 중, 학습 중 인지는 "검출 흉내 + GPU 확률 모드", VLA 는 RecallVLA. 자세히는 아래 표와 각 절.
+
 ## 한눈에 보기
 
 | 부품 | 선택 | 한 줄 이유 | 상태 |
 |---|---|---|---|
 | 지도·위치 (SLAM) | **Cartographer (2D 라이다)** — 시뮬에서는 실제로 자체 `slam2d`(scenemap)가 돈다 | 리모에서 가볍게 돌고, 물체 높이는 depth 로 알 수 있음 | 시뮬은 `slam2d`, 실기에서 무엇을 쓸지 다시 정해야 함 |
-| 물체 인식 | **ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, [github.com/juyoung020/ObjectSAM](https://github.com/juyoung020/ObjectSAM) v1.0: `ObjectSAM-416.pt`·`.onnx`·`-int8-qdq.onnx`) + SigLIP 2 B/32 + objprob(scenemap 확률 모드, 기본 켬, 매개변수 `objprob_params/yolo26n-seg-obj-416.json`)** — 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. 벽·천장 기하 제거, 이름 없는 3D·벡터 병합, vMF 벡터·베이지안 이름 (아래 "물체 인식" 절). YOLO26·YOLOE 는 비교 뒤 보관(`~/ovdet_models/archive`) | 가장 많이 잡고(목록 밖 포함) 벡터·단어 찾기 둘 다 됨. 목표: FastSAM-s 의 재현율 + YOLO26s-seg 수준의 깔끔함 | **10-05: decided ObjectSAM (YOLO26n 학생) + SigLIP 2 + objprob** — 기본 엔진(behavior-2026 `26cbdc4`: libsgrt 글루 `SGRT_ENGINE`·`realbag_run`·explore/LIMO 시작 스크립트, objprob 기본 켬). 원래 FastSAM-s-416 은 `--engine`/`SGRT_ENGINE` 으로 고를 수 있음 |
-| 같은 물체 판단 (DA) | **직접 만듦 — 이름 없는 확률 DA (`objprob`)** | 3D 맞닿음(가우시안) + 벡터 일치(vMF)의 가설 검정. 처음엔 같은 이름끼리 위치로 비교했으나 FastSAM 조각이 안 합쳐져 바꿈 | 결정, 구현·기본 켬 (10-05 — behavior-2026 `26cbdc4`) |
+| 물체 인식 | **ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, [github.com/juyoung020/ObjectSAM](https://github.com/juyoung020/ObjectSAM) v1.0: `ObjectSAM-416.pt`·`.onnx`·`-int8-qdq.onnx`) + SigLIP 2 B/32 + objprob(scenemap 확률 모드, 기본 켬, 매개변수 `objprob_params/yolo26n-seg-obj-416.json`)** — 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. 벽·천장 기하 제거, 이름 없는 3D·벡터 병합, vMF 벡터·베이지안 이름 (아래 "물체 인식" 절). YOLO26·YOLOE 는 비교 뒤 보관(`models/ovdet/archive`) | 가장 많이 잡고(목록 밖 포함) 벡터·단어 찾기 둘 다 됨. 목표: FastSAM-s 의 재현율 + YOLO26s-seg 수준의 깔끔함 | **10-05: decided ObjectSAM (YOLO26n 학생) + SigLIP 2 + objprob** — 기본 엔진(libsgrt 글루 `SGRT_ENGINE`·`realbag_run`·explore/LIMO 시작 스크립트, objprob 기본 켬). 원래 FastSAM-s-416 은 `--engine`/`SGRT_ENGINE` 으로 고를 수 있음 |
+| 같은 물체 판단 (DA) | **직접 만듦 — 이름 없는 확률 DA (`objprob`)** | 3D 맞닿음(가우시안) + 벡터 일치(vMF)의 가설 검정. 처음엔 같은 이름끼리 위치로 비교했으나 FastSAM 조각이 안 합쳐져 바꿈 | 결정, 구현·기본 켬 (10-05). 판정·합치기 계산식은 scenemap 과 GPU 학습 지도가 공용 헤더 하나를 쓰게 바꾸는 중(10-06) |
 | 물체 찾기 | **임베딩 벡터 찾기 + 이름(의미) 찾기** 둘 다, **에이전트·RecallVLA 공용 색인** | 이름 검색 → 생김새 재검색 → 확인 후 이름 고치기. 에이전트엔 글로, VLA 는 자기 질의 벡터로 | 결정 (10-05 갱신). 에이전트 도구 `search_objects`·`confirm_object`·`list_place` 구현(`369cd3a`, `936c256`), RecallVLA 자체 검색은 학습 전 |
+| 물체 임베딩·이름 | **SigLIP 2 B/32 하나**(우리 C++/TensorRT 포팅, 영상 마스크 풀링 + 글 인코더) | 실제 로봇·학습·찾기가 같은 공간. 옛 PE-L 글 공간 + 투영 머리 `h` + 한국어 학생 경로는 버림 | **결정 (10-06)**, 바꾸는 중(GPU_MAP_PORT P5) — 바꾼 뒤 이름 품질 확인하고 옛 경로 보관. 한국어 지시: SigLIP 2 글 인코더에 그대로 넣어 재 보고, 모자라면 한국어 → 이름 짝 표 |
+| 학습 중 인지 | **검출 흉내(인지 오차 모델, 통계형 → 필요하면 학습형) + GPU 로 옮긴 확률 모드 합치기** | 학습 속도를 지키면서 실제 ObjectSAM + SigLIP 2 + objprob 와 같은 입력. 자율주행 PEM 방식([PERCEPTION_EMULATION_SURVEY.md](map_vla/PERCEPTION_EMULATION_SURVEY.md)) | **결정 (10-06)**. 흉내 값은 OmniGibson + 진짜 파이프라인 결과로 맞춤. 학생 DAgger 일부와 마지막 미세 조정만 진짜 파이프라인 |
 | 지도 갱신 | **직접 만듦** | 바뀐 부분만 고침 | 결정 |
 | 방 나누기·이름 | **직접 만듦** — 방 안 물체의 SigLIP 2 이름 → 규칙, 다음은 임베딩 제로샷 분류 | 클래스 이름 없는 FastSAM-s 에서도 방 종류를 붙임 | 결정 |
 | 물체 지도 저장·보기 | **Spark-DSG** 저장, 보기는 **2D 지도** | Hydra·Khronos 와 같은 형식. 웹 3D 뷰어는 안 씀(10-02) | 결정 |
 | 큰 계획·대화 (LLM) | **Qwen3.5-9B**, AI agent 수업이 주는 KAU API | 요금 없이 사용 (인터넷 필요) | 결정 |
-| 작은 계획·행동 (VLA) | ~~π0.5~~ → **우리 작은 VLA**(얼린 SigLIP 2 + 지도 토큰 + flow matching 행동, `training/BC`) | 지도 토큰을 넣고 리모 + OMX 에 맞추려고 직접 만듦. π0.5 는 버림(10-04) | 결정, 작은 판 G5 완료·큰 판(얼린 Qwen) G7 |
+| 작은 계획·행동 (VLA) | ~~π0.5~~ → **RecallVLA**(Qwen3.5-0.8B 전체 학습 + SigLIP 2, 단계 문장 + flow matching 행동, 기억 요약 인코더, `training/vla`) | 지도 기억에서 물체를 스스로 찾아가고, 없으면 탐색. 리모 + OMX-F 에 맞춤. π0.5 는 코드·가중치까지 지움(10-06) | 결정. 신경망·융합 커널 완료, 학습은 교사(빈 지도 커리큘럼) 준비 뒤 |
 | VLA 실행 위치 (π0.5 때 정함) | **리모**, 안 되면 라즈베리파이 5 + DEEPX DX-M1 (보유) | 로봇이 서버 없이 스스로 움직이게 | 결정 |
-| 시뮬레이션 | **2026 BEHAVIOR Challenge 벤치마크** (참고 코드는 2025 상위 팀 것) | 대회 상위 팀과 점수를 비교할 수 있음 | 결정 |
+| 시뮬레이션 | **BEHAVIOR-1K 집 장면(OmniGibson) + 우리 GPU 일괄 환경** | 대회가 아니라 리모 집기·놓기 학습장. 대량 학습은 GPU 환경, 확인·미세 조정은 OmniGibson | 결정 (10-06 갱신: 대회 저장소는 분리, BEHAVIOR-1K 는 `third_party/`) |
 | 앱 | **iOS (SwiftUI) · Android (Compose)** | 네이티브, 카카오톡식 채팅 | 결정 |
 
 ## 고를 때 따지는 것
@@ -58,9 +62,9 @@
 
 잴 것: 리모 CPU·메모리 사용량, 방을 한 바퀴 돌고 출발점에 왔을 때 어긋난 거리.
 
-### 물체 인식 — 아직 결정 못 함 (10-05)
+### 물체 인식 — ObjectSAM + SigLIP 2 + objprob (10-05 결정)
 
-> **10-05: decided ObjectSAM (YOLO26n 학생) + SigLIP 2 + objprob.** 분할 = ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, [github.com/juyoung020/ObjectSAM](https://github.com/juyoung020/ObjectSAM) v1.0: `ObjectSAM-416.pt`·`.onnx`·`-int8-qdq.onnx`) + SigLIP 2 B/32 + objprob(scenemap 확률 모드, 기본 켬, 매개변수 `objprob_params/yolo26n-seg-obj-416.json`). 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. FastSAM-s 재학습(`FastSAM-s-416-obj`)은 버리고 `~/ovdet_models/archive/x86_sm120/` 에 보관했다.
+> **10-05: decided ObjectSAM (YOLO26n 학생) + SigLIP 2 + objprob.** 분할 = ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, [github.com/juyoung020/ObjectSAM](https://github.com/juyoung020/ObjectSAM) v1.0: `ObjectSAM-416.pt`·`.onnx`·`-int8-qdq.onnx`) + SigLIP 2 B/32 + objprob(scenemap 확률 모드, 기본 켬, 매개변수 `objprob_params/yolo26n-seg-obj-416.json`). 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. FastSAM-s 재학습(`FastSAM-s-416-obj`)은 버리고 `models/ovdet/archive/x86_sm120/` 에 보관했다.
 >
 > **(기록) 갱신 (2026-10-05 저녁): 방향 결정 — FastSAM-s-416 + SigLIP 2 + scenemap 확률 모드(`objprob`).** 같은 BEHAVIOR 기록(house_double_floor_lower, LIMO r3)에서 셋을 비교(`~/datasets/sim_detcmp/README.md`, 정답 34개, slam 자세): FastSAM-s-416 노드 290·정답 찾음 27·중복 140·벽 위 가짜 108, YOLO26s-seg 28·14·9·4, YOLOE-11L 78·24·32·19. 사용자 관찰: "FastSAM-s 는 천장·벽이 안 걸러지고 병합이 잘 안 됨, YOLO26s-seg 는 다 잘 되는데 뽑은 수가 아쉬움, YOLOE 는 FastSAM-s 보다 벽·천장이 덜함". 목표는 **FastSAM-s 를 YOLO26s-seg 수준으로 깔끔하게 + 물체를 더 잘 잡게**. YOLO26s-seg·YOLOE 엔진은 보관했다.
 >
@@ -258,9 +262,9 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 
 잴 것: 명령 10~20개로 VLA 에게 맞는 지시를 주는 비율, 물체를 놓쳤을 때 다시 찾아가는 비율, 응답 시간.
 
-### 작은 계획·행동 (VLA) — π0.5 (잠정)
+### 작은 계획·행동 (VLA) — RecallVLA (π0.5 는 버림)
 
-> **대체됨 (10-04)**: π0.5 는 버렸다(가중치도 지움). VLA 는 우리가 만든 작은 VLA 다 — 얼린 SigLIP 2 영상 탑 + 물체 기억 지도 토큰 + 지시 문장 → flow matching 행동 전문가, 시뮬 RL 교사에게서 BC·DAgger 로 배운다([training/BC](../training/BC/README.md), G5). 얼린 Qwen 을 쓰는 큰 판은 G7([GPU_TRAINING.md](map_vla/GPU_TRAINING.md) 11절). 아래는 그 전 판단으로 남긴다.
+> **10-06**: VLA 는 **RecallVLA** 다 — Qwen3.5-0.8B 전체 학습 + SigLIP 2(영상 3장: 리모 RGB·손목 RGB·위에서 본 지도), 기억 요약 인코더(물체 ≤ 256 → 32 + 정밀 칸 8, "기억에 없음"), 단계 문장 + flow matching 행동([MAPVLA_SPEC](map_vla/MAPVLA_SPEC.md), `training/vla`). 교사는 빈 지도에서 자라는 지도로 학습하는 강화학습·대본 교사(행동은 학생과 같은 입력, 특권은 critic 만), 학생은 BC·DAgger([CURRICULUM_BEHAVIOR2026](map_vla/CURRICULUM_BEHAVIOR2026.md) 5.7). π0.5 코드·가중치는 10-06 지움. 아래는 그 전 판단으로 남긴다.
 
 - LLM 의 지시와 카메라 영상을 받아, 할 일을 스스로 잘게 나눠 로봇을 움직이고 눈앞의 실패는 스스로 복구한다. 2025 BEHAVIOR 대회 1~3위 팀이 모두 π0.5 를 썼고, 공개된 모델과 코드가 많다.
 - 학습(LoRA)은 학교 4090(24GB)에서 한다 (22.5GB 이상 필요, 4090 에 겨우 들어감). 시뮬 평가·추론은 시뮬 작업 PC(RTX 5070 Ti 16GB)에서 잘 돈다.
@@ -283,7 +287,9 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 
 양자화 단계: bf16 (원래) → int8 → int4 순으로 줄이며 성공률이 얼마나 떨어지는지 잰다.
 
-### 시뮬레이션 — 2026 BEHAVIOR Challenge 벤치마크
+### 시뮬레이션 — 2026 BEHAVIOR Challenge 벤치마크 → BEHAVIOR-1K 장면 + GPU 환경 (10-06)
+
+> **10-06**: 대회 점수는 목표가 아니다(리모 집기·놓기가 목표). 옛 대회 저장소는 분리했고, 쓰던 것(인지 코드, 리모 시뮬 실행, 플래너, 학습 렌더)은 robot-agent 로 옮겼다. 집 장면·물체·과제 인스턴스(BEHAVIOR-1K)는 `third_party/BEHAVIOR-1K` 에 두고 OmniGibson 으로 확인·재현한다. 대량 학습은 GPU 일괄 환경(`training/RL`). 학습 집 4 채(1층 집·2층 집 아래층·식당·사무실) / 평가 집 3 채(Rs_int·호텔 방·2층 집 위층)로 나눈다. 아래는 그 전 판단으로 남긴다.
 
 - 참고하는 코드·체크포인트는 2025 대회 상위 팀 것이다(서브모듈 `docs/2025상위팀_깃허브.md`).
 - 대회가 준 과제와 평가 방식을 그대로 쓴다 → 점수를 대회 상위 팀과 바로 비교할 수 있다.
