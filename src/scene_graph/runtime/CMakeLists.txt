@@ -19,7 +19,7 @@ endif()
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../scenemap ${CMAKE_BINARY_DIR}/scenemap)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../ovdet ${CMAKE_BINARY_DIR}/ovdet)
-# 물체 영상 임베딩(SigLIP 2 TensorRT + 라벨 찾기, src/scene_graph/clip) — SGRT_CLIP 이면 켜짐
+# SigLIP 2 TensorRT(마스크마다 이름·임베딩, src/scene_graph/clip) — objprob 이 씀
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../clip ${CMAKE_BINARY_DIR}/clip)
 # Cartographer 자세 원천(../slam_carto, SGRT_POSE=carto 기본). Cartographer 가 설치돼 있지 않으면 없이 빌드(자세 = 오도메트리만)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../slam_carto ${CMAKE_BINARY_DIR}/slam_carto EXCLUDE_FROM_ALL)
@@ -29,7 +29,7 @@ set_target_properties(sgrt_crop PROPERTIES POSITION_INDEPENDENT_CODE ON CUDA_RUN
 target_link_libraries(sgrt_crop PUBLIC scenemap CUDA::cudart_static)
 target_compile_options(sgrt_crop PRIVATE -O3)
 
-add_library(sgrt SHARED src/sgrt.cpp src/sgrt_clip.cpp)
+add_library(sgrt SHARED src/sgrt.cpp)
 target_include_directories(sgrt PUBLIC include PRIVATE ../clip/src)
 target_link_libraries(sgrt PRIVATE sgrt_crop scenemap ovdet sgclip)
 target_compile_options(sgrt PRIVATE -Wall -Wextra)

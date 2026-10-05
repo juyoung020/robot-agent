@@ -5,7 +5,6 @@
 - 검출: ovdet(TensorRT). 기본은 이름 없는 분할 엔진 ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만, `yolo26n-seg-obj-416.plan`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 이름·임베딩 + scenemap 확률 모드(아래 "objprob 앞단"). 머리 RGB 를 장치 메모리에서 바로 읽는다.
 - 위치: Cartographer 2D(`../slam_carto`, 기본 — 2D 라이다 스캔 `sgrt_push_scan` + proprio 바퀴 오도메트리).
 - 지도·물체 기억: scenemap(그 자세로 격자 mapper2d·objmap·방·장면 그래프·저장). 깊이는 호스트 f32 미터.
-- (선택) 물체 영상 임베딩: sgclip(SigLIP 2, `../clip`). `SGRT_CLIP` 이면 켜짐.
 
 파이썬은 포인터만 넘긴다(`glue/sgrt_glue.py`). 한 스레드에서 부른다. 설계는 [docs/scenemap_설계.md](../scenemap/README.md) 3.2.2·3.5·3.6·3.7절.
 
@@ -26,7 +25,6 @@ keyframe 인지는 `sgrt_want_image()` 가 알려 준다(`kf_every` 스텝마다
 | `include/sgrt.h` | C ABI: `sgrt_create`·`sgrt_begin`·`sgrt_step`·`sgrt_save`·`sgrt_destroy`, 통계·시간(`sgrt_stats`·`sgrt_get_timing`·`sgrt_get_stage_timing`), 지도 보기(`sgrt_map`·`sgrt_map_snapshot`, scenemap 문맥 `sgrt_scenemap` — 다른 스레드의 읽기 도구가 자기 스냅숏·`sm_observe_object_name` 을 쓰려고, 10-05), 자세 원천(`sgrt_set_pose_mode`·`sgrt_push_pose`·`sgrt_get_pose_diag`), 2D 라이다(`sgrt_push_scan`, 10-06), 이름 종류(`sgrt_set_kind_names`), 임베딩·이름 찾기(`sgrt_object_embedding`·`sgrt_query_embedding`·`sgrt_query_label`·`sgrt_object_names`·`sgrt_get_clip_stats`) |
 | `src/sgrt.cpp` | 구현: ovdet + scenemap 연결, 낱말 표, 영상 시각 늦춤(`SGRT_IMAGE_LAG`), 저장 스레드, 스트림 요약 스레드(`SGRT_STREAM`), 입력 기록(`SGRT_RECORD`), 단계 시간(det·step·map·record) |
 | `src/crop.cu` · `crop.hpp` | CUDA 커널 둘: best view 상자 자르기(넓이 평균, 요청 32개씩 한 번에, 자른 것만 고정 메모리로 내려받기)와 점 구름 화소 색 모으기. 식은 `scenemap/src/bestview.cpp` 호스트 판과 같다 |
-| `src/sgrt_clip.cpp` · `.hpp` | sgclip 연결: keyframe 마다 새 물체·best view 품질이 임베딩 때의 1.2배 이상인 물체를 최대 8개 비동기로 임베딩. 저장 때 `objects/O<id>_emb.f16`, `cache/names.json`, scene.json 노드 metadata(`sm_set_object_meta`). 라벨 표는 따로 스레드에서 읽음 |
 | `glue/sgrt_glue.py` | 평가기 쪽 접착부 `SceneMemory(task, out_dir)` · `step(obs)` · `close()`. 과제 프롬프트(`../ovdet/config/task_prompts.txt` 의 과제 줄 + `_scene` 줄), GT 자세 넣기, GT 기록, 900 스텝마다 진단·시간 출력 |
 | `tests/test_crop.cpp` | 장치 자르기·색 모으기 = 호스트 식, 시간 |
 | `tools/sgrt_replay.cpp` | sgrt 기록(`SGRT_RECORD`)을 libsgrt 로 다시 굴림(검출 → 지도 → 저장). 라이브러리는 dlopen — 옛 빌드와 새 빌드를 같은 입력으로 바이트 비교 |
@@ -102,7 +100,7 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 
 ## 환경 변수
 
-`src/sgrt.cpp`·`src/sgrt_clip.cpp`(라이브러리)와 `glue/sgrt_glue.py`(글루)가 읽는 것 전부.
+`src/sgrt.cpp`(라이브러리)와 `glue/sgrt_glue.py`(글루)가 읽는 것 전부.
 
 | 이름 | 기본값 | 뜻 |
 |---|---|---|
@@ -119,7 +117,6 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 | `SGRT_STREAM` | 없음(끔) | `host:port`. sgview(`--ingest`)로 실시간 스트림. 자세·지도 변화분은 스텝 안에서 링 버퍼로, 요약은 따로 스레드가 만든다. 5 s 마다 stderr 에 스트림 통계 |
 | `SGRT_STREAM_HZ` | `60` | 요약(view) 만드는 주기 Hz, 0.5–240 으로 자름 |
 | `SGRT_RECORD` | 없음(끔) | 파일 경로. 받은 입력(proprio·외부 자세·라이다 스캔 'L'·keyframe 깊이·RGB·검출)을 이진(`SGRC` 판 1)으로 기록. `tools/sgrt_replay`(Cartographer 포함)·`scenemap/tools/sm_bench` 가 재생 |
-| `SGRT_CLIP` | 없음(끔) | SigLIP 2 엔진 plan 경로. `1` = `models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan`, `0`·빈 값 = 끔 |
 | `SGRT_CLIP_GRAPH` | sgclip 기본(1) | 배치 크기별 CUDA graph 쓰기(`sgc_config.use_graph`) |
 | `SGRT_LABELS` | `data/embed_work/labels/objects-v1` | 라벨 표 폴더(이름 찾기). 색인 캐시는 `<out_dir>/cache/index` |
 | `SGC_IMG_SAMPLE` | `models/ovdet/x86_sm120/siglip2_b32/img_sample_lvis10k.f16`(있으면) | 라벨 표 투영을 맞출 영상 임베딩 표본(sgclip 변수, sgrt_clip 이 읽어 넘김) |

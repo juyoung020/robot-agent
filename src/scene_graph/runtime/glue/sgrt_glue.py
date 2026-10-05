@@ -361,9 +361,6 @@ class SceneMemory:
             if self.gt_log is not None:
                 self.gt_log.flush()
             print(f"[sgrt] t={self.t} pose diag {self.pose_diag()}", flush=True)
-            cs = self.clip_stats()
-            if cs:
-                print(f"[sgrt] t={self.t} clip {cs}", flush=True)
             for k, v in self.timing().items():
                 print(f"[sgrt] timing {k}: " + " ".join(f"{a}={b:.1f}" if isinstance(b, float) else f"{a}={b}" for a, b in v.items()),
                       flush=True)
@@ -420,57 +417,8 @@ class SceneMemory:
         self.L.sgrt_stats(self.h, *[ctypes.byref(x) for x in v])
         return dict(keyframes=v[0].value, last_dets=v[1].value, objects=v[2].value, det_ms=v[3].value, save_ms=v[4].value)
 
-    def clip_stats(self):
-        """SGRT_CLIP counters and last-batch times (sgrt_get_clip_stats), None when off / old library."""
-        L = self.L
-        if not hasattr(L, "sgrt_get_clip_stats") or not L.sgrt_clip_enabled(ctypes.c_void_p(self.h)):
-            return None
-        f = [(n, ctypes.c_int32) for n in ("enabled", "n_objects", "n_named", "n_submitted", "n_done", "n_dropped", "last_batch")] + \
-            [(n, ctypes.c_float) for n in ("crop_ms", "net_ms", "submit_us", "names_us", "save_ms")]
-        st = type("_St", (ctypes.Structure,), {"_fields_": f})()
-        L.sgrt_get_clip_stats(ctypes.c_void_p(self.h), ctypes.byref(st))
-        return {n: (round(getattr(st, n), 3) if t is ctypes.c_float else getattr(st, n)) for n, t in f}
-
-    def clip_report(self, queries=("radio", "라디오", "chair", "의자", "sofa", "소파")):
-        """SGRT_CLIP: per-object names (en/ko) and label-table queries through the C ABI (sgrt.h, clip section)."""
-        L = self.L
-        if not hasattr(L, "sgrt_clip_enabled") or not L.sgrt_clip_enabled(ctypes.c_void_p(self.h)):
-            return None
-
-        class _St(ctypes.Structure):
-            _fields_ = [(n, ctypes.c_int32) for n in ("enabled", "n_objects", "n_named", "n_submitted", "n_done", "n_dropped", "last_batch")] + \
-                       [(n, ctypes.c_float) for n in ("crop_ms", "net_ms", "submit_us", "names_us", "save_ms")]
-
-        class _Nm(ctypes.Structure):
-            _fields_ = [("en", ctypes.c_char_p), ("ko", ctypes.c_char_p), ("score", ctypes.c_float)]
-        L.sgrt_get_clip_stats.argtypes = [ctypes.c_void_p, ctypes.POINTER(_St)]
-        L.sgrt_object_names.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(_Nm), ctypes.c_int32,
-                                        ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_int32)]
-        L.sgrt_query_label.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int32, ctypes.POINTER(ctypes.c_uint32),
-                                       ctypes.POINTER(ctypes.c_float)]
-        L.sgrt_save(self.h)   # names come from the save (label lookup + cache)
-        st = _St()
-        L.sgrt_get_clip_stats(self.h, ctypes.byref(st))
-        out = {"stats": {n: getattr(st, n) for n, _ in _St._fields_}, "objects": {}, "queries": {}}
-        for oid in range(1, 400):
-            nm = (_Nm * 3)()
-            le, lk, sv = ctypes.c_char_p(), ctypes.c_char_p(), ctypes.c_int32()
-            n = L.sgrt_object_names(self.h, oid, nm, 3, ctypes.byref(le), ctypes.byref(lk), ctypes.byref(sv))
-            if n > 0:
-                out["objects"][oid] = (le.value.decode(), lk.value.decode(), round(nm[0].score, 3), [x.en.decode() for x in nm[:n]], bool(sv.value))
-        for q in queries:
-            ids, sc = (ctypes.c_uint32 * 5)(), (ctypes.c_float * 5)()
-            n = L.sgrt_query_label(self.h, q.encode(), 5, ids, sc)
-            out["queries"][q] = [(ids[i], round(sc[i], 3)) for i in range(max(n, 0))] if n >= 0 else n
-        print(f"[sgrt] clip: {out}", flush=True)
-        return out
-
     def close(self):
         if self.h:
-            try:
-                self.clip_report()
-            except Exception as e:  # report only
-                print(f"[sgrt] clip report failed: {e}", flush=True)
             print(f"[sgrt] pose diag (SLAM vs GT): {self.pose_diag()}", flush=True)
             for k, v in self.timing().items():
                 print(f"[sgrt] timing {k}: " + " ".join(f"{a}={b:.1f}" if isinstance(b, float) else f"{a}={b}" for a, b in v.items()),

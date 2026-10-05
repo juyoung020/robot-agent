@@ -377,7 +377,7 @@ memory/
 | 엔진 | `clip/tools/build_engine.py` | FP16 + 이름에 `norm`·`mlp/act` 든 층 FP32 고정, 배치 칸 1·2·4·8 프로필, INT8 PTQ 선택. 엔진·ONNX 는 `models/ovdet/x86_sm120/siglip2_b32/`(git 밖) |
 | 실행 | `clip/src/{crop.cu,encoder.cpp}` | CUDA 커널 하나(정사각 상자 + 10 % 둘레, 원본 RGB 양선형 256², 정규화 FP16, 8 × 8 마스크 비율), TensorRT 자기 스트림, 칸 2개 비동기 고리, 배치 칸별 CUDA graph, 결과 자리 풀. TRT 8.2 / 10 분기 |
 | 라벨 찾기 | `clip/src/labels.cpp` | 표 = training/embed `labels/objects-v1`(30,533 줄, 영·한, WordNet 상위어, 구조물, main/tail). IVF 256 + 128-d FP16 1단계(+ 선택 128-bit 해밍) + 768-d 다시 매김, AVX2 / NEON / 일반 |
-| 기억 폴더 | `clip/src/memstore.*`, `runtime/src/sgrt_clip.*` | `objects/O<id>_emb.f16`, `cache/names.json`, `cache/index/`, scene.json 노드 `emb`·`names`(sm_set_object_meta). 다시 만드는 조건 = 3.5 |
+| 기억 폴더 | `clip/src/memstore.*` | `objects/O<id>_emb.f16`, `cache/names.json`, `cache/index/`, scene.json 노드 `emb`·`names`(sm_set_object_meta). 다시 만드는 조건 = 3.5 |
 | 글 쪽 | `clip/tools/text_query.py` | SigLIP 2 글 탑(로봇 밖, CPU): 글 → 768-d, 기억 폴더 찾기, HTTP `/encode`·`/search` |
 | 시험 | `ctest`(clip 4 개) | 커널 = CPU 기준, 엔진 = PyTorch FP32, 찾기 = 전부 훑기, 캐시 규칙 |
 
@@ -471,7 +471,7 @@ Nano 는 같은 ONNX 로 `--profiles 1,8`(메모리) + FP16.
    gcc 7 은 C++17 `<filesystem>` 에 `-lstdc++fs` 가 필요할 수 있다. nlohmann json 헤더(3.x)가 필요하다.
 3. 라벨 색인은 PC 에서 만들어 옮겨도 된다(같은 리틀 엔디언). 투영 표본 파일(`img_sample_lvis10k.f16`, 15 MB)도 같이.
 4. Nano 실측으로 4절·8.4 의 추정을 바꾼다. FastSAM 과 같은 문맥에서 메모리(엔진 + 활성 0.2–0.3 GB 추정).
-5. 한국어 학생(training/embed)이 나오면 `sgrt_query_embedding` 에 그 768-d 를 넣는다.
+5. 한국어 학생(training/embed)이 나오면 그 768-d 로 물체 벡터와 비교한다.
 
 ## 출처
 

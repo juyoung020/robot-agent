@@ -23,7 +23,6 @@
 #include "scenemap.h"
 #include "scenemap/bestview.hpp"
 #include "scenemap/timing.hpp"
-#include "sgrt_clip.hpp"
 #ifdef SGRT_HAVE_CARTO
 #include "slam_carto.h"
 #endif
@@ -117,9 +116,7 @@ struct sgrt {
   // SGRT_STREAM_HZ(기본 60, 0.5–240 으로 자름)로 만든다 — 스텝 스레드는 아무것도 기다리지 않는다. 파일 저장(위 saver)과 별개.
   std::thread viewer;
   std::atomic<bool> view_quit{false};
-  sgrt_clip::ClipMem clip;          // 물체 영상 임베딩 캐시(SGRT_CLIP — objprob 판에서는 init 하지 않아 꺼져 있음; 물체 벡터는 scenemap 이 μ 로 저장)
   ObjprobFront op;                  // objprob 앞단
-  std::vector<std::string> name_buf;  // sgrt_object_names 문자열
 };
 
 namespace {
@@ -514,7 +511,6 @@ int sgrt_begin(sgrt* s, const char* const* prompt, int32_t n, char* err, size_t 
   // 이름은 SigLIP 2 낱말 표(과제 이름을 더함), 검출 엔진은 'object' 하나
   sm_reset(s->sm);
   cartoReset(s);
-  s->clip.reset();
   if (objprobBegin(s, prompt, n, err, err_len) != 0) return -1;
   s->step = 0;
   s->prev_stamp = -1;
@@ -605,7 +601,6 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
     rc = d ? sm_push_image_rgb(s->sm, &si, d, &src) : sm_push_image(s->sm, &si, nullptr);
     if (d) objprobReenc(s, im_stamp, rgb, rgb_on_device, row_stride, pix_stride, w, h, d);
     s->kf_ms = float(msSince(t1));
-    if (d) s->clip.keyframe(im_stamp, rgb, rgb_on_device, row_stride, pix_stride, w, h, d, s->sm);   // 새·좋아진 물체만, 비동기
     s->n_kf++;
     s->n_det = d ? d->n : 0;
   }
@@ -621,7 +616,6 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
     si.fx = fx; si.fy = fy; si.cx = cx; si.cy = cy;
     rc = sm_push_image(s->sm, &si, nullptr);
   }
-  s->clip.poll();
   s->step++;
   if (stamp - s->last_save >= s->cfg.save_s) {
     s->last_save = stamp;
@@ -642,7 +636,6 @@ int sgrt_save(sgrt* s) {
   if (!s) return -1;
   const auto t0 = std::chrono::steady_clock::now();
   sm_save_stats st{};
-  s->clip.save(s->out_dir, s->sm);   // emb·이름 캐시 → sm_set_object_meta(아래 scene.json 에 들어감)
   const int rc = sm_save_dsg_ex(s->sm, s->out_dir.c_str(), &st);   // 바뀐 best view 만 PNG 로
   s->save_ms = float(msSince(t0));
   s->n_png = st.n_png;
@@ -832,45 +825,5 @@ int sgrt_reset_stage_timing(sgrt* s) {
 
 extern "C" {
 
-int sgrt_clip_enabled(const sgrt* s) { return s && s->clip.on() ? 1 : 0; }
-
-int sgrt_objprob_enabled(const sgrt* s) { return s ? 1 : 0; }
-
-int sgrt_object_embedding(sgrt* s, uint32_t id, float* out) { return s ? s->clip.embedding(id, out) : -1; }
-
-int sgrt_query_embedding(sgrt* s, const float* q, int32_t k, uint32_t* ids, float* scores) {
-  return s ? s->clip.query(q, k, ids, scores, s->sm) : -1;
-}
-
-int sgrt_query_label(sgrt* s, const char* text, int32_t k, uint32_t* ids, float* scores) {
-  return s ? s->clip.queryText(text, k, ids, scores, s->sm) : -1;
-}
-
-int sgrt_object_names(sgrt* s, uint32_t id, sgrt_name* out, int32_t cap, const char** level_en, const char** level_ko, int32_t* structural) {
-  if (!s) return -1;
-  std::vector<std::pair<std::string, std::string>> nk;
-  std::vector<float> sc;
-  std::string lv, lk;
-  int st = 0;
-  if (!s->clip.names(id, &nk, &sc, &lv, &lk, &st)) return 0;
-  s->name_buf.clear();
-  for (auto& [e, k] : nk) s->name_buf.push_back(e), s->name_buf.push_back(k);
-  s->name_buf.push_back(lv);
-  s->name_buf.push_back(lk);
-  const int n = std::min<int>(cap, int(nk.size()));
-  for (int i = 0; i < n && out; ++i) out[i] = sgrt_name{s->name_buf[2 * i].c_str(), s->name_buf[2 * i + 1].c_str(), sc[i]};
-  if (level_en) *level_en = s->name_buf[s->name_buf.size() - 2].c_str();
-  if (level_ko) *level_ko = s->name_buf.back().c_str();
-  if (structural) *structural = st;
-  return n;
-}
-
-int sgrt_get_clip_stats(const sgrt* s, sgrt_clip_stats* o) {
-  if (!s || !o) return -1;
-  const sgrt_clip::Stats t = s->clip.stats();
-  *o = sgrt_clip_stats{s->clip.on() ? 1 : 0, t.n_objects, t.n_named, t.n_submitted, t.n_done, t.n_dropped, t.last_batch,
-                       t.crop_ms, t.net_ms, t.submit_us, t.names_us, t.save_ms};
-  return 0;
-}
 
 }  // extern "C"

@@ -201,7 +201,7 @@
 | 1 URDF 합치기 | 완료 | `src/robot/map_vla_description` — `72a9f7a`, `4536d88`, `0c4b83d` | — | robot |
 | 1 캘리브레이션, 좌표 연결 확인, 팔 ROS 2, ros2 bag, 토픽 정리 | 안 함 | `scripts/` README 만 | 리모 받은 뒤 | robot |
 | 1 TF 트리 | 일부 | `docs/map_vla/tf_tree.pdf`, URDF. 실기 `map→odom` 없음 | — | robot |
-| 2 물체 인식 ObjectSAM + SigLIP 2 + objprob | 완료(PC) | SigLIP 2 붙음(`sgrt_clip`, 서브모듈 `61eb0a2`, `976e217`, `8c1a7d6`). 10-05 기본 검출 = ObjectSAM(YOLO26n 학생, `training/fastsam` `6b481de`) + objprob — libsgrt·realbag_run 기본(behavior-2026 `26cbdc4`, 올림 `ac1b671`). YOLOE 는 보관 | 이름 정답률·R@1 재측정, Jetson 기기 위 시간 | map |
+| 2 물체 인식 ObjectSAM + SigLIP 2 + objprob | 완료(PC) | SigLIP 2 붙음(objprob, 서브모듈 `61eb0a2`, `976e217`, `8c1a7d6`). 10-05 기본 검출 = ObjectSAM(YOLO26n 학생, `training/fastsam` `6b481de`) + objprob — libsgrt·realbag_run 기본(behavior-2026 `26cbdc4`, 올림 `ac1b671`). YOLOE 는 보관 | 이름 정답률·R@1 재측정, Jetson 기기 위 시간 | map |
 | 2 xyz·DA·지도 갱신·벡터 찾기·Spark-DSG 저장 | 완료 | scenemap `objmap.cpp`, `da/`, `sgrt_query_*`, `dsg_save.cpp`, sgview `c4548fe` | known_bugs 7·10·11 | map |
 | 2 방 나누기·이름(제로샷) | 일부 | 규칙표만, 제로샷 없음 | — | map |
 | 3 Qwen API | 완료 | planner `llm.rs` | — | robot |
@@ -258,7 +258,6 @@
 | `src/robot` limo 라이선스 TODO | 결정 필요 | upstream `package.xml` | 사용자: 재배포 여부 | robot |
 | model_selection DA 생김새 코사인 | 결정 필요 | `da/` 에 임베딩 비교 없음 | — | map |
 | clip_candidates 8.6 Nano TRT 측정 | 안 함 | — | 실기 | robot |
-| clip_candidates 8.6-5 한국어 학생 → `sgrt_query_embedding` | 일부 | API 있음(`sgrt.h:155`), 연결 안 됨 | 연결 | map |
 | model_selection 앱 WS·VPN | 결정 필요 | — | — | robot |
 
 ---

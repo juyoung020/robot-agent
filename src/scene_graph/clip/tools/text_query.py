@@ -3,7 +3,7 @@ same space as the robot's object embeddings (memory/objects/O<id>_emb.f16).
 
     # one shot: top-k objects of a memory folder for each query (JSON on stdout)
     python text_query.py --mem MEMORY_DIR "radio" "라디오" "흰 의자"
-    # encode only: raw 768 x FP32 little-endian per query to OUT (for sgrt_query_embedding)
+    # encode only: raw 768 x FP32 little-endian per query to OUT
     python text_query.py --encode OUT.f32 "white chair"
     # server: model stays loaded. GET /encode?q=...  -> {"q", "vec": [768]}
     #                             GET /search?mem=DIR&q=...&k=5 -> {"q", "hits": [{"id", "score", "name", "name_ko"}]}

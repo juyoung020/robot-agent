@@ -50,8 +50,6 @@ class SmInsp(ctypes.Structure):
     _fields_ = [("id", ctypes.c_uint32), ("closest_view_m", ctypes.c_float), ("n_views", ctypes.c_int32), ("top_seen", ctypes.c_float)]
 
 
-class SgName(ctypes.Structure):
-    _fields_ = [("en", ctypes.c_char_p), ("ko", ctypes.c_char_p), ("score", ctypes.c_float)]
 
 
 def bind(L):
@@ -64,8 +62,6 @@ def bind(L):
     L.sm_snap_pose.argtypes = [ctypes.c_void_p]
     L.sm_snap_inspect.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.POINTER(SmInsp))]
     L.sm_last_assoc.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.c_int32]
-    L.sgrt_object_names.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(SgName), ctypes.c_int32, ctypes.POINTER(ctypes.c_char_p),
-                                    ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_int32)]
 
 
 def snapshot(perc):
@@ -93,16 +89,6 @@ def snapshot(perc):
         return (pose.x, pose.y, pose.yaw), objs
     finally:
         L.sm_snapshot_release(sp)
-
-
-def names_of(perc, oid, cap=5):
-    out = (SgName * cap)()
-    le, lk, st = ctypes.c_char_p(), ctypes.c_char_p(), ctypes.c_int32()
-    try:
-        n = perc.L.sgrt_object_names(perc.H, oid, out, cap, ctypes.byref(le), ctypes.byref(lk), ctypes.byref(st))
-    except Exception:
-        return []
-    return [((out[k].en or b"").decode(errors="replace"), round(float(out[k].score), 4)) for k in range(max(0, min(n, cap)))]
 
 
 def w2m(p, rw, rm):
@@ -243,7 +229,7 @@ for (scene, task), paths in groups.items():
                         best = (dxy, o)
                 if best:
                     o = best[1]
-                    tgt = dict(o, err=[round(o["pos"][q] - pm[q], 4) for q in range(3)], names=names_of(perc, o["id"]))
+                    tgt = dict(o, err=[round(o["pos"][q] - pm[q], 4) for q in range(3)], names=[(o["name"], o["score"])] if o["name"] else [])
             rec = dict(t=r["t"], si=si, px=npx, px_in=nin, bb=bb, dist=round(dist, 3), n_obj=len(objs), n_det=max(0, nd), assoc=assoc, tgt=tgt, gpu_cause=r.get("cause"), gpu_conf=r.get("task_conf"))
             if not shots or npx:
                 shots.append((npx, si, out.rgb))

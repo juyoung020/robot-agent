@@ -45,7 +45,7 @@ $TRT_PY tools/build_engine.py models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_tex
     models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_text_fp16.plan --pin 'ln_,mlp/gelu,reducel2,^/div$'
 # 2) C++ (CUDA 12.8, libpng) — 시험 6개
 cmake -S src/scene_graph/clip -B build/sgclip && cmake --build build/sgclip -j && ctest --test-dir build/sgclip
-# 3) sgrt 에 같이 들어감(runtime/CMakeLists.txt add_subdirectory). 켜기: SGRT_CLIP=1(기본 엔진 경로) 또는 plan 경로
+# 3) sgrt 에 같이 들어감(runtime/CMakeLists.txt add_subdirectory) — objprob 이 마스크마다 SigLIP 2 이름·임베딩
 ```
 
 - 라벨 표: `SGRT_LABELS`(기본 `data/embed_work/labels/objects-v1`, training/embed `export_labels.py` 가 만든다).

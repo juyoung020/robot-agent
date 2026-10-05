@@ -48,4 +48,3 @@ git grep -n -E "/mnt/c/behavior-2026|wsl\.exe" -- 'src/*' 'tools/*' ':!*.md' ':!
 | O2 | `objmap.cpp` 조각 합치기(접촉 판정) + `capi.cpp` `robotParams` `body_r` 0.22 | 몸 반경 안의 구름 점을 빼서 조각끼리 닿음 판정이 안 섬 | 리모 바로 앞(약 0.2 m 안) 작은 물체(컵 4 cm)가 윗면·옆면 두 조각으로 남음 — **집기에 직접 영향** | 먼저 원인 확인: 몸 빼기를 접촉 판정 뒤로 미루거나 손목 카메라 점은 빼지 않기 |
 | O3 | `objmap.cpp` `update` 맨 앞 `apMergePass` | 같은 영상에서 새로 생긴 조각은 다음 keyframe 에서야 합쳐짐 | 한 keyframe 동안 같은 물체가 둘로 보임(짧음) | 큰 문제 아니면 둠 |
 | O4 | (시험 `test_objmem` boxes, 원인 모름) | 높은 위치(영상 행 280..400)의 넓은 소파는 물체가 생겨도 스냅숏에 안 나옴(행 350..440 이면 나옴) | 높이 있는 넓은 가구가 그래프에서 빠질 수 있음 | 원인 찾기 |
-| O5 | `src/scene_graph/runtime/src/sgrt.cpp` `ClipMem`(`SGRT_CLIP`) | objprob 판에서 초기화되지 않음 — 죽은 코드 | 없음 | 잔재 정리 때 archive |

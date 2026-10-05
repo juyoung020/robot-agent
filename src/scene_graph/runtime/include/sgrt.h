@@ -158,31 +158,6 @@ typedef struct {
 int    sgrt_get_stage_timing(const sgrt*, sgrt_stage_timing* out, int32_t cap);
 int    sgrt_reset_stage_timing(sgrt*);
 
-/* ---- 물체 영상 임베딩·이름(추가 ABI, src/scene_graph/clip · docs/clip_candidates.md 3.5) ----
- * 환경 변수 SGRT_CLIP = SigLIP 2 엔진 plan(또는 1 = models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan)이면 켜짐.
- * keyframe 마다 새 물체·best view 가 좋아진 물체(최대 8 개)를 원본 RGB 에서 잘라 비동기로 임베딩(768-d, L2). 저장 때
- * objects/O<id>_emb.f16(원본), cache/names.json(라벨 표 SGRT_LABELS 로 뽑은 이름 캐시), scene.json 노드 metadata.emb·names.
- * 질의 벡터는 같은 SigLIP 2 글 공간 768-d(글 인코더는 로봇 밖 tools/text_query.py, 나중에 작은 한국어 학생) — 여기서는 벡터만 받는다. */
-int    sgrt_clip_enabled(const sgrt*);
-/* 물체 id 의 임베딩(768 FP32, L2). 1 = 있음, 0 = 아직 없음 */
-int    sgrt_object_embedding(sgrt*, uint32_t id, float* out768);
-/* 질의 벡터(768, L2) ↔ 살아 있는 물체(스냅숏에 있는 것 전부, 큰 가구 포함) 코사인 상위 k. 개수 */
-int    sgrt_query_embedding(sgrt*, const float* q768, int32_t k, uint32_t* ids, float* scores);
-/* 질의 글이 라벨 표의 영어·한국어 이름과 정확히 같으면 그 미리 계산한 글 임베딩으로 찾기("radio", "라디오").
- * 개수, -2 = 표에 없는 글(→ 글 인코더로 벡터를 만들어 sgrt_query_embedding), -3 = 라벨 표 아직 없음 */
-int    sgrt_query_label(sgrt*, const char* text, int32_t k, uint32_t* ids, float* scores);
-typedef struct { const char* en; const char* ko; float score; } sgrt_name;
-/* 물체 → 이름 상위 cap 개(점수 순) + 확신 맞춘 이름(level, 상위어일 수 있음). 문자열은 다음 sgrt_object_names 까지.
- * 개수, 0 = 아직 이름 없음(임베딩 전·라벨 표 없음) */
-int    sgrt_object_names(sgrt*, uint32_t id, sgrt_name* out, int32_t cap, const char** level_en, const char** level_ko, int32_t* structural);
-typedef struct {
-  int32_t enabled, n_objects, n_named, n_submitted, n_done, n_dropped, last_batch;
-  float crop_ms, net_ms;      /* 마지막 묶음 GPU 시간 */
-  float submit_us;            /* 마지막 제출 CPU(자르기 커널 끝까지 기다림 포함) */
-  float names_us;             /* 물체 하나 이름 뽑기(라벨 찾기 + 상위어) */
-  float save_ms;              /* 저장 때 emb·이름 캐시 쓰기 */
-} sgrt_clip_stats;
-int    sgrt_get_clip_stats(const sgrt*, sgrt_clip_stats* out);
 
 /* ---- objprob 앞단(확률 물체 모델 — scenemap README "scenemap 확률 모드", tools/realbag 과 같은 길) ----
  * 물체 지도의 유일한 규칙 — 늘 켜짐(끄는 스위치 없음).
@@ -190,7 +165,7 @@ int    sgrt_get_clip_stats(const sgrt*, sgrt_clip_stats* out);
  * scenemap 확률 모드(vMF 벡터·이름 사후·이름 없는 같은 것 판정·칼만 위치·랜색 평면 구조물 거르기·문창 크기·벽 높이), 통째 다시 담기.
  * 매개변수 SGRT_OBJPROB_PARAMS = 파일 | none(내장), 없으면 tools/realbag/objprob_params/<엔진 줄기>.json. 과제 이름은 낱말 표에 더함.
  * SGRT_INSPECT=1 = 살펴본 정도(sm_set_inspect, scenemap README "살펴본 정도").
- * SGRT_CLIP(ClipMem)은 안 켬 — 물체 벡터 objects/O<id>_emb.f16(μ)·_views.f16 은 scenemap 이 씀(sgsearch·search_objects 가 읽음). */
+ * 물체 벡터 objects/O<id>_emb.f16(μ)·_views.f16 은 scenemap 이 씀(sgsearch·search_objects 가 읽음). */
 int    sgrt_objprob_enabled(const sgrt*);
 
 #ifdef __cplusplus
