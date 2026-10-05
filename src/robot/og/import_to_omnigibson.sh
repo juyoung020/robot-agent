@@ -4,7 +4,8 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 W=${W:-/tmp/limo_omx_import}; mkdir -p "$W"
-BH1K=${BEHAVIOR_1K:-$HERE/../../behavior-2026/BEHAVIOR-1K}   # 서브모듈 안(없으면 BEHAVIOR_1K=...)
+. "$HERE/../../../config/paths.env"
+BH1K=${BEHAVIOR_1K:-$B1K_ROOT}
 URDF_IN=${1:-$("$HERE/../tools/build_urdf.sh" "$W/map_vla.urdf")}   # 인자로 URDF 를 주면 그것
 sed -e "s#<mimic[^>]*/>##g" -e "s#file://##g" -e "s#\(limo_[a-z]*\)\.dae\" scale=\"1 1 1\"#\1.stl\" scale=\"0.001 0.001 0.001\"#" -e "s#\(limo_[a-z]*\)\.dae\"/>#\1.stl\" scale=\"0.001 0.001 0.001\"/>#" "$URDF_IN" > "$W/limo_omx_source.urdf"
 # STL 은 mm 이고 URDF 의 scale="0.001" 은 시각 메시에만 먹어 충돌 메시가 1000 배(321 m)로 만들어졌다(로봇이 공중에 뜨고 벽 판정이 틀어짐)
