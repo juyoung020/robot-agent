@@ -34,6 +34,10 @@
 #include "rasc.h"       // BEHAVIOR 장면 RASC v3 로더(training/RL/tools/b1kconv/cpp, 읽기만)
 #include "rec_util.h"   // jpeg::encode, Obj, jnum, mkdirs (training/viewer/tools/record_replay)
 #include "scenemap.h"
+#include "ra_paths.h"
+#include "sg_capture.h"   // Capture(스트림 받기)·sg_drain — record_replay 와 같이 씀
+#include "sgrec.hpp"
+#include "sgrt.h"
 
 using namespace rec;
 
@@ -132,70 +136,8 @@ static std::string underlay_json(const std::string& path, const std::string& tas
       .raw("task_objects", tobjs + "]").str("task", task_name).done();
 }
 
-// ---- 기록 한 줄씩 읽기(sgrec.hpp 와 같은 형식, 전부 메모리에 올리지 않음 — 2 GB 기록) ----
-struct Rec {
-  char tag = 0;
-  double stamp = 0;
-  std::vector<float> f;
-  double g[3]{};
-  int w = 0, h = 0;
-  double K[4]{};
-  std::vector<uint8_t> rgba;
-  int n = 0, img_w = 0, img_h = 0, mask_w = 0, mask_h = 0;
-  float msx = 0, msy = 0, mox = 0, moy = 0;
-  std::vector<int32_t> cls;
-  std::vector<float> score, box;
-  std::vector<uint32_t> bits;
-  std::vector<float> scan;   // 'L'
-  double scan_h[5]{};
-};
-template <class T> static bool rd(FILE* f, T* v) { return std::fread(v, sizeof(T), 1, f) == 1; }
-static bool next(FILE* f, Rec& r) {
-  const int t = std::fgetc(f);
-  if (t == EOF) return false;
-  r.tag = char(t);
-  if (!rd(f, &r.stamp)) return false;
-  if (t == 'P') {
-    int32_t n;
-    if (!rd(f, &n)) return false;
-    r.f.resize(n);
-    return std::fread(r.f.data(), 4, n, f) == size_t(n);
-  }
-  if (t == 'G') return std::fread(r.g, 8, 3, f) == 3;
-  if (t == 'L') {   // 2D 라이다 스캔: i32 n, f64 angle_min, angle_inc, time_inc, range_min, range_max, f32[n]
-    int32_t n;
-    if (!rd(f, &n) || std::fread(r.scan_h, 8, 5, f) != 5) return false;
-    r.scan.resize(n);
-    return std::fread(r.scan.data(), 4, n, f) == size_t(n);
-  }
-  if (t != 'I') return false;
-  int32_t w, h;
-  if (!rd(f, &w) || !rd(f, &h) || std::fread(r.K, 8, 4, f) != 4) return false;
-  r.w = w; r.h = h;
-  r.f.resize(size_t(w) * h);
-  if (std::fread(r.f.data(), 4, r.f.size(), f) != r.f.size()) return false;
-  r.rgba.clear();
-  if (std::fgetc(f) == 1) {
-    std::vector<uint8_t> rgb(size_t(w) * h * 3);
-    if (std::fread(rgb.data(), 1, rgb.size(), f) != rgb.size()) return false;
-    r.rgba.resize(size_t(w) * h * 4);
-    for (size_t i = 0; i < size_t(w) * h; ++i) { r.rgba[4 * i] = rgb[3 * i]; r.rgba[4 * i + 1] = rgb[3 * i + 1]; r.rgba[4 * i + 2] = rgb[3 * i + 2]; r.rgba[4 * i + 3] = 255; }
-  }
-  int32_t n, iw, ih, mw, mh;
-  if (!rd(f, &n) || !rd(f, &iw) || !rd(f, &ih) || !rd(f, &mw) || !rd(f, &mh) || !rd(f, &r.msx) || !rd(f, &r.msy) || !rd(f, &r.mox) || !rd(f, &r.moy)) return false;
-  r.n = n; r.img_w = iw; r.img_h = ih; r.mask_w = mw; r.mask_h = mh;
-  r.cls.resize(n); r.score.resize(n); r.box.resize(4 * size_t(n));
-  const size_t words = (size_t(mw) * mh + 31) / 32;
-  r.bits.resize(words * n);
-  if (n && (std::fread(r.cls.data(), 4, n, f) != size_t(n) || std::fread(r.score.data(), 4, n, f) != size_t(n) || std::fread(r.box.data(), 4, r.box.size(), f) != r.box.size() ||
-            std::fread(r.bits.data(), 4, r.bits.size(), f) != r.bits.size()))
-    return false;
-  return true;
-}
-
-#include "sgrt.h"
-#include "ra_paths.h"
-#include "sg_capture.h"   // Capture(스트림 받기)·sg_drain — record_replay 와 같이 씀
+// 기록은 한 줄씩 읽는다(sgrec::Reader — 판마다 수 GB, scenemap/tools/sgrec.hpp 하나)
+using sgrec::Rec;
 
 
 // 배치만(--layout): 시뮬 기록 없이 BEHAVIOR 장면 하나를 sgview 판으로 — 다닐 곳 격자를 점유 지도로, 방을 방 노드로, 로봇은 과제 인스턴스 시작 자세.
@@ -302,10 +244,8 @@ int main(int argc, char** argv) {
   if (out.empty() && !run_out.empty()) out = run_out + "/replays/ep_000000_explore.sg";
   if (recp.empty() || run.empty() || out.empty()) { std::fprintf(stderr, "usage: og2sg --rec rec.bin --run OG_RUN_DIR --out EP.sg [--robot limo_omx]\n"); return 2; }
   mkdirs(out + "/cam");
-  FILE* rf = std::fopen(recp.c_str(), "rb");
-  char magic[4];
-  uint32_t ver = 0;
-  if (!rf || std::fread(magic, 1, 4, rf) != 4 || std::memcmp(magic, "SGRC", 4) || !rd(rf, &ver) || ver != 1) { std::fprintf(stderr, "not an SGRC v1 record: %s\n", recp.c_str()); return 1; }
+  sgrec::Reader reader;
+  if (!reader.open(recp.c_str())) { std::fprintf(stderr, "not an SGRC v1 record: %s\n", recp.c_str()); return 1; }
 
   Capture cap;
   if (!cap.start(out + "/stream.sgs")) { std::perror("capture"); return 1; }
@@ -364,14 +304,14 @@ int main(int argc, char** argv) {
     have_pend = false;
   };
   auto flush = [&]() { if (have_pend) step(nullptr); };
-  while (next(rf, r)) {
+  while (reader.next(&r)) {
     if (r.tag == 'G') {
       flush();
       sgrt_push_pose(sg, r.stamp, r.g[0], r.g[1], r.g[2]);   // 정답 자세: 떠밀림 진단용(SGRT_POSE=gt 일 때만 지도 자세)
       gt.push_back({r.stamp, r.g[0], r.g[1], r.g[2]});
     } else if (r.tag == 'L') {
       flush();
-      sgrt_push_scan(sg, r.stamp, int(r.scan.size()), r.scan.data(), r.scan_h[0], r.scan_h[1], r.scan_h[2], r.scan_h[3], r.scan_h[4]);
+      sgrt_push_scan(sg, r.stamp, int(r.f.size()), r.f.data(), r.scan[0], r.scan[1], r.scan[2], r.scan[3], r.scan[4]);
     } else if (r.tag == 'P') {
       flush();
       if (max_frames > 0 && steps >= max_frames) break;
@@ -402,7 +342,6 @@ int main(int argc, char** argv) {
     }
   }
   flush();
-  std::fclose(rf);
   sm_stream_view(c);
   drain();
   // 메모리 폴더(sgview 가 /file/ 로 읽는 물체 조각·점구름)

@@ -49,6 +49,7 @@ add_test(NAME crop COMMAND test_crop)
 # 실제 엔진·프레임으로 sgrt 끝까지(검출 → best view·구름 → 저장)
 add_executable(sgrt_frames tools/sgrt_frames.cpp)
 target_link_libraries(sgrt_frames sgrt CUDA::cudart_static)
+target_include_directories(sgrt_frames PRIVATE ../scenemap/include)
 
 # sgrt 기록(SGRT_RECORD)을 libsgrt(dlopen — 두 빌드를 같은 입력으로 비교 가능)로 다시 굴리기: 검출 → 지도 → 저장
 add_executable(sgrt_replay tools/sgrt_replay.cpp)

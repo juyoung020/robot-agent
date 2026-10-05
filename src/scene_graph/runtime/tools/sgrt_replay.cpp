@@ -55,8 +55,8 @@ int main(int argc, char** argv) {
   auto stats = sym<void (*)(const sgrt*, int32_t*, int32_t*, int32_t*, float*, float*)>(h, "sgrt_stats");
   auto push_scan = sym<int (*)(sgrt*, double, int32_t, const float*, double, double, double, double, double)>(h, "sgrt_push_scan");
 
-  std::vector<sgrec::Rec> recs;
-  if (!sgrec::load(argv[3], &recs, frames)) { std::fprintf(stderr, "cannot read %s\n", argv[3]); return 1; }
+  sgrec::Reader reader;
+  if (!reader.open(argv[3])) { std::fprintf(stderr, "cannot read %s\n", argv[3]); return 1; }
   const std::string engine = argv[2], names = engine + ".names.txt";
   sgrt_config cfg{engine.c_str(), names.c_str(), argv[4], kf, 1.0, 0.25f};
   char err[512] = {0};
@@ -66,7 +66,9 @@ int main(int argc, char** argv) {
 
   FILE* tf = traj.empty() ? nullptr : std::fopen(traj.c_str(), "w");
   if (tf) std::fprintf(tf, "stamp,map_x,map_y,map_yaw,diag_n,err_xy,err_yaw,ref_x,ref_y,ref_yaw\n");
-  const sgrec::Rec* pend = nullptr;
+  sgrec::Rec pend, r;   // 기다리는 'P'(다음이 같은 시각 'I' 면 영상과 함께)
+  bool have = false;
+  int n_p = 0;
   size_t n_step = 0, n_img = 0;
   auto run = [&](const sgrec::Rec* p, const sgrec::Rec* im) {
     if (!im) {
@@ -87,24 +89,26 @@ int main(int argc, char** argv) {
     }
     ++n_step;
   };
-  for (const auto& r : recs) {
+  while (reader.next(&r)) {
     if (r.tag == 'P') {
-      if (pend) run(pend, nullptr);
-      pend = &r;
+      if (have) run(&pend, nullptr);
+      if (frames > 0 && n_p++ >= frames) { have = false; break; }
+      std::swap(pend, r);
+      have = true;
     } else if (r.tag == 'I') {
-      if (pend && pend->stamp == r.stamp) run(pend, &r);
-      pend = nullptr;
+      if (have && pend.stamp == r.stamp) run(&pend, &r);
+      have = false;
     } else if (r.tag == 'G') {
-      if (pend) run(pend, nullptr);
-      pend = nullptr;
+      if (have) run(&pend, nullptr);
+      have = false;
       push_pose(s, r.stamp, r.g[0], r.g[1], r.g[2]);
     } else if (r.tag == 'L') {   // 스캔은 스텝 사이에 온다 — 기다리는 스텝을 먼저 끝냄(기록 순서 그대로)
-      if (pend) run(pend, nullptr);
-      pend = nullptr;
+      if (have) run(&pend, nullptr);
+      have = false;
       push_scan(s, r.stamp, int32_t(r.f.size()), r.f.data(), r.scan[0], r.scan[1], r.scan[2], r.scan[3], r.scan[4]);
     }
   }
-  if (pend) run(pend, nullptr);
+  if (have) run(&pend, nullptr);
   if (tf) std::fclose(tf);
   save(s);
   sgrt_pose_diag d{};
