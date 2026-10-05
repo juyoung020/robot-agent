@@ -382,13 +382,13 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
     delete s;
     return nullptr;
   }
-  // 로봇 고르기: SGRT_SM_CONFIG(sm_create config_json 그대로) > SGRT_ROBOT(limo_omx | r1pro) > 없음(LIMO + OMX-F, sm_create(NULL))
+  // 로봇 고르기: SGRT_SM_CONFIG(sm_create config_json 그대로) > SGRT_ROBOT(limo_omx) > 없음(LIMO + OMX-F, sm_create(NULL))
   std::string smj;
   if (const char* sj = std::getenv("SGRT_SM_CONFIG"); sj && *sj) smj = sj;
   else if (const char* rb = std::getenv("SGRT_ROBOT"); rb && *rb) smj = std::string("{\"robot\": \"") + rb + "\"}";
   s->sm = sm_create(smj.empty() ? nullptr : smj.c_str());
   if (!s->sm) {
-    put(err, err_len, ("sgrt_create: sm_create rejected config " + smj + " (SGRT_ROBOT = limo_omx | r1pro)").c_str());
+    put(err, err_len, ("sgrt_create: sm_create rejected config " + smj + " (SGRT_ROBOT = limo_omx)").c_str());
     ovd_destroy(s->det);
     delete s;
     return nullptr;
@@ -399,9 +399,6 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
     delete s;
     return nullptr;
   }
-  if (sm_get_robot(s->sm) != SM_ROBOT_LIMO_OMX)
-    std::fprintf(stderr, "[sgrt] robot %d (0 r1pro = 옛 기록 전용, 1 limo_omx), proprio >= %d, config %s\n", sm_get_robot(s->sm),
-                 sm_proprio_dim(sm_get_robot(s->sm)), smj.c_str());
   {
     const char* pm = std::getenv("SGRT_POSE");
     const std::string m = pm && *pm ? pm : "carto";
@@ -783,10 +780,6 @@ int sgrt_set_pose_mode(sgrt* s, int32_t mode) {
   if (!s) return -1;
 #ifdef SGRT_HAVE_CARTO
   if (mode == SM_POSE_SLAM) mode = SM_POSE_EXT;   // 옛 값(slam2d, archive) = Cartographer
-  if (mode == SM_POSE_EXT && sm_get_robot(s->sm) != SM_ROBOT_LIMO_OMX) {
-    std::fprintf(stderr, "[sgrt] Cartographer needs LIMO wheel odometry (proprio 0-2) -> odom for this robot (R1 records)\n");
-    mode = SM_POSE_ODOM;
-  }
   if (mode == SM_POSE_EXT && !s->carto) {
     sc_config cc = sc_default_config();
     const char* cn = std::getenv("SGRT_CARTO_CONFIG");

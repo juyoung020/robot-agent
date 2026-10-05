@@ -81,7 +81,7 @@ export class SgPanel {
   setPip(k, on) { this.pipShow = this.pipShow || {}; this.pipShow[k] = on; this.updatePips(this.state ? this.state.t : 0); }
   updatePips(t) {
     const i = this.info || {}, host = this.$("rp_cams");
-    // 이름표는 판의 로봇에서(meta.robot) — LIMO 가 아닌 판(예: BEHAVIOR 사람 시연 r1pro)을 LIMO 로 적지 않게
+    // 이름표는 판의 로봇에서(meta.robot) — LIMO 가 아닌 판(옛 기록 등)을 LIMO 로 적지 않게
     const rob = i.robot || "limo_omx", isLimo = /limo/i.test(rob);
     const bodyT = isLimo ? "LIMO RGB" : `${rob} head RGB (not LIMO)`, wristT = isLimo ? "wrist RGB" : `${rob} wrist RGB (not LIMO)`;
     for (const [k, title, list] of [["body", bodyT, i.cams || []], ["wrist", wristT, i.wcams || []]]) {

@@ -267,8 +267,8 @@ fn furniture_rects_of(text: &str) -> Vec<f64> {
 }
 
 /// Which robot made the run, for the trajectory label: `robot_footprint.json` next to the memory dir (run dir) or inside it.
-/// An explicit `"robot"` field wins; older files only carry the simulator AABB, which tells the two bodies apart
-/// (R1 Pro ≈ 0.75 × 0.73 × 1.48 m, LIMO + OMX-F ≈ 0.35 × 0.36 × 0.38 m). Unknown → null (the page says "robot").
+/// An explicit `"robot"` field wins; older files only carry the simulator AABB (LIMO + OMX-F ≈ 0.35 × 0.36 × 0.38 m).
+/// Unknown → null (the page says "robot").
 fn robot_kind(st: &State) -> Option<String> {
     let mut cands = vec![st.dir.join("robot_footprint.json")];
     if let Some(p) = st.dir.parent() {
@@ -287,9 +287,6 @@ fn robot_kind(st: &State) -> Option<String> {
             let xy = e[0].max(e[1]);
             if xy < 0.5 && e[2] < 0.6 {
                 return Some("limo_omx".into());
-            }
-            if xy > 0.6 && e[2] > 1.0 {
-                return Some("r1pro".into());
             }
         }
         return None;

@@ -121,7 +121,7 @@ int    sgrt_set_pose_mode(sgrt*, int32_t mode);
  * SLAM 은 Cartographer(../slam_carto) 하나: SGRT_POSE 없음·carto(·옛 이름 slam) → scenemap SM_POSE_EXT(3). 스텝마다 proprio 의 바퀴
  *   오도메트리(LIMO 0–2)와 sgrt_push_scan 의 스캔을 Cartographer 에 넣고, 스텝 시각의 자세를 scenemap 에 준다(지도·물체는 그 자세로).
  *   옛 scenemap slam2d(깊이 가상 스캔 맞추기)는 10-06 archive. 스캔이 한 번도 안 오면 자세 = 오도메트리만(한 번 경고).
- *   Cartographer 없이 빌드했거나 R1 기록이면 odom.
+ *   Cartographer 없이 빌드했으면 odom.
  *   SGRT_CARTO_CONFIG = lua 이름(기본 limo_x2l.lua), SGRT_LASER = "x,y,z,yaw"(base ← 라이다, 기본 URDF laser_link 0.103,0,-0.034,0).
  * sgrt_push_scan: 스캔 하나(라이다 프레임). stamp = 마지막 광선 시각, ranges[i] 방향 = angle_min + i·angle_inc.
  *   범위 밖·NaN·inf 는 버림. 기록(SGRT_RECORD)에 'L' 레코드로 남는다. sgrt_step 과 같은 스레드에서. 0 성공 */
@@ -129,14 +129,14 @@ int    sgrt_push_scan(sgrt*, double stamp, int32_t n, const float* ranges, doubl
                       double range_min, double range_max);
 
 /* ---- 로봇 고르기(추가 ABI, 10-04) ----
- * 기본은 LIMO + OMX-F(proprio 12). R1 Pro(proprio 61, 머리 zed_link 깊이)는 옛 기록 재생 전용. sgrt_create 때 환경 변수로 고른다:
- *   SGRT_ROBOT=limo_omx | r1pro            → sm_create("{\"robot\": \"<값>\"}")
+ * 로봇은 LIMO + OMX-F 하나(proprio 12). sgrt_create 때 환경 변수로 확인한다:
+ *   SGRT_ROBOT=limo_omx                    → sm_create("{\"robot\": \"<값>\"}")
  *   SGRT_SM_CONFIG=<json>                  → sm_create(<json>) 그대로(robot·odom·grip_closed, scenemap.h sm_create). SGRT_ROBOT 보다 먼저
  *   둘 다 없으면 sm_create(NULL) = LIMO + OMX-F. 모르는 로봇·틀린 json 이면 sgrt_create 가 NULL(err 에 까닭).
  * LIMO + OMX-F(limo_omx): sgrt_step 의 proprio = 12 f32(scenemap.h SM_LIMO_*: odom x, y, yaw, vx, vy, wz, omx_joint1..5,
  *   gripper), 영상 = 몸통 앞 깊이 카메라(cam 0 = depth_camera_lens_optical_frame, 렌즈 광학 프레임)와 그 내부 파라미터.
  * sgrt_set_robot: 만든 뒤 바꾸기(sm_set_robot — 지도·물체를 비움, labels·자세 모드는 그대로). sgrt_begin 앞에서 부를 것. 0 성공.
- * sgrt_get_robot: 0 = SM_ROBOT_R1PRO, 1 = SM_ROBOT_LIMO_OMX. sgrt_proprio_dim: 지금 로봇의 최소 n_proprio(12 / R1 61). */
+ * sgrt_get_robot: 0 = SM_ROBOT_LIMO_OMX. sgrt_proprio_dim: 최소 n_proprio(12). */
 int    sgrt_set_robot(sgrt*, int32_t robot);
 int    sgrt_get_robot(const sgrt*);
 int    sgrt_proprio_dim(const sgrt*);

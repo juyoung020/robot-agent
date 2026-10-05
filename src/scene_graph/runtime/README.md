@@ -30,7 +30,6 @@ keyframe 인지는 `sgrt_want_image()` 가 알려 준다(`kf_every` 스텝마다
 | `glue/sgrt_glue.py` | 평가기 쪽 접착부 `SceneMemory(task, out_dir)` · `step(obs)` · `close()`. 과제 프롬프트(`../ovdet/config/task_prompts.txt` 의 과제 줄 + `_scene` 줄), GT 자세 넣기, GT 기록, 900 스텝마다 진단·시간 출력 |
 | `tests/test_crop.cpp` | 장치 자르기·색 모으기 = 호스트 식, 시간 |
 | `tools/sgrt_replay.cpp` | sgrt 기록(`SGRT_RECORD`)을 libsgrt 로 다시 굴림(검출 → 지도 → 저장). 라이브러리는 dlopen — 옛 빌드와 새 빌드를 같은 입력으로 바이트 비교 |
-| `tools/dom_bench_det.cpp` | dynamic-object-mapping-benchmark 시퀀스를 실제 검출(ovdet FastSAM-s 416, conf 0.25)로 scenemap 에 넣어 `map_timeline.csv`·`map_points.npz`. `--classify`: 검출마다 SigLIP 2 임베딩 → 글 프롬프트(벤치마크 범주·구조물) 코사인 최대를 cls 로. 없으면 sgrt 와 같이 모두 'object' |
 | `tools/sgrt_frames.cpp` | 실제 엔진으로 끝까지 확인: raw RGB 프레임을 장치에 올려 `sgrt_step` → 저장. 깊이는 평평한 2 m(가짜) — 검출 → 자르기·색 모으기 → PNG/PLY 경로 확인용 |
 
 ## 만들기
@@ -57,26 +56,26 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 - 관측에 머리 RGB-D 가 없으면 한 번 경고한다(`RGBDFullResWrapper` 를 쓸 것).
 - 쓰는 곳: `src/sim/move_robot/run_eval_move.py`, `src/sim/explore/run_explore.py`.
 
-## 로봇 고르기(LIMO + OMX-F 가 기본, R1 Pro 는 옛 기록 전용)
+## 로봇(LIMO + OMX-F 하나)
 
-기본은 LIMO + OMX-F(10-06 부터, `sm_create(NULL)`). R1 Pro 는 옛 R1 기록 재생·시험에만 `SGRT_ROBOT=r1pro` 로 명시. `sgrt_create` 때 환경 변수로 고른다.
+로봇은 LIMO + OMX-F 하나(`sm_create(NULL)`). `sgrt_create` 때 환경 변수로 확인한다.
 
 | 방법 | 뜻 |
 |---|---|
-| `SGRT_ROBOT=limo_omx \| r1pro` | `sm_create("{\"robot\": \"<값>\"}")` |
+| `SGRT_ROBOT=limo_omx` | `sm_create("{\"robot\": \"<값>\"}")` |
 | `SGRT_SM_CONFIG='<json>'` | `sm_create` 의 config_json 그대로(`robot`·`odom`·`grip_closed`, `../scenemap/README.md` LIMO 절). `SGRT_ROBOT` 보다 먼저 |
-| `sgrt_set_robot(s, 1)` | 만든 뒤 바꾸기(지도·물체 비움). `sgrt_begin` 앞에서. `sgrt_get_robot`·`sgrt_proprio_dim` 으로 확인 |
+| `sgrt_set_robot(s, 0)` | 만든 뒤 바꾸기(지도·물체 비움). `sgrt_begin` 앞에서. `sgrt_get_robot`·`sgrt_proprio_dim` 으로 확인 |
 
 모르는 로봇·틀린 json 이면 `sgrt_create` 가 NULL(err 에 까닭). LIMO 면 `sgrt_step` 의 proprio 는 12 f32(`SM_LIMO_*`), 영상은 몸통 앞 깊이 카메라(scenemap cam 0 = `depth_camera_lens_optical_frame`, 렌즈)와 그 내부 파라미터다. `sgrt_step` 은 영상 하나만 받으므로 손목 카메라(cam 1, 깊이 없음)는 넘기지 않는다(지도에도 안 씀).
 
-**글루(`SceneMemory`)** 가 로봇을 정하는 순서: 인자 `robot_model=` → `SGRT_ROBOT` → 시뮬 로봇의 `robot.model`(`limo_omx`) → 첫 스텝 관측에 `:eyes:Camera:0` 이 있으면 LIMO 로 바꿈(`sgrt_set_robot`). 아무것도 안 정해지면 limo_omx(라이브러리 기본).
+**글루(`SceneMemory`)**: 인자 `robot_model=`·`SGRT_ROBOT` 은 `limo_omx` 만 받는다(다른 값은 오류).
 
-| | R1 Pro | LIMO + OMX-F (OmniGibson `limo_omx`, robot-agent `src/robot/og/limo_omx_eval.yaml`) |
-|---|---|---|
-| 지도 카메라 | `<r>:zed_link:Camera:0` (720×720) | `robot_limo:eyes:Camera:0` (`RGBDFullResWrapper` 면 720×720) → cam 0 |
-| 내부 파라미터 | 고정 `HEAD_K`(306, 306, 360, 360) | 시뮬 센서 `intrinsic_matrix` 에서 읽음(해상도가 바뀌면 다시) |
-| proprio | 평가기 61 그대로 | 평가기 proprio(`base_qvel, arm_0_qpos, arm_0_qvel, eef_0_pos, eef_0_quat, gripper_0_qpos, gripper_0_qvel`, 24) → 12: 0–2 오도메트리 = `base_qvel` 을 30 Hz 로 적분(정답 자세 안 씀), 3–5 `base_qvel`(vx, vy, wz 베이스 기준), 6–10 `arm_0_qpos`(omx_joint1..5), 11 `gripper_0_qpos[0]`(omx_gripper_joint_1). 자리는 `robot._proprio_obs` 에서 구하고(없으면 yaml 순서) 크기가 다르면 멈춤 |
-| 손목 | — | `robot_limo:wrist_eye:Camera:0` = cam 1(RGB 만), 넘기지 않음 |
+| | LIMO + OMX-F (OmniGibson `limo_omx`, robot-agent `src/robot/og/limo_omx_eval.yaml`) |
+|---|---|
+| 지도 카메라 | `robot_limo:eyes:Camera:0` (`RGBDFullResWrapper` 면 720×720) → cam 0 |
+| 내부 파라미터 | 시뮬 센서 `intrinsic_matrix` 에서 읽음(해상도가 바뀌면 다시) |
+| proprio | 평가기 proprio(`base_qvel, arm_0_qpos, arm_0_qvel, eef_0_pos, eef_0_quat, gripper_0_qpos, gripper_0_qvel`, 24) → 12: 0–2 오도메트리 = `base_qvel` 을 30 Hz 로 적분(정답 자세 안 씀), 3–5 `base_qvel`(vx, vy, wz 베이스 기준), 6–10 `arm_0_qpos`(omx_joint1..5), 11 `gripper_0_qpos[0]`(omx_gripper_joint_1) |
+| 손목 | `robot_limo:wrist_eye:Camera:0` = cam 1(RGB 만), 넘기지 않음 |
 
 시뮬 확인: `src/sim/limo/run_limo_map.sh [task] [steps]` — 평가기를 LIMO 로 띄우고(robot-agent `eval_with_limo.py`) 제자리 한 바퀴 + 앞이 비면 직진·막히면 왼쪽으로 꺾기, 끝에 지도 ↔ 정답 바닥 지도(`src/sim/explore/gt/`)·자세 오차·몸통 카메라 외부 파라미터 ↔ scenemap 순기구학을 `summary.json`·`overlay.png` 로. 탐색은 아래 "LIMO 탐색".
 
@@ -88,16 +87,16 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 
 ### LIMO 탐색 (스킬 explore)
 
-`SGRT_ROBOT=limo_omx src/sim/explore/run_explore.sh frontier turning_on_radio [tag]` — R1 과 같은 스크립트·에이전트(robot-agent `explore`)·move_robot(libmove_robot)·지도 넘기기. R1 과 다른 점만:
+`SGRT_ROBOT=limo_omx src/sim/explore/run_explore.sh frontier turning_on_radio [tag]` — 스크립트·에이전트(robot-agent `explore`)·move_robot(libmove_robot)·지도 넘기기. 설정:
 
-| R1 가정 | LIMO 에서 |
+| 항목 | LIMO + OMX-F |
 |---|---|
-| 평가기 `omnigibson.eval.eval` + 기본 R1 Pro 설정 | `$ROBOT_AGENT/src/robot/og/eval_with_limo.py`(미리 뽑은 시작 자세 별칭, agent_metric 고침) + `--robot-config limo_omx_eval.yaml` (`run_explore.py --robot limo_omx --limo-shim`, 기본은 `SGRT_ROBOT`) |
-| move_robot proprio 61 / 행동 23 (베이스·몸통·두 팔·두 그리퍼) | `src/sim/move_robot/move_robot_limo.py`: libmove_robot 은 그대로 R1 으로 돌리고 바이트만 바꿈. proprio 24 의 `base_qvel` → R1 61 의 0–2(나머지 0), 행동 23 의 베이스(BASE_OUT 0.75, 0.75, 1.0 으로 m/s·rad/s) → LIMO 9: 베이스 0–2 = 홀로노믹 vx, vy, wz / (0.5, 0.5, 0.8727) 자르기, 팔 3–7 = `reset_joint_pos`(홈 [0, -1.6, 1.45, 0.15, 0]) 고정, 그리퍼 8 = -1(닫힘, 0 은 반 열림이라 안 씀). 칸은 시뮬 로봇의 `controller_action_idx`·`_proprio_obs` 에서 읽음 |
-| 몸통·팔 집어넣기(tuck), 머리 카메라 기울기 = 몸통 관절 유지 | 없음(카메라 몸통 고정). 베이스 아닌 `part` 호출은 move_robot 에 안 가고 오류로 답함 |
-| 머리 카메라 `zed_link`, 고정 HEAD_K | 글루가 `eyes` 카메라·센서 내부 파라미터(위 표) |
-| 정답 기록 끔 | `SGRT_GT_LOG=<out>/gt_poses.csv` 기본(+ `.objects.json` 정답 물체), `<out>/poses.csv`(keyframe 마다 정답 world·map 틀 자세 ↔ slam 자세), `<out>/pose_diag.json`(sgrt_get_pose_diag, 약 1 초마다 — 평가기가 close 전에 끝나므로) |
-| 몸통(libmove_robot `nav.rs` Footprint, R1 원 0.37 m · 계획 부풀림 0.40) | **LIMO 사각형 0.36 × 0.22 m**(시뮬 충돌 모양: 몸통 0.322, 바퀴 폭 0.217, 홈 자세 팔이 뒤로 0.18 m 까지 → 대칭), 부풀림 = 외접원 0.211 + 0.03 = 0.241 m. `MOVE_ROBOT_FOOTPRINT=limo_omx`(run_explore.sh 가 LIMO 일 때 기본으로 넣음, `rect:LxW`·`circle:R` 도 됨). 없으면 R1 그대로 |
+| 평가기 | `$ROBOT_AGENT/src/robot/og/eval_with_limo.py`(미리 뽑은 시작 자세 별칭, agent_metric 고침) + `--robot-config limo_omx_eval.yaml` (`run_explore.py --robot limo_omx --limo-shim`, 기본은 `SGRT_ROBOT`) |
+| move_robot 연결 | `src/sim/move_robot/move_robot_limo.py`: libmove_robot 은 그대로 R1 으로 돌리고 바이트만 바꿈. proprio 24 의 `base_qvel` → R1 61 의 0–2(나머지 0), 행동 23 의 베이스(BASE_OUT 0.75, 0.75, 1.0 으로 m/s·rad/s) → LIMO 9: 베이스 0–2 = 홀로노믹 vx, vy, wz / (0.5, 0.5, 0.8727) 자르기, 팔 3–7 = `reset_joint_pos`(홈 [0, -1.6, 1.45, 0.15, 0]) 고정, 그리퍼 8 = -1(닫힘, 0 은 반 열림이라 안 씀). 칸은 시뮬 로봇의 `controller_action_idx`·`_proprio_obs` 에서 읽음 |
+| 몸통·팔 집어넣기(tuck) | 없음(카메라 몸통 고정). 베이스 아닌 `part` 호출은 move_robot 에 안 가고 오류로 답함 |
+| 카메라 | 글루가 `eyes` 카메라·센서 내부 파라미터(위 표) |
+| 정답 기록 | `SGRT_GT_LOG=<out>/gt_poses.csv` 기본(+ `.objects.json` 정답 물체), `<out>/poses.csv`(keyframe 마다 정답 world·map 틀 자세 ↔ slam 자세), `<out>/pose_diag.json`(sgrt_get_pose_diag, 약 1 초마다 — 평가기가 close 전에 끝나므로) |
+| 몸통(libmove_robot `nav.rs` Footprint) | **LIMO 사각형 0.36 × 0.22 m**(시뮬 충돌 모양: 몸통 0.322, 바퀴 폭 0.217, 홈 자세 팔이 뒤로 0.18 m 까지 → 대칭), 부풀림 = 외접원 0.211 + 0.03 = 0.241 m. `MOVE_ROBOT_FOOTPRINT=limo_omx`(run_explore.sh 가 LIMO 일 때 기본으로 넣음, `rect:LxW`·`circle:R` 도 됨). |
 
 그 밖: `MOVE_ROBOT_LIB` 기본 = `$ROBOT_AGENT/src/agent/tools/move_robot/target/release/libmove_robot.so`, 정답 바닥 지도는 `src/sim/explore/gt` 가 없으면 `~/behavior-2026/src/sim/explore/gt`(서브모듈 안에서는 둘 다 같은 경로). libsgrt 는 `sgrt_set_robot` 이 있는 빌드여야 함(없으면 멈춤). `SGRT_ROBOT` 없음 = limo_omx(10-06 부터; 옛 R1 기본값은 없어짐, `r1pro` 는 옛 기록 재생에만).
 
@@ -105,15 +104,13 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 
 **LIMO 탐색 결과 2**(10-04, 같은 조건 + 렌즈 프레임 cam 0(scenemap FK = OmniGibson eyes, 차 2.6e-7 m), eyes 수평 화각 67.9°(Dabai 깊이, fx 534.7 @ 720), move_robot 몸 0.36 × 0.22 m(`MOVE_ROBOT_FOOTPRINT=limo_omx`), path_m 고침): `no_frontier`, go_to 15 번, 시뮬 157.4 s(벽 183 s). move_robot `path_m` 38.35 m 대 정답 38.15 m(+0.5 %, 전 −16 %). 빈칸 59.2 m², 정답 바닥의 95.0 %. slam ↔ 정답 keyframe 786 개 rms 9.9 cm / 0.30°, 최대 12.6 cm / 1.75°, 끝 11.2 cm / 0.43°(경로가 3 배 길고 화각이 좁아짐). 막힘·멈춤·접촉 0, 최소 여유 0.05 m. 판: `data/outputs/explore_20261004_100358_turning_on_radio_frontier_limo`.
 
-**R1 회귀**(10-04): 바꾸기 전(7219187)과 뒤의 libsgrt 를 `sgrt_replay` 로 같은 기록 3 개(`mem_pose_slam_*`, `mem_pose_gt_move*`, 엔진 yolo26s-seg) × 자세 모드 3 개(slam·gt·odom)에 굴려(`SGRT_SAVE_SYNC=1`) 저장 디렉터리 전부(map.pgm·scene.json·view.json·물체 PNG/PLY)와 keyframe 자세 CSV 가 바이트까지 같음 — `SGRT_ROBOT` 없음, `SGRT_ROBOT=r1pro` 둘 다. `sm_bench --save --traj` 9 개도 같음.
-
 ## 환경 변수
 
 `src/sgrt.cpp`·`src/sgrt_clip.cpp`(라이브러리)와 `glue/sgrt_glue.py`(글루)가 읽는 것 전부.
 
 | 이름 | 기본값 | 뜻 |
 |---|---|---|
-| `SGRT_ROBOT` | 없음(limo_omx) | 로봇: `limo_omx` · `r1pro`(옛 기록 전용)(위 "로봇 고르기"). 글루도 읽는다 |
+| `SGRT_ROBOT` | 없음(limo_omx) | 로봇: `limo_omx`(위 "로봇"). 글루도 읽는다 |
 | `SGRT_SM_CONFIG` | 없음 | scenemap `sm_create` config_json 그대로(예: `{"robot": "limo_omx", "odom": "twist"}`). 있으면 `SGRT_ROBOT` 무시 |
 | `SGRT_POSE` | `carto` | 자세 원천. `carto`(Cartographer: 2D 라이다 + 바퀴 오도메트리, `../slam_carto` — `slam` 도 같은 뜻) · `odom`(적분만) · `gt`(외부 정답 베이스 자세, map = 시뮬 world — 진단·시각화용, 대회 제출 금지). 옛 scenemap `slam2d` 는 10-06 archive. 스캔이 안 오면 오도메트리만(경고 한 번). 시뮬은 실제 로봇과 같게 `carto` 로 재고, `gt` 는 확인용으로만 |
 | `SGRT_CARTO_CONFIG` | `limo_x2l.lua` | Cartographer lua(`../slam_carto/config`, `SLAM_CARTO_CONFIG_DIR` 로 다른 폴더) |

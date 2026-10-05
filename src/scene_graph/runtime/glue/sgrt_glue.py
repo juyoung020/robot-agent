@@ -24,10 +24,8 @@ used for the drift diagnostic. GT is for sim debugging/visualisation only -- the
 submission time. SGRT_GT_LOG=<csv> also logs per-keyframe GT base/head-camera poses; on close the GT object poses are
 written next to it (<csv>.objects.json) for scoring object positions.
 
-Robot (libsgrt robot selection, sgrt.h): our LIMO + OMX-F (default; OmniGibson model "limo_omx", robot config robot-agent src/robot/og/limo_omx_eval.yaml). Chosen by, in order: the
-SceneMemory(robot_model=...) argument, env SGRT_ROBOT (also read by libsgrt itself), the simulator robot's model name
-(robot.model == "limo_omx"), and on the first step an observation that carries the LIMO body camera (":eyes:Camera:0").
-Nothing set -> limo_omx. R1 Pro ("r1pro", 61-dim evaluator proprio, head camera zed_link) is kept only for replaying old R1 recordings.
+Robot (libsgrt robot selection, sgrt.h): our LIMO + OMX-F (the only one; OmniGibson model "limo_omx", robot config robot-agent src/robot/og/limo_omx_eval.yaml). A
+SceneMemory(robot_model=...) argument or env SGRT_ROBOT other than "limo_omx" is an error.
 For LIMO the glue packs scenemap's 12-dim LIMO proprio (scenemap.h SM_LIMO_*) from the evaluator proprio
 (base_qvel, arm_0_qpos, gripper_0_qpos): 0-2 wheel-odometry pose = base_qvel integrated at 30 Hz (no GT), 3-5 base_qvel
 (vx, vy, wz in the base frame), 6-10 omx_joint1..5, 11 omx_gripper_joint_1. The map image is the body camera
@@ -49,10 +47,10 @@ LIB = os.environ.get("SGRT_LIB", str(pathlib.Path(__file__).resolve().parents[4]
 # 분할 엔진 기본 = ObjectSAM(YOLO26n 학생, 이름 없는 'object') + SigLIP 2 + objprob(libsgrt 가 켬). YOLOE·YOLO26s 는 보관(models/ovdet/archive)
 ENGINE = os.environ.get("SGRT_ENGINE", str(pathlib.Path.home() / "ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan"))
 PROMPTS = ROOT / "src/scene_graph/ovdet/config/task_prompts.txt"
-HEAD_K = (306.0, 306.0, 360.0, 360.0)  # omnigibson.eval.utils.eval_utils.CAMERA_INTRINSICS["R1Pro"]["head"] (720x720)
-ROBOTS = {"r1pro": 0, "limo_omx": 1}       # sgrt_get_robot / scenemap SM_ROBOT_*
-HEAD_LINK = {0: "zed_link", 1: "eyes"}     # map camera (scenemap cam 0) sensor link per robot
-WRIST_LINK = {1: "wrist_eye"}              # LIMO wrist camera (scenemap cam 1, RGB only)
+HEAD_K = (306.0, 306.0, 360.0, 360.0)  # fallback intrinsics (fx, fy, cx, cy) until the OmniGibson sensor is read (_limo_head_k)
+ROBOTS = {"limo_omx": 0}                   # sgrt_get_robot / scenemap SM_ROBOT_*
+HEAD_LINK = "eyes"                         # map camera (scenemap cam 0) sensor link
+WRIST_LINK = "wrist_eye"                   # LIMO wrist camera (scenemap cam 1, RGB only)
 # evaluator proprio layout of limo_omx_eval.yaml (used when the sim robot can't be asked): key -> size, in order
 LIMO_PROPRIO_OBS = [("base_qvel", 3), ("arm_0_qpos", 5), ("arm_0_qvel", 5), ("eef_0_pos", 3), ("eef_0_quat", 4),
                     ("gripper_0_qpos", 2), ("gripper_0_qvel", 2)]
@@ -181,7 +179,7 @@ class SceneMemory:
         L.sgrt_begin(self.h, arr, len(names), err, 512)
         if err.value:
             print(f"[sgrt] prompt: {err.value.decode()}", flush=True)
-        cam = HEAD_LINK[self.robot_id]
+        cam = HEAD_LINK
         self.keys = (f"{robot}::proprio", f"{robot}::{robot}:{cam}:Camera:0::rgb", f"{robot}::{robot}:{cam}:Camera:0::depth_linear")
         self.t = 0
         self.robot = None
@@ -198,25 +196,16 @@ class SceneMemory:
             self.gt_log.write("step,stamp,x,y,z,yaw,cam_x,cam_y,cam_z,cam_qx,cam_qy,cam_qz,cam_qw\n")
         # sim 2D lidar (module docstring): LIMO only, needs the sim robot
         self.lidar = None
-        self.use_lidar = self.has_scan and self.robot_id == 1 and os.environ.get("SGRT_LIDAR", "1") != "0"
+        self.use_lidar = self.has_scan and os.environ.get("SGRT_LIDAR", "1") != "0"
         self.py_ns = {"gt": 0, "prep": 0, "call": 0, "lidar": 0}
         self.py_n = 0
-        print(f"[sgrt] {task}: {len(names)} prompt names, out {out_dir}, robot {self.robot_id} ({HEAD_LINK[self.robot_id]})", flush=True)
+        print(f"[sgrt] {task}: {len(names)} prompt names, out {out_dir}, robot limo_omx ({HEAD_LINK})", flush=True)
 
     def _limo_init(self):
         self.head_k = HEAD_K
         self.odom = [0.0, 0.0, 0.0]   # LIMO wheel odometry (x, y, yaw), integrated from base_qvel
         self.layout = None
         self._lp = np.zeros(12, np.float32)
-
-    def _switch_robot(self, rid: int, robot: str):
-        """First step only: the observation shows a different robot than the library was created for (no sim robot at init)."""
-        if not self.has_robot or self.L.sgrt_set_robot(self.h, rid) != 0:
-            raise RuntimeError(f"[sgrt] observation is robot {rid} but {LIB} can't switch (rebuild libsgrt / set SGRT_ROBOT)")
-        self.robot_id = rid
-        cam = HEAD_LINK[rid]
-        self.keys = (f"{robot}::proprio", f"{robot}::{robot}:{cam}:Camera:0::rgb", f"{robot}::{robot}:{cam}:Camera:0::depth_linear")
-        print(f"[sgrt] robot switched to {rid} from the observation keys ({cam})", flush=True)
 
     def _limo_proprio(self, p):
         """evaluator proprio (limo_omx_eval.yaml proprio_obs) -> scenemap LIMO 12 (SM_LIMO_*)."""
@@ -249,7 +238,7 @@ class SceneMemory:
         k = None
         for name, sen in (getattr(r, "sensors", None) or {}).items():
             # hasattr(sen, ...) 는 속성을 실제로 읽어 아래 AssertionError 가 try 밖에서 난다 — 클래스에서 확인
-            if ":" + HEAD_LINK[1] + ":" in name and hasattr(type(sen), "intrinsic_matrix"):
+            if ":" + HEAD_LINK + ":" in name and hasattr(type(sen), "intrinsic_matrix"):
                 try:
                     K = sen.intrinsic_matrix
                     k = (float(K[0][0]), float(K[1][1]), float(K[0][2]), float(K[1][2]))
@@ -270,15 +259,12 @@ class SceneMemory:
 
     def step(self, obs: dict):
         kp, kr, kd = self.keys
-        if kp not in obs:  # weights' robot name differs from the evaluator's (e.g. robot_r1): find by suffix
+        if kp not in obs:  # weights' robot name differs from the evaluator's (e.g. robot_limo): find by suffix
             kp = next(k for k in obs if k.endswith("::proprio"))
             r = kp.split("::")[0]
-            cam = HEAD_LINK[self.robot_id]
+            cam = HEAD_LINK
             kr, kd = f"{r}::{r}:{cam}:Camera:0::rgb", f"{r}::{r}:{cam}:Camera:0::depth_linear"
             self.keys = (kp, kr, kd)
-        if self.t == 0 and self.robot_id == 0 and kr not in obs and any(f":{HEAD_LINK[1]}:Camera:0::" in k for k in obs):
-            self._switch_robot(1, kp.split("::")[0])
-            kp, kr, kd = self.keys
         t0 = time.perf_counter_ns()
         stamp = self.t / 30.0
         if self.use_gt:
@@ -321,8 +307,7 @@ class SceneMemory:
         p = obs[kp]
         p = p[0] if p.ndim == 2 else p
         prop = np.ascontiguousarray((p.detach().cpu().numpy() if hasattr(p, "detach") else np.asarray(p)), np.float32)
-        if self.robot_id == 1:
-            prop = self._limo_proprio(prop)
+        prop = self._limo_proprio(prop)
         rgb = depth = None
         rp, dev, rs, ps, w, h = None, 0, 0, 0, 0, 0
         want = self.L.sgrt_want_image(self.h)
@@ -362,7 +347,7 @@ class SceneMemory:
             else:
                 depth = np.ascontiguousarray((depth.detach().cpu().numpy() if hasattr(depth, "detach") else np.asarray(depth)), np.float32)
         t2 = time.perf_counter_ns()
-        k = HEAD_K if self.robot_id == 0 else (self._limo_head_k(w, h) if depth is not None else self.head_k)
+        k = self._limo_head_k(w, h) if depth is not None else self.head_k
         self.L.sgrt_step(self.h, stamp, prop.ctypes.data, prop.size, rp, dev, rs, ps, w, h,
                          depth.ctypes.data if depth is not None else None, *k)
         t3 = time.perf_counter_ns()
@@ -386,7 +371,7 @@ class SceneMemory:
         if not hasattr(self, "_cam"):
             self._cam = None
             for name, sen in getattr(self.robot, "sensors", {}).items():
-                if f":{HEAD_LINK[self.robot_id]}:" in name or (self.robot_id == 0 and "zed_link" in name):
+                if f":{HEAD_LINK}:" in name:
                     self._cam = sen
                     break
         return self._cam

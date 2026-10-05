@@ -27,7 +27,7 @@ target/release/sgview <memory_dir> [--port 8080] [--bind 0.0.0.0]
 - 공중에 뜬 그래프 2층: 물체(z 4 m, 상태 색 + 썸네일), 방(그 위 층 간격 2 m) + 에이전트 궤적(바닥), 간선(층 안·방→물체). 장소·전치사 관계·building·frontier 는 그리지 않는다.
 - 2D 벽(하늘색 선) + 벽 상태 벡터(길이 56) + "Save wall state" 로 JSON 저장.
 - slam 지도는 출발 자세 좌표라 벽이 기울어져 있다(예: turning_on_radio 출발 yaw 49°). 벽 선분은 `wallSegmentsAligned` 로 벽 방향 θ 에서 찾고(`/api/walls`·`walls` 이벤트에 `theta`), 페이지는 \|θ\| > 1° 면 점유 지도를 θ 로 돌린 격자로 다시 뽑아 그린다(칸 계단 → 곧은 벽, 보기만 바뀜). gt 지도(축에 맞음)는 예전과 같다. 선분은 원래 격자의 점유 띠에 다시 맞춰 벽 위에 놓인다(scenemap `wallSegmentsAligned`).
-- 궤적 라벨은 로봇 이름: `view.json` 의 `robot`, 없으면 `/api/robot`(실행 폴더 `robot_footprint.json` 의 `robot`, 옛 파일은 AABB 로 R1 Pro·LIMO 구분), 모르면 "robot".
+- 궤적 라벨은 로봇 이름: `view.json` 의 `robot`, 없으면 `/api/robot`(실행 폴더 `robot_footprint.json` 의 `robot`, 옛 파일은 AABB 크기로 LIMO 판정), 모르면 "robot".
 - 물체 클릭(그래프 노드 12 px 안 → 아니면 경계 상자 광선) 또는 드롭다운 → 정보 표 + RGB/마스크/깊이 조각.
 
 ## 구조

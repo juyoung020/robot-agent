@@ -371,7 +371,7 @@ let graphNodes = [];   // for picking/labels/hover: {id, kind, x, y, z, oid?}
 let trajInfo = null;   // {len, last:[x,y,z]}
 // trajectory label: the robot of the run — view.json "robot" if the memory carries it, else the server's guess from the run's
 // robot_footprint.json (/api/robot), else a neutral "robot"
-const ROBOT_NAMES = { r1pro:"R1", r1:"R1", limo_omx:"LIMO", limo:"LIMO" };
+const ROBOT_NAMES = { limo_omx:"LIMO", limo:"LIMO" };
 let robotKind = null;
 function robotLabel() { const k = (view && view.robot) || robotKind; return k ? (ROBOT_NAMES[k] || k) : "robot"; }
 async function loadRobotKind() { try { robotKind = (await (await fetch("/api/robot")).json()).robot || null; } catch (e) { robotKind = null; } }
