@@ -70,7 +70,7 @@
 1. **물체 기억** — 로봇이 본 물체를 2D 지도 위에 등록하고, 옮겨지거나 사라지면 고친다.
 2. **큰 계획·대화 (LLM)** — 사람과 채팅으로 대화하고, 물체 기억을 읽어 VLA 에게 상황을 풀어 준다 ("컵은 주방 식탁 위, 놓을 곳은 거실 식탁"). 물체가 화면 밖으로 벗어나 VLA 가 움직일 수 없으면, 기억을 보고 다시 계획한다.
 3. **작은 계획·행동 (VLA)** — LLM 의 지시와 카메라 영상을 받아, 할 일을 잘게 나눠(팔 뻗기 → 잡기 → 들기) 로봇 팔·바퀴를 실제로 움직인다. 집다가 놓치는 것처럼 눈앞에서 생긴 실패는 스스로 복구한다.
-   - VLA 는 π0.5 가 아니라 **우리가 만든 작은 VLA** 다(10-04, π0.5 는 버림): 얼린 SigLIP 2 영상 탑 + 물체 기억 지도 토큰 + 지시 문장 → flow matching 행동. 시뮬 RL 교사에게서 BC·DAgger 로 배운다([`training/BC`](training/BC/README.md), G5). 얼린 Qwen 을 쓰는 큰 판은 G7 계획.
+   - VLA 는 π0.5 가 아니라 **우리가 만든 VLA** 다(10-04, π0.5 는 버림). 본 모델은 **RecallVLA**(Qwen3.5-0.8B 전부 학습 + SigLIP 2 + 물체 기억 → 단계 문장 + 행동, [사양](docs/map_vla/MAPVLA_SPEC.md), 학습기 [`training/vla`](training/vla/README.md) — 큰 학습은 아직). 지금 도는 작은 학생은 얼린 SigLIP 2 영상 탑 + 물체 기억 지도 토큰 + 지시 문장 → flow matching 행동이고, 시뮬 RL·대본 교사에게서 BC·DAgger 로 배운다([`training/BC`](training/BC/README.md)).
 
 ## 로봇
 
@@ -88,7 +88,7 @@ robot-agent/
 │   │   ├── skills/  #   스킬(한 가지 일을 끝까지 하는 단위, 지금은 explore)
 │   │   ├── tools/   #   LLM 에게 보이는 도구(move_robot, Rust)
 │   │   └── prompts/ #   공통 프롬프트
-│   ├── vla/         # ③ 작은 계획·행동 (우리 VLA — 지금은 README 만, 학습 코드는 training/BC)
+│   ├── vla/         # ③ 작은 계획·행동 (우리 VLA — 지금은 README 만, 학습 코드는 training/vla·training/BC)
 │   ├── app/         # 휴대폰 앱 (iOS·Android, 채팅으로 명령)
 │   └── behavior-2026/ # 서브모듈: BEHAVIOR Challenge 2026 (시뮬레이터에서 같은 구조를 시험)
 │       ├── src/scene_graph/ # 물체 기억 원본: scenemap·da·ovdet·clip(물체 영상 임베딩)·runtime(sgrt)·sgview
@@ -96,7 +96,7 @@ robot-agent/
 │       │                    #   spark_dsg/: Spark-DSG 우리 수정본 (BSD-3, 층 3개로 줄임 · mesh/zmq 제거)
 │       ├── tools/   #   실행·측정·검증 스크립트
 │       └── archive/ #   지금 안 쓰는 모듈 (지우지 않고 옮겨 둠)
-├── training/        # 로봇에 올릴 작은 모델 학습 (embed/: 영상–글 임베딩 증류, RL/·BC/: VLA 학습, model/: 베이스 모델)
+├── training/        # 모델 학습 (embed/: 영상–글 임베딩 증류, RL/·BC/: 교사·작은 학생, vla/: RecallVLA, fastsam/: ObjectSAM 분할, viewer/: 학습 뷰어, model/: 베이스 모델)
 ├── scripts/         # 설치·실행 스크립트
 ├── tools/           # sync_scene_graph.sh (behavior-2026 → src/scene_graph 동기화)
 ├── tests/           # 테스트 (sandbox/ 는 AI·사람 실험 공간)
@@ -110,7 +110,7 @@ robot-agent/
 - [docs/map_vla/README.md](docs/map_vla/README.md) — Map_Vla(리모 + 매니퓰레이터 VLA) 설계 문서
 - [src/scene_graph/README.md](src/scene_graph/README.md) — 물체 기억 코드(실제 로봇 쪽)·동기화·빌드
 - [src/robot/README.md](src/robot/README.md) — 리모 + 매니퓰레이터 로봇 설명(URDF·RViz)
-- [training/README.md](training/README.md) — 작은 모델 학습
+- [training/README.md](training/README.md) — 모델 학습(교사·학생·RecallVLA·분할·학습 뷰어)
 - [scenemap 설계](https://github.com/juyoung020/behavior-2026/blob/main/docs/scenemap_설계.md) — 물체 기억(2D SLAM·물체 지도·계획기 질의) 설계 (서브모듈)
 - [archive/README.md](https://github.com/juyoung020/behavior-2026/blob/main/archive/README.md) — 지금 안 쓰는 모듈: 무엇을, 왜, 어떻게 되살리나 (서브모듈)
 - [tools/README.md](https://github.com/juyoung020/behavior-2026/blob/main/tools/README.md) — 실행·측정·검증 스크립트 (서브모듈)

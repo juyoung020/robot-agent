@@ -10,10 +10,12 @@ LLM 이 골라 부르는 도구를 둔다. 설계는 [`../plan.md`](../plan.md) 
 | `confirm_object` | 확인된 물체의 이름 고치기(이름 사후 베이즈 갱신 + 확인 기록) — [`search_objects/`](search_objects/) |
 | `describe_object` | 물체 크기·관측 수·움직인 거리, 선택하면 best view 사진 |
 | `list_place` | 방의 물체, 또는 가구 id 상자에서 1.5 m 안 물체(거리·높이 숫자, 관계말 없음), 최대 15 — [`search_objects/`](search_objects/) |
-| `set_plan` | 스킬 단계 계획을 검증하고 π0.5 에게 줄 문장으로 바꾸기 |
+| `set_plan` | 스킬 단계 계획을 검증하고 VLA(RecallVLA)에게 줄 문장으로 바꾸기 |
 | `check` | 보이는지·잡았는지·놓였는지·도착했는지 확인 |
 | `ask_user` | 사용자에게 되묻기 (턴 끝냄) |
 | `report` | 진행·완료·실패 알리기 (턴 끝냄) |
+
+- 코드가 있는 것(10-06): `search_objects`·`confirm_object`·`list_place`([`search_objects/`](search_objects/)), `move_robot`. `describe_object`·`set_plan`·`check`·`ask_user`·`report` 는 설계만(plan.md 3.3).
 | `move_robot` | 로봇 한 부분(베이스·몸통·팔·그리퍼)을 직접 움직이고 멈출 때까지 기다리기 — [`move_robot/`](move_robot/) |
 
 ## `search_objects` · `confirm_object` — 물체 찾기와 이름 고치기 (10-05)
@@ -36,8 +38,8 @@ list_place     {"place": "kitchen" | "R2" | "O12"}
 
 ## `move_robot` — 관절·베이스 직접 움직이기
 
-π0.5 를 거치지 않고 LLM 이 로봇을 직접 움직이는 도구 하나. 하는 일은 이것뿐이다: 한 부분을 목표까지 안전하게 움직이고 결과를 짧게 돌려준다.
-(plan.md 3.3 은 "이동·스킬 실행 도구는 LLM 에 주지 않는다"가 기본이다. 이 도구는 시연·디버깅·π0.5 가 못 하는 작은 보정용이고, 본 경로에 넣을지는 결정 필요.)
+VLA 를 거치지 않고 LLM 이 로봇을 직접 움직이는 도구 하나(π0.5 는 10-04 에 버림, 우리 VLA 는 RecallVLA). 하는 일은 이것뿐이다: 한 부분을 목표까지 안전하게 움직이고 결과를 짧게 돌려준다.
+(plan.md 3.3 은 "이동·스킬 실행 도구는 LLM 에 주지 않는다"가 기본이다. 이 도구는 시연·디버깅·VLA 가 못 하는 작은 보정용이고, 본 경로에 넣을지는 결정 필요.)
 
 ### 스키마 (9B 모델용으로 작게, 정의 JSON 약 2 KB — `move_robot::definition()`, `move-robot schema`)
 

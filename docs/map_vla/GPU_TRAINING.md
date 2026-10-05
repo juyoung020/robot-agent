@@ -1,6 +1,6 @@
 # GPU 안에서만 도는 학습 — RL 교사와 VLA (C++/CUDA/Rust)
 
-작성 2026-10-03. **설계 문서**다. 코드는 아직 없다.
+작성 2026-10-03. **설계 문서**다. 구현: G0–G6 끝(`training/RL`·`training/BC`, 11절 표와 [TODO_TRACKER.md](TODO_TRACKER.md) 1절), G7 은 RecallVLA 학습기 `training/vla` 로 바뀜(MAPVLA_SPEC).
 - 입력·출력은 [VLA_INPUT.md](VLA_INPUT.md), 시뮬 범위는 [SIM_PORTING.md](SIM_PORTING.md), 팀 엔진 검토는 [BEHAVIOR_ENGINE_REVIEW.md](BEHAVIOR_ENGINE_REVIEW.md), 학습 흐름은 [training/README.md](../../training/README.md).
 - 표기: **(추정)** = 재지 않았거나 원문으로 확인하지 못한 숫자·판단. 표시 없는 숫자는 코드·문서·NVIDIA 자료에서 확인한 것이다.
 - 팀 코드 경로는 `src/behavior-2026/` 아래 기준이다. JSBSim 포팅은 `~/juyoung020/jsbsim-f16-cuda` 이다.

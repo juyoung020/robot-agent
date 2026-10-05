@@ -161,7 +161,7 @@ flowchart LR
 | 기본형? 프로? | 받는 로봇에 따라 ROS 버전, CUDA·TensorRT 버전, 라이다 설정이 달라짐 | 정해지기 전에는 두 쪽 다 되게 짜고, 정해지면 이 문서를 고친다 |
 | 학교 밖 접속 | 앱과 Qwen API 를 밖에서 쓰려면 네트워크를 열어야 함 | VPN 등, 학교 규칙 확인 |
 | ~~LoRA 학습은 학교 4090 에서만~~ (대체됨: π0.5 버림, 우리 VLA 는 이 PC 에서 학습) | 22.5GB 이상이라 시뮬 작업 PC(16GB)에는 안 들어감. 4090 은 한 대 | 학습 시간을 미리 잡고, 평가는 시뮬 작업 PC 에서 따로 |
-| 물체 인식 바꾸는 중(10-05: ObjectSAM + objprob 로 정함, 시뮬 sgrt 도 옮김) | FastSAM-s + SigLIP 2 는 그대로면 조각남·벽 오등록이 많다(BEHAVIOR 비교: 노드 290, 중복 140, 벽 위 가짜 108 / YOLO26s 28·9·4). 실제 bag(OpenLORIS)에서도 이름 정답 약 30 %, 자세 떠밀림 4–22 cm. 시뮬 sgrt 는 아직 보관 YOLOE | 확률 모드로 **FastSAM-s 의 재현율 + YOLO26s-seg 수준 깔끔함**을 맞추고, 통과하면 sgrt·LIMO 지도 시험·GPU 지도 근사판을 확률 모드로 옮긴다. 벽 축 정렬 버그(기운 SLAM 지도에서 정책 쪽 벽 0 개)는 고치는 중 |
+| 물체 인식(10-05: ObjectSAM + objprob 로 정함, 시뮬 sgrt·realbag 도 옮김 — behavior-2026 `26cbdc4`) | FastSAM-s + SigLIP 2 는 그대로면 조각남·벽 오등록이 많다(BEHAVIOR 비교: 노드 290, 중복 140, 벽 위 가짜 108 / YOLO26s 28·9·4). 실제 bag(OpenLORIS)에서도 이름 정답 약 30 %, 자세 떠밀림 4–22 cm. 시뮬 sgrt 도 이제 ObjectSAM(YOLOE 는 보관). 남은 위험: Jetson 기기 위 시간 안 잼, 실제 이름 정답률 | 확률 모드로 **FastSAM-s 의 재현율 + YOLO26s-seg 수준 깔끔함**을 맞추고, 통과하면 sgrt·LIMO 지도 시험·GPU 지도 근사판을 확률 모드로 옮긴다. 벽 축 정렬 버그(기운 SLAM 지도에서 정책 쪽 벽 0 개)는 고치는 중 |
 
 ---
 

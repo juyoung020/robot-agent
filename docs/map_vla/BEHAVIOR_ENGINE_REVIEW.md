@@ -35,7 +35,7 @@
 | 폐루프 빈 곳 | 보조 잡기(시연 0)와 성공 판정이 native 루프에 없다. 렌더가 느리다(판 1, 원해상도 116 ms/프레임) | `docs/미해결과제.md` B19 |
 | GPU 풀이 고정비 | 커널 한 번 3.2 ms(시험)·9 ms(radio). 판 64에서 CPU보다 느림 | 미해결과제 B16 |
 | 과제 범위 | 100과제 중 지원 64, 부분 14, 막힘 22 | `docs/엔진_자체구현.md` 15.2 |
-| 학습기 | `vla/pi05_train`은 π0.5용. 우리 VLA(SigLIP2 + Qwen3.5 + 액션 헤드)용 학습기는 없다. **(10-04 바뀜)** 우리 학습기는 `training/` 에 있다: G1 환경 커널, G2 GPU 지도, G3·G4 RL 교사 PPO, G5 BC 작은 VLA(얼린 SigLIP 2 + 지도 토큰 + flow matching 행동, DAgger). 큰 VLA(얼린 Qwen)는 G7 계획 | `src/vla/pi05_train`, `training/RL`, `training/BC`, [GPU_TRAINING.md](GPU_TRAINING.md) 11절 |
+| 학습기 | `vla/pi05_train`은 π0.5용. 우리 VLA(SigLIP2 + Qwen3.5 + 액션 헤드)용 학습기는 없다. **(10-04 바뀜)** 우리 학습기는 `training/` 에 있다: G1 환경 커널, G2 GPU 지도, G3·G4 RL 교사 PPO, G5 BC 작은 VLA(얼린 SigLIP 2 + 지도 토큰 + flow matching 행동, DAgger). 큰 VLA(얼린 Qwen)는 G7 계획 → **RecallVLA**(Qwen3.5-0.8B 전부 학습) 학습기 `training/vla`(MAPVLA_SPEC) | `src/vla/pi05_train`, `training/RL`, `training/BC`, [GPU_TRAINING.md](GPU_TRAINING.md) 11절 |
 | π0.5 학습 메모리 | LoRA도 22.5 GB 초과라 이 PC(16 GB)에서는 불가. 학습은 보류 상태. **(10-04)** π0.5 는 쓰지 않기로 해서 이 행은 기록으로만 남긴다 | `docs/학습환경_가속.md`, 미해결과제 A7 |
 
 ## 6. 방향 제안 (결정은 사용자)

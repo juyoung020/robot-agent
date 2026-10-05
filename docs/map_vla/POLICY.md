@@ -1,6 +1,6 @@
 # 정책 설계 — RL 교사와 VLA 학생 (리모 + OMX-F)
 
-작성 2026-10-03. **설계 문서**다. 정책·학습기는 아직 없다. 실행기 접점(1.2·1.3)과 안전 거르개·끝 조건(7.1·7.2)은 10-04 에 구현했다 — 1.4 "구현 상태".
+작성 2026-10-03. **설계 문서**다. 구현된 것: 교사 PPO(approach A0–A2, `training/RL/ppo`)·대본 특권 교사(B4–B6, 4.8)·작은 학생 BC/DAgger(`training/BC`)·RecallVLA 학습기(`training/vla`), 실행기 접점(1.2·1.3)과 안전 거르개·끝 조건(7.1·7.2, 10-04) — 1.4 "구현 상태". 남은 일은 [TODO_TRACKER.md](TODO_TRACKER.md) 2절.
 입력·출력은 [VLA_INPUT.md](VLA_INPUT.md) 에서 정했다. 이 문서는 그 입력·출력을 쓰는 **정책 두 개**(RL 교사, VLA 학생)와 학습 순서를 정한다.
 GPU 학습 시스템(커널 합치기, FP8, GPU 환경 안에서 지도 만들기)은 [GPU_TRAINING.md](GPU_TRAINING.md)(작성 중)에 둔다. 여기서는 되풀이하지 않는다.
 
@@ -35,10 +35,10 @@ GPU 학습 시스템(커널 합치기, FP8, GPU 환경 안에서 지도 만들�
 - 에이전트 계획([src/agent/plan.md](../../src/agent/plan.md) 2.4·3.3): LLM 은 이동·스킬 도구를 직접 쓰지 않고 `set_plan` 으로 단계 목록을 넘긴다. 단계 문장은 Rust `skillspec::render()` 한 곳에서 만든다(숫자 거리·각도 금지).
   같은 문서 2.4 표 D(리모): `move to` 는 **Nav2 제어기**, `pick up`·`place` 는 VLA.
 - `move_robot`([src/agent/tools/README.md](../../src/agent/tools/README.md)): 베이스 `go_to`(아는 빈칸 Dijkstra + DWA), `probe`, `delta`, 관절 `absolute`/`delta`. 안전 한계는 `Safety::default`.
-  **지금 부분(part)과 한계는 R1 Pro 기준**이다(`left_arm` 7 관절, `r1pro.urdf` 한계). 리모 + OMX-F 용 부분은 아직 없다.
+  **지금 부분(part)과 한계는 R1 Pro 기준**이다(`left_arm` 7 관절, `r1pro.urdf` 한계). 리모 + OMX-F 용 부분은 아직 없다. **(10-04 바뀜)** 리모 + OMX-F 몸·한계·순기구학은 `limo.rs`(`d4e8bd7`) — VLA 실행기·거르개가 씀(1.4). LLM 도구 `move_robot` 의 리모 팔·그리퍼 부분은 아직 없다(1.4 끝).
 - 탐사 스킬([skills/explore](../../src/agent/skills/explore/README.md)): LLM 이 `move_robot` 의 `go_to`·`probe` 만 써서 두 집에서 접촉 0, 덮음 0.94–0.95(시뮬, `SGRT_POSE=gt`). 닫힌 문 뒤 방은 "VLA 실행기 몫" 으로 남겼다.
 - 실행기 전환 접점(`src/behavior-2026/src/sim/explore/run_explore.py`, [decision_log.md](../../src/agent/decision_log.md)):
-  도구 호출 `{"executor":"vla","skill":"<문장>","max_s":20}` 이 오면 `act()` 를 π0.5 엔진으로 넘긴다.
+  도구 호출 `{"executor":"vla","skill":"<문장>","max_s":20}` 이 오면 `act()` 를 π0.5 엔진으로 넘긴다. **(10-04 바뀜)** 이것은 서브모듈의 R1 경로만이다 — 우리 VLA 는 π0.5 를 쓰지 않고, 리모 경로는 1.3·1.4 의 `libmove_robot` 실행기다.
   - 끝 조건은 **스텝 수뿐**이다(`max_s × 30` 스텝 뒤 `{"status":"done"}`). 성공·실패 판정은 없다.
   - VLA 가 도는 동안 `move_robot` 은 `tick` 으로 관측만 하고, **VLA 행동은 `move_robot` 을 거치지 않고** 시뮬로 바로 간다.
   - 끝나면 `move_robot` 을 `reset` 한다. 가중치가 없으면 `{"status":"unavailable"}`.

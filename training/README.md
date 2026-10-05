@@ -7,7 +7,8 @@
 - 모델 하나에 폴더 하나.
   - `embed/`: 물체 이름 붙이기·검색용 영상–글 임베딩(증류). 설계와 결과는 [embed/README.md](embed/README.md).
   - `RL/`: 시뮬에서 RL 전문가(교사) 정책 학습 — 관측·보상·신경망·설정. [RL/README.md](RL/README.md)
-  - `BC/`: 전문가 궤적 + 자연어 단계 지시로 우리 작은 VLA 모방학습(증류) — 얼린 SigLIP 2 영상 탑 + 지도·글 토큰 + flow matching 행동. 얼린 Qwen 을 쓰는 큰 VLA 는 G7(아직 안 함). G5: 교사 기록·BF16 BC 학습기·DAgger 를 GPU 그래프로. 영상 학생 = 학습 때 다시 렌더(팀 RenderBatch 그래프) → 얼린 SigLIP 2 패치 토큰(C++/CUDA) + 지도·글 토큰 → flow matching 청크, DAgger 8 번 0.946(교사 0.944). [BC/README.md](BC/README.md)
+  - `BC/`: 전문가 궤적 + 자연어 단계 지시로 우리 작은 VLA 모방학습(증류) — 얼린 SigLIP 2 영상 탑 + 지도·글 토큰 + flow matching 행동. 큰 모델은 아래 `vla/`(RecallVLA). G5: 교사 기록·BF16 BC 학습기·DAgger 를 GPU 그래프로. 영상 학생 = 학습 때 다시 렌더(팀 RenderBatch 그래프) → 얼린 SigLIP 2 패치 토큰(C++/CUDA) + 지도·글 토큰 → flow matching 청크, DAgger 8 번 0.946(교사 0.944). [BC/README.md](BC/README.md)
+  - `vla/`: **RecallVLA** 학습기(C++/CUDA) — 몸통 Qwen3.5-0.8B 전부 학습 + SigLIP 2 B/32 영상 + 지도·몸 인코더 + 행동 전문가, 단계 문장 출력, 기억 요약 인코더. M1–M5(정확도 검증·메모리·속도·커널 융합) 끝, 큰 학습은 아직(입력은 TRAINING_DESIGN W10). 사양 [MAPVLA_SPEC.md](../docs/map_vla/MAPVLA_SPEC.md). [vla/README.md](vla/README.md)
   - `fastsam/`: 물체 분할 ObjectSAM(10-05 결정 — FastSAM-s 에서 증류한 YOLO26n 학생, things 만, `yolo26n-seg-obj-416`; FastSAM-s 계산의 약 1/10 이라 LIMO Jetson 에 맞음, 기기 위 시간은 아직 안 잼). 처음엔 FastSAM-s 416 다시 학습(벽·천장·바닥은 배경, 문·창·계단은 물체, 조각 대신 통째) — 원래 FastSAM 마스크 자기 증류 + BEHAVIOR 시뮬 정답 + COCO·LVIS·ADE20K, 같은 라벨로 Jetson Nano 용 YOLO26n-seg 학생. **이 폴더만 AGPL-3.0**(Ultralytics). 공개판은 별도 저장소 [ObjectSAM](https://github.com/juyoung020/ObjectSAM). [fastsam/README.md](fastsam/README.md)
   - `viewer/`: 학습 뷰어(Rust 서버 + 브라우저, 실행 폴더를 읽기만). [viewer/README.md](viewer/README.md)
   - `model/`: 베이스 모델 가중치(저장소에 없음, 받는 방법은 [model/README.md](model/README.md)).

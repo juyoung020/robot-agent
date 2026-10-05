@@ -5,6 +5,8 @@
 
 환경 확인: nvcc 13.2, rustc/cargo, g++, cmake 있음. GPU는 5070 Ti(compute 12.0, 드라이버 580).
 
+> **구현 상태(10-06 확인)**: 이 설계는 MuJoCo Warp 를 옮기지 않고 자체 GPU 환경 커널로 구현했다 — G1 `training/RL/env`(`0eddb72`, CPU 참조판 비트 동일), 잡기 물리 E6(`564a19a`). depth·RGB 렌더는 팀 RenderBatch(`b27aafd`), 지도용 광선은 자체(`training/RL/map`). 단계별 상태는 [TODO_TRACKER.md](TODO_TRACKER.md) 7절. 저장소 기준 CUDA 는 12.8.
+
 ---
 
 ## 1. 참조에서 직접 확인한 것
@@ -88,17 +90,17 @@ state_out   float[nworld][S]          // 정규화 완료된 학습 입력
 ---
 
 ## 4. 열린 문제와 위험
-- **용도가 미정**: 시뮬을 (a) 데모 데이터 생성, (b) 폐루프 평가, (c) RL 중 무엇에 쓸지에 따라 접촉 정확도 요구가 크게 다르다.
-- **MJWarp를 검증 오라클로 쓰려면 Python이 필요**하다. `CLAUDE.md`는 학습/추론 코드에 Python을 금지하는데, 검증용에도 허용할지 정해야 한다.
-- LIMO 바퀴 역학(메카넘/차동 모드)을 생략하므로 실제 주행과 차이가 난다 (sim-to-real).
+- ~~**용도가 미정**~~ **(정해짐)**: RL 교사 학습·대본 교사 시연 만들기·폐루프 평가 셋 다(G3–G5, E6). 접촉은 잡기 모형 수준(E6), BEHAVIOR 물체 대조는 E7.
+- ~~**MJWarp를 검증 오라클로 쓰려면 Python이 필요**하다~~ **(정해짐)**: MJWarp 를 쓰지 않는다. 검증은 CPU 참조판 비트 동일 + 음성 대조, Python 은 오프라인 기준값 덤프만(예: `training/BC/tools/siglip_ref.py`).
+- LIMO 바퀴 역학(메카넘/차동 모드)을 생략하므로 실제 주행과 차이가 난다 (sim-to-real). (환경은 차동으로 구현)
 - URDF의 LIMO 카메라와 손목 카메라 위치는 실측 전 값이다.
 - Newton, Madrona, Isaac Lab은 코드를 읽지 않았다. 필요하면 추가로 읽는다.
 
 ---
 
-## 5. 팀 프로젝트의 지도 인터페이스 (`refs/code/behavior-2026/src/scene_graph/scenemap/include/scenemap.h`)
+## 5. 팀 프로젝트의 지도 인터페이스 (`refs/code/behavior-2026/src/scene_graph/scenemap/include/scenemap.h` — 지금 경로는 서브모듈 `src/behavior-2026/src/scene_graph/scenemap/include/scenemap.h`)
 시뮬레이션이 내보내는 값과 지도가 받는 값을 같은 형식으로 맞춘다.
 - 입력 영상 `sm_image`: `cam`(0 머리, 1 왼손목, 2 오른손목), `rgba` (w×h×4 u8), **`depth_m` (w×h float, 미터)**, `fx, fy, cx, cy`. 우리 depth 버퍼 정의(미터, float)와 같다.
-- 입력 proprio: 스텝마다 f32 배열(`n_proprio`). 지금 팀 코드는 R1 Pro용 61개다. 우리 로봇(LIMO + OMX)의 구성은 새로 정해야 한다.
+- 입력 proprio: 스텝마다 f32 배열(`n_proprio`). 지금 팀 코드는 R1 Pro용 61개다. 우리 로봇(LIMO + OMX)의 구성은 새로 정해야 한다. **(정해짐)** scenemap `limo_omx` 매개변수에 LIMO + OMX 순기구학이 들어갔다(서브모듈 `7219187`, 올림 `a2abc45`).
 - 지도 출력: 물체 `sm_object` {id, name, pos[3], extent[3], n_obs, last_seen, state(SEEN/GONE/MOVED/HELD)} (map 프레임), 2D 점유 격자 `sm_grid` (int8, −1 모름, 0~100 점유%), 도달 거리 `sm_snap_reachable`. 이것이 VLA state의 "물체/금지 영역" 입력의 원천이다.
 - 시뮬에서 지도를 직접 뽑을지(GT)는 Isaac Sim 쪽 작업이다. 팀의 `dynamic-object-mapping-benchmark`(Isaac Sim)가 `src/`에 있다. 내용은 아직 안 읽었다.

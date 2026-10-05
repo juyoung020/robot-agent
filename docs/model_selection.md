@@ -9,8 +9,8 @@
 |---|---|---|---|
 | 지도·위치 (SLAM) | **Cartographer (2D 라이다)** — 시뮬에서는 실제로 자체 `slam2d`(scenemap)가 돈다 | 리모에서 가볍게 돌고, 물체 높이는 depth 로 알 수 있음 | 시뮬은 `slam2d`, 실기에서 무엇을 쓸지 다시 정해야 함 |
 | 물체 인식 | **ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, [github.com/juyoung020/ObjectSAM](https://github.com/juyoung020/ObjectSAM) v1.0: `ObjectSAM-416.pt`·`.onnx`·`-int8-qdq.onnx`) + SigLIP 2 B/32 + objprob(scenemap 확률 모드, 기본 켬, 매개변수 `objprob_params/yolo26n-seg-obj-416.json`)** — 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. 벽·천장 기하 제거, 이름 없는 3D·벡터 병합, vMF 벡터·베이지안 이름 (아래 "물체 인식" 절). YOLO26·YOLOE 는 비교 뒤 보관(`~/ovdet_models/archive`) | 가장 많이 잡고(목록 밖 포함) 벡터·단어 찾기 둘 다 됨. 목표: FastSAM-s 의 재현율 + YOLO26s-seg 수준의 깔끔함 | **10-05: decided ObjectSAM (YOLO26n 학생) + SigLIP 2 + objprob** — 기본 엔진(behavior-2026 `26cbdc4`: libsgrt 글루 `SGRT_ENGINE`·`realbag_run`·explore/LIMO 시작 스크립트, objprob 기본 켬). 원래 FastSAM-s-416 은 `--engine`/`SGRT_ENGINE` 으로 고를 수 있음 |
-| 같은 물체 판단 (DA) | **직접 만듦 — 이름 없는 확률 DA (`objprob`)** | 3D 맞닿음(가우시안) + 벡터 일치(vMF)의 가설 검정. 처음엔 같은 이름끼리 위치로 비교했으나 FastSAM 조각이 안 합쳐져 바꿈 | 설계 결정, 구현 중 (10-05) |
-| 물체 찾기 | **임베딩 벡터 찾기 + 이름(의미) 찾기** 둘 다, **에이전트·RecallVLA 공용 색인** | 이름 검색 → 생김새 재검색 → 확인 후 이름 고치기. 에이전트엔 글로, VLA 는 자기 질의 벡터로 | 결정 (10-05 갱신), 도구 구현 중 |
+| 같은 물체 판단 (DA) | **직접 만듦 — 이름 없는 확률 DA (`objprob`)** | 3D 맞닿음(가우시안) + 벡터 일치(vMF)의 가설 검정. 처음엔 같은 이름끼리 위치로 비교했으나 FastSAM 조각이 안 합쳐져 바꿈 | 결정, 구현·기본 켬 (10-05 — behavior-2026 `26cbdc4`) |
+| 물체 찾기 | **임베딩 벡터 찾기 + 이름(의미) 찾기** 둘 다, **에이전트·RecallVLA 공용 색인** | 이름 검색 → 생김새 재검색 → 확인 후 이름 고치기. 에이전트엔 글로, VLA 는 자기 질의 벡터로 | 결정 (10-05 갱신). 에이전트 도구 `search_objects`·`confirm_object`·`list_place` 구현(`369cd3a`, `936c256`), RecallVLA 자체 검색은 학습 전 |
 | 지도 갱신 | **직접 만듦** | 바뀐 부분만 고침 | 결정 |
 | 방 나누기·이름 | **직접 만듦** — 방 안 물체의 SigLIP 2 이름 → 규칙, 다음은 임베딩 제로샷 분류 | 클래스 이름 없는 FastSAM-s 에서도 방 종류를 붙임 | 결정 |
 | 물체 지도 저장·보기 | **Spark-DSG** 저장, 보기는 **2D 지도** | Hydra·Khronos 와 같은 형식. 웹 3D 뷰어는 안 씀(10-02) | 결정 |
@@ -162,7 +162,7 @@ OpenLORIS office1-1·1-5 노드 120 → 120, 107 → 111. 솔직히 랜색은 �
 | 다른 후보 | 안 고른 이유 |
 |---|---|
 | YOLO-seg nano (09-30 첫 선택) | 영역과 이름을 한 번에 주지만 정해진 이름만, 목록 밖 물건·자유 글 찾기가 안 됨 |
-| YOLOE (시뮬에서 지금 돌아감) | 단어로 찾을 수 있지만 프롬프트 어휘 안에서만. 물체 벡터가 없어 생김새로 못 찾음 |
+| YOLOE (10-05 까지 시뮬에서 돌던 것 — 지금은 보관, 기본은 ObjectSAM) | 단어로 찾을 수 있지만 프롬프트 어휘 안에서만. 물체 벡터가 없어 생김새로 못 찾음 |
 | OpenAI CLIP B/32 + 한국어 글 인코더 | 바로 쓸 수 있는 2순위 대안. 한국어 찾기는 좋지만 이름 정답률이 낮음(0.28) |
 | MobileCLIP 계열 | 이름 정확도는 가장 높지만 가중치가 비상업 라이선스 |
 | MobileSAM · EfficientViT-SAM · SAM 2 | 리모에 무거움. 정밀한 영역은 VLA 에 쓰이지 않음 |

@@ -1,6 +1,6 @@
 # 학습 뷰어 설계 — RL 교사·BC 학생·DAgger·RL 다듬기 (Rust 서버 + 브라우저)
 
-작성 2026-10-03. 설계 문서. **구현 상태는 13절**(2026-10-04: V0–V4 와 V5 의 평가 표 — 코드 `training/viewer/`, 사용법 [training/viewer/README.md](../../training/viewer/README.md)).
+작성 2026-10-03. 설계 문서. **구현은 끝났다**(2026-10-04, V0–V5 — 코드 `training/viewer/`(trainview), 사용법 [training/viewer/README.md](../../training/viewer/README.md)). 정한 값은 12절, 구현 상태·설계와 다르게 한 것은 13절. 아래 1–11절은 설계 때 글 그대로다.
 - 무엇을 학습하나는 [POLICY.md](POLICY.md), 학습 고리·로그 링 버퍼는 [GPU_TRAINING.md](GPU_TRAINING.md), 입력은 [VLA_INPUT.md](VLA_INPUT.md), 실행 기록 위치는 [training/README.md](../../training/README.md).
 - 본보기 둘: 사용자의 전투기 RL 학습 뷰어(`~/aircombat-rl-private/student/viewer/`, 이하 **전투기 뷰어**)와 팀의 Rust 실시간 뷰어 [sgview](../../src/scene_graph/sgview/README.md).
 - 표기: **(추정)** = 재지 않은 숫자·판단. 지금 있는 코드에 대한 말은 직접 열어 보고 확인한 것만 적었다(파일 경로를 붙임).
@@ -86,6 +86,7 @@
 - 종류는 **`run.json` 의 `kind` 가 정한다.** 이름으로 짐작하지 않는다.
 - 화면 위 실행 고르는 자리는 줄을 나눈다: `teacher` / `student`(bc·dagger·rlft·eval) / `labs`. 선택은 줄을 건너 **하나**다(전투기 뷰어와 같음). 비교 탭만 여럿을 고른다.
 - 기본으로 여는 실행은 `latest.txt` 가 가리키는 본학습이다. `lab` 은 기본 선택 후보가 아니다(전투기 뷰어 `_latest`).
+- (구현에서 바뀜) 실행 고르기 줄은 `pipelines`(학생 ← 교사)·`teachers`·`BEHAVIOR`·`archive`·`test data (synthetic)` 이고, `labs` 무리는 `test data` 로 합쳤다 — 13절, viewer README "화면".
 
 ### 3.1 한 실행 안에서 목적이 다른 판 — 줄기(stream)로 가른다
 
@@ -117,6 +118,7 @@
   labs/<이름>/                            # 같은 모양
 ```
 
+- (구현) 실제 뿌리는 학습기 `--out` 폴더(`~/ra_*`)와 `~/trainview_work/*` 다 — 12절. 지금 학습기가 쓰는 파일은 13절 표.
 - 전부 **선택**이다. 있는 것만 화면에 뜬다. 없는 것은 "무엇이 없어서 안 그렸다" 를 적는다.
 - 학습기는 이 폴더에 **덧붙이기**(`progress`, `episodes`)와 **이름 바꾸기**(`replays`, `evals`)만 한다. 뷰어는 아무것도 쓰지 않는다.
 
@@ -566,23 +568,25 @@ trainfmt/             (쓰는 쪽과 같이 쓰는 형식 크레이트, 4.6)
 | V5 | 영상 칸, 평가 표, FP8 묶음 | 학생 평가 판에서 영상이 프레임과 맞음 | G5(BC) |
 | (뒤) | 살아 있는 평가 판 하나를 scenemap 스트림(`MAP_RECT`·`POSE`·`JOINTS`)으로 바로 보기 — sgview `--ingest` 를 붙임 | | 필요하면 |
 
-## 12. 정할 것
+## 12. 정할 것 → 정한 것 (구현에서, 2026-10-04)
 
-| 무엇 | 선택지 | 기본 제안 |
+설계 때 열어 둔 것들이다. 지금은 모두 코드로 정해졌다(마지막 줄만 안 잼). 사용법은 [viewer README](../../training/viewer/README.md).
+
+| 무엇 | 선택지(설계 때) | 정한 것 |
 |---|---|---|
-| 뷰어 자리 | `training/viewer/` / `src/` 아래 / sgview 안 | `training/viewer/` (학습 도구) |
-| 실행 뿌리 | 모델마다(`~/rl_work/runs`, `~/bc_work/runs`) / 하나(`~/map_vla_work/runs`) | 모델마다 + 뷰어가 `--root` 여럿. dagger·rlft 는 학생이라 `bc_work` |
-| `args.json` 대 `run.json` | training/README 는 `args.json` | `run.json` 하나에 인자까지. README 는 맞춰 고칠 것 |
-| sgview 코드 나누기 | 옮겨 쓰기 / sgview 에서 Rust 모듈·JS 모듈로 빼기 | 옮겨 쓰고, 둘 다 돌면 뺀다 |
-| three.js 판 | sgview 의 2021 UMD 빌드 / 새 모듈판(전투기 0.160.0) | sgview 것. 로봇 코드가 거기 맞춰 있다 |
-| 그리퍼 값 → 두 관절 | `robot.json` 에 그리퍼 관절 둘(`omx_gripper_joint_1/2`). 값 하나를 나누는 식(부호·배율) | URDF 에서 확인 후 `joint_map` 에 적음 |
-| 커리큘럼 이름 | GPU_TRAINING 5.5 의 C0–C2 / POLICY 4.5 의 단계 1–4 | 두 문서를 맞춘다. 뷰어는 `run.json` 의 표를 읽으므로 어느 쪽이든 된다 |
-| 완성도 칸 | GPU_TRAINING 5.6(0 / 0–30 / 30–70 / 70–100 / 100 %) / POLICY 8(전부 / 일부 / 빈 / 없음) | 칸 경계를 `run.json` 에. 지도 방식(`none`·`gt`·`slam`)은 열로 따로 |
-| 표를 모집단으로 | 학습기가 칸(스킬 × 집 × 완성도)마다 판 수·성공 수를 `progress` 에 실음 / 표본만 | 처음엔 표본(키가 너무 많아짐). 칸 수가 작으면 모집단 키 추가 |
-| 영상 | JPEG(로그 스레드) / BC 데이터의 HEVC 파일 위치만 기록 / 없음 | JPEG, 평가 줄기만 |
-| 슬롯 정밀도 | f16 / f32 | f16 (16–32 m 에서 1.6 cm 단위, 4.4) |
-| 원격 보기 | 127.0.0.1 + SSH 터널 / 0.0.0.0 | 127.0.0.1 기본 |
-| std `TcpListener` 대기열 | Rust std 가 `listen` 에 주는 값 | 확인할 것. 작으면 전투기 뷰어처럼 연결 거부가 난다 |
+| 뷰어 자리 | `training/viewer/` / `src/` 아래 / sgview 안 | `training/viewer/`(서버 `trainview`, 형식 크레이트 `trainfmt/`) |
+| 실행 뿌리 | 모델마다 / 하나 | 학습기의 `--out` 폴더(`~/ra_*` 아래)가 곧 실행 폴더, 뷰어는 `--root` 여럿(뿌리 밑 깊이 4 까지 `run.json`·`progress.jsonl` 있는 폴더) |
+| `args.json` 대 `run.json` | training/README 는 `args.json` | `run.json` 하나(설정 전부 `config`). 학습기는 옛 `config.json`·`log.csv`·`results.json` 도 그대로 씀(training/README 맞춤) |
+| sgview 코드 나누기 | 옮겨 쓰기 / 모듈로 빼기 | 재생 탭은 sgview 페이지를 **고치지 않고** iframe 으로 띄우고, 서버(`src/sg.rs`)가 sgview 실시간 경로를 판 재생으로 흉내. three.js·로봇 GLB·페이지는 `build.rs` 가 sgview 에서 읽어 바이너리에 넣음 |
+| three.js 판 | sgview 2021 UMD / 새 모듈판 | sgview 것(`build.rs` 가 `three.min.js`·`OrbitControls.js`·`GLTFLoader.js` 를 가져옴) |
+| 그리퍼 값 → 두 관절 | 부호·배율 | `omx_gripper_joint_1` = 값, `omx_gripper_joint_2` = −값(`tools/record_replay/g1_rec.h`, `assets/sgpanel.js`) |
+| 커리큘럼 이름 | C0–C2 / 단계 1–4 | `run.json` `curriculum` 표와 progress `curriculum/*` 키(`stage`, `success_rate/<단계>`, `start_map_fraction/<단계>` …)로 읽음 — 이름은 학습기 설정 그대로 |
+| 완성도 칸 | GPU_TRAINING 5.6 / POLICY 8 | BC 평가 표 `…/success_rate_by_completion/<칸>`(`bc_run`), PPO 는 단계별 `curriculum/*` |
+| 표를 모집단으로 | 칸마다 모집단 / 표본만 | PPO·BC 의 `rollout/*` 는 장치 링의 바퀴 합계(모집단). 판마다 줄(표본)은 재생 기록 판(`s_eval/episodes_eval.jsonl`)만 — 학습 판마다 줄은 장치 링 변경이 필요해 안 함(13절) |
+| 영상 | JPEG / HEVC 위치 / 없음 | 평가 판만: `.trp` 안 카메라 JPEG(`trainfmt::trp`), sgview 판 폴더는 몸통 카메라 그림(OmniGibson 판) |
+| 슬롯 정밀도 | f16 / f32 | f16(`trainfmt/src/trp.rs`) |
+| 원격 보기 | 127.0.0.1 + SSH 터널 / 0.0.0.0 | 기본 `--bind 127.0.0.1`, 원격은 SSH 터널 또는 `--bind 0.0.0.0` |
+| std `TcpListener` 대기열 | Rust std 가 `listen` 에 주는 값 | 확인 안 함(연결 거부는 아직 못 봄) |
 
 ## 13. 구현 상태 (2026-10-04)
 
