@@ -32,9 +32,8 @@ void   sgrt_default_config(sgrt_config* c);
 sgrt*  sgrt_create(const sgrt_config* c, char* err, size_t err_len);
 void   sgrt_destroy(sgrt*);
 /* 새 판: 지도·물체 비우고, 프롬프트 표(이 판에서 찾을 물체 이름) 지정.
- * 엔진: sgrt_config.engine = ObjectSAM(이름 없는 분할, 어휘 'object' 하나 — 이름은 SigLIP 2 + objprob) 이 기본. 닫힌 어휘 YOLO-seg(COCO-80)는 옛 규칙 비교용.
- * 환경 변수 SGRT_PROMPT = task | all | auto(기본). auto 는 엔진 어휘가 200 이하(닫힌 어휘)면 all — 엔진 이름 전부를 표로
- * 쓰고(과제 이름 중 어휘 밖 것은 err 에 적음), 아니면 task(prompt 그대로). prompt 가 NULL·0 개면 늘 all.
+ * 엔진: sgrt_config.engine = ObjectSAM(이름 없는 분할, 어휘 'object' 하나) 이 기본. 이름은 SigLIP 2 낱말 표(SGRT_LABELS)가 정하고
+ * prompt(과제 이름)는 낱말 표에 더해짐(표에 없는 이름은 stderr 에 적음). prompt 가 NULL·0 개여도 됨.
  * 이름 종류(구조물·고정·옮길 수 있음)는 scenemap 기본 표: COCO 의 dining table·couch·bed·refrigerator·oven·sink·tv·toilet·
  * microwave·potted plant·bench 는 고정, person 은 구조물(노드 안 됨), 나머지(cup·bottle·book·chair …)는 옮길 수 있음. */
 int    sgrt_begin(sgrt*, const char* const* prompt, int32_t n, char* err, size_t err_len);
@@ -186,12 +185,12 @@ typedef struct {
 int    sgrt_get_clip_stats(const sgrt*, sgrt_clip_stats* out);
 
 /* ---- objprob 앞단(확률 물체 모델 — scenemap README "scenemap 확률 모드", tools/realbag 과 같은 길) ----
- * 환경 변수 SGRT_OBJPROB = 1 | 0 | 없음(기본: 엔진 어휘가 'object' 하나인 분할 엔진 — ObjectSAM yolo26n-seg-obj-416·FastSAM-s — 이면 켬).
- * 켜면 keyframe 마다 검출 마스크마다 SigLIP 2 임베딩(SGRT_OBJPROB_CLIP, 기본 siglip2_b32_mask_fp16.plan) → 낱말 표(SGRT_LABELS) 이름,
+ * 물체 지도의 유일한 규칙 — 늘 켜짐(끄는 스위치 없음).
+ * keyframe 마다 검출 마스크마다 SigLIP 2 임베딩(SGRT_OBJPROB_CLIP, 기본 siglip2_b32_mask_fp16.plan) → 낱말 표(SGRT_LABELS) 이름,
  * scenemap 확률 모드(vMF 벡터·이름 사후·이름 없는 같은 것 판정·칼만 위치·랜색 평면 구조물 거르기·문창 크기·벽 높이), 통째 다시 담기.
  * 매개변수 SGRT_OBJPROB_PARAMS = 파일 | none(내장), 없으면 tools/realbag/objprob_params/<엔진 줄기>.json. 과제 이름은 낱말 표에 더함.
  * SGRT_INSPECT=1 = 살펴본 정도(sm_set_inspect, scenemap README "살펴본 정도").
- * 켜면 SGRT_CLIP(ClipMem)은 안 켬 — 물체 벡터 objects/O<id>_emb.f16(μ)·_views.f16 은 scenemap 이 씀(sgsearch·search_objects 가 읽음). */
+ * SGRT_CLIP(ClipMem)은 안 켬 — 물체 벡터 objects/O<id>_emb.f16(μ)·_views.f16 은 scenemap 이 씀(sgsearch·search_objects 가 읽음). */
 int    sgrt_objprob_enabled(const sgrt*);
 
 #ifdef __cplusplus

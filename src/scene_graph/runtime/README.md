@@ -24,7 +24,7 @@ keyframe 인지는 `sgrt_want_image()` 가 알려 준다(`kf_every` 스텝마다
 | 파일 | 하는 일 |
 |---|---|
 | `include/sgrt.h` | C ABI: `sgrt_create`·`sgrt_begin`·`sgrt_step`·`sgrt_save`·`sgrt_destroy`, 통계·시간(`sgrt_stats`·`sgrt_get_timing`·`sgrt_get_stage_timing`), 지도 보기(`sgrt_map`·`sgrt_map_snapshot`, scenemap 문맥 `sgrt_scenemap` — 다른 스레드의 읽기 도구가 자기 스냅숏·`sm_observe_object_name` 을 쓰려고, 10-05), 자세 원천(`sgrt_set_pose_mode`·`sgrt_push_pose`·`sgrt_get_pose_diag`), 2D 라이다(`sgrt_push_scan`, 10-06), 이름 종류(`sgrt_set_kind_names`), 임베딩·이름 찾기(`sgrt_object_embedding`·`sgrt_query_embedding`·`sgrt_query_label`·`sgrt_object_names`·`sgrt_get_clip_stats`) |
-| `src/sgrt.cpp` | 구현: ovdet + scenemap 연결, 프롬프트 표(`SGRT_PROMPT`), 영상 시각 늦춤(`SGRT_IMAGE_LAG`), 저장 스레드, 스트림 요약 스레드(`SGRT_STREAM`), 입력 기록(`SGRT_RECORD`), 단계 시간(det·step·map·record) |
+| `src/sgrt.cpp` | 구현: ovdet + scenemap 연결, 낱말 표, 영상 시각 늦춤(`SGRT_IMAGE_LAG`), 저장 스레드, 스트림 요약 스레드(`SGRT_STREAM`), 입력 기록(`SGRT_RECORD`), 단계 시간(det·step·map·record) |
 | `src/crop.cu` · `crop.hpp` | CUDA 커널 둘: best view 상자 자르기(넓이 평균, 요청 32개씩 한 번에, 자른 것만 고정 메모리로 내려받기)와 점 구름 화소 색 모으기. 식은 `scenemap/src/bestview.cpp` 호스트 판과 같다 |
 | `src/sgrt_clip.cpp` · `.hpp` | sgclip 연결: keyframe 마다 새 물체·best view 품질이 임베딩 때의 1.2배 이상인 물체를 최대 8개 비동기로 임베딩. 저장 때 `objects/O<id>_emb.f16`, `cache/names.json`, scene.json 노드 metadata(`sm_set_object_meta`). 라벨 표는 따로 스레드에서 읽음 |
 | `glue/sgrt_glue.py` | 평가기 쪽 접착부 `SceneMemory(task, out_dir)` · `step(obs)` · `close()`. 과제 프롬프트(`../ovdet/config/task_prompts.txt` 의 과제 줄 + `_scene` 줄), GT 자세 넣기, GT 기록, 900 스텝마다 진단·시간 출력 |
@@ -123,14 +123,12 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 | `SGRT_STREAM` | 없음(끔) | `host:port`. sgview(`--ingest`)로 실시간 스트림. 자세·지도 변화분은 스텝 안에서 링 버퍼로, 요약은 따로 스레드가 만든다. 5 s 마다 stderr 에 스트림 통계 |
 | `SGRT_STREAM_HZ` | `60` | 요약(view) 만드는 주기 Hz, 0.5–240 으로 자름 |
 | `SGRT_RECORD` | 없음(끔) | 파일 경로. 받은 입력(proprio·외부 자세·라이다 스캔 'L'·keyframe 깊이·RGB·검출)을 이진(`SGRC` 판 1)으로 기록. `tools/sgrt_replay`(Cartographer 포함)·`scenemap/tools/sm_bench` 가 재생 |
-| `SGRT_PROMPT` | `auto` | 프롬프트 표. `task`(과제 이름만) · `all`(엔진 어휘 전부) · `auto`(어휘 200 이하 닫힌 어휘 엔진이면 `all`, 아니면 `task`). 프롬프트가 비면 늘 `all` |
 | `SGRT_CLIP` | 없음(끔) | SigLIP 2 엔진 plan 경로. `1` = `models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan`, `0`·빈 값 = 끔 |
 | `SGRT_CLIP_GRAPH` | sgclip 기본(1) | 배치 크기별 CUDA graph 쓰기(`sgc_config.use_graph`) |
 | `SGRT_LABELS` | `data/embed_work/labels/objects-v1` | 라벨 표 폴더(이름 찾기). 색인 캐시는 `<out_dir>/cache/index` |
 | `SGC_IMG_SAMPLE` | `models/ovdet/x86_sm120/siglip2_b32/img_sample_lvis10k.f16`(있으면) | 라벨 표 투영을 맞출 영상 임베딩 표본(sgclip 변수, sgrt_clip 이 읽어 넘김) |
 | `SGRT_LIB` | `build/sgrt/libsgrt.so` | 글루: 읽을 라이브러리 |
 | `SGRT_ENGINE` | `models/ovdet/x86_sm120/yolo26n-seg-obj-416.plan` (ObjectSAM — YOLO26n 학생, 이름 없는 분할) | 글루: 검출 엔진. 이름 표는 `<엔진>.names.txt`. 선생 FastSAM-s = `FastSAM-s-416.plan` |
-| `SGRT_OBJPROB` | 없음(자동) | objprob 앞단(아래 "objprob 앞단"). `1` 켬 · `0` 끔 · 없음 = 엔진 어휘가 `object` 하나(분할 엔진)면 켬 |
 | `SGRT_OBJPROB_PARAMS` | `tools/realbag/objprob_params/<엔진 줄기>.json` | objprob 엔진별 매개변수 파일, `none` = 내장 기본값 |
 | `SGRT_OBJPROB_CLIP` | `models/ovdet/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan` | objprob 마스크 임베딩 SigLIP 2 엔진 |
 | `SGRT_INSPECT` | `0` | `1` = 살펴본 정도(scenemap README "살펴본 정도", view.json·scene.json 물체 `inspect`) |
@@ -141,15 +139,15 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 
 `sgrt_config` 기본값(`sgrt_default_config`): `kf_every` 6, `save_s` 1.0(시뮬 초), `conf_th` 0.25. 글루도 같은 값을 넘긴다.
 
-## objprob 앞단 (10-05, 기본 켬)
+## objprob 앞단 (물체 지도의 유일한 규칙, 늘 켬)
 
-분할 엔진(ObjectSAM `yolo26n-seg-obj-416.plan`, 어휘 `object` 하나)이면 libsgrt 가 `tools/realbag/realbag_run` 과 같은 길로 돈다(낱말 표·라벨 사전·엔진별 매개변수는 `src/objprob_front.hpp` 하나를 같이 씀).
+분할 엔진(ObjectSAM `yolo26n-seg-obj-416.plan`, 어휘 `object` 하나) 위에서 libsgrt 가 `tools/realbag/realbag_run` 과 같은 길로 돈다(낱말 표·라벨 사전·엔진별 매개변수는 `src/objprob_front.hpp` 하나를 같이 씀).
 
 1. keyframe: ovdet 분할 → 마스크마다 SigLIP 2 임베딩(장치 RGB 에서 바로, 같은 스텝 안에서 기다림) → 낱말 표 글 임베딩 최댓값 = 검출 이름, `sm_set_det_embeddings`.
 2. `sm_push_image_rgb` — scenemap 확률 모드: vMF 벡터 합치기, 베이즈 이름 합치기, 이름 없는 같은 것 판정(로지스틱 = 로그 우도비), 칼만 위치, 랜색 평면으로 벽·천장·바닥 조각 거르기, 문·창 크기 검사, 벽 높이 규칙.
 3. `sm_reencode_requests` → 구름 투영 마스크로 SigLIP 2 → `sm_set_object_embeddings`(통째 다시 담기).
 
-판 시작(`sgrt_begin`)의 과제 이름은 엔진 프롬프트가 아니라 낱말 표에 더한다(이미 있는 낱말·라벨은 빼고, SigLIP 2 라벨 표에 있는 것만). 켜면 `SGRT_CLIP`(ClipMem)은 안 켠다 — 물체 벡터 `objects/O<id>_emb.f16`(μ)·`_views.f16` 은 scenemap 이 저장하고 `sgsearch`·`search_objects` 가 읽는다. 끝날 때 stderr 에 keyframe 당 SigLIP 2·다시 담기 시간.
+판 시작(`sgrt_begin`)의 과제 이름은 엔진 프롬프트가 아니라 낱말 표에 더한다(이미 있는 낱말·라벨은 빼고, SigLIP 2 라벨 표에 있는 것만). `SGRT_CLIP`(ClipMem)은 안 켠다 — 물체 벡터 `objects/O<id>_emb.f16`(μ)·`_views.f16` 은 scenemap 이 저장하고 `sgsearch`·`search_objects` 가 읽는다. 끝날 때 stderr 에 keyframe 당 SigLIP 2·다시 담기 시간.
 
 확인: radio r3 기록(`data/datasets/limo_rec/r3.bin`)을 `sgrt_replay` 로 — 730 keyframe, 마스크 17.8 개/kf, SigLIP 2 3.7 ms/kf, 다시 담기 0.33 ms/kf, 살아 있는 노드 104(같은 기록을 realbag 스트림으로 바꾼 `realbag_run` 판 96 — 깊이 4 m 자름·영상 늦춤이 다름).
 

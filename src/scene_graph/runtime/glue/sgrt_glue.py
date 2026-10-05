@@ -3,10 +3,10 @@ pointers to the C++/CUDA runtime (segmentation -> SigLIP 2 names/embeddings -> s
 Spark-DSG save). No computation here.
 
 Detector (env SGRT_ENGINE): default ObjectSAM, the class-agnostic YOLO26n student models/ovdet/x86_sm120/yolo26n-seg-obj-416.plan
-(https://github.com/juyoung020/ObjectSAM). With a class-agnostic engine libsgrt turns objprob on by itself (SGRT_OBJPROB, sgrt.h):
+(https://github.com/juyoung020/ObjectSAM). libsgrt always runs objprob (sgrt.h):
 SigLIP 2 per-mask names + embeddings, the scenemap probabilistic object model with the per-engine parameters
 src/scene_graph/tools/realbag/objprob_params/<engine>.json. The teacher FastSAM-s stays selectable
-(SGRT_ENGINE=models/ovdet/x86_sm120/FastSAM-s-416.plan). SGRT_OBJPROB=0 = old name rules.
+(SGRT_ENGINE=models/ovdet/x86_sm120/FastSAM-s-416.plan).
 
     mem = SceneMemory(task_name, out_dir)        # once per process
     mem.step(obs)                                # every evaluator step, before the policy acts
