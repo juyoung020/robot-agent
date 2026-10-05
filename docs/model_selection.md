@@ -8,7 +8,7 @@
 | 부품 | 선택 | 한 줄 이유 | 상태 |
 |---|---|---|---|
 | 지도·위치 (SLAM) | **Cartographer (2D 라이다)** — 시뮬에서는 실제로 자체 `slam2d`(scenemap)가 돈다 | 리모에서 가볍게 돌고, 물체 높이는 depth 로 알 수 있음 | 시뮬은 `slam2d`, 실기에서 무엇을 쓸지 다시 정해야 함 |
-| 물체 인식 | **FastSAM-s (416) + SigLIP 2 B/32 + scenemap 확률 모드(`objprob`)** — 벽·천장 기하 제거, 이름 없는 3D·벡터 병합, vMF 벡터·베이지안 이름 (아래 "물체 인식" 절). YOLO26·YOLOE 는 비교 뒤 보관(`~/ovdet_models/archive`) | 가장 많이 잡고(목록 밖 포함) 벡터·단어 찾기 둘 다 됨. 목표: FastSAM-s 의 재현율 + YOLO26s-seg 수준의 깔끔함 | **방향 결정 (10-05), 확률 모드 구현·검증 중** — 시뮬 sgrt·LIMO 지도 시험은 옮길 때까지 보관 엔진 사용 |
+| 물체 인식 | **ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, [github.com/juyoung020/ObjectSAM](https://github.com/juyoung020/ObjectSAM) v1.0: `ObjectSAM-416.pt`·`.onnx`·`-int8-qdq.onnx`) + SigLIP 2 B/32 + objprob(scenemap 확률 모드, 기본 켬, 매개변수 `objprob_params/yolo26n-seg-obj-416.json`)** — 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. 벽·천장 기하 제거, 이름 없는 3D·벡터 병합, vMF 벡터·베이지안 이름 (아래 "물체 인식" 절). YOLO26·YOLOE 는 비교 뒤 보관(`~/ovdet_models/archive`) | 가장 많이 잡고(목록 밖 포함) 벡터·단어 찾기 둘 다 됨. 목표: FastSAM-s 의 재현율 + YOLO26s-seg 수준의 깔끔함 | **10-05: decided ObjectSAM (YOLO26n 학생) + SigLIP 2 + objprob** — 기본 엔진(behavior-2026 `26cbdc4`: libsgrt 글루 `SGRT_ENGINE`·`realbag_run`·explore/LIMO 시작 스크립트, objprob 기본 켬). 원래 FastSAM-s-416 은 `--engine`/`SGRT_ENGINE` 으로 고를 수 있음 |
 | 같은 물체 판단 (DA) | **직접 만듦 — 이름 없는 확률 DA (`objprob`)** | 3D 맞닿음(가우시안) + 벡터 일치(vMF)의 가설 검정. 처음엔 같은 이름끼리 위치로 비교했으나 FastSAM 조각이 안 합쳐져 바꿈 | 설계 결정, 구현 중 (10-05) |
 | 물체 찾기 | **임베딩 벡터 찾기 + 이름(의미) 찾기** 둘 다, **에이전트·RecallVLA 공용 색인** | 이름 검색 → 생김새 재검색 → 확인 후 이름 고치기. 에이전트엔 글로, VLA 는 자기 질의 벡터로 | 결정 (10-05 갱신), 도구 구현 중 |
 | 지도 갱신 | **직접 만듦** | 바뀐 부분만 고침 | 결정 |
@@ -48,7 +48,7 @@
 > **10-04 메모**: 저장소에 Cartographer 는 없다. 시뮬에서는 scenemap 의 자체 2D SLAM(`src/scene_graph/scenemap/src/slam2d.cpp`)이 돈다. 실기에서 Cartographer 를 쓸지 `slam2d` 를 쓸지는 아직 안 정했다.
 
 - 리모로 방을 한 번 돌며 2D 지도를 만들고, 평소엔 그 지도 위에서 **위치만** 추정한다.
-- 물체 위치(xyz)는 SLAM 이 아니라 `로봇 위치 + 카메라 장착 위치 + 물체 마스크(지금은 FastSAM-s) 무게중심의 depth` 로 계산해 기록한다. 그래서 무거운 3D SLAM 은 필요 없다.
+- 물체 위치(xyz)는 SLAM 이 아니라 `로봇 위치 + 카메라 장착 위치 + 물체 마스크(지금은 ObjectSAM) 무게중심의 depth` 로 계산해 기록한다. 그래서 무거운 3D SLAM 은 필요 없다.
 - 시뮬레이션은 정답 위치를 주므로, 물체 기억·계획 파트는 SLAM 이 끝나기를 기다리지 않아도 된다.
 
 | 다른 후보 | 안 고른 이유 |
@@ -60,7 +60,9 @@
 
 ### 물체 인식 — 아직 결정 못 함 (10-05)
 
-> **갱신 (2026-10-05 저녁): 방향 결정 — FastSAM-s-416 + SigLIP 2 + scenemap 확률 모드(`objprob`).** 같은 BEHAVIOR 기록(house_double_floor_lower, LIMO r3)에서 셋을 비교(`~/datasets/sim_detcmp/README.md`, 정답 34개, slam 자세): FastSAM-s-416 노드 290·정답 찾음 27·중복 140·벽 위 가짜 108, YOLO26s-seg 28·14·9·4, YOLOE-11L 78·24·32·19. 사용자 관찰: "FastSAM-s 는 천장·벽이 안 걸러지고 병합이 잘 안 됨, YOLO26s-seg 는 다 잘 되는데 뽑은 수가 아쉬움, YOLOE 는 FastSAM-s 보다 벽·천장이 덜함". 목표는 **FastSAM-s 를 YOLO26s-seg 수준으로 깔끔하게 + 물체를 더 잘 잡게**. YOLO26s-seg·YOLOE 엔진은 보관했다.
+> **10-05: decided ObjectSAM (YOLO26n 학생) + SigLIP 2 + objprob.** 분할 = ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, [github.com/juyoung020/ObjectSAM](https://github.com/juyoung020/ObjectSAM) v1.0: `ObjectSAM-416.pt`·`.onnx`·`-int8-qdq.onnx`) + SigLIP 2 B/32 + objprob(scenemap 확률 모드, 기본 켬, 매개변수 `objprob_params/yolo26n-seg-obj-416.json`). 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. FastSAM-s 재학습(`FastSAM-s-416-obj`)은 버리고 `~/ovdet_models/archive/x86_sm120/` 에 보관했다.
+>
+> **(기록) 갱신 (2026-10-05 저녁): 방향 결정 — FastSAM-s-416 + SigLIP 2 + scenemap 확률 모드(`objprob`).** 같은 BEHAVIOR 기록(house_double_floor_lower, LIMO r3)에서 셋을 비교(`~/datasets/sim_detcmp/README.md`, 정답 34개, slam 자세): FastSAM-s-416 노드 290·정답 찾음 27·중복 140·벽 위 가짜 108, YOLO26s-seg 28·14·9·4, YOLOE-11L 78·24·32·19. 사용자 관찰: "FastSAM-s 는 천장·벽이 안 걸러지고 병합이 잘 안 됨, YOLO26s-seg 는 다 잘 되는데 뽑은 수가 아쉬움, YOLOE 는 FastSAM-s 보다 벽·천장이 덜함". 목표는 **FastSAM-s 를 YOLO26s-seg 수준으로 깔끔하게 + 물체를 더 잘 잡게**. YOLO26s-seg·YOLOE 엔진은 보관했다.
 >
 > **(아래는 비교 전 기록)** 상태 (2026-10-05 낮): 미결정. 아래 "FastSAM-s + SigLIP 2" 는 09-30 이후의 안이었지만, 실제 로봇 데이터(OpenLORIS-Scene)에서 FastSAM 이 물체를 잘게 쪼개 중복이 많았고(물체 177 개, 0.5 m 안 같은 이름 쌍 72 개), 방 이름 규칙에는 일정한 물체 어휘가 필요해서 다시 고르는 중이다. 셋 중 하나로 **통일**해야 한다(지금은 시뮬 탐사 = YOLOE, LIMO 지도 시험 = YOLO26s-seg, 벤치마크·실제 bag = FastSAM + SigLIP 2 로 제각각).
 >
@@ -131,9 +133,9 @@ OpenLORIS office1-1·1-5 노드 120 → 120, 107 → 111. 솔직히 랜색은 �
 - 문 조각에 붙는 물체 이름(curtain·bag).
 
 **다음**
-- FastSAM 재학습 엔진(`FastSAM-s-416-obj.plan`)으로 다시 돈다(`realbag_run --engine`).
+- ~~FastSAM 재학습 엔진(`FastSAM-s-416-obj.plan`)으로 다시 돈다~~ → 10-05: ObjectSAM(YOLO26n 학생, `yolo26n-seg-obj-416`)이 기본 엔진(`realbag_run` 은 `--engine` 없이).
 - 병합·식탁 둘레 잘못 합침을 줄인다.
-- sgrt·LIMO 지도 시험을 확률 모드로 옮기는 일은 아래 사항이 끝난 뒤에 한다.
+- sgrt·LIMO 지도 시험을 확률 모드로 옮김 — 10-05 끝(behavior-2026 `26cbdc4`, libsgrt objprob 앞단: 아래 셋 모두).
   - sgrt 에서 조각 임베딩을 scenemap 에 넘기기.
   - 통째 다시 담기를 sgrt_clip 에서 돌리기.
   - O<id>_emb.f16 를 쓰는 곳을 하나로(scenemap 저장 ↔ sgrt_clip).
@@ -146,7 +148,7 @@ OpenLORIS office1-1·1-5 노드 120 → 120, 107 → 111. 솔직히 랜색은 �
 - **SigLIP 2 B/32** 가 물체 조각(원본 RGB 에서 상자 + 10 % 둘레, 정사각)마다 768-d 영상 임베딩을 낸다. 새 물체 / best view 가 바뀐 물체만, 묶어서, 비동기로 돈다.
 - 이름은 그 임베딩과 미리 계산한 **라벨 표**(글 임베딩)의 코사인으로 고른다. 확신이 낮으면 WordNet 상위어로 올린다. 벽·바닥 같은 구조물은 표시만 하고 agent 목록에서 뺀다.
 - 저장: 물체 벡터는 **원본 임베딩 그대로**(`objects/O<id>_emb.f16`), 이름은 다시 만들 수 있는 **캐시**(기억 폴더 `cache/names.json`).
-- 코드는 서브모듈 `src/behavior-2026/src/scene_graph/clip`(작업 중). 지금 시뮬에서 돌아가는 검출기는 아직 YOLOE(`src/behavior-2026/src/scene_graph/ovdet`). 후보·측정: [CLIP 후보](clip_candidates.md), [물체 인식 모델 후보](perception_model_candidates.md).
+- 코드는 서브모듈 `src/behavior-2026/src/scene_graph/clip`. (10-05 갱신: 시뮬 검출기도 ObjectSAM + SigLIP 2 + objprob — YOLOE 는 보관.) 후보·측정: [CLIP 후보](clip_candidates.md), [물체 인식 모델 후보](perception_model_candidates.md).
 
 **왜 SAM + CLIP 으로 돌아왔나 (YOLO-seg → FastSAM-s + SigLIP 2)**
 
@@ -329,6 +331,7 @@ agent(LLM) 에게는 읽기 쉽게 JSON 으로 바꿔 넘긴다.
 | 2026-10-03 | 시뮬레이션: **2026 BEHAVIOR Challenge**(참고 코드는 2025 상위 팀). 장비: 시뮬 평가·π0.5 추론 = `jy-desktop`(RTX 5070 Ti 16GB), LoRA 학습 = 학교 4090 | 16GB 에 LoRA 학습이 안 들어감 |
 | 2026-10-03 | 방 나누기·이름 절 추가: CLIP + SAM 구조로 — SigLIP 2 이름을 방 규칙에, 다음은 임베딩 제로샷 방 분류, LLM 이름은 덮어쓰기 | FastSAM-s 는 클래스 이름이 없어 검출기 이름만 쓰면 방 종류를 못 붙임 |
 | 2026-10-03 | 물체 인식 후보 B 적어 둠: YOLOE 그대로 + SigLIP 2(+ training/embed 머리) — FastSAM-s + SigLIP 2 와 비교해서 정함 | |
+| 2026-10-05 | 10-05: decided ObjectSAM (YOLO26n 학생) + SigLIP 2 + objprob — 분할 기본 엔진 `yolo26n-seg-obj-416`(FastSAM-s 에서 증류, things 만), 확률 모드 기본 켬 | 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼 |
 | 2026-10-04 | VLA: **π0.5 버림** → 우리 작은 VLA(`training/BC`, G5). π0.5 절·실행 위치 절은 기록으로 남김. SLAM: 시뮬은 자체 `slam2d`, 실기 선택은 다시 정함 | π0.5 가중치는 일부러 지움. Cartographer 는 저장소에 없음 |
 
 </details>

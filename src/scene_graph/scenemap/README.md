@@ -177,7 +177,9 @@ swapped 는 여전히 0: 같은 이름 쌍(의자 ↔ 의자, 스탠드 둘 ↔ 
 7. 병합(da): 이름이 달라도 3D IoU ≥ 0.5 면 합침, 이름 표 합.
 8. 값은 그대로: `min_points`·`confirm`·`prune_s`·`moved_d`·`gone_misses` 3·`gone_min_s` 2·`occl`·`da_*`·`big`·`grow_max`·`max_ext`.
 
-## scenemap 확률 모드(`objprob`) — 확률론적 물체 수준 매핑: FastSAM 조각 + SigLIP 2 (10-05, `ObjParams::objprob`, 기본 꺼짐)
+## scenemap 확률 모드(`objprob`) — 확률론적 물체 수준 매핑: 분할 조각 + SigLIP 2 (10-05, `ObjParams::objprob`)
+
+> 10-05 결정: 쓰는 길은 ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 + objprob — libsgrt·realbag_run 에서 기본으로 켬(scenemap 라이브러리 자체는 `sm_set_object_model` 을 불러야 켜짐). 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞음 — 기기 위 시간은 아직 안 잼. 아래 표의 FastSAM-s 판들은 그 전 비교 기록이다.
 
 용어(stuff·things, PCA 와 RANSAC 등)는 robot-agent `docs/terms.md`.
 
@@ -291,7 +293,10 @@ swapped 는 여전히 0: 같은 이름 쌍(의자 ↔ 의자, 스탠드 둘 ↔ 
   | **v0.2 학생 · 다시 맞춤 0.5/0.7(파일)** | 96 / 108 | 27 / 27 | 45 / 51 | 12 / 14 | 1·2·0 / 1·4·0 | 110/16 · 126/15 |
 
   - FastSAM-s-416-obj 0.5/0.7(128 / 124 노드, 찾음 28 / 27, OL 120 · 135)보다 노드는 적고, 찾음은 1 낮거나 같다.
-  - 기본 엔진은 그대로다.
+  - **10-05: decided ObjectSAM — 기본 엔진 = ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 + objprob(매개변수 = 이 파일).** 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞음 — 기기 위 시간은 아직 안 잼. `realbag_run`(`--engine` 없이, objprob 기본 켬)·
+    libsgrt(`SGRT_ENGINE` 기본, 분할 엔진이면 objprob 자동 — runtime README "objprob 앞단")·LIMO/explore 시작 스크립트 모두. 원래 FastSAM-s(`FastSAM-s-416.plan`)와
+    버린 FastSAM-s 재학습(보관 `~/ovdet_models/archive/x86_sm120/FastSAM-s-416-obj.plan`)은 `--engine`·`SGRT_ENGINE` 으로 고를 수 있고 각자 매개변수 파일이 자동으로 실린다.
+    위 "기본 엔진은 그대로"(FastSAM-s-416-obj 표)는 그때 판단이다.
 - scenemap 확률 모드 CPU: gt 판 731 keyframe 18.2 s vs 옛 규칙 11.9 s(keyframe 당 약 +8.6 ms, 통째 다시 담기 GPU 포함).
 
 ## 살펴본 정도(inspection) — 가장 가까이 본 거리·본 시점 수·윗면 본 비율 (10-05, 기본 꺼짐)

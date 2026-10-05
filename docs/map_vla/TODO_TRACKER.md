@@ -125,7 +125,7 @@
 |---|---|---|---|---|
 | 1 벤치마크 raw 3 개 받기·validate | 진행 중 | 어댑터 작업에 포함 | (다른 에이전트) | map |
 | 2 어댑터: 시퀀스 → scenemap C ABI | 진행 중 | — | (다른 에이전트) | map |
-| 3 실제 검출(FastSAM + SigLIP 2) | 일부 | SigLIP 2 는 `sgrt_clip` 에 붙음, 검출기는 아직 YOLOE(FastSAM 코드 없음) | 어댑터 뒤 | map |
+| 3 실제 검출(ObjectSAM + SigLIP 2) | 일부 | SigLIP 2 는 `sgrt_clip` 에 붙음, 검출기는 아직 YOLOE(FastSAM 코드 없음) — 10-05: 기본 ObjectSAM + objprob | 어댑터 뒤 | map |
 | 4 지도 → state 변환기(슬롯 16 × 14) | 대체됨 | VLA_INPUT 칸 형식 + GPU 지도 토큰(`1bbd634`) 으로 바뀜 | — | map |
 | 5 우리 로봇 데이터와 짝지어 학습 | 대체됨 | 시뮬 안 지도로 학습(G4·G5), 지도 켬/끔 비교 `c96c367` | — | policy |
 
@@ -201,7 +201,7 @@
 | 1 URDF 합치기 | 완료 | `src/robot/map_vla_description` — `72a9f7a`, `4536d88`, `0c4b83d` | — | robot |
 | 1 캘리브레이션, 좌표 연결 확인, 팔 ROS 2, ros2 bag, 토픽 정리 | 안 함 | `scripts/` README 만 | 리모 받은 뒤 | robot |
 | 1 TF 트리 | 일부 | `docs/map_vla/tf_tree.pdf`, URDF. 실기 `map→odom` 없음 | — | robot |
-| 2 물체 인식 FastSAM-s + SigLIP 2 | 일부 | SigLIP 2 붙음(`sgrt_clip`, 서브모듈 `61eb0a2`, `976e217`, `8c1a7d6`). 검출기 아직 YOLOE | FastSAM-s 붙이고 이름 정답률·R@1 재측정 | map |
+| 2 물체 인식 FastSAM-s + SigLIP 2 | 일부 | SigLIP 2 붙음(`sgrt_clip`, 서브모듈 `61eb0a2`, `976e217`, `8c1a7d6`). 검출기 아직 YOLOE → 10-05: ObjectSAM(YOLO26n 학생) + objprob 붙음 | 이름 정답률·R@1 재측정 | map |
 | 2 xyz·DA·지도 갱신·벡터 찾기·Spark-DSG 저장 | 완료 | scenemap `objmap.cpp`, `da/`, `sgrt_query_*`, `dsg_save.cpp`, sgview `c4548fe` | known_bugs 7·10·11 | map |
 | 2 방 나누기·이름(제로샷) | 일부 | 규칙표만, 제로샷 없음 | — | map |
 | 3 Qwen API | 완료 | planner `llm.rs` | — | robot |
@@ -325,18 +325,18 @@
 
 **10-05 추가 (지도 인지·검색)**
 - 끝남: scenemap 확률 모드(`scenemap/src/objmap.cpp`·`objprob.cpp`, 확률론적 물체 수준 매핑 — [용어](../terms.md)) 1 차 + 벽 방향 수정, 조각 평면 맞춤 PCA → 랜색 교체(behavior-2026 `3b5543f`, 결과 거의 같음), 에이전트 물체 검색 도구 `search_objects`·`confirm_object`·`list_place` + 공용 물체 색인 + SigLIP 2 글 인코더(실시간 지도·좌표·시간 조건).
-- 진행 중: 확률 모드 이름 정리(`objprob`), 벽 조각이 door·window·pillar 이름으로 살아남는 문제(문·창 보호에 크기 확인 추가), FastSAM-s things 전용 재학습(`training/fastsam/`), 목표 칸 통일 → 탑뷰 이미지.
+- 진행 중: 확률 모드 이름 정리(`objprob`), 벽 조각이 door·window·pillar 이름으로 살아남는 문제(문·창 보호에 크기 확인 추가), things 전용 분할(`training/fastsam/` — 10-05: ObjectSAM YOLO26n 학생으로 결정), 목표 칸 통일 → 탑뷰 이미지.
 
 **인지 다지기 단계 (RecallVLA 큰 학습 전에 통과, 10-05 결정)** — VLA 는 지도 기억을 입력으로 받으므로 인지·지도가 먼저다. 학습용 GPU 지도 근사(`training/RL/map`)는 실제 scenemap 을 흉내 내므로 scenemap 이 바뀌면 다시 맞춘다.
 
 | 부분 | 위치 | 할 일 | 통과 기준(예시) |
 |---|---|---|---|
-| 분할 | `training/fastsam/` | 벽·천장·바닥을 자르지 않는 FastSAM-s | 물체·문·창·계단·처음 보는 종류 재현율이 기존 이상 |
+| 분할 | `training/fastsam/` | 벽·천장·바닥을 자르지 않는 분할. **10-05: decided ObjectSAM (YOLO26n 학생) + SigLIP 2 + objprob** — 기본 엔진 `yolo26n-seg-obj-416`(behavior-2026 `26cbdc4`: libsgrt·realbag_run·시작 스크립트). FastSAM-s 재학습(`FastSAM-s-416-obj`)은 보관(`~/ovdet_models/archive/x86_sm120/`, 버림). 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼 | 물체·문·창·계단·처음 보는 종류 재현율이 기존 이상 |
 | 물체 지도 | `scenemap/src/objmap.cpp`·`objprob.cpp` | 중복·잘못 합침·벽 오등록 줄이기 | BEHAVIOR radio r3: 찾음 ≥ 28/34, 중복·벽 오등록이 YOLO26s-seg 수준에 가깝게 |
 | 바뀜 판정 | 같은 곳 | DOMB(이동·제거·추가·교환), OpenLORIS office1-6 채점 | DOMB 이동·교환 > 0, 변화 F1 > 0.25 / 안 바뀐 판 가짜 사라짐 최소 |
 | SLAM | `scenemap/src/slam2d.cpp` | 고리 닫기·재위치 추정 | 실제 bag 출발 기준 떠밀림 줄이기(지금 4–22 cm) |
 | 이름·어휘 | `clip` 라벨 표 | 다시점 투표 효과 측정, 어휘 하나로 | 실제 이름 정답률(지금 약 30 %) 개선 |
-| 실행 경로 통일 | sgrt(시뮬 탐사)·LIMO 지도 시험 | 새 FastSAM + 확률 모드로(지금은 보관 엔진 `~/ovdet_models/archive`) | 같은 결과 |
+| 실행 경로 통일 | sgrt(시뮬 탐사)·LIMO 지도 시험 | ObjectSAM + 확률 모드로 — 10-05 끝(behavior-2026 `26cbdc4`: libsgrt objprob 앞단, `SGRT_ENGINE` 기본 학생) | 같은 결과 |
 | 학습용 지도 근사 | `training/RL/map` | 새 scenemap 기준으로 다시 맞춤 | map_cmp 5.2 기준 통과 |
 
 - 다음(그 뒤): RecallVLA 자체 검색(질의 벡터 → 상위 K 칸, 검색 InfoNCE, 힌트 지우기·틀린 이름 섞기) 구현.

@@ -1,5 +1,13 @@
 """Thin evaluator-process glue for libsgrt.so (src/scene_graph/runtime/include/sgrt.h): hands the observation tensors'
-pointers to the C++/CUDA runtime (YOLOE detection -> scenemap object map -> Spark-DSG save). No computation here.
+pointers to the C++/CUDA runtime (segmentation -> SigLIP 2 names/embeddings -> scenemap probabilistic object map (objprob) ->
+Spark-DSG save). No computation here.
+
+Detector (env SGRT_ENGINE): default ObjectSAM, the class-agnostic YOLO26n student ~/ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan
+(https://github.com/juyoung020/ObjectSAM). With a class-agnostic engine libsgrt turns objprob on by itself (SGRT_OBJPROB, sgrt.h):
+SigLIP 2 per-mask names + embeddings, the scenemap probabilistic object model with the per-engine parameters
+src/scene_graph/tools/realbag/objprob_params/<engine>.json. Other engines stay selectable: the original FastSAM-s
+(SGRT_ENGINE=~/ovdet_models/x86_sm120/FastSAM-s-416.plan), the discarded FastSAM-s fine-tune (~/ovdet_models/archive/x86_sm120/FastSAM-s-416-obj.plan, archived) and the archived
+closed/open-vocabulary YOLO engines (~/ovdet_models/archive, old name rules). SGRT_OBJPROB=0 = old name rules.
 
     mem = SceneMemory(task_name, out_dir)        # once per process
     mem.step(obs)                                # every evaluator step, before the policy acts
@@ -35,8 +43,8 @@ import numpy as np
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[3]  # repo root (src/scene_graph/runtime/glue -> ../../../..)
 LIB = os.environ.get("SGRT_LIB", str(pathlib.Path.home() / "sgrt_build/libsgrt.so"))
-# YOLOE 는 보관됨(2026-10-05, ~/ovdet_models/archive): 물체 인식은 FastSAM-s + SigLIP 2(objprob)로 옮기는 중. 옮길 때까지 보관 엔진을 쓴다
-ENGINE = os.environ.get("SGRT_ENGINE", str(pathlib.Path.home() / "ovdet_models/archive/x86_sm120/yoloe-11l-all.plan"))
+# 분할 엔진 기본 = ObjectSAM(YOLO26n 학생, 이름 없는 'object') + SigLIP 2 + objprob(libsgrt 가 켬). YOLOE·YOLO26s 는 보관(~/ovdet_models/archive)
+ENGINE = os.environ.get("SGRT_ENGINE", str(pathlib.Path.home() / "ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan"))
 PROMPTS = ROOT / "src/scene_graph/ovdet/config/task_prompts.txt"
 HEAD_K = (306.0, 306.0, 360.0, 360.0)  # omnigibson.eval.utils.eval_utils.CAMERA_INTRINSICS["R1Pro"]["head"] (720x720)
 ROBOTS = {"r1pro": 0, "limo_omx": 1}       # sgrt_get_robot / scenemap SM_ROBOT_*

@@ -1,7 +1,8 @@
 #!/bin/bash
 # 탐사 한 판 + 실시간 뷰어를 한 번에 — 경로·라이브러리·뷰어 폴더를 스크립트가 맞춘다(사람이 틀릴 자리를 없앰).
 #   tools/run_explore_live.sh [policy=frontier] [task=turning_on_radio] [tag=live] [--port 8080] [--pose slam|odom|gt]
-# 하는 일: ① libsgrt 증분 빌드 + SGRT_STREAM 지원 확인(없으면 중단) ② explore 에이전트 바이너리 확인
+# 검출 기본 = ObjectSAM(YOLO26n 학생) + SigLIP 2 + objprob(behavior-2026 run_explore.sh·sgrt_glue.py), 살펴본 정도 켬. 원래 FastSAM-s 는 SGRT_ENGINE=…/FastSAM-s-416.plan
+# 하는 일: ① libsgrt 증분 빌드(-j4) + SGRT_STREAM·objprob 지원 확인(없으면 중단) ② explore 에이전트 바이너리 확인
 #          ③ 시뮬 판을 robot-agent/src/behavior-2026 에서 실행(자세 기본 slam, 지도는 매 갱신 전송)
 #          ④ 판의 memory/ 가 생기면 뷰어를 그 폴더로 켠다(예전 뷰어는 PID 로만 끈다)
 set -euo pipefail
@@ -19,7 +20,8 @@ done
 
 BUILD=${SGRT_BUILD:-$HOME/sgrt_build_explore}
 [ -d "$BUILD" ] || { echo "[live] 빌드 폴더 없음: $BUILD (cmake -S $BH/src/scene_graph/runtime -B $BUILD)"; exit 1; }
-cmake --build "$BUILD" -j"$(nproc)" --target sgrt >/dev/null
+cmake --build "$BUILD" -j"${BUILD_JOBS:-4}" --target sgrt >/dev/null   # -j4: 시뮬·학습과 같이 돌 때 RAM
+grep -aqF sgrt_objprob_enabled "$BUILD/libsgrt.so" || { echo "[live] libsgrt 에 objprob 앞단이 없다(옛 빌드): $BUILD"; exit 1; }
 grep -aqF SGRT_STREAM "$BUILD/libsgrt.so" ||  # strings|grep -q 는 pipefail 에서 SIGPIPE(141)로 항상 실패
   { echo "[live] libsgrt 에 SGRT_STREAM 이 없다(옛 빌드): $BUILD"; exit 1; }
 AG=$ROOT/src/agent/skills/explore/target/release/explore
@@ -40,7 +42,7 @@ cd "$BH"
 before=$(ls -d outputs/explore_*_"$TASK"_"$POL"_"$TAG" 2>/dev/null | sort | tail -1 || true)   # 같은 태그의 예전 판을 집지 않게
 setsid nohup src/sim/explore/run_explore.sh "$POL" "$TASK" "$TAG" > "/tmp/run_explore_$TAG.log" 2>&1 &
 SIMPID=$!
-echo "[live] 판 시작(자세 $POSE) — 로그 /tmp/run_explore_$TAG.log"
+echo "[live] 판 시작(자세 $POSE, 검출 ${SGRT_ENGINE:-ObjectSAM yolo26n-seg-obj-416} + SigLIP 2 + objprob) — 로그 /tmp/run_explore_$TAG.log"
 RUN=""
 for i in $(seq 1 120); do
   RUN=$(ls -d outputs/explore_*_"$TASK"_"$POL"_"$TAG" 2>/dev/null | sort | tail -1 || true)

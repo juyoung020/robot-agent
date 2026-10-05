@@ -173,6 +173,15 @@ typedef struct {
 } sgrt_clip_stats;
 int    sgrt_get_clip_stats(const sgrt*, sgrt_clip_stats* out);
 
+/* ---- objprob 앞단(확률 물체 모델 — scenemap README "scenemap 확률 모드", tools/realbag 과 같은 길) ----
+ * 환경 변수 SGRT_OBJPROB = 1 | 0 | 없음(기본: 엔진 어휘가 'object' 하나인 분할 엔진 — ObjectSAM yolo26n-seg-obj-416·FastSAM-s — 이면 켬).
+ * 켜면 keyframe 마다 검출 마스크마다 SigLIP 2 임베딩(SGRT_OBJPROB_CLIP, 기본 siglip2_b32_mask_fp16.plan) → 낱말 표(SGRT_LABELS) 이름,
+ * scenemap 확률 모드(vMF 벡터·이름 사후·이름 없는 같은 것 판정·칼만 위치·랜색 평면 구조물 거르기·문창 크기·벽 높이), 통째 다시 담기.
+ * 매개변수 SGRT_OBJPROB_PARAMS = 파일 | none(내장), 없으면 tools/realbag/objprob_params/<엔진 줄기>.json. 과제 이름은 낱말 표에 더함.
+ * SGRT_INSPECT=1 = 살펴본 정도(sm_set_inspect, scenemap README "살펴본 정도").
+ * 켜면 SGRT_CLIP(ClipMem)은 안 켬 — 물체 벡터 objects/O<id>_emb.f16(μ)·_views.f16 은 scenemap 이 씀(sgsearch·search_objects 가 읽음). */
+int    sgrt_objprob_enabled(const sgrt*);
+
 #ifdef __cplusplus
 }
 #endif

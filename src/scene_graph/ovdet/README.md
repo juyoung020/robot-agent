@@ -2,7 +2,13 @@
 
 `ovdet` is the detector of the scenemap perception stack (`docs/scenemap_설계.md`).
 
-> ovdet (YOLOE) is what the code uses today, but object recognition is moving to FastSAM-s 416 + SigLIP 2 B/32 (`src/scene_graph/clip/`, in progress).
+> **Decided (2026-10-05): ObjectSAM (YOLO26n student, engine `~/ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan`) + SigLIP 2 + objprob.**
+> The default engine everywhere (libsgrt glue `SGRT_ENGINE`, `realbag_run`, `dom_bench_det`, the sim/LIMO launchers) is the class-agnostic
+> ObjectSAM segmenter: a YOLO26n student distilled from FastSAM-s, things-only (https://github.com/juyoung020/ObjectSAM, release v1.0). Its vocabulary is one name, `object`. Why: about 1/10 of FastSAM-s's compute, so it suits LIMO's Jetson (Nano especially); on-device timing is still to be measured. Names and embeddings come from
+> SigLIP 2 B/32 per mask (`src/scene_graph/clip/`), and the scenemap probabilistic object model (`objprob`) fuses them with the per-engine
+> parameters `src/scene_graph/tools/realbag/objprob_params/yolo26n-seg-obj-416.json`. Other engines stay selectable by flag/env:
+> the original FastSAM-s (`FastSAM-s-416.plan`), the discarded FastSAM-s fine-tune (archived: `~/ovdet_models/archive/x86_sm120/FastSAM-s-416-obj.plan`), and the archived
+> YOLOE / YOLO26s-seg (`~/ovdet_models/archive/x86_sm120/`, open/closed vocabulary with the old name rules, described below).
 
 - **In:** one camera image and a prompt, the task's BDDL object names.
 - **Out:** a list of objects. Each object has a prompt index, a score, a box and a mask.
@@ -23,9 +29,9 @@ There is no Python and no ROS at run time, so the evaluator process calls it dir
 
 ```c
 OvdConfig cfg; ovd_default_config(&cfg);
-cfg.seg_engine = "yoloe-11l-all.plan"; cfg.names = "yoloe-11l-all.plan.names.txt";
+cfg.seg_engine = "yolo26n-seg-obj-416.plan"; cfg.names = "yolo26n-seg-obj-416.plan.names.txt";   // ObjectSAM (or an archived YOLOE plan)
 OvdHandle* h = ovd_create(&cfg, err, sizeof err);
-ovd_set_prompt(h, names, n, err, sizeof err);            // once per episode: the prompt table
+ovd_set_prompt(h, names, n, err, sizeof err);            // once per episode: the prompt table (NULL, 0 = whole vocabulary, e.g. ObjectSAM's "object")
 const sm_detections* d = ovd_detect(h, &img, &timing);   // per image; valid until the next call
 ```
 
@@ -46,12 +52,14 @@ const sm_detections* d = ovd_detect(h, &img, &timing);   // per image; valid unt
 
 ## Engines
 
+ObjectSAM (default) has one name, `object`, and needs no prompt (`ovd_set_prompt(h, NULL, 0, …)`); it is built by robot-agent `training/fastsam/build_engine.py`. The rest of this section is the archived YOLOE engine.
+
 The engine is built once with a whole vocabulary: every task's BDDL objects plus 18 scene structures, 272 names in `config/vocab_all.txt`.
 
 A prompt switches classes on and off. YOLOE's class scores are independent sigmoids per class, so the result equals an engine exported with only the prompt's names. `config/task_prompts.txt` lists each task's names, plus the `_scene` line.
 
 ```
-~/ovdet_export_venv/bin/python tools/export_yoloe.py --model yoloe-11l-seg --vocab all --out ~/ovdet_models/onnx/yoloe-11l-all.onnx   # CPU, Ultralytics
+~/ovdet_export_venv/bin/python archive/src/scene_graph/ovdet/tools/export_yoloe.py --model yoloe-11l-seg --vocab all --out ~/ovdet_models/onnx/yoloe-11l-all.onnx   # CPU, Ultralytics
 ~/ovdet_venv/bin/python tools/build_engines.py ~/ovdet_models/onnx/yoloe-11l-all.onnx                                              # GPU lock
 ```
 
@@ -104,7 +112,9 @@ The network share of the student, from `trtexec` per-layer profiling, is backbon
 
 ## Detector comparison
 
-`scripts/eval_linux.sh` runs `tools/ovdet_eval.py` on the same frames for every head:
+(History, YOLOE era. The scripts were archived on 10-05 with the YOLOE engines: `archive/src/scene_graph/ovdet/scripts/eval_linux.sh`·`eval_conf.sh`, `archive/src/scene_graph/ovdet/tools/ovdet_eval.py`. ObjectSAM is evaluated by robot-agent `training/fastsam/eval_det.py` and end to end by `tools/realbag/objprob_eval.py`.)
+
+`scripts/eval_linux.sh` ran `tools/ovdet_eval.py` on the same frames for every head:
 
 - ep0, 0–40 s, every 5th frame
 - ep200, whole episode, every 15th frame
@@ -142,6 +152,6 @@ Done:
 Left:
 
 1. **The ep0 radio is never found** with the task prompt "radio receiver". This holds even at conf 0.05. With the whole 272-name vocabulary it is found but named "satchel". Next step: add synonyms such as "radio" to the vocabulary, re-export, and re-run the comparison.
-2. `tools/ref_check.py` compares ovdet with Ultralytics' own FP32 prediction. It is written but has not been run.
+2. `tools/ref_check.py` (archived: `archive/src/scene_graph/ovdet/tools/ref_check.py`) compares ovdet with Ultralytics' own FP32 prediction. It is written but has not been run.
 3. Coffee tables are often named "floor" or "rug". Check whether the cause is the GT labels (floor points inside the table's GT box).
 4. Whether to make the recommended setting the default of `ovd_default_config` is not decided yet. It depends on scenemap's object-map scores.

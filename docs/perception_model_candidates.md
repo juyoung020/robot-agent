@@ -6,8 +6,8 @@
 
 - CLIP 류 임베딩(FastSAM-s 마스크 → 이름·임베딩, Nano 단독) 후보·측정: [CLIP 후보](clip_candidates.md) (10-03).
 - 자체 임베딩 머리(SigLIP 2 B/32 위 128-d MLP, PE-L 증류) + 한국어 질의 학생 + 라벨 표 형식: [training/embed](../training/embed/README.md) (10-03, 시범).
-- 이 문서를 쓸 때 쓰던 것(코드에는 아직 있음): `src/behavior-2026/src/scene_graph/ovdet` = **YOLOE-11 text-prompt seg**, TensorRT FP16, C API, 어휘 272개.
-  - 그 뒤 방향: **FastSAM-s(입력 416) 마스크 → SigLIP 2 B/32 임베딩으로 이름**으로 바꾸는 중이다(`src/behavior-2026/src/scene_graph/clip`, 작업 중). 근거·측정은 [CLIP 후보](clip_candidates.md). 아래 YOLOE·YOLO-seg 추천은 그 전 판단으로 남긴다.
+- 이 문서를 쓸 때 쓰던 것(코드에는 아직 있음, 지금은 보관 엔진): `src/behavior-2026/src/scene_graph/ovdet` = **YOLOE-11 text-prompt seg**, TensorRT FP16, C API, 어휘 272개.
+  - 그 뒤 방향: **FastSAM-s(입력 416) 마스크 → SigLIP 2 B/32 임베딩으로 이름**으로 바꿨고, 10-05 에 ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, [github.com/juyoung020/ObjectSAM](https://github.com/juyoung020/ObjectSAM) v1.0) + SigLIP 2 + objprob(scenemap 확률 모드, 기본 켬, 매개변수 `objprob_params/yolo26n-seg-obj-416.json`) 로 정했다(까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼). 근거·측정은 [CLIP 후보](clip_candidates.md). 아래 YOLOE·YOLO-seg 추천은 그 전 판단으로 남긴다.
   - 비교 기록: `src/behavior-2026/docs/ovdet_검출기.md`. 숫자는 10-02 에 "다시 잴 것" 표시가 붙어 있다. 그래서 방향 참고로만 쓴다.
 - 표기
   - (추정): 출처 없이 비슷한 모델에서 미루어 본 값.

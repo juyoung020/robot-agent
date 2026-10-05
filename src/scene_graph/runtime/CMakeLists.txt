@@ -1,4 +1,4 @@
-# libsgrt.so — ovdet(YOLOE TensorRT) + scenemap(slam2d·objmap·Spark-DSG 저장) 을 한 C ABI 로 (include/sgrt.h).
+# libsgrt.so — ovdet(분할 엔진 TensorRT, 기본 ObjectSAM + SigLIP 2 objprob) + scenemap(slam2d·objmap·Spark-DSG 저장) 을 한 C ABI 로 (include/sgrt.h).
 #   cmake -S src/scene_graph/runtime -B ~/sgrt_build && cmake --build ~/sgrt_build -j
 cmake_minimum_required(VERSION 3.18)
 # CUDA: ovdet 과 같은 툴킷(12.8, sm_120). best view 자르기 커널(src/crop.cu)
@@ -27,6 +27,9 @@ add_library(sgrt SHARED src/sgrt.cpp src/sgrt_clip.cpp)
 target_include_directories(sgrt PUBLIC include PRIVATE ../clip/src)
 target_link_libraries(sgrt PRIVATE sgrt_crop scenemap ovdet sgclip)
 target_compile_options(sgrt PRIVATE -Wall -Wextra)
+# objprob 엔진별 매개변수 폴더: behavior-2026 안이면 ../tools/realbag/objprob_params, robot-agent 사본(src/scene_graph)이면 서브모듈 쪽
+target_compile_definitions(sgrt PRIVATE SGRT_PARAMS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tools/realbag/objprob_params"
+                                        SGRT_PARAMS_DIR2="${CMAKE_CURRENT_SOURCE_DIR}/../../behavior-2026/src/scene_graph/tools/realbag/objprob_params")
 
 # best view 장치 자르기 시험(작은 GPU 시험): 호스트 식과 같은지, 시간
 enable_testing()

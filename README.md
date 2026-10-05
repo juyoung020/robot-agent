@@ -118,14 +118,14 @@ robot-agent/
 ## 정한 것
 
 - 이미지 임베딩: SigLIP 2 B/32.
-- 분할: FastSAM-s, 입력 416.
+- 분할(10-05 결정): ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, [github.com/juyoung020/ObjectSAM](https://github.com/juyoung020/ObjectSAM) v1.0) + SigLIP 2 + objprob(scenemap 확률 모드, 기본 켬, 매개변수 `objprob_params/yolo26n-seg-obj-416.json`), 입력 416. 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼.
 - 물체 벡터는 원본 임베딩 그대로 두고, 이름은 기억 폴더의 `cache/` 에 둔다.
 - CUDA 12.8.
 - 지도 자세: `SGRT_POSE` 로 고른다(`slam`·`odom`·`gt`, 실제 로봇 기본 `slam`, 시뮬 시험은 `gt`).
 
 ## BEHAVIOR Challenge 2026 (서브모듈)
 
-[`src/behavior-2026`](https://github.com/juyoung020/behavior-2026) 은 같은 구조(물체 기억 + LLM 계획 + VLA)를 Stanford BEHAVIOR Challenge 2026 시뮬레이터(OmniGibson, Isaac Sim 5.1)에서 시험하는 저장소다. 물체 기억은 scenemap(2D SLAM + YOLOE 물체 지도), 행동은 π0.5 네이티브 CUDA 엔진(그 저장소 것 — 우리 VLA 는 π0.5 를 쓰지 않는다). 실행 환경은 Ubuntu 22.04 + RTX 4090(자세히는 그 저장소의 `docs/Linux_설치.md`).
+[`src/behavior-2026`](https://github.com/juyoung020/behavior-2026) 은 같은 구조(물체 기억 + LLM 계획 + VLA)를 Stanford BEHAVIOR Challenge 2026 시뮬레이터(OmniGibson, Isaac Sim 5.1)에서 시험하는 저장소다. 물체 기억은 scenemap(2D SLAM + 물체 지도 — ObjectSAM 분할 + SigLIP 2 + objprob), 행동은 π0.5 네이티브 CUDA 엔진(그 저장소 것 — 우리 VLA 는 π0.5 를 쓰지 않는다). 실행 환경은 Ubuntu 22.04 + RTX 4090(자세히는 그 저장소의 `docs/Linux_설치.md`).
 
 ```bash
 git submodule update --init src/behavior-2026   # 서브모듈 받기 (그 안의 BEHAVIOR-1K 등은 필요할 때 --recursive)

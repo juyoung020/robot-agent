@@ -4,6 +4,7 @@
 
 - 앞 문서: [물체 인식 모델 후보](perception_model_candidates.md) Nano 단독안. 거기서는 "별도 CLIP 은 기본에서 뺌"이었다.
   - 이 문서는 **새 방향**(FastSAM-s 로 이름 없는 마스크 → CLIP 으로 이름·임베딩)을 전제로 다시 본다.
+  - 10-05: 분할은 ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만, 엔진 `yolo26n-seg-obj-416`, https://github.com/juyoung020/ObjectSAM) + SigLIP 2 + objprob 로 정했다. 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. 아래 FastSAM-s 숫자는 그 전 측정 기록이다.
 - 표기
   - (추정): 직접 재지 않고 미루어 본 값. **Nano 숫자는 전부 추정이다.** Nano 에서 CLIP 을 잰 공개 숫자는 찾지 못했다.
   - (PC): RTX 5070 Ti, TensorRT 10.16, FP16, `trtexec` GPU 시간 중앙값, CUDA graph.
@@ -308,7 +309,7 @@ memory/
 
 | 부분 | 선택 | 도는 곳 | 비고 |
 |---|---|---|---|
-| 분할 | **FastSAM-s 416**, FP16, opset 13 정적 ONNX → Nano 에서 엔진 빌드 | Nano GPU, keyframe 만(≤ 1 Hz) | ovdet 이 이미 돌린다(클래스 무관, CUDA NMS) |
+| 분할 | **ObjectSAM 416**(10-05, 처음 안은 FastSAM-s 416), FP16, 정적 ONNX(`ObjectSAM-416.onnx`, opset 13) → Nano 에서 엔진 빌드 | Nano GPU, keyframe 만(≤ 1 Hz) | ovdet 이 이미 돌린다(클래스 무관, CUDA NMS) |
 | 영상 인코더 | **SigLIP 2 B/32-256**, 두 출력(`emb`, `emb_mask`, 입력 `images` N×3×256×256 + `wpatch` N×64), LayerNorm FP32 고정 | Nano GPU, 같은 CUDA 문맥, 별도 스트림, 배치 ≤ 8 | 저장은 벡터 1개(FP16 768-d, `objects/O<id>_emb.f16`), 이름은 `cache/` (3.5절) |
 | 영상 대안 | OpenAI B/32 + `Bingsu/clip-vit-base-patch32-ko` | 같은 자리 | meridian 과 같은 공간. 한국어 찾기 측정 1위(0.75). 이름은 0.28 로 낮다 |
 | 한국어 글 | **처음**: SigLIP 2 자체 글(282M)을 agent 서버에서. **다음**: `lassl/bert-ko-small` 학생을 SigLIP 2 B/32 글 공간에 다시 증류(3.2 b) | 서버 → 나중에 Nano | 사전에 있는 말은 미리 계산한 표에서 바로 |

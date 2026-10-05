@@ -3,6 +3,8 @@
 구상: ① `dynamic-object-mapping-benchmark`로 GT 지도를 만들고, ② 우리 지도 업데이터를 만들고, ③ 지도 자체를 학습 state에 수치로 넣는다.
 이 문서는 각 단계가 가능한지와 순서를 정리한다. 1–4단계 진행 상황과 잰 값은 맨 아래 §6.
 
+> 10-05: 검출은 ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만, 엔진 `yolo26n-seg-obj-416`) + SigLIP 2 + objprob 로 정했다(`dom_bench_det`·`realbag_run`·libsgrt 기본). 아래 "FastSAM" 측정은 그 전 기록이다.
+
 ## 1. 벤치마크가 주는 것 / 안 주는 것 (`src/dynamic-object-mapping-benchmark`, 직접 읽음)
 | 주는 것 | 안 주는 것 |
 |---|---|

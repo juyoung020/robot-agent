@@ -17,7 +17,7 @@ flowchart LR
     APP["📱 휴대폰 앱<br/>채팅"]
     subgraph LIMO["리모 — 우리 코드 전부"]
         direction LR
-        S["카메라 · 라이다"] --> M["① 물체 기억<br/>SLAM · FastSAM-s + SigLIP 2<br/>물체 무게중심 xyz 기록 · 2D 지도"]
+        S["카메라 · 라이다"] --> M["① 물체 기억<br/>SLAM · ObjectSAM + SigLIP 2<br/>물체 무게중심 xyz 기록 · 2D 지도"]
         M --> A["② 큰 계획·대화 (LLM agent)<br/>기억 풀어 주기 · 다시 계획"]
         A --> V["③ 작은 계획·행동 (VLA)<br/>이동 · 우리 작은 VLA"]
     end
@@ -90,7 +90,7 @@ flowchart LR
 
 | 할 일 | 내용 | 담당 |
 |---|---|---|
-| 물체 인식 | **FastSAM-s(입력 416) + SigLIP 2 B/32 + scenemap 확률 모드(`objprob`)** (10-05 방향 결정). FastSAM-s 가 이름 없는 물체 조각 → SigLIP 2 가 조각마다 768-d 벡터(찾기용) + 라벨 표로 이름. 확률 모드: 벽·천장·바닥은 **기하로** 거르고(지도 벽선과 겹치는 수직 평면, 천장·바닥 높이 수평면), 조각은 이름 없이 3D·벡터로 합친다. YOLO26s-seg·YOLOE 는 같은 BEHAVIOR 기록에서 비교한 뒤 보관(`~/ovdet_models/archive`) — 비교 결과 `~/datasets/sim_detcmp/README.md`. 시뮬 sgrt·LIMO 지도 시험은 확률 모드로 옮길 때까지 보관 엔진을 쓴다 | |
+| 물체 인식 | **ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생, things 만 — 엔진 `yolo26n-seg-obj-416`, [github.com/juyoung020/ObjectSAM](https://github.com/juyoung020/ObjectSAM) v1.0: `ObjectSAM-416.pt`·`.onnx`·`-int8-qdq.onnx`) + SigLIP 2 B/32 + objprob(scenemap 확률 모드, 기본 켬, 매개변수 `objprob_params/yolo26n-seg-obj-416.json`)** (10-05 결정, 입력 416). 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. ObjectSAM 이 이름 없는 물체 조각 → SigLIP 2 가 조각마다 768-d 벡터(찾기용) + 라벨 표로 이름. 확률 모드: 벽·천장·바닥은 **기하로** 거르고(지도 벽선과 겹치는 수직 평면, 천장·바닥 높이 수평면), 조각은 이름 없이 3D·벡터로 합친다. YOLO26s-seg·YOLOE 는 같은 BEHAVIOR 기록에서 비교한 뒤 보관(`~/ovdet_models/archive`) — 비교 결과 `~/datasets/sim_detcmp/README.md`. 시뮬 sgrt·LIMO 지도 시험도 ObjectSAM + 확률 모드가 기본(behavior-2026 `26cbdc4`) | |
 | 물체 위치 (xyz) | 분할 모델이 물체 영역(마스크)과 그 **무게중심**을 찾아 준다 → 무게중심 + depth → 월드 좌표 **xyz** 로 기록. 물체마다 위치 하나 | |
 | 같은 물체 판단 (DA) | 새로 본 물체가 이미 아는 물체인지 — **직접 만든다**. 10-05 부터 **이름 없는 확률 DA(`objprob`)**: 같은 물체 대 다른 물체의 베이지안 가설 검정(3D 맞닿음·겹침 + 벡터 일치 vMF). 물체마다 벡터 = vMF 사후(r ← r + κ·z, 상위 5 시점 벡터 저장), 이름 = 베이지안 범주 사후(SigLIP 점수 + 크기 + 방, 낮으면 상위어), 위치 = 칼만. 처음 설계(같은 이름끼리 위치로 비교)는 FastSAM 조각이 안 합쳐져 바꿈 — 실행 중 | |
 | 물체 찾기 | **임베딩 벡터 찾기** + **이름(의미) 찾기** 둘 다, **공용 물체 색인 하나**를 agent 와 RecallVLA 가 함께 쓴다(10-05). 3 단계: 이름·동의어·상위어 → 없거나 약하면 **이름 무시 생김새 재검색**(예: "라디오" 가 "소화기" 로 잘못 등록돼도 찾음) → 확인되면 이름 고치기. agent 에는 글(이름·속성·방·상태)로, VLA 는 자기 질의 벡터로 — [모델 선택](model_selection.md) | |
@@ -157,11 +157,11 @@ flowchart LR
 | **VLA 가 리모에서 돌까** | (10-04: π0.5 는 버림, 아래는 π0.5 때 판단) 공식 기준 실행에 8GB 이상, 리모는 4GB 를 다른 것과 나눠 씀. 우리 작은 VLA 는 리모에서 아직 안 재 봄 | 먼저 재 보고, 안 되면 라즈베리파이 5 + DEEPX DX-M1. 더 작은 VLA(SmolVLA) 도 후보. **프로(8GB)면** int8·int4 로 줄여 돌릴 만함 |
 | 리모 ROS 2 | 기본형은 Ubuntu 18.04 라 최신 ROS 2 가 안 깔림 | 포팅된 것 중 우리 리모에서 되는 것 찾기. **프로면** ROS 2 Foxy 공식 지원이라 거의 해결 |
 | ~~매니퓰레이터~~ (해결: OMX-F) | 모델이 안 정해져서 팔 제어·캘리브레이션을 못 정함. URDF·TF 트리·시뮬 학습도 팔 모델에 달려 있음 | 팔을 빨리 정한다. 그 전에는 리모 URDF 만으로 바퀴·카메라·라이다 TF 와 시뮬 이동부터 |
-| 리모 메모리 4GB | SLAM·FastSAM-s·SigLIP 2·물체 기억·VLA 가 모두 한 곳에 | 가벼운 모델 우선, 입력 해상도 줄이기. 프로는 8GB |
+| 리모 메모리 4GB | SLAM·ObjectSAM·SigLIP 2·물체 기억·VLA 가 모두 한 곳에 | 가벼운 모델 우선, 입력 해상도 줄이기. 프로는 8GB |
 | 기본형? 프로? | 받는 로봇에 따라 ROS 버전, CUDA·TensorRT 버전, 라이다 설정이 달라짐 | 정해지기 전에는 두 쪽 다 되게 짜고, 정해지면 이 문서를 고친다 |
 | 학교 밖 접속 | 앱과 Qwen API 를 밖에서 쓰려면 네트워크를 열어야 함 | VPN 등, 학교 규칙 확인 |
 | ~~LoRA 학습은 학교 4090 에서만~~ (대체됨: π0.5 버림, 우리 VLA 는 이 PC 에서 학습) | 22.5GB 이상이라 시뮬 작업 PC(16GB)에는 안 들어감. 4090 은 한 대 | 학습 시간을 미리 잡고, 평가는 시뮬 작업 PC 에서 따로 |
-| 물체 인식 바꾸는 중 | FastSAM-s + SigLIP 2 는 그대로면 조각남·벽 오등록이 많다(BEHAVIOR 비교: 노드 290, 중복 140, 벽 위 가짜 108 / YOLO26s 28·9·4). 실제 bag(OpenLORIS)에서도 이름 정답 약 30 %, 자세 떠밀림 4–22 cm. 시뮬 sgrt 는 아직 보관 YOLOE | 확률 모드로 **FastSAM-s 의 재현율 + YOLO26s-seg 수준 깔끔함**을 맞추고, 통과하면 sgrt·LIMO 지도 시험·GPU 지도 근사판을 확률 모드로 옮긴다. 벽 축 정렬 버그(기운 SLAM 지도에서 정책 쪽 벽 0 개)는 고치는 중 |
+| 물체 인식 바꾸는 중(10-05: ObjectSAM + objprob 로 정함, 시뮬 sgrt 도 옮김) | FastSAM-s + SigLIP 2 는 그대로면 조각남·벽 오등록이 많다(BEHAVIOR 비교: 노드 290, 중복 140, 벽 위 가짜 108 / YOLO26s 28·9·4). 실제 bag(OpenLORIS)에서도 이름 정답 약 30 %, 자세 떠밀림 4–22 cm. 시뮬 sgrt 는 아직 보관 YOLOE | 확률 모드로 **FastSAM-s 의 재현율 + YOLO26s-seg 수준 깔끔함**을 맞추고, 통과하면 sgrt·LIMO 지도 시험·GPU 지도 근사판을 확률 모드로 옮긴다. 벽 축 정렬 버그(기운 SLAM 지도에서 정책 쪽 벽 0 개)는 고치는 중 |
 
 ---
 
@@ -205,6 +205,7 @@ flowchart LR
 | 2026-10-05 | 실제 공개 ROS bag(OpenLORIS-Scene, TUM RGB-D)에 인지 파이프라인을 돌려 봄: SLAM 4–22 cm, 지도 점유 0.89–0.99, 물체 이름 약 30 %, 조각남 | 실제 데이터에서 되는지 확인 — MAP_STATE_PLAN 7 절, README 영상 |
 | 2026-10-05 | 물체 인식 비교(같은 BEHAVIOR 기록, FastSAM-s-416 / YOLO26s-seg / YOLOE-11L, 모두 + SigLIP 2) 뒤 **방향 = FastSAM-s-416 + scenemap 확률 모드(`objprob`)**, YOLO 계열 보관 | 가장 많이 잡고 벡터·단어 찾기 둘 다 됨. B 는 깔끔하지만 뽑는 수가 적음(닫힌 어휘). 목표: A 를 B 수준으로 깔끔하게 + 더 잘 잡게 |
 | 2026-10-05 | DA·이름·벡터를 확률로(`objprob`): 베이지안 가설 검정 DA, vMF 물체 벡터, 베이지안 이름, 칼만 위치, 벽·천장 기하 거르기 | 같은 이름 조건 DA 가 FastSAM 조각을 못 합침. 불확실성을 RecallVLA 지도 토큰에 그대로 씀 |
+| 2026-10-05 | 10-05: decided ObjectSAM (YOLO26n 학생) + SigLIP 2 + objprob — 분할 기본 엔진 `yolo26n-seg-obj-416`(FastSAM-s 에서 증류, things 만, [ObjectSAM](https://github.com/juyoung020/ObjectSAM) v1.0), 확률 모드 기본 켬, 시뮬 sgrt·realbag 모두 | 까닭: FastSAM-s 계산의 약 1/10 이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼 |
 | 2026-10-05 | 물체 찾기: agent·RecallVLA 공용 색인, 3 단계 재검색(이름 → 생김새 → 이름 고치기), agent 도구 `search_objects`·`confirm_object`. 검색도 RecallVLA 가 함 | LLM 은 API 라 벡터를 못 받음 → 도구 안에서 검색하고 글로. VLA 는 기억 전체에서 필요한 물체를 스스로 불러와야 16 칸 한계를 넘음 |
 
 </details>

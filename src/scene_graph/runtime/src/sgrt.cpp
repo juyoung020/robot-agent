@@ -17,13 +17,59 @@
 #include <vector>
 
 #include "crop.hpp"
+#include "objprob_front.hpp"
 #include "ovdet.h"
 #include "scenemap.h"
 #include "scenemap/bestview.hpp"
 #include "scenemap/timing.hpp"
 #include "sgrt_clip.hpp"
 
-constexpr int kClosedVocabMax = 200;   // 이 이하 어휘 = 닫힌 어휘 엔진(COCO-80), 기본으로 어휘 전부
+constexpr int kClosedVocabMax = 200;
+
+// objprob 앞단(확률 물체 모델, scenemap README "scenemap 확률 모드"): 이름 없는 분할 엔진(어휘 'object' 하나 — ObjectSAM·FastSAM-s)이면 기본 켬.
+// 검출마다 SigLIP 2 마스크 임베딩 → 낱말 표 최댓값 이름 + sm_set_det_embeddings, 갱신 뒤 sm_reencode_requests(통째 다시 담기)도 같은 스텝에.
+// 낱말 표·라벨 사전·엔진별 매개변수 = realbag_run 과 같은 것(objprob_front.hpp, tools/realbag/objprob_params/<엔진>.json).
+struct ObjprobFront {
+  bool on = false;
+  sgc_encoder* enc = nullptr;
+  sgc_labels* lt = nullptr;
+  std::vector<float> text;          // 낱말 줄마다 글 임베딩(L2)
+  std::vector<int> text_cls;        // 낱말 줄 → 라벨 번호
+  std::string obj_kv, label_prior, params_file;
+  std::vector<float> emb, remb;     // 이 keyframe 검출 임베딩, 다시 담기 결과
+  std::vector<int32_t> cls;
+  std::vector<sgc_item> items;
+  std::vector<sgc_result> res = std::vector<sgc_result>(64);
+  std::vector<uint32_t> rbits, rids;
+  std::vector<sm_reenc_req> rreq;
+  double enc_ms = 0, reenc_ms = 0;
+  int64_t n_kf = 0, n_enc = 0, n_reenc = 0;
+  // items 를 모두 넣고 결과를 out[id] 에(id = 요청 번호). on_res(id, emb) 는 결과마다
+  template <class F>
+  bool run(double stamp, const sgc_frame& fr, int n, std::vector<float>* out, F on_res) {
+    out->assign(size_t(n) * SGC_DIM, 0.f);
+    int sent = 0, got = 0;
+    while (got < n) {
+      if (sent < n) {
+        const int k = sgc_submit(enc, stamp, &fr, items.data() + sent, n - sent);
+        if (k < 0) return false;
+        sent += k;
+      }
+      const int r = sgc_poll(enc, res.data(), int(res.size()), 1);
+      for (int q = 0; q < r; ++q) {
+        const sgc_result& x = res[size_t(q)];
+        std::copy(x.emb, x.emb + SGC_DIM, out->begin() + size_t(x.id) * SGC_DIM);
+        on_res(x.id, x.emb);
+      }
+      got += r;
+    }
+    return true;
+  }
+  ~ObjprobFront() {
+    if (enc) sgc_destroy(enc);
+    if (lt) sgc_labels_close(lt);
+  }
+};   // 이 이하 어휘 = 닫힌 어휘 엔진(COCO-80), 기본으로 어휘 전부
 
 struct sgrt {
   sgrt_config cfg{};
@@ -65,7 +111,8 @@ struct sgrt {
   // SGRT_STREAM_HZ(기본 60, 0.5–240 으로 자름)로 만든다 — 스텝 스레드는 아무것도 기다리지 않는다. 파일 저장(위 saver)과 별개.
   std::thread viewer;
   std::atomic<bool> view_quit{false};
-  sgrt_clip::ClipMem clip;          // 물체 영상 임베딩(SGRT_CLIP 이면 켜짐)
+  sgrt_clip::ClipMem clip;          // 물체 영상 임베딩(SGRT_CLIP 이면 켜짐, objprob 이면 끔 — 물체 벡터는 scenemap 이 μ 로 저장)
+  ObjprobFront op;                  // objprob 앞단(SGRT_OBJPROB)
   std::vector<std::string> name_buf;  // sgrt_object_names 문자열
 };
 
@@ -166,6 +213,138 @@ int gatherCb(void* user, const int32_t* xy, int32_t n, uint8_t* rgb) {
   c->s->n_points += n;
   return rc;
 }
+std::string homePath(const std::string& rel) {
+  const char* h = std::getenv("HOME");
+  return std::string(h ? h : ".") + "/" + rel;
+}
+// objprob 켜기 판단·SigLIP 2·매개변수 파일. SGRT_OBJPROB = 1 | 0 | 없음(어휘가 'object' 하나인 분할 엔진이면 켬)
+bool objprobInit(sgrt* s, char* err, size_t err_len) {
+  const char* e = std::getenv("SGRT_OBJPROB");
+  const int V = ovd_vocab_size(s->det);
+  const bool agnostic = V == 1 && std::string(ovd_vocab_name(s->det, 0)) == "object";
+  s->op.on = e && *e ? std::atoi(e) != 0 : agnostic;
+  if (!s->op.on) {
+    if (agnostic) std::fprintf(stderr, "[sgrt] objprob off (SGRT_OBJPROB=0): class-agnostic engine, every node is 'object'\n");
+    return true;
+  }
+  const char* cp = std::getenv("SGRT_OBJPROB_CLIP");
+  const std::string clip_plan = cp && *cp ? cp : homePath("ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan");
+  const char* lp = std::getenv("SGRT_LABELS");
+  const std::string ldir = lp && *lp ? lp : homePath("embed_work/labels/objects-v1");
+  sgc_config cc;
+  sgc_default_config(&cc);
+  cc.engine = clip_plan.c_str();
+  s->op.enc = sgc_create(&cc, err, err_len);
+  if (!s->op.enc) return false;
+  s->op.lt = sgc_labels_open(ldir.c_str(), nullptr, err, err_len);
+  if (!s->op.lt) return false;
+  // 엔진별 매개변수: SGRT_OBJPROB_PARAMS = 파일 | none, 없으면 <매개변수 폴더>/<엔진 줄기>.json
+  const char* pe = std::getenv("SGRT_OBJPROB_PARAMS");
+  std::string pf = pe ? pe : "";
+  if (pf.empty()) {
+    const std::string stem = objprob_front::engineStem(s->cfg.engine);
+    for (const char* d : {SGRT_PARAMS_DIR, SGRT_PARAMS_DIR2}) {
+      const std::string c = std::string(d) + "/" + stem + ".json";
+      if (std::FILE* f = std::fopen(c.c_str(), "r")) { std::fclose(f); pf = c; break; }
+    }
+    if (pf.empty()) std::fprintf(stderr, "[sgrt] objprob: no params file for %s (built-in defaults)\n", stem.c_str());
+  }
+  if (!pf.empty() && pf != "none") {
+    if (!objprob_front::readParamsFile(pf, &s->op.obj_kv, &s->op.label_prior)) {
+      put(err, err_len, ("sgrt objprob: cannot read params " + pf).c_str());
+      return false;
+    }
+    s->op.params_file = pf;
+  }
+  std::fprintf(stderr, "[sgrt] objprob on: SigLIP 2 %s, labels %s, params %s (label prior %s)\n", clip_plan.c_str(), ldir.c_str(),
+               pf.empty() ? "built-in" : pf.c_str(), s->op.label_prior.empty() ? "uniform" : s->op.label_prior.c_str());
+  return true;
+}
+// objprob 판 시작: 낱말 표(+ 과제 이름 중 낱말 표에 없는 것) → 라벨 → scenemap 확률 모드
+int objprobBegin(sgrt* s, const char* const* prompt, int32_t n, char* err, size_t err_len) {
+  ObjprobFront& o = s->op;
+  ovd_set_prompt(s->det, nullptr, 0, nullptr, 0);   // 분할 엔진: 'object' 하나
+  s->labels.clear();
+  o.text.clear();
+  o.text_cls.clear();
+  std::vector<std::pair<std::string, std::string>> extra;
+  for (int i = 0; i < n && prompt; ++i) {
+    if (!prompt[i] || !*prompt[i]) continue;
+    bool have = false;
+    for (const auto& w : objprob_front::kVocab) have = have || std::strcmp(w.text, prompt[i]) == 0 || std::strcmp(w.label, prompt[i]) == 0;
+    for (const auto& w : objprob_front::kVocabAp) have = have || std::strcmp(w.text, prompt[i]) == 0;
+    if (!have) extra.emplace_back(prompt[i], prompt[i]);
+  }
+  std::string missing;
+  objprob_front::buildTextTable(o.lt, true, extra, &s->labels, &o.text, &o.text_cls, &missing);
+  objprob_front::addApLabels(&s->labels);
+  std::vector<const char*> lp;
+  for (const auto& l : s->labels) lp.push_back(l.c_str());
+  sm_set_labels(s->sm, lp.data(), int(lp.size()));
+  std::string er;
+  if (!objprob_front::enable(s->sm, &s->labels, o.text, o.text_cls, o.label_prior, o.obj_kv, &er)) {
+    put(err, err_len, er.c_str());
+    return -1;
+  }
+  std::fprintf(stderr, "[sgrt] objprob: %zu words -> %zu labels (task words added %zu; not in SigLIP table:%s)\n", o.text_cls.size(),
+               s->labels.size(), extra.size(), missing.c_str());
+  return 0;
+}
+// keyframe: 검출마다 SigLIP 2 마스크 임베딩 → 이름(낱말 최댓값) → d2(cls 바꾼 사본) + sm_set_det_embeddings
+bool objprobName(sgrt* s, double stamp, const uint8_t* rgb, int on_dev, int64_t rs, int ps, int w, int h, const sm_detections* d,
+                 sm_detections* d2) {
+  ObjprobFront& o = s->op;
+  const auto t0 = std::chrono::steady_clock::now();
+  *d2 = *d;
+  o.cls.assign(size_t(std::max(0, d->n)), 0);
+  if (d->n > 0) {
+    const sgc_frame fr{rgb, on_dev, rs, ps, w, h, d->mask_w, d->mask_h, d->mask_sx, d->mask_sy, d->mask_ox, d->mask_oy, d->mask_bits};
+    o.items.resize(size_t(d->n));
+    for (int k = 0; k < d->n; ++k) o.items[size_t(k)] = sgc_item{uint32_t(k), k, {d->box[4 * k], d->box[4 * k + 1], d->box[4 * k + 2], d->box[4 * k + 3]}, 1.f};
+    const bool ok = o.run(stamp, fr, d->n, &o.emb, [&](uint32_t id, const float* e) {
+      int best = 0;
+      float bs = -2.f;
+      for (size_t p = 0; p < o.text_cls.size(); ++p) {
+        const float* tp = o.text.data() + p * SGC_DIM;
+        float sd = 0.f;
+        for (int j = 0; j < SGC_DIM; ++j) sd += e[j] * tp[j];
+        if (sd > bs) { bs = sd; best = int(p); }
+      }
+      o.cls[id] = o.text_cls[size_t(best)];
+    });
+    if (!ok) return false;
+    sm_set_det_embeddings(s->sm, o.emb.data(), d->n, SGC_DIM);
+    o.n_enc += d->n;
+  }
+  d2->cls = o.cls.data();
+  o.enc_ms += msSince(t0);
+  ++o.n_kf;
+  return true;
+}
+// 갱신 뒤: 통째 다시 담기(합친 물체·더 좋은 모습을 구름 투영 마스크로)
+void objprobReenc(sgrt* s, double stamp, const uint8_t* rgb, int on_dev, int64_t rs, int ps, int w, int h, const sm_detections* d) {
+  ObjprobFront& o = s->op;
+  const sm_reenc_req* rq = nullptr;
+  const uint32_t* rb = nullptr;
+  const int nr = sm_reencode_requests(s->sm, &rq, &rb);
+  if (nr <= 0) return;
+  const auto t0 = std::chrono::steady_clock::now();
+  const size_t words = (size_t(d->mask_w) * d->mask_h + 31) / 32;
+  o.rbits.assign(rb, rb + size_t(nr) * words);
+  o.rreq.assign(rq, rq + nr);
+  const sgc_frame fr{rgb, on_dev, rs, ps, w, h, d->mask_w, d->mask_h, d->mask_sx, d->mask_sy, d->mask_ox, d->mask_oy, o.rbits.data()};
+  o.items.resize(size_t(nr));
+  o.rids.resize(size_t(nr));
+  for (int k = 0; k < nr; ++k) {
+    const sm_reenc_req& q = o.rreq[size_t(k)];
+    o.items[size_t(k)] = sgc_item{uint32_t(k), k, {q.box[0], q.box[1], q.box[2], q.box[3]}, q.kappa};
+    o.rids[size_t(k)] = q.id;
+  }
+  if (o.run(stamp, fr, nr, &o.remb, [](uint32_t, const float*) {}))
+    sm_set_object_embeddings(s->sm, o.rids.data(), o.remb.data(), nr, SGC_DIM);
+  o.reenc_ms += msSince(t0);
+  o.n_reenc += nr;
+}
 }  // namespace
 
 extern "C" {
@@ -208,6 +387,12 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
     delete s;
     return nullptr;
   }
+  if (!objprobInit(s, err, err_len)) {
+    sm_destroy(s->sm);
+    ovd_destroy(s->det);
+    delete s;
+    return nullptr;
+  }
   if (sm_get_robot(s->sm) != SM_ROBOT_R1PRO)
     std::fprintf(stderr, "[sgrt] robot %d (0 r1pro, 1 limo_omx), proprio >= %d, config %s\n", sm_get_robot(s->sm),
                  sm_proprio_dim(sm_get_robot(s->sm)), smj.c_str());
@@ -216,6 +401,7 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
     sm_set_pose_mode(s->sm, m == "gt" ? SM_POSE_GT : m == "odom" ? SM_POSE_ODOM : SM_POSE_SLAM);
   }
   if (const char* pl = std::getenv("SGRT_MAP_POLICY")) sm_set_map_update(s->sm, std::atoi(pl) ? 1 : 0, 0);
+  if (const char* ip = std::getenv("SGRT_INSPECT"); ip && std::atoi(ip)) sm_set_inspect(s->sm, 1);   // 살펴본 정도(view.json·scene.json "inspect")
   if (const char* lg = std::getenv("SGRT_IMAGE_LAG")) s->image_lag = std::clamp(std::atoi(lg), 0, 7);
   if (const char* ss = std::getenv("SGRT_SAVE_SYNC")) s->save_async = std::atoi(ss) == 0;
   if (s->save_async)
@@ -260,7 +446,7 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
       std::fprintf(stderr, "[sgrt] streaming to %s (view %.1f Hz)\n", st, 1e6 / double(period.count()));
     }
   }
-  s->clip.init(s->out_dir);
+  if (!s->op.on) s->clip.init(s->out_dir);   // objprob: 물체 벡터는 scenemap(μ·모습) — ClipMem 과 같은 파일을 쓰므로 끔
   if (const char* rp = std::getenv("SGRT_RECORD")) {
     s->rec = std::fopen(rp, "wb");
     if (s->rec) {
@@ -291,6 +477,10 @@ void sgrt_destroy(sgrt* s) {
     s->scv.notify_all();
     s->saver.join();
   }
+  if (s->op.on && s->op.n_kf)
+    std::fprintf(stderr, "[sgrt] objprob: %lld keyframes, SigLIP 2 %.2f ms/kf (%.1f masks/kf), whole re-encode %.2f ms/kf (%lld)\n",
+                 (long long)s->op.n_kf, s->op.enc_ms / double(s->op.n_kf), double(s->op.n_enc) / double(s->op.n_kf),
+                 s->op.reenc_ms / double(s->op.n_kf), (long long)s->op.n_reenc);
   if (s->det) ovd_destroy(s->det);
   if (s->sm) sm_destroy(s->sm);
   sgrt_crop::destroy(s->crop);
@@ -303,6 +493,17 @@ int sgrt_begin(sgrt* s, const char* const* prompt, int32_t n, char* err, size_t 
   if (!s) return -1;
   // 프롬프트 방식: SGRT_PROMPT=task(과제 이름만) | all(엔진 어휘 전부) | auto(기본: 어휘가 kClosedVocabMax 이하인 닫힌 어휘
   // 엔진 — COCO-80 YOLO-seg — 이면 all, YOLOE 큰 어휘면 task)
+  if (s->op.on) {   // objprob: 이름은 SigLIP 2 낱말 표(과제 이름 더함), 검출 엔진은 'object' 하나
+    sm_reset(s->sm);
+    s->clip.reset();
+    if (objprobBegin(s, prompt, n, err, err_len) != 0) return -1;
+    s->step = 0;
+    s->prev_stamp = -1;
+    s->n_stamps = 0;
+    s->last_save = -1e9;
+    s->n_kf = s->n_det = 0;
+    return 0;
+  }
   const char* mode = std::getenv("SGRT_PROMPT");
   const std::string m = mode ? mode : "auto";
   const int V = ovd_vocab_size(s->det);
@@ -367,6 +568,14 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
     im.pix_stride = pix_stride;
     im.on_device = rgb_on_device;
     const sm_detections* d = ovd_detect(s->det, &im, nullptr);
+    sm_detections dn{};
+    if (d && s->op.on) {   // objprob: 마스크마다 SigLIP 2 → 이름·임베딩(검출 시간에 넣음)
+      if (!objprobName(s, stamp, rgb, rgb_on_device, row_stride, pix_stride, w, h, d, &dn)) {
+        std::fprintf(stderr, "[sgrt] objprob: SigLIP 2 submit failed\n");
+        return -1;
+      }
+      d = &dn;
+    }
     s->det_ms = float(msSince(t0));
     s->tm.h[kSgDet].add(s->det_ms * 1e3);
     if (s->rec) {
@@ -387,6 +596,7 @@ int sgrt_step(sgrt* s, double stamp, const float* proprio, int32_t n_proprio, co
     CropSrc cs{s, rgb, row_stride, pix_stride, rgb_on_device, w, h};
     const sm_rgb_source src{&cropCb, &gatherCb, &cs};
     rc = d ? sm_push_image_rgb(s->sm, &si, d, &src) : sm_push_image(s->sm, &si, nullptr);
+    if (d && s->op.on) objprobReenc(s, im_stamp, rgb, rgb_on_device, row_stride, pix_stride, w, h, d);
     s->kf_ms = float(msSince(t1));
     if (d) s->clip.keyframe(im_stamp, rgb, rgb_on_device, row_stride, pix_stride, w, h, d, s->sm);   // 새·좋아진 물체만, 비동기
     s->n_kf++;
@@ -575,6 +785,8 @@ int sgrt_reset_stage_timing(sgrt* s) {
 extern "C" {
 
 int sgrt_clip_enabled(const sgrt* s) { return s && s->clip.on() ? 1 : 0; }
+
+int sgrt_objprob_enabled(const sgrt* s) { return s && s->op.on ? 1 : 0; }
 
 int sgrt_object_embedding(sgrt* s, uint32_t id, float* out) { return s ? s->clip.embedding(id, out) : -1; }
 

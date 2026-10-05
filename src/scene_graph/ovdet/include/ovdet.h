@@ -10,8 +10,8 @@
  * offset back to the input image. Nothing is copied to the caller; the arrays live in the handle and stay valid until
  * the next ovd_detect / ovd_set_prompt / ovd_destroy on that handle.
  *
- * Engine: images 1 x 3 x H x W, output0 1 x (4 + nc + 32) x A, output1 1 x 32 x h x w (tools/export_yoloe.py,
- * tools/build_engines.py). It is built once with a whole vocabulary (every task's BDDL objects + scene structures,
+ * Engine: images 1 x 3 x H x W, output0 1 x (4 + nc + 32) x A, output1 1 x 32 x h x w (archive/src/scene_graph/ovdet/tools/export_yoloe.py,
+ * tools/build_engines.py; ObjectSAM: robot-agent training/fastsam/build_engine.py, one name "object"). It is built once with a whole vocabulary (every task's BDDL objects + scene structures,
  * <engine>.names.txt); the prompt switches classes on and off. YOLOE's class scores are independent per class, so this
  * equals an engine built with only the prompt's names.
  *

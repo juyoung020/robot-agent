@@ -2,7 +2,7 @@
 // 읽는 것은 방법이 읽어도 되는 것만(rgb·depth·intrinsics·poses·frames). 넣는 방법은 ../scenemap/tools/dom_seq.hpp,
 // 완벽한 검출판은 ../scenemap/tools/dom_bench.cpp.
 //
-// 검출: ovdet(FastSAM-s 416 TensorRT, 이름 없음 'object', sgrt 와 같은 conf 0.25). 이름(--classify):
+// 검출: ovdet(분할 엔진 기본 ObjectSAM yolo26n-seg-obj-416 TensorRT, 이름 없음 'object', sgrt 와 같은 conf 0.25). 이름(--classify):
 //   검출마다 sgclip(SigLIP 2 B/32 영상 탑, 마스크 풀링) 768-d → 아래 kPrompts 글 임베딩(라벨 표 objects-v1 의 글 벡터)과 코사인
 //   최대인 줄의 이름을 cls 로. 이름은 벤치마크 범주 이름이거나 구조물(wall·floor …) — scenemap 이 구조물을 물체로 만들지 않고,
 //   같은 이름끼리만 같은 물체로 잇는다. --classify 없이는 sgrt 와 같다: 모든 검출 cls 0 'object'(위치만으로 잇기).
@@ -122,7 +122,7 @@ int main(int argc, char** argv) {
     return 2;
   }
   const std::string home = std::getenv("HOME") ? std::getenv("HOME") : ".";
-  std::string engine = home + "/ovdet_models/x86_sm120/FastSAM-s-416.plan";
+  std::string engine = home + "/ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan";   // ObjectSAM(YOLO26n 학생). 원래 FastSAM-s = --engine …/FastSAM-s-416.plan
   std::string clip_plan = home + "/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan";
   std::string labels_dir = home + "/embed_work/labels/objects-v1";
   float conf = 0.25f;

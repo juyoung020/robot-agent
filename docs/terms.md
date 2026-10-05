@@ -8,8 +8,8 @@
 |---|---|---|
 | **things** | 셀 수 있는 개별 물체(의자·컵·문·창·계단). 판옵틱 분할(Kirillov 외 2019)·COCO-Stuff(Caesar 외 2018)의 구분 | 물체 노드. 문·창·계단은 구조물 표시를 단 물체 노드로 남긴다 |
 | **stuff** | 모양이 정해지지 않은 배경 영역(벽·천장·바닥·하늘). ConceptGraphs 는 `bg_classes`, 방 구조 추정에서는 room layout 이라 부른다 | 지도에 물체로 넣지 않는다 |
-| **stuff 제거** | 분할 결과에서 벽·천장·바닥을 빼는 일 | `scenemap/src/objprob.cpp` 조각 평면 판정(아래 랜색) + `training/fastsam/`(벽·천장·바닥을 아예 자르지 않게 재학습한 FastSAM-s) |
-| **things 전용 분할** | 물체만 자르고 stuff 는 배경으로 두는 분할 | 재학습 FastSAM-s `FastSAM-s-416-obj.plan` |
+| **stuff 제거** | 분할 결과에서 벽·천장·바닥을 빼는 일 | `scenemap/src/objprob.cpp` 조각 평면 판정(아래 랜색) + `training/fastsam/`(벽·천장·바닥을 아예 자르지 않게 학습한 분할 — ObjectSAM) |
+| **things 전용 분할** | 물체만 자르고 stuff 는 배경으로 두는 분할 | ObjectSAM(FastSAM-s 에서 증류한 YOLO26n 학생) `yolo26n-seg-obj-416.plan` — 10-05 기본 |
 
 ## 물체 지도를 만드는 말
 

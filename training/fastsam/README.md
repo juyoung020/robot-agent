@@ -1,6 +1,8 @@
 # fastsam — 물체 분할 다시 학습(벽·천장·바닥 없이, 통째로)
 
-작성 2026-10-05. **이 폴더의 코드는 AGPL-3.0 이다**([LICENSE](LICENSE), 아래 "라이선스"). 저장소의 나머지는 Apache-2.0.
+작성 2026-10-05. **10-05 결정: 쓰는 분할은 ObjectSAM — 여기서 FastSAM-s 에서 증류한 YOLO26n 학생(things 만, 엔진 `yolo26n-seg-obj-416`) + SigLIP 2 + objprob.** 공개: https://github.com/juyoung020/ObjectSAM (v1.0, `ObjectSAM-416.pt`·`ObjectSAM-416.onnx`·`ObjectSAM-416-int8-qdq.onnx`). 까닭: FastSAM-s 계산의 약 1/10(3.8 대 약 40 GFLOPs)이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. 아래 FastSAM-s 재학습(`FastSAM-s-416-obj`)은 로컬 비교 실험으로만 남고 쓰지 않는다.
+
+**이 폴더의 코드는 AGPL-3.0 이다**([LICENSE](LICENSE), 아래 "라이선스"). 저장소의 나머지는 Apache-2.0.
 
 ## 목표
 
@@ -21,10 +23,10 @@ FastSAM-s 416(TensorRT, behavior-2026 `src/scene_graph/ovdet`)을 다시 학습�
 ## 결과 요약
 
 **설치한 엔진**
-- `~/ovdet_models/x86_sm120/FastSAM-s-416-obj.plan`: v2, 문턱 0.05 보정, 실행 conf 0.25 그대로. `.pt`·`.onnx` 는 `~/ovdet_models/pt/`.
-- `~/ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan`: Nano 학생 v0.2(`n26_uw`, 덜 나눔 벌점), 문턱 0.03 보정. 공개판 ObjectSAM-n-416(v0.2).
-  - 앞 학생(v0, t 0.04)은 `yolo26n-seg-obj-416-v0.plan` 으로 남겼다.
-- 옛 엔진 `FastSAM-s-416.plan` 은 그대로 있다. 기본값은 바꾸지 않았다.
+- `~/ovdet_models/archive/x86_sm120/FastSAM-s-416-obj.plan`: FastSAM-s 재학습 v2 — 보관(버림, 기본 아님), 문턱 0.05 보정. `.pt`·`.onnx` 는 `~/ovdet_models/archive/pt/`(`~/ovdet_models/archive/README.md`). 옛 학습 판은 `~/datasets/fastsam_obj/archive/`.
+- `~/ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan`: **ObjectSAM** — YOLO26n 학생(`n26_uw`, 덜 나눔 벌점), 문턱 0.03 보정. **기본 엔진(10-05)**. 공개판 ObjectSAM v1.0(`ObjectSAM-416.*`).
+  - 앞 학생(v0, t 0.04)은 `~/ovdet_models/archive/x86_sm120/yolo26n-seg-obj-416-v0.plan` 으로 보관했다.
+- 옛 엔진 `FastSAM-s-416.plan` 은 `~/ovdet_models/x86_sm120/` 에 그대로 있다(라벨 선생·평가 기준, `--engine`/`SGRT_ENGINE` 으로 고름). 기본값은 10-05 에 ObjectSAM 으로 바꿨다(behavior-2026 `26cbdc4`: libsgrt 글루·realbag_run·explore/LIMO 시작 스크립트, objprob 기본 켬).
 
 **게이트(검출 단계, 버킷마다 옛 엔진보다 뚜렷이 나쁘지 않음)**
 - FastSAM-s-416-obj(v2, t 0.05)는 시뮬·COCO·ADE 세 곳 모든 버킷에서 95 % 구간이 0 을 포함하거나 더 좋다.
@@ -41,7 +43,7 @@ FastSAM-s 416(TensorRT, behavior-2026 `src/scene_graph/ovdet`)을 다시 학습�
 - 시뮬에서 재현율을 맞추려면 문턱을 낮춰야 하는데, 실제 사진에서는 그 문턱이 과하다.
 - 같은 v2 를 t 0.11 로 쓰면 OpenLORIS 는 깨끗하다(230·298 노드, 천장 띠 5·9). 하지만 재현율 게이트에서 떨어진다(시뮬 문·창·계단 −6 %p, COCO 문·창·계단 −7 %p).
 
-**권고**
+**권고**(10-05 전 판단 — 기록. 결정은 아래 "어느 것을 쓰나")
 - 시뮬(BEHAVIOR) 실험과 옛 규칙 지도에는 FastSAM-s-416-obj 가 확실히 낫다.
 - 실제 로봇 기본값으로 바꾸기 전에 두 가지가 필요하다.
   - ① objprob 매개변수를 새 엔진에 다시 맞춘다 — 했다(behavior-2026 `objprob_params/FastSAM-s-416-obj.json`, 학생은 `yolo26n-seg-obj-416.json`).
@@ -204,7 +206,7 @@ FastSAM-s 416(TensorRT, behavior-2026 `src/scene_graph/ovdet`)을 다시 학습�
 | n26_v0 | yolo26n-seg.pt(머리 1 클래스로 새로) | 시뮬 5.2k ×3 + 실제 18k | 60 | Nano 학생 v0 |
 | n26_v1 | n26_v0 | fs_v2 와 같은 목록·라벨(`--list train_fs_v2.txt`) | 30 | 공정 재학습. 게이트 t 0.03(v0 보다 낮음), 나아지지 않음 |
 | n26_kd | n26_v0 | 같은 목록, 의사 라벨 = fs_v2(FastSAM-s-obj) 마스크 + 정답 통째(`yolo_kd/`) | 30 | 증류. v1 보다 헛것·덜 나눔이 조금 많음, 나아지지 않음 |
-| **n26_uw** | n26_v1 | fs_v2 목록·라벨 + 덜 나눔 벌점(`--under-w 3`) | 15 | **설치(t 0.03), 공개 v0.2** |
+| **n26_uw** | n26_v1 | fs_v2 목록·라벨 + 덜 나눔 벌점(`--under-w 3`) | 15 | **설치(t 0.03), 공개 ObjectSAM v1.0, 기본 엔진** |
 
 **한 표 비교**
 - 검출 단계는 2 장마다 한 장으로 쟀다. 칸은 옛 엔진 → 새 것 값이다.
@@ -239,7 +241,7 @@ FastSAM-s 416(TensorRT, behavior-2026 `src/scene_graph/ovdet`)을 다시 학습�
 - 일부는 실제로 놓친 것이다. 화분에 반쯤 가린 나무 문이 그 예다.
 - 문·창·계단 이미지를 더 넣은 v2·v3 로도 크게 나아지지 않았다.
 
-## Nano 안(YOLO26n-seg, Jetson Nano 4 GB) — 공개 ObjectSAM-n-416 v0.2
+## Nano 안(YOLO26n-seg, Jetson Nano 4 GB) — ObjectSAM(공개 v1.0, 기본 엔진)
 
 **출력**
 - `end2end=False` 로 내보내면 옛 FastSAM 엔진과 같은 모양이다(1×37×3549 + 1×32×104×104).
@@ -292,15 +294,15 @@ FastSAM-s 416(TensorRT, behavior-2026 `src/scene_graph/ovdet`)을 다시 학습�
 - **이 PC(RTX 5070 Ti)에서 INT8 은 이득이 없다.** 오히려 느리고 메모리가 많다. 작은 망에서는 양자화·형 변환 커널이 따로 남고, FP16 텐서 코어가 이미 충분히 빠르다.
 - Orin(sm_87, INT8 텐서 코어)에서는 다를 수 있다. 재지는 않았다.
 - Nano(sm_53, Maxwell)에는 INT8 텐서 코어가 없어 FP16 만 쓴다.
-- 공개용 INT8 은 'entropy, 머리 FP16'이다(`ObjectSAM-n-416-int8-qdq.onnx`). 스케일이 ONNX 안에 있어 보정 캐시·영상 없이 대상 기기에서 바로 빌드한다.
+- 공개용 INT8 은 'entropy, 머리 FP16'이다(`ObjectSAM-416-int8-qdq.onnx`). 스케일이 ONNX 안에 있어 보정 캐시·영상 없이 대상 기기에서 바로 빌드한다.
 
 **대상 기기에서 엔진 빌드**(엔진은 GPU·TensorRT 판마다 따로 — 여기서는 만들 수 없어 방법만)
 ```
 # Jetson Orin (JetPack 5.1+/6, TensorRT 8.5+/10.x): FP16, 또는 INT8(Q/DQ)
-/usr/src/tensorrt/bin/trtexec --onnx=ObjectSAM-n-416.onnx --fp16 --saveEngine=objsam_n_fp16.plan
-/usr/src/tensorrt/bin/trtexec --onnx=ObjectSAM-n-416-int8-qdq.onnx --int8 --fp16 --saveEngine=objsam_n_int8.plan
+/usr/src/tensorrt/bin/trtexec --onnx=ObjectSAM-416.onnx --fp16 --saveEngine=objsam_n_fp16.plan
+/usr/src/tensorrt/bin/trtexec --onnx=ObjectSAM-416-int8-qdq.onnx --int8 --fp16 --saveEngine=objsam_n_int8.plan
 # Jetson Nano (JetPack 4.6, TensorRT 8.2): FP16 만
-/usr/src/tensorrt/bin/trtexec --onnx=ObjectSAM-n-416.onnx --fp16 --workspace=1024 --saveEngine=objsam_n_fp16.plan
+/usr/src/tensorrt/bin/trtexec --onnx=ObjectSAM-416.onnx --fp16 --workspace=1024 --saveEngine=objsam_n_fp16.plan
 # 또는 python3 quant_engine.py build <onnx> <plan> --mode fp16|int8 (TRT 8.2 플래그 차이 처리)
 ```
 - 둘 다 `--useCudaGraph` 로 지연을 잰다. 실행 쪽 ovdet 은 CUDA 그래프로 부른다(behavior-2026 ovdet README "Per-call latency").
@@ -314,11 +316,10 @@ FastSAM-s 416(TensorRT, behavior-2026 `src/scene_graph/ovdet`)을 다시 학습�
   - 학생: 0.934 / 0.222 / 0.612 / 0.103 → 0.624 / 0.158 / 0.392 / 0.081.
   - FastSAM-s-obj: 0.892 → 0.617.
 
-**어느 것을 쓰나**
-- PC(RTX급)·Orin 에서 품질이 먼저면 FastSAM-s-416-obj(v0.1) FP16 이다. 벽·천장·바닥 헛것과 통째 IoU 가 낫다. 이 PC 에서는 지연도 같다(0.62 ms).
-- 식탁 + 의자 같은 덜 나눔이 문제면 ObjectSAM-n v0.2 다. 시뮬 덜 나눔이 옛 엔진 수준이다.
-- Jetson Nano(4 GB, FP16 만)는 ObjectSAM-n v0.2 다. 계산은 FastSAM-s 의 약 1/10(3.8 대 약 40 GFLOPs), 엔진은 7 MB 대 47 MB 다. Nano 에서는 재지 않았다.
-- Orin INT8 은 ObjectSAM-n INT8(Q/DQ)이다. 게이트는 지나지만 이 PC 에서는 이득이 없다. Orin 에서 FP16 과 재 보고 고른다.
+**어느 것을 쓰나** — **10-05: decided ObjectSAM (YOLO26n 학생) + SigLIP 2 + objprob**
+- 모든 기기(PC·Orin·Nano)의 기본은 ObjectSAM(`yolo26n-seg-obj-416`, 공개 `ObjectSAM-416.*`)이다. 까닭: FastSAM-s 계산의 약 1/10(3.8 대 약 40 GFLOPs)이라 LIMO 의 Jetson(특히 Nano)에 맞다 — 기기 위 시간은 아직 안 잼. objprob 매개변수는 behavior-2026 `objprob_params/yolo26n-seg-obj-416.json`.
+- Jetson Nano(4 GB)는 FP16(`ObjectSAM-416.onnx`), Orin 은 FP16 또는 INT8 Q/DQ(`ObjectSAM-416-int8-qdq.onnx` — 이 PC 에서는 이득이 없었다, Orin 에서 재 보고 고른다).
+- FastSAM-s 재학습(`FastSAM-s-416-obj`, `~/ovdet_models/archive/x86_sm120/` 에 보관)은 쓰지 않는다. PC 에서 벽·천장·바닥 헛것·통째 IoU 는 조금 나았지만 덜 나눔이 많고 계산이 약 10 배다(로컬 비교 기록으로만 남김).
 
 ## 다시 만들기
 
@@ -349,7 +350,7 @@ bash export.sh <out.pt> FastSAM-s-416-obj      # → ~/ovdet_models/{pt,x86_sm12
 # 6) 끝에서 끝·실제 bag
 bash e2e.sh <이름> ~/ovdet_models/x86_sm120/FastSAM-s-416-obj.plan plain   # 그리고 objprob
 bash realcheck.sh <이름> ~/ovdet_models/x86_sm120/FastSAM-s-416-obj.plan
-# 7) Nano 학생 v0.2(ObjectSAM-n-416): 같은 목록·라벨, 덜 나눔 벌점
+# 7) ObjectSAM(YOLO26n 학생 n26_uw): 같은 목록·라벨, 덜 나눔 벌점
 ~/fastsam_venv/bin/python train.py --name n26_v1 --init ~/datasets/fastsam_obj/runs/n26_v0/weights/last.pt \
     --list ~/datasets/fastsam_obj/yolo/train_fs_v2.txt --epochs 30 --lr0 0.003 --workers 4
 ~/fastsam_venv/bin/python train.py --name n26_uw --init ~/datasets/fastsam_obj/runs/n26_v1/weights/last.pt \
@@ -360,7 +361,7 @@ bash realcheck.sh <이름> ~/ovdet_models/x86_sm120/FastSAM-s-416-obj.plan
 ~/fastsam_venv/bin/python quant_engine.py calib --out ~/datasets/fastsam_obj/quant/calib512.npy --list ~/datasets/fastsam_obj/yolo/train_fs_v2.txt
 ~/fastsam_venv/bin/python quant_engine.py qdq <model.onnx> <model_qdq.onnx> --calib ~/datasets/fastsam_obj/quant/calib512.npy --algo entropy --exclude 'model\.23/'
 ~/ovdet_venv/bin/python quant_engine.py build <model_qdq.onnx> <out.plan> --mode int8
-# 9) 공개판: sanitize_release.py <cal.pt> <out_dir> ObjectSAM-n-416 → .pt·.onnx, 위 qdq 로 -int8-qdq.onnx
+# 9) 공개판: sanitize_release.py <cal.pt> <out_dir> ObjectSAM-416 → .pt·.onnx, 위 qdq 로 -int8-qdq.onnx
 ```
 
 ## 라이선스
@@ -405,4 +406,4 @@ bash realcheck.sh <이름> ~/ovdet_models/x86_sm120/FastSAM-s-416-obj.plan
 - 분할 모델과 학습 도구는 **ObjectSAM**(AGPL-3.0)으로 따로 공개한다: https://github.com/juyoung020/ObjectSAM
 - 이 폴더가 원본이다. `publish_objectsam.sh` 가 이 PC 전용 경로를 빼고 `tools/` 로 복사한다.
 - 공개용 가중치는 `sanitize_release.py` 로 만든다. 로컬 경로·옵티마이저·git 정보를 뺀다.
-- v0.1: FastSAM-s-obj-416. v0.2: ObjectSAM-n-416(YOLO26n 학생 `n26_uw`, t 0.03) `.pt`·`.onnx`·`-int8-qdq.onnx`. 공개 README 는 영어만 쓴다.
+- 공개 모델은 ObjectSAM 하나다(YOLO26n 학생 `n26_uw`, t 0.03): 릴리스 v1.0, `ObjectSAM-416.pt`·`ObjectSAM-416.onnx`·`ObjectSAM-416-int8-qdq.onnx`. 앞 릴리스(FastSAM-s 재학습 판·앞 학생 판)는 내렸다. 공개 README 는 영어만 쓴다.
