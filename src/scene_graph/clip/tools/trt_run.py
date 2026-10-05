@@ -14,7 +14,9 @@ import sys
 
 import numpy as np
 
-_site = glob.glob(os.path.expanduser("the TensorRT Python env/lib/python3*/site-packages"))
+# TensorRT 파이썬은 TRT_PY(config/paths.env) 의 venv 에서
+_trt_py = os.environ.get("TRT_PY", "")   # 없으면 지금 파이썬에 tensorrt 가 있어야 함
+_site = glob.glob(os.path.join(os.path.dirname(os.path.dirname(_trt_py)), "lib/python3*/site-packages"))
 if _site and _site[0] not in sys.path:
     sys.path.append(_site[0])
 import tensorrt as trt  # noqa: E402

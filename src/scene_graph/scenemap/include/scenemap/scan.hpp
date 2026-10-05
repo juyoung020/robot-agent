@@ -24,9 +24,9 @@ struct Capsule {
   float a[3], b[3], r;
 };
 
-// 로봇 몸 가리기. caps 가 있으면(순기구학 팔·몸통 뼈대) 그것을, 없으면 어깨 대략값–팔 끝 선분을 쓴다.
+// 로봇 몸 가리기. caps 가 있으면(순기구학 팔 뼈대) 그것을, 없으면 어깨 대략값–팔 끝 선분을 쓴다.
 struct BodyState {
-  float eef[2][3] = {{0}};        // 두 팔 끝(베이스 기준)
+  float eef[2][3] = {{0}};        // 팔 끝(베이스 기준). OMX-F 는 팔 하나라 두 칸에 같은 값
   std::vector<Capsule> caps;
 };
 

@@ -1,6 +1,5 @@
 // scenemap 2D 지도 쌓기 — 자세는 밖에서 받는다(Cartographer ../slam_carto · 정답 · 오도메트리 적분).
-// 10-06: 옛 slam2d(깊이 가상 스캔 맞추기로 자세를 고치던 것)는 archive/src/scene_graph/scenemap 으로 옮겼다. 여기 남은 것은
-// 자세와 상관없는 부분 — base_qvel 적분(keyframe 사이·외부 자세가 없을 때), keyframe 깊이 가상 스캔(scan.hpp)·붙은 것 거르기,
+// 하는 일: base_qvel 적분(keyframe 사이·외부 자세가 없을 때), keyframe 깊이 가상 스캔(scan.hpp)·붙은 것 거르기,
 // 넣기 정책(움직임 거르기·사건 기반), 2D 점유 격자(grid.hpp), 마지막 스캔(탐색 안전 정지).
 #pragma once
 #include <cstdint>

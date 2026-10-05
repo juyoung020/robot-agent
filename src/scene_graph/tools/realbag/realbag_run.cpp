@@ -4,13 +4,13 @@
 //   realbag_run <stream dir>[,<stream dir>…] <out dir> [옵션]
 //     --robot limo_omx         scenemap 로봇(limo_omx 하나 — 우리 로봇의 SLAM·몸 크기 설정)
 //     --pose carto|odom|gt     자세 원천(기본 carto = Cartographer(../../slam_carto): 2D 라이다 scans.bin + 바퀴 오도메트리(bag2stream.py
-//                              --scan-only) → 영상마다 sm_push_ext_pose(SM_POSE_EXT). slam = carto(옛 이름 — 깊이 맞추기 slam2d 는 10-06 archive).
+//                              --scan-only) → 영상마다 sm_push_ext_pose(SM_POSE_EXT). slam = carto(옛 이름).
 //                              스트림에 scans.bin 이 없으면 경고하고 odom. --carto-config <lua>(기본 openloris → openloris_hokuyo.lua),
 //                              끝에 <out>/carto_map.pgm·metrics.json "carto". gt = 정답 베이스 자세(여러 판을
 //                              한 지도에 이을 때 — 판 사이 재위치 추정이 없으므로). slam·odom 에서도 정답은 진단(sm_get_pose_diag)에만 넣는다
 //     --det fastsam|yolo|none  검출(기본 fastsam = 이름 없는 분할 엔진 + SigLIP 2 이름(dom_bench_det --classify 와 같은 길). 분할 엔진 기본은
 //                              ObjectSAM(YOLO26n 학생, yolo26n-seg-obj-416.plan — objprob_front.hpp kDefaultEngine), 원래 FastSAM-s 는
-//                              --engine models/ovdet/x86_sm120/FastSAM-s-416.plan(버린 FastSAM-s 재학습은 보관 models/ovdet/archive/x86_sm120/FastSAM-s-416-obj.plan).
+//                              --engine models/ovdet/x86_sm120/FastSAM-s-416.plan.
 //     --det yolo               닫힌 어휘 YOLO 분할(기본 yolo26s-seg-416, COCO 80) — 엔진 어휘 전부
 //     --namer siglip|engine    이름 붙이기(기본 fastsam = siglip, yolo = engine 클래스). siglip = 검출기 마스크마다 SigLIP 2 조각 임베딩을
 //                              아래 낱말 글 임베딩과 맞춤(세 검출기를 같은 이름 표로 비교할 때)
@@ -639,7 +639,7 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "[carto] %s has no 2D lidar (scans.bin/T_bl, bag2stream.py --scan-only) -> --pose odom\n", streams[0].dir.c_str());
     pose = "odom";
   }
-  if (pose != "carto" && pose != "odom" && pose != "gt") { std::fprintf(stderr, "--pose carto|odom|gt (slam2d is archived)\n"); return 2; }
+  if (pose != "carto" && pose != "odom" && pose != "gt") { std::fprintf(stderr, "--pose carto|odom|gt\n"); return 2; }
   sm_set_pose_mode(c, pose == "gt" ? SM_POSE_GT : pose == "odom" ? SM_POSE_ODOM : SM_POSE_EXT);
   // Cartographer(--pose carto): 스캔 + 바퀴 오도메트리 → 영상마다 자세(sm_push_ext_pose)
   std::vector<ScanRec> scans;

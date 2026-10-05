@@ -391,7 +391,7 @@ def main():
     ap.add_argument("--gt-dir", default=None)
     ap.add_argument("--vla-policy", default=os.environ.get("MR_VLA_POLICY"), help="LIMO VLA stand-in: scripted | replay:<jsonl> (default scripted)")
     ap.add_argument("--robot", default=os.environ.get("SGRT_ROBOT") or "limo_omx", choices=["limo_omx"])
-    ap.add_argument("--limo-shim", default=os.environ.get("LIMO_SHIM") or str(pathlib.Path.home() / "robot-agent/src/robot/og/eval_with_limo.py"))
+    ap.add_argument("--limo-shim", default=os.environ.get("LIMO_SHIM") or str(pathlib.Path(__file__).resolve().parents[3] / "src/robot/og/eval_with_limo.py"))
     args = ap.parse_args(argv[:split])
     eval_args = argv[split + 1:]
     if "--policy" in eval_args:

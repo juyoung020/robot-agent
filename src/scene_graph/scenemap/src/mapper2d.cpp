@@ -1,4 +1,4 @@
-// mapper2d.hpp 구현 — 옛 slam2d.cpp 에서 자세 맞추기(matchA·matchB)를 뺀 나머지(archive/src/scene_graph/scenemap/src/slam2d.cpp).
+// mapper2d.hpp 구현.
 #include "scenemap/mapper2d.hpp"
 
 #include <algorithm>

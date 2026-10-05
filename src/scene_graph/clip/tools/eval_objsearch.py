@@ -80,9 +80,10 @@ class Search:
         for f in ("sgc_labels_open_ex", "sgc_text_create", "sgc_create", "sgs_open"):
             getattr(L, f).restype = C.c_void_p
         err = C.create_string_buffer(512)
-        home = os.path.expanduser("~")
+        home = os.path.expanduser("~")   # ~/.cache/sgclip (색인 캐시)
+        OVDET = os.environ.get("OVDET_MODELS") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../../models/ovdet")
         self.lab = L.sgc_labels_open_ex(labels_dir.encode(), f"{home}/.cache/sgclip".encode(),
-                                        f"{home}/ovdet_models/x86_sm120/siglip2_b32/img_sample_lvis10k.f16".encode(), err, 512)
+                                        f"{OVDET}/x86_sm120/siglip2_b32/img_sample_lvis10k.f16".encode(), err, 512)
         assert self.lab, err.value
         tc = TextCfg()
         L.sgc_text_default_config(C.byref(tc), None)

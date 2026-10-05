@@ -29,7 +29,7 @@ AG=${RA_BUILD:-$ROOT/build}/bin/run-skill   # tools/build_all.sh agent
 SV=$RA_BUILD/bin/sgview
 [ -x "$SV" ] || "$ROOT/tools/build_all.sh" sgview
 
-export SGRT_ROBOT=${SGRT_ROBOT:-limo_omx}   # 우리 로봇은 LIMO + OMX-F 하나(R1 Pro 는 10-06 에 뺌 — run_explore.sh 도 같은 기본)
+export SGRT_ROBOT=${SGRT_ROBOT:-limo_omx}   # 로봇: LIMO + OMX-F
 export SGRT_LIB=$BUILD/libsgrt.so SGRT_POSE=$POSE SGRT_STREAM=127.0.0.1:9001 SGRT_MAP_EVERY=${SGRT_MAP_EVERY:-1}
 # 학습 뷰어 재생 판(선택, TRAINVIEW_OG=1): sgrt 기록(rec.bin, 약 2 GB/판)을 켜고, 판이 끝나면 og2sg 로 sgview 판을 만든다
 #   → $RA_TRAINVIEW_WORK/behavior_og/<판 이름>/ (trainview --root $RA_TRAINVIEW_WORK/behavior_og). og2sg: tools/build_all.sh og2sg

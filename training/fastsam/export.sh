@@ -1,7 +1,7 @@
 #!/bin/bash
 # 학습 결과 .pt → ONNX(입력 크기 IMGSZ, 기본 416, opset 13, end2end 없음 — 옛 FastSAM-s-416.onnx 와 같은 모양
 # 1×37×A + 1×32×(S/4)×(S/4)) → TensorRT FP16 엔진(build_engine.py, ovdet 엔진과 같은 설정).
-#   bash export.sh <best.pt> <이름(예: FastSAM-s-416-obj)>
+#   bash export.sh <best.pt> <이름(예: yolo26n-seg-obj-416)>
 # 결과: $OUT_PT/<이름>.pt·.onnx, $OUT_PLAN/<이름>.plan(+ .names.txt = 'object')
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)

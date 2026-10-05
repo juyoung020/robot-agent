@@ -5,9 +5,8 @@ Spark-DSG save). No computation here.
 Detector (env SGRT_ENGINE): default ObjectSAM, the class-agnostic YOLO26n student models/ovdet/x86_sm120/yolo26n-seg-obj-416.plan
 (https://github.com/juyoung020/ObjectSAM). With a class-agnostic engine libsgrt turns objprob on by itself (SGRT_OBJPROB, sgrt.h):
 SigLIP 2 per-mask names + embeddings, the scenemap probabilistic object model with the per-engine parameters
-src/scene_graph/tools/realbag/objprob_params/<engine>.json. Other engines stay selectable: the original FastSAM-s
-(SGRT_ENGINE=models/ovdet/x86_sm120/FastSAM-s-416.plan), the discarded FastSAM-s fine-tune (models/ovdet/archive/x86_sm120/FastSAM-s-416-obj.plan, archived) and the archived
-closed/open-vocabulary YOLO engines (models/ovdet/archive, old name rules). SGRT_OBJPROB=0 = old name rules.
+src/scene_graph/tools/realbag/objprob_params/<engine>.json. The teacher FastSAM-s stays selectable
+(SGRT_ENGINE=models/ovdet/x86_sm120/FastSAM-s-416.plan). SGRT_OBJPROB=0 = old name rules.
 
     mem = SceneMemory(task_name, out_dir)        # once per process
     mem.step(obs)                                # every evaluator step, before the policy acts
@@ -20,7 +19,7 @@ Sim 2D lidar (env SGRT_LIDAR, default 1 for LIMO): the glue ray-casts the LIMO X
 500 rays, 0.12-8 m, URDF laser_link) and hands each scan to libsgrt (sgrt_push_scan) before the step; SGRT_LIDAR=0 turns it off.
 The glue pushes the simulator's ground-truth robot base pose (robot.get_position_orientation(), world frame) every step
 whenever it can find the robot (SGRT_GT_POSE=0 turns that off): in gt mode it is the map pose, otherwise it is only
-used for the drift diagnostic. GT is for sim debugging/visualisation only -- the challenge rules forbid it at
+used for the drift diagnostic. GT is for sim debugging/visualisation only -- never use it at
 submission time. SGRT_GT_LOG=<csv> also logs per-keyframe GT base/head-camera poses; on close the GT object poses are
 written next to it (<csv>.objects.json) for scoring object positions.
 
@@ -44,8 +43,10 @@ import numpy as np
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[3]  # repo root (src/scene_graph/runtime/glue -> ../../../..)
 LIB = os.environ.get("SGRT_LIB", str(pathlib.Path(__file__).resolve().parents[4] / "build/bin/libsgrt.so"))
-# 분할 엔진 기본 = ObjectSAM(YOLO26n 학생, 이름 없는 'object') + SigLIP 2 + objprob(libsgrt 가 켬). YOLOE·YOLO26s 는 보관(models/ovdet/archive)
-ENGINE = os.environ.get("SGRT_ENGINE", str(pathlib.Path.home() / "ovdet_models/x86_sm120/yolo26n-seg-obj-416.plan"))
+# 분할 엔진 기본 = ObjectSAM(YOLO26n 학생, 이름 없는 'object') + SigLIP 2 + objprob(libsgrt 가 켬)
+REPO = HERE.parents[3]
+OVDET_MODELS = pathlib.Path(os.environ.get("OVDET_MODELS") or REPO / "models/ovdet")
+ENGINE = os.environ.get("SGRT_ENGINE", str(OVDET_MODELS / "x86_sm120/yolo26n-seg-obj-416.plan"))
 PROMPTS = ROOT / "src/scene_graph/ovdet/config/task_prompts.txt"
 HEAD_K = (306.0, 306.0, 360.0, 360.0)  # fallback intrinsics (fx, fy, cx, cy) until the OmniGibson sensor is read (_limo_head_k)
 ROBOTS = {"limo_omx": 0}                   # sgrt_get_robot / scenemap SM_ROBOT_*

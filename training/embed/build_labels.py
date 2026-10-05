@@ -55,7 +55,7 @@ def main():
         return ko.get(wn_id(s), [])
 
     # curated vocabularies first (their spelling wins)
-    _a = sys.argv; sys.argv = ['x']; sys.path.insert(0, os.path.expanduser('$CLIP_BENCH'))
+    _a = sys.argv; sys.argv = ['x']; sys.path.insert(0, BENCH)
     import score as S
     sys.argv = _a
     for n in S.VOCAB: add(n, '', 'eval_vocab')

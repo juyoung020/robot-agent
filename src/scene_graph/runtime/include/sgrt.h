@@ -104,8 +104,8 @@ typedef struct sm_ctx sm_ctx;
 sm_ctx* sgrt_scenemap(sgrt*);
 
 /* ---- 자세 원천·단계 시간·기록(추가 ABI, 10-03) ----
- * 자세 원천: 3 ext = Cartographer(기본, 아래 "2D 라이다"), 1 odom(적분만), 2 gt(외부·정답 베이스 자세 — 시뮬 진단·시각화용,
- *   대회 제출 금지). 0(옛 slam2d)은 3 과 같다. 환경 변수 SGRT_POSE=carto|odom|gt 가 sgrt_create 때 기본값을 정한다.
+ * 자세 원천: 3 ext = Cartographer(기본, 아래 "2D 라이다"), 1 odom(적분만), 2 gt(외부·정답 베이스 자세 — 시뮬 진단·시각화 전용,
+ *   실제 실행에는 쓰지 않음). 0 은 3 과 같다(옛 값 호환). 환경 변수 SGRT_POSE=carto|odom|gt 가 sgrt_create 때 기본값을 정한다.
  *   gt 면 map = 시뮬 world 프레임.
  * sgrt_push_pose: 이번 스텝의 외부 베이스 자세(map/world: x, y, yaw rad). 같은 stamp 의 sgrt_step 앞에 부른다.
  *   gt 가 아닌 모드에서도 넣으면 떠밀림 진단(sgrt_get_pose_diag)과 기록에 쓴다.
@@ -120,7 +120,7 @@ int    sgrt_set_pose_mode(sgrt*, int32_t mode);
 /* ---- 2D 라이다 · Cartographer(추가 ABI, 10-06) ----
  * SLAM 은 Cartographer(../slam_carto) 하나: SGRT_POSE 없음·carto(·옛 이름 slam) → scenemap SM_POSE_EXT(3). 스텝마다 proprio 의 바퀴
  *   오도메트리(LIMO 0–2)와 sgrt_push_scan 의 스캔을 Cartographer 에 넣고, 스텝 시각의 자세를 scenemap 에 준다(지도·물체는 그 자세로).
- *   옛 scenemap slam2d(깊이 가상 스캔 맞추기)는 10-06 archive. 스캔이 한 번도 안 오면 자세 = 오도메트리만(한 번 경고).
+ *   스캔이 한 번도 안 오면 자세 = 오도메트리만(한 번 경고).
  *   Cartographer 없이 빌드했으면 odom.
  *   SGRT_CARTO_CONFIG = lua 이름(기본 limo_x2l.lua), SGRT_LASER = "x,y,z,yaw"(base ← 라이다, 기본 URDF laser_link 0.103,0,-0.034,0).
  * sgrt_push_scan: 스캔 하나(라이다 프레임). stamp = 마지막 광선 시각, ranges[i] 방향 = angle_min + i·angle_inc.

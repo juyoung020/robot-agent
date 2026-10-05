@@ -1671,7 +1671,7 @@ uint32_t sm_snap_object_room(const sm_snapshot_t* s, uint32_t id) {
 int sm_set_pose_mode(sm_ctx* c, int32_t mode) {
   if (!c || mode < SM_POSE_SLAM || mode > SM_POSE_EXT) return -1;
   std::lock_guard<std::mutex> g(c->mu);
-  c->pose_mode = mode == SM_POSE_SLAM ? SM_POSE_EXT : mode;   // SM_POSE_SLAM(옛 slam2d, archive) = EXT
+  c->pose_mode = mode == SM_POSE_SLAM ? SM_POSE_EXT : mode;   // SM_POSE_SLAM(옛 값) = EXT
   return 0;
 }
 

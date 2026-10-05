@@ -745,7 +745,7 @@ static void testCloud() {
   }
 }
 
-// keyframe 시간: slam2d 만(검출 없음) / slam2d + objmap + best view(검출 6, 호스트 RGBA 자르기)
+// keyframe 시간: mapper2d 만(검출 없음) / mapper2d + objmap + best view(검출 6, 호스트 RGBA 자르기)
 static void testTiming() {
   std::printf("[timing]\n");
   std::vector<Rect> rs = {R(C_CUP, 300, 300, 340, 340, 1.5f, 250, 0, 0), R(C_BOOK, 420, 270, 480, 345, 1.8f, 0, 0, 250),
@@ -764,7 +764,7 @@ static void testTiming() {
       b += g.kf(0.2 * k, rs);
     }
   }
-  std::printf("  keyframe 720²: slam2d 만 %.3f ms, + objmap·best view(검출 6, 매번 자르기) %.3f ms\n", a / N, b / N);
+  std::printf("  keyframe 720²: mapper2d 만 %.3f ms, + objmap·best view(검출 6, 매번 자르기) %.3f ms\n", a / N, b / N);
 }
 
 int main(int argc, char** argv) {

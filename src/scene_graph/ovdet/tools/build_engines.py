@@ -8,6 +8,7 @@ ObjectSAM (class-free 'object'):
   python build_engines.py models/ovdet/onnx/ObjectSAM-416.onnx --out models/ovdet/x86_sm120
 """
 import argparse
+import os
 import shutil
 import time
 from pathlib import Path
@@ -38,7 +39,7 @@ def build(onnx_path, out_path, workspace_gb=4):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('onnx', nargs='+')
-    ap.add_argument('--out', default=str(Path.home() / 'ovdet_models' / 'x86_sm120'))
+    ap.add_argument('--out', default=os.environ.get('OVDET_MODELS', str(Path(__file__).resolve().parents[4] / 'models/ovdet')) + '/x86_sm120')
     ap.add_argument('--names', help='class names file for every plan (closed-vocabulary engines: config/coco80.txt)')
     ap.add_argument('--workspace-gb', type=float, default=4)
     a = ap.parse_args()

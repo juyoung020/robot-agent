@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "sgsearch.h"
+#include "ra_paths.h"
 
 static std::string home(const char* rel) { return std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + rel; }
 
@@ -26,7 +27,7 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "usage: sgsearch MEM [--labels DIR] [--no-text] [--encode] [--cache DIR] [--k N] [--force] search|bench|confirm|object|stats …\n");
     return 2;
   }
-  std::string mem = argv[1], labels = std::getenv("SGRT_LABELS") ? std::getenv("SGRT_LABELS") : home("/embed_work/labels/objects-v1"), cache;
+  std::string mem = argv[1], labels = std::getenv("SGRT_LABELS") ? std::getenv("SGRT_LABELS") : ra::labels(), cache;
   bool text = true, enc = false, force = false;
   int k = 0, i = 2;
   for (; i < argc && argv[i][0] == '-'; ++i) {
@@ -43,7 +44,7 @@ int main(int argc, char** argv) {
   char err[512] = {0};
   const std::string idx = home("/.cache/sgclip");
   const char* sample = std::getenv("SGC_IMG_SAMPLE");
-  const std::string def_sample = home("/ovdet_models/x86_sm120/siglip2_b32/img_sample_lvis10k.f16");
+  const std::string def_sample = ra::models() + "/x86_sm120/siglip2_b32/img_sample_lvis10k.f16";
   sgc_labels* L = sgc_labels_open_ex(labels.c_str(), idx.c_str(), sample ? sample : def_sample.c_str(), err, sizeof(err));
   if (!L) { std::fprintf(stderr, "labels: %s\n", err); return 1; }
   sgc_text* T = nullptr;
@@ -57,7 +58,7 @@ int main(int argc, char** argv) {
   if (enc) {
     sgc_config ec;
     sgc_default_config(&ec);
-    const std::string eng = std::getenv("SGC_ENGINE") ? std::getenv("SGC_ENGINE") : home("/ovdet_models/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan");
+    const std::string eng = std::getenv("SGC_ENGINE") ? std::getenv("SGC_ENGINE") : ra::models() + std::string("/x86_sm120/siglip2_b32/siglip2_b32_mask_fp16.plan");
     ec.engine = eng.c_str();
     ec.margin = 0.f;   // best view 사진은 이미 잘라 둔 것
     E = sgc_create(&ec, err, sizeof(err));

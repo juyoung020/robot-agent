@@ -3,7 +3,7 @@
 //
 // 그래프로 잡기(작업 1): RenderBatch::render 안의 일은 커널 실행뿐(kBuild, kRigs, kShade/kAtrous/kCompose)이고 호스트 값(판 수, 잡음 제거 횟수,
 // frame)은 잡을 때 고정된다. 단 하나의 걸림돌은 render_cam → Scratch::ensure 의 cudaMalloc(처음 부를 때·판 수가 늘 때)이다.
-// → create() 가 잡기 전에 한 번 그려 작업 공간을 잡아 두면 그 뒤 render 는 cudaMalloc 이 없어 그대로 잡힌다(서브모듈을 고치거나 베낄 필요 없음).
+// → create() 가 잡기 전에 한 번 그려 작업 공간을 잡아 두면 그 뒤 render 는 cudaMalloc 이 없어 그대로 잡힌다(렌더 엔진을 고치거나 베낄 필요 없음).
 // capture_cold_probe() 는 그 반대(작업 공간 없이 바로 잡기)가 실패하는지 확인하는 시험용이다.
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>

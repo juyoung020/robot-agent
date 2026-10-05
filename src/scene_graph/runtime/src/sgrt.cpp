@@ -404,7 +404,7 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
     const std::string m = pm && *pm ? pm : "carto";
     const int mode = m == "gt" ? SM_POSE_GT : m == "odom" ? SM_POSE_ODOM : SM_POSE_EXT;
     if (mode == SM_POSE_EXT && m != "slam" && m != "carto")
-      std::fprintf(stderr, "[sgrt] SGRT_POSE=%s unknown -> carto (carto|odom|gt; slam = carto; slam2d is archived)\n", m.c_str());
+      std::fprintf(stderr, "[sgrt] SGRT_POSE=%s unknown -> carto (carto|odom|gt; slam = carto)\n", m.c_str());
     sgrt_set_pose_mode(s, mode);
   }
   if (const char* pl = std::getenv("SGRT_MAP_POLICY")) sm_set_map_update(s->sm, std::atoi(pl) ? 1 : 0, 0);
@@ -779,7 +779,7 @@ sm_ctx* sgrt_scenemap(sgrt* s) { return s ? s->sm : nullptr; }
 int sgrt_set_pose_mode(sgrt* s, int32_t mode) {
   if (!s) return -1;
 #ifdef SGRT_HAVE_CARTO
-  if (mode == SM_POSE_SLAM) mode = SM_POSE_EXT;   // 옛 값(slam2d, archive) = Cartographer
+  if (mode == SM_POSE_SLAM) mode = SM_POSE_EXT;   // 옛 값 0 = Cartographer(호환)
   if (mode == SM_POSE_EXT && !s->carto) {
     sc_config cc = sc_default_config();
     const char* cn = std::getenv("SGRT_CARTO_CONFIG");
