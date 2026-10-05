@@ -159,6 +159,7 @@ export class Replay {
     this.clearEpisode();
     this.$("rp_run").textContent = id;
     this.$("rp_stream").innerHTML = streams.map(s => `<option>${esc(s)}</option>`).join("");
+    this.autoStream = true;
     this.$("rp_list").innerHTML = "";
     this.$("rp_note").textContent = "";
     if (this.visible) this.refreshList(); else this.stale = true;
@@ -171,8 +172,19 @@ export class Replay {
     if (!this.run) return;
     if (!this.visible) { this.stale = true; return; }
     const id = this.run, st = this.$("rp_stream").value || "main";
-    const j = await this.api("/api/replays", { run: id, stream: st });
+    let j = await this.api("/api/replays", { run: id, stream: st });
     if (id !== this.run) return;
+    // 실행을 막 고른 참이고 고른 줄기에 판이 없으면, 판이 있는 첫 줄기로 넘어간다
+    // (BC/DAgger 의 자동 기록 판은 main 이 아니라 eval 줄기에 쌓인다)
+    if (this.autoStream && !(j.rows || []).length) {
+      for (const o of this.$("rp_stream").options) {
+        if (o.value === st) continue;
+        const k = await this.api("/api/replays", { run: id, stream: o.value });
+        if (id !== this.run) return;
+        if ((k.rows || []).length) { this.$("rp_stream").value = o.value; j = k; break; }
+      }
+    }
+    this.autoStream = false;
     this.rows = j.rows || [];
     const why = j.why || "";
     const m = this.meta || {};
