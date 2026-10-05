@@ -17,7 +17,7 @@
 |---|---|
 | **결정(10-03)** | **SigLIP 2 B/32-256 채택, PC 포팅 끝(8절)**: 엔진 = 패치 GEMM + FP16(LayerNorm·GELU FP32) + 배치 칸 1·2·4·8, PyTorch FP32 대비 코사인 평균 0.99987(567 crop, 98.8 % ≥ 0.999), 이름·찾기 정확도 FP32 와 같음. Nano(TRT 8.2) 빌드는 남음 |
 | **1순위 영상 인코더** | **SigLIP 2 B/32-256** (Apache-2.0, 영상 쪽 95M, 768-d). 마스크를 MAP 풀링 주의집중에 log 가중치로 넣는 **두 번째 출력(emb_mask)** 을 ONNX 에 굳힌다 |
-| 2순위(바로 쓸 수 있는 대안) | **OpenAI CLIP ViT-B/32** (MIT, 지금 meridian 과 같은 영상 공간) + **`Bingsu/clip-vit-base-patch32-ko`** 한국어 글 인코더(MIT, 영상 탑이 OpenAI B/32 와 비트까지 같음을 확인) |
+| 2순위(바로 쓸 수 있는 대안) | **OpenAI CLIP ViT-B/32** (MIT) + **`Bingsu/clip-vit-base-patch32-ko`** 한국어 글 인코더(MIT, 영상 탑이 OpenAI B/32 와 비트까지 같음을 확인) |
 | 연구용으로만 | MobileCLIP-S1 / MobileCLIP 2-S0. 우리 데이터 이름 정확도가 가장 높은 축이지만 가중치가 apple-amlr(비상업) |
 | 우리 데이터 이름 붙이기 | 어휘 360개 기준 정답률 0.30–0.35(정답이 3D 상자에서 와서 잡음이 있다. 깨끗한 부분집합은 0.33–0.41). **라디오는 모든 모델이 0** — 이름 붙이기만으로는 부족하다 |
 | 우리 데이터 글 → 물체 찾기 | SigLIP 2 B/32: 영어 R@1 0.70, **한국어 그대로 0.65**. "라디오"·"빨간 라디오"는 1·2위 안에 찾는다 → **임베딩 저장이 이름보다 중요** |
@@ -38,9 +38,9 @@
   1. **이름 붙이기**: 마스크마다 어휘 중 하나. 영상 임베딩 ↔ 미리 계산한 라벨 글 임베딩. 구조물(벽·바닥·천장·문·창)은 걸러낸다. 한국어 이름은 짝지은 표로.
   2. **임베딩 찾기**: 물체마다 영상 임베딩을 저장. "빨간 컵"·"radio"·"흰 의자" 같은 자유 글과 코사인으로 비교.
 - 그래서 **영상·글 인코더가 정렬된 모델**이어야 한다. 글 인코더는 Nano 또는 로봇 밖 어디서 돌아도 된다(2.3).
-- 기준선: 팀 `neoul-ro/meridian_frontend`
+- 기준선: OpenAI CLIP B/32 경로
   - OpenAI CLIP ViT-B/32 영상 쪽, FP16 TRT, 224 입력, 512-d.
-  - 출력 둘: CLS(`query_emb`)와 마스크 가중 패치 풀링(`id_emb`, 7 × 7 가중치 `wpatch` 입력).
+  - 출력 둘: CLS 와 마스크 가중 패치 풀링(7 × 7 가중치 입력).
   - GPU 에서 `roi_align` 으로 상자를 224 × 224 로 늘려 자른다(가로세로 비 무시, 둘레 없음).
   - keyframe 발화 때 새 tracklet 만 묶어 한 번에 넣는다. 워커 스레드 + 별도 스트림, TensorRT 10 API(`set_tensor_address`, `execute_async_v3`), Jetson Orin.
 
@@ -97,7 +97,7 @@
 | 모델 | 자르기 | 이름: 시연 / 깨끗 / 기억 | 구조물 재현 / 오탐 | 찾기 영어 R@1 / MRR | 찾기 한국어(모델 자체 글) R@1 / MRR |
 |---|---|---|---|---|---|
 | OpenAI B/32 | 상자 | 0.28 / 0.30 / 0.20 | 0.11 / 0.19 | 0.50 / 0.62 | 0.05 (영어 전용) |
-| OpenAI B/32 | 늘림(meridian) | 0.21 / 0.23 / 0.32 | 0.26 / 0.14 | 0.60 / 0.69 | 0.15 |
+| OpenAI B/32 | 늘림 | 0.21 / 0.23 / 0.32 | 0.26 / 0.14 | 0.60 / 0.69 | 0.15 |
 | DataComp B/32 | 상자 | 0.31 / 0.34 / 0.32 | 0.46 / 0.24 | 0.60 / 0.73 | 0.00 |
 | DataComp B/32-256 | 늘림 | 0.30 / 0.34 / 0.36 | 0.25 / 0.16 | 0.65 / 0.75 | 0.05 |
 | **SigLIP 2 B/32** | **마스크 MAP** | **0.34 / 0.40 / 0.40** | 0.55 / 0.17 | **0.70 / 0.83** | **0.65 / 0.75** |
@@ -116,7 +116,7 @@
 
 **자르기 방법 비교 (이름: 시연 / 깨끗)**
 
-| 모델 | 상자+둘레 | 늘림(meridian) | 마스크 밖 회색 | 마스크 넓혀 흐리게 | 배경 반만 흐림 | 패치·마스크 풀링 |
+| 모델 | 상자+둘레 | 늘림 | 마스크 밖 회색 | 마스크 넓혀 흐리게 | 배경 반만 흐림 | 패치·마스크 풀링 |
 |---|---|---|---|---|---|---|
 | OpenAI B/32 | **0.28 / 0.30** | 0.21 / 0.23 | 0.05 / 0.09 | 0.19 / 0.22 | 0.17 / 0.23 | 0.02 / 0.01 |
 | DataComp B/32 | **0.31 / 0.34** | 0.25 / 0.27 | 0.11 / 0.13 | 0.21 / 0.25 | 0.21 / 0.27 | 0.03 / 0.01 |
@@ -126,10 +126,10 @@
 
 **읽는 법**
 - **마스크 밖을 지우면 나빠진다.** 문맥이 사라지고 FastSAM 마스크는 proto 격자(4 px)라 가장자리가 계단 모양이다. 계단 모양 때문에 'staircase' 가 자주 나왔다. 넓혀 흐리게 해도 상자보다 못하다.
-- **ViT CLIP 의 패치 토큰은 글과 정렬되어 있지 않다.** 마지막 층 패치 토큰을 마스크로 평균해 투영하면 'dirt'·'tie'·'plywood' 가 나온다(0.02). meridian 의 `id_emb` 는 **같은 물체 판별(re-ID)에만** 쓰고, 이름·글 찾기에는 `query_emb`(CLS)를 써야 한다.
+- **ViT CLIP 의 패치 토큰은 글과 정렬되어 있지 않다.** 마지막 층 패치 토큰을 마스크로 평균해 투영하면 'dirt'·'tie'·'plywood' 가 나온다(0.02). 마스크 풀링 임베딩은 **같은 물체 판별(re-ID)에만** 쓰고, 이름·글 찾기에는 CLS 임베딩을 써야 한다.
 - **SigLIP 2 의 MAP 풀링에 마스크를 넣으면 공짜로 좋아진다.** 주의집중 logit 에 `log(max(w, 0.01))` 을 더한다(w = 8 × 8 격자 마스크 비율). w = 1 이면 원래 출력과 같다(확인). 상자 문맥은 패치에 남고, 풀링만 물체 쪽으로 기운다.
 - FastViT(MobileCLIP)은 마지막이 전역 평균이라 마스크 가중 평균이 자연스럽게 된다.
-- **늘림(meridian 방식)** 은 시연 crop 에서는 나쁘고, 길쭉한 기억 crop 에서는 좋을 때가 있다. 기본은 정사각 + 둘레로 한다.
+- **늘림(가로세로 비 무시)** 은 시연 crop 에서는 나쁘고, 길쭉한 기억 crop 에서는 좋을 때가 있다. 기본은 정사각 + 둘레로 한다.
 - 범주별(SigLIP 2 마스크 MAP): sofa 0.93, room light 0.48, coffee table 0.33, TV 0.57, **radio 0.00, cabinet 0.00, fireplace 0.08**.
   - 라디오(빨간·흰 장난감 같은 모양, 로봇 손에 들림)는 모든 모델이 'stapler'·'candy cane'·'defibrillator' 로 부른다.
   - 서랍장은 'baseboard'(구조물 단어)로 끌려간다. 드문 구조물 단어 9개를 어휘에서 빼도 시연 정확도는 그대로, 기억 crop 만 +0.04–0.08.
@@ -311,7 +311,7 @@ memory/
 |---|---|---|---|
 | 분할 | **ObjectSAM 416**(10-05, 처음 안은 FastSAM-s 416), FP16, 정적 ONNX(`ObjectSAM-416.onnx`, opset 13) → Nano 에서 엔진 빌드 | Nano GPU, keyframe 만(≤ 1 Hz) | ovdet 이 이미 돌린다(클래스 무관, CUDA NMS) |
 | 영상 인코더 | **SigLIP 2 B/32-256**, 두 출력(`emb`, `emb_mask`, 입력 `images` N×3×256×256 + `wpatch` N×64), LayerNorm FP32 고정 | Nano GPU, 같은 CUDA 문맥, 별도 스트림, 배치 ≤ 8 | 저장은 벡터 1개(FP16 768-d, `objects/O<id>_emb.f16`), 이름은 `cache/` (3.5절) |
-| 영상 대안 | OpenAI B/32 + `Bingsu/clip-vit-base-patch32-ko` | 같은 자리 | meridian 과 같은 공간. 한국어 찾기 측정 1위(0.75). 이름은 0.28 로 낮다 |
+| 영상 대안 | OpenAI B/32 + `Bingsu/clip-vit-base-patch32-ko` | 같은 자리 | 한국어 찾기 측정 1위(0.75). 이름은 0.28 로 낮다 |
 | 한국어 글 | **처음**: SigLIP 2 자체 글(282M)을 agent 서버에서. **다음**: `lassl/bert-ko-small` 학생을 SigLIP 2 B/32 글 공간에 다시 증류(3.2 b) | 서버 → 나중에 Nano | 사전에 있는 말은 미리 계산한 표에서 바로 |
 | 라벨 표 | 주 표 1–3k(BEHAVIOR 집 물건 + COCO/LVIS/O365 + 구조물) + 긴 꼬리 28.8k(WordNet, 3–5만으로 늘림), 영어 글 임베딩은 PC 에서 한 번, 한국어 이름 열 | 파일로 Nano 에 | 확신도 낮으면 WordNet 상위어로 |
 | 투영 차원 | 1단계 128-d INT8 + 128-bit 부호(처음엔 PCA, 다음 학습 투영 a), 2단계 768-d FP16 | Nano CPU | |
@@ -333,7 +333,7 @@ memory/
 5. 라벨 찾기: C++ 작은 라이브러리(IVF·INT8·2진·다시 매김, NEON 판과 일반 판). 표 파일은 PC 에서 Python 으로 만든다.
 6. 출력: Spark-DSG 노드에 `name`, `name_ko`, `name_score`, `semantic_feature`(768-d) 를 넣는다(뷰어 메타데이터와 같은 자리).
 
-**TensorRT 8.2 (JetPack 4.6) 에서 달라지는 것 (meridian 은 TRT 10)**
+**TensorRT 8.2 (JetPack 4.6) 에서 달라지는 것**
 - 실행: `enqueueV3` + `setTensorAddress` 대신 `enqueueV2(bindings, stream)` + 바인딩 배열. 동적 크기는 `setBindingDimensions`. ovdet 에 `#if NV_TENSORRT_MAJOR < 10` 분기를 둔다.
 - 빌드: `setMemoryPoolLimit` 대신 `setMaxWorkspaceSize`. 층별 정밀도는 `ILayer::setPrecision` + `kOBEY_PRECISION_CONSTRAINTS`(8.2 에 있다고 봄, 없으면 `kSTRICT_TYPES`).
 - ONNX: opset 13, 정적 배치, `onnxsim` 으로 Shape·Gather 정리. 엔진은 **Nano 에서** 만든다(엔진은 기기·버전에 묶인다).
@@ -487,4 +487,3 @@ Nano 는 같은 ONNX 로 `--profiles 1,8`(메모리) + FP16.
 - [D10]·[12] 앞 문서 출처(Nano ResNet18 FP16, YOLOv8n-seg Nano)
 - 한국어: https://huggingface.co/Bingsu/clip-vit-base-patch32-ko , https://huggingface.co/Bingsu/vitB32_bert_ko_small_clip , https://huggingface.co/hyunlord/siglip2-base-patch16-224-ko , https://github.com/Bing-su/KoCLIP_training_code , SBERT 다국어 증류 https://arxiv.org/abs/2004.09813 , https://huggingface.co/sentence-transformers/clip-ViT-B-32-multilingual-v1
 - DEEPX 동물원 CLIP — https://github.com/DEEPX-AI/dx-modelzoo
-- meridian: `neoul-ro/meridian_frontend` `meridian_frontend/clip/clip.py`, `sam/sam.py`, `tracker/tracker.py`
