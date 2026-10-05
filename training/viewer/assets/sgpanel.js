@@ -186,7 +186,7 @@ export class SgPanel {
     }
     this.mesh = G; this.meshInfo = H;
     if (this.ul) { this.ul.add(G); for (const m of this.ulBoxes || []) m.visible = this.meshOn === false; }
-    else this.scene().add(G);
+    else this.scene().add(this.mfw(G));
     G.visible = this.meshOn !== false;
     this.invalidate();
   }
@@ -196,10 +196,12 @@ export class SgPanel {
     if (!this.win || !this.trHead || this.ov || !(this.trHead.scene && this.trHead.scene.boxes)) return;
     const T = this.win.THREE, off = (this.info && this.info.window_origin) || [0, 0];
     this.ov = buildOverlays(T, this.trHead.scene, this.trHead.inputs || {}, off, (t, x, y, z, h, bg) => this.mkLabel(t, x, y, z, h, bg));
-    for (const k of ["cond", "env", "feas"]) { this.ov[k].visible = !!this.ovOn[k]; this.scene().add(this.ov[k]); }
+    for (const k of ["cond", "env", "feas"]) { this.ov[k].visible = !!this.ovOn[k]; this.scene().add(this.mfw(this.ov[k])); }
     if (this.hoverables) this.hoverables.push(...this.ov.hover);
     this.invalidate();
   }
+  // 세계 좌표 묶음 → 장면 틀(map = R·world + t, info.map_from_world)
+  mfw(g) { const m = (this.info && this.info.map_from_world) || [1, 0, 0, 0]; const w = new this.win.THREE.Group(); w.rotation.z = Math.atan2(m[1], m[0]); w.position.set(m[2], m[3], 0); w.add(g); g.userData.wrap = w; return w; }
   mkLabel(text, x, y, z, h = 0.3, bg = "rgba(255,255,255,0.85)") {
     const T = this.win.THREE, cv = document.createElement("canvas"), g = cv.getContext("2d"), fs = 30;
     g.font = `600 ${fs}px system-ui, sans-serif`; cv.width = Math.ceil(g.measureText(text).width) + 16; cv.height = fs + 14;

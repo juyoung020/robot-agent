@@ -177,6 +177,15 @@ sys.path.insert(0, str(OG_DIR))
 import limo_eef_fix  # noqa: E402
 limo_eef_fix.install()
 
+# 학습과 GPU 를 나눠 씀: 텍스처 스트리밍 예산을 낮추고 큰 mip 을 버림(그림은 조금 흐려짐 — 인지 입력 640×480 에는 충분, OG_TEX_BUDGET 으로 바꿈)
+try:
+    import carb
+    _st = carb.settings.get_settings()
+    _st.set("/rtx-transient/resourcemanager/texturestreaming/enabled", True)
+    _st.set("/rtx-transient/resourcemanager/texturestreaming/memoryBudget", float(os.environ.get("OG_TEX_BUDGET", "0.08")))
+    _st.set("/rtx-transient/resourcemanager/maxMipCount", int(os.environ.get("OG_MAX_MIP", "10")))
+except Exception as e:
+    print(f"[og_replay] texture budget not set: {e}", flush=True)
 sc, task, split, iid = W["scene"], W["task"], int(W["split"]), int(W["inst_id"])
 jd = os.path.join(TI, "scenes" if split == 0 else "scene_test/public", sc, "json")
 tmpl = os.path.join(TI, "scene_test/public", sc, "json", f"{sc}_task_{task}_0_0_template.json")
@@ -374,7 +383,12 @@ if "map" in secs:
         x0, y0, x1, y1 = struct.unpack_from("<iiii", b2, p + 36)
         p += 4 + 48 + (x1 - x0 + 1) * (y1 - y0 + 1)
 open(os.path.join(out, "episode.trp"), "wb").write(bytes(b2))
-mj = dict(format="SGS1", meta=meta, robot="limo_omx", map_from_world=[1, 0, 0, 0], gt_path=gt[::1], labels={}, cams=camj, duration=dur,
+# scenemap 지도 틀 = 첫 자세가 원점(g1_rec.h 와 같은 식): map = R(−yaw0)·world + t. GT 궤적은 map 틀로
+th = -gt[0][3]
+cth, sth = math.cos(th), math.sin(th)
+mtx, mty = -(cth * gt[0][1] - sth * gt[0][2]), -(sth * gt[0][1] + cth * gt[0][2])
+gt = [[g[0], cth * g[1] - sth * g[2] + mtx, sth * g[1] + cth * g[2] + mty, g[3] + th] for g in gt]
+mj = dict(format="SGS1", meta=meta, robot="limo_omx", map_from_world=[cth, sth, mtx, mty], gt_path=gt, labels={}, cams=camj, duration=dur,
           policy_trp="episode.trp", window_origin=[wx, wy], world=W,
           joint_order=["", "", "", "", "", "", "omx_joint1", "omx_joint2", "omx_joint3", "omx_joint4", "omx_joint5", "omx_gripper_joint_1"],
           n_objects=st.get("objects"), stream=dict(frames=cap.frames, pose=cap.by_type[1], map=cap.by_type[2], view=cap.by_type[3], joints=cap.by_type[4]),
