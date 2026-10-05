@@ -32,6 +32,11 @@ struct Trainer {
   float* obs_rows = nullptr;  // [(T+1)][N][80] — 같은 값을 판마다 이어서(미니배치 모으기가 섞은 행을 연속으로 읽게)
   float* act_env = nullptr;   // [8][N]
   float* act_buf = nullptr;   // [T][N][8]
+  // 대본 교사 모방(cfg.bc_coef > 0, 장면 판): 스텝마다 대본 교사 행동·무게(잡기 판 1)
+  float* tcol = nullptr;      // [8][N] 교사 출력(열 우선)
+  float* tact_buf = nullptr;  // [T][N][8]
+  float* tw_buf = nullptr;    // [T][N]
+  float *mb_tact = nullptr, *mb_tw = nullptr;
   float* logp_buf = nullptr;  // [T][N]
   float* val_buf = nullptr;   // [T+1][N]
   float* rew_buf = nullptr;   // [T][N]

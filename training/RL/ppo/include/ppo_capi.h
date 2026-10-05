@@ -69,6 +69,10 @@ typedef struct PpoConfig {
   char b_rasc_dir[256];   /* RASC 폴더(빈 = $RA_B1K_SCENES, 없으면 training/data/b1k_scenes) */
   uint32_t env_stages;    /* 쓰는 환경 단계 비트(1 << 단계, 커리큘럼 env 의 합). 0 = stage 하나. 장치 단계 바꾸기가 띄울 환경 커널 무리를 정함 */
   int32_t pad_es;
+  /* 대본 교사 모방 보조 손실(DAPG 꼴, 커리큘럼 4·5단계 잡기): 잡기 판(B4–B6)에서 λ·(평균 − 대본 교사 행동)², λ = bc_coef·max(0, 1 − 바퀴/bc_decay).
+     0 = 끔(예전과 비트 같음) */
+  float bc_coef;
+  int32_t bc_decay;
 } PpoConfig;
 
 typedef struct PpoLog {

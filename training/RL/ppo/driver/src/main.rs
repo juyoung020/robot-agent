@@ -109,6 +109,8 @@ struct PpoConfig {
     b_rasc_dir: [u8; 256],
     env_stages: u32,
     pad_es: i32,
+    bc_coef: f32,    // 대본 교사 모방 보조 손실 λ0(잡기 판)
+    bc_decay: i32,   // λ 를 0 까지 줄이는 바퀴 수
 }
 
 #[repr(C)]
@@ -350,6 +352,8 @@ fn make_config(v: &Value) -> PpoConfig {
         b_rasc_dir: cstr256(v.get("beh").and_then(|b| b.get("rasc_dir")).and_then(|x| x.as_str()).unwrap_or("")),
         env_stages: 0,
         pad_es: 0,
+        bc_coef: gf(v, "bc_coef", 0.0) as f32,
+        bc_decay: gi(v, "bc_decay", 1000) as i32,
     }
 }
 

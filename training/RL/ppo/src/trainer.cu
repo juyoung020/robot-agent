@@ -86,6 +86,7 @@ inline int half_bits(uint32_t S) {
 }
 
 struct GatherP {
+  const float* tact_buf; const float* tw_buf; float* tact; float* tw;   // 대본 교사 모방(없으면 nullptr)
   const float* obs_buf /* 행 판 obs_rows [T+1][N][80] */; const gmap::MapTok* tok0; const float* act_buf; const float* logp_buf; const float* val_buf; const float* adv_buf;
   const float* ret_buf; int N, T, MB, base, epoch, hb, use_map, goal_mode; uint64_t seed; const TrainState* ts;
   uint16_t* x0; uint16_t* sc; uint32_t* mask; float *act, *oldlogp, *oldv, *adv, *ret;
@@ -102,6 +103,8 @@ __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
                                      g.sc + (size_t)r * KSLOT * SLOT_C, g.use_map, g.goal_mode, lane, AS_L, g.vt, g.aug, (uint64_t)g.ts->iter,
                                      ((uint64_t)t << 32) | (uint64_t)i, true);
   if (lane < N_ACT) g.act[(size_t)r * N_ACT + lane] = g.act_buf[((size_t)t * g.N + i) * N_ACT + lane];
+  if (g.tact && lane < N_ACT) g.tact[(size_t)r * N_ACT + lane] = g.tact_buf[((size_t)t * g.N + i) * N_ACT + lane];
+  if (g.tact && lane == 0) g.tw[r] = g.tw_buf[(size_t)t * g.N + i];
   if (lane == 0) {
     g.mask[r] = mk;
     g.oldlogp[r] = g.logp_buf[(size_t)t * g.N + i];
@@ -109,6 +112,15 @@ __global__ void __launch_bounds__(AS_L * AS_E) gather_k(GatherP g) {
     g.adv[r] = g.adv_buf[(size_t)t * g.N + i];
     g.ret[r] = g.ret_buf[(size_t)t * g.N + i];
   }
+}
+
+// 대본 교사 행동 [8][N] → [T][N][8] 의 t 줄, 무게 = 잡기 판(B4–B6)이면 1
+__global__ void teach_store_k(const float* tcol, const int* kind, int t, int N, float* tact, float* tw) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= N) return;
+  const bool on = kind[i] >= bsc::EK_B4;
+  for (int k = 0; k < N_ACT; ++k) tact[((size_t)t * N + i) * N_ACT + k] = on ? fminf(fmaxf(tcol[(size_t)k * N + i], -1.f), 1.f) : 0.f;
+  tw[(size_t)t * N + i] = on ? 1.f : 0.f;
 }
 
 // ---- 행동 표본(장치 난수) · logp · 가치 ----
@@ -429,13 +441,18 @@ Trainer::Trainer(const PpoConfig& c) : cfg(c) {
   Mmax = MB > N ? MB : N;
   if (cfg.act_dims <= 0 || cfg.act_dims > N_ACT) cfg.act_dims = N_ACT;
   net::set_fp8(cfg.fp8);   // G6: 그래프를 잡기 전에(잡을 때 고정되는 호스트 값)
-  lh = LossHyper{cfg.clip, cfg.vclip, cfg.vf_coef, cfg.ent_coef, cfg.adaptive_lr, cfg.kl_target, cfg.lr_min, cfg.lr_max, cfg.act_dims, cfg.bound_coef};
+  lh = LossHyper{cfg.clip, cfg.vclip, cfg.vf_coef, cfg.ent_coef, cfg.adaptive_lr, cfg.kl_target, cfg.lr_min, cfg.lr_max, cfg.act_dims, cfg.bound_coef, cfg.bc_coef, cfg.bc_decay};
   ah = AdamHyper{cfg.adam_b1, cfg.adam_b2, cfg.adam_eps, cfg.max_grad_norm};
 
   obs_buf = alloc<float>((size_t)(T + 1) * N_OBS_G1 * N);
   obs_rows = alloc<float>((size_t)(T + 1) * N_OBS_G1 * N);
   act_env = alloc<float>((size_t)N_ACT * N);
   act_buf = alloc<float>((size_t)T * N * N_ACT);
+  if (cfg.bc_coef > 0.f && cfg.stage >= 3) {   // 대본 교사 모방(장면 판)
+    tcol = alloc<float>((size_t)N_ACT * N);
+    tact_buf = alloc<float>((size_t)T * N * N_ACT);
+    tw_buf = alloc<float>((size_t)T * N);
+  }
   logp_buf = alloc<float>((size_t)T * N);
   val_buf = alloc<float>((size_t)(T + 1) * N);
   rew_buf = alloc<float>((size_t)T * N);
@@ -503,6 +520,7 @@ Trainer::Trainer(const PpoConfig& c) : cfg(c) {
   mb_oldv = alloc<float>(MB);
   mb_adv = alloc<float>(MB);
   mb_ret = alloc<float>(MB);
+  if (tact_buf) { mb_tact = alloc<float>((size_t)MB * N_ACT); mb_tw = alloc<float>(MB); }
   // 1 칸(편향 입력)
   for (int l = 0; l < N_LAYER; ++l) {
     const LayerDesc& L = kLayers[l];
@@ -727,14 +745,14 @@ uint16_t* Trainer::sin_full(int rows) {
 }
 
 void Trainer::gather(int epoch, int mb) {
-  GatherP g{obs_rows, tok->at(0), act_buf, logp_buf, val_buf, adv_buf, ret_buf, N, T, MB, mb * MB, epoch, half_bits((uint32_t)(N * T)), cfg.use_map,
+  GatherP g{tact_buf, tw_buf, mb_tact, mb_tw, obs_rows, tok->at(0), act_buf, logp_buf, val_buf, adv_buf, ret_buf, N, T, MB, mb * MB, epoch, half_bits((uint32_t)(N * T)), cfg.use_map,
             cfg.goal_from_map, cfg.seed, ts, x0, sc, mask, mb_act, mb_oldlogp, mb_oldv, mb_adv, mb_ret, vt.dev(), aug_d};
   gather_k<<<(MB + AS_E - 1) / AS_E, AS_L * AS_E>>>(g);
   PCK(cudaGetLastError());
 }
 
 void Trainer::loss(int M) {
-  LossIn in{mean, val, P + lay.logstd, mb_act, mb_oldlogp, mb_oldv, mb_adv, mb_ret};
+  LossIn in{mean, val, P + lay.logstd, mb_act, mb_oldlogp, mb_oldv, mb_adv, mb_ret, mb_tact, mb_tw};
   ppo_loss(in, M, ts, lh, dz[L_A4], dz[L_C4], loss_part, bug, 0);
   ppo_loss_reduce(loss_part, loss_blocks(M), M, lh, G + lay.logstd, P + lay.logstd, ts, 0);
 }
@@ -806,6 +824,10 @@ void Trainer::rollout_step(int t) {
   forward(N);
   if (t == T) { value_k<<<sb, 128>>>(val, N, val_buf + (size_t)T * N); return; }
   sample_k<<<sb, 128>>>(mean, val, P + lay.logstd, ts, cfg.seed, t, N, act_env, act_buf, logp_buf, val_buf);
+  if (tact_buf) {   // 대본 교사 행동(이 스텝 상태에서) — 모방 손실의 라벨
+    env->teacher(tcol);
+    teach_store_k<<<sb, 128>>>(tcol, env->soa().iv + (size_t)env::I_B_KIND * N, t, N, tact_buf, tw_buf);
+  }
   env->step(act_env, obs_buf + (size_t)(t + 1) * N_OBS_G1 * N, rew_buf + (size_t)t * N, done_buf + (size_t)t * N);
   obs_rows_k<<<(N + 31) / 32, 256>>>(obs_buf + (size_t)(t + 1) * N_OBS_G1 * N, N, obs_rows + (size_t)(t + 1) * N_OBS_G1 * N);
   epstat_k<<<sb, 128>>>(done_buf + (size_t)t * N, map->metrics() + (size_t)gmap::M_INIT * N, env->soa().iv + (size_t)env::I_B_LKIND * N, N, cur_len, it_stat, tab);

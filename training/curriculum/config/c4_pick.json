@@ -1,5 +1,5 @@
 {
-  "comment": "커리큘럼 4단계 시연: 물체 잡기(B4 — 잡는 자세에서 집어 들기), house_single_floor 하나, 빈 지도 C2. training/curriculum/README.md",
+  "comment": "커리큘럼 4단계 시연: 물체 잡기(B4 — 잡는 자세에서 집어 들기). 처음부터 PPO 로는 성공 0(60 분) → 대본 교사 모방 보조 손실(DAPG 꼴) λ0 = 1, 2000 바퀴에 걸쳐 0 으로. house_single_floor, 빈 지도 C2. training/curriculum/README.md",
   "n_env": 4096,
   "horizon": 64,
   "epochs": 5,
@@ -94,12 +94,14 @@
   },
   "ckpt_every": 200,
   "print_every": 10,
-  "budget_minutes": 60,
+  "budget_minutes": 40,
   "out": "runs/ppo_pnp",
   "goal_from_map": 1,
   "bound_coef": 0.5,
   "map_kmin": 3,
   "map_kmax": 6,
   "map_reveal_r": 1.5,
-  "act_mask": 255
+  "act_mask": 255,
+  "bc_coef": 1.0,
+  "bc_decay": 2000
 }

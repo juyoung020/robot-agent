@@ -31,6 +31,8 @@ struct LossHyper {
   float kl_target, lr_min, lr_max;
   int act_dims;   // (예전 값, 커널은 쓰지 않음) 학습하는 행동은 장치 값 TrainState::act_mask
   float bound_coef;   // 정책 평균이 행동 자르기(±1) 밖이면 coef·(|μ|−1)² (행 평균). 0 이면 끔(G3 와 비트 같음)
+  float bc_coef = 0.f;   // 대본 교사 모방 보조 손실 λ0(잡기 판, LossIn::tact·tw) — 0 = 끔
+  int bc_decay = 1;      // λ = bc_coef·max(0, 1 − iter/bc_decay)
 };
 struct AdamHyper {
   float b1, b2, eps, max_norm;
@@ -98,6 +100,8 @@ struct LossIn {
   const float* oldv;     // [M]
   const float* adv;      // [M] (정규화 전)
   const float* ret;      // [M]
+  const float* tact = nullptr;   // [M][8] 대본 교사 행동(잡기 판), 없으면 nullptr
+  const float* tw = nullptr;     // [M] 그 행의 무게(잡기 판 1, 나머지 0)
 };
 constexpr int LOSS_NT = 256;
 constexpr int LOSS_NQ = 16;   // 블록 부분합 칸: dlogσ 8, pg, vl, kl, clip
