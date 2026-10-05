@@ -58,8 +58,7 @@ DEV void room_type_pred(int ep, int key, int true_type, float out[6]) {
   const float u0 = rand01(h), u1 = rand01(h), u2 = rand01(h);
   int ty = true_type;
   float conf;
-  if (!MP::noise) conf = 1.f;
-  else if (u0 < RoomPredP::p_ok) conf = RoomPredP::c_ok0 + (1.f - RoomPredP::c_ok0) * u1;
+  if (u0 < RoomPredP::p_ok) conf = RoomPredP::c_ok0 + (1.f - RoomPredP::c_ok0) * u1;
   else {
     int o = (int)(u1 * (float)(N_RTYPE - 1));
     o = o > N_RTYPE - 2 ? N_RTYPE - 2 : o;

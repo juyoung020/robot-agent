@@ -23,7 +23,7 @@
 DEV void put_det(Det& D, uint64_t& rng, const float med[3], const float bc[3], const float ext[3], float o2, float ex, float ey, float ec, float es) {
   const float fwd = med[0], left = med[1], rh = sqrtf(fwd * fwd + left * left);
   const float sig_d = MP::dn0 + MP::dn2 * fwd * fwd;
-  const float gd = (MP::noise ? gauss(rng) : 0.f) * sig_d, gl = (MP::noise ? gauss(rng) : 0.f) * MP::lat_n, gz = (MP::noise ? gauss(rng) : 0.f) * MP::lat_n;
+  const float gd = gauss(rng) * sig_d, gl = gauss(rng) * MP::lat_n, gz = gauss(rng) * MP::lat_n;
   const float bu = fwd / rh, bv = left / rh;
   const float nf = bu * gd - bv * gl, nl = bv * gd + bu * gl;
   {
@@ -38,7 +38,7 @@ DEV void put_det(Det& D, uint64_t& rng, const float med[3], const float bc[3], c
     D.bc[1] = ey + (es * bx + ec * by);
     D.bc[2] = o2 + bc[2] + gz;
   }
-  for (int a = 0; a < 3; ++a) D.ext[a] = maxf(0.01f, ext[a] + (MP::noise ? gauss(rng) : 0.f) * MP::ext_n);
+  for (int a = 0; a < 3; ++a) D.ext[a] = maxf(0.01f, ext[a] + gauss(rng) * MP::ext_n);
 }
 
 // 모습 신뢰도(bestview.cpp viewKappa): κ = k0·s/(s + s0)·1/(1 + (깊이/d0)²), s = √(마스크 넓이 화소). 잘림 배율 1(엔진 json kap_trunc 1)
@@ -68,7 +68,7 @@ DEV void pe_labels(Det& D, uint64_t& rng, int nlab, const int16_t sim[3], int na
   for (int j = 0; j < n; ++j) {
     const float p = j == 0 ? q : maxf(other, 1e-3f);
     D.lab[j] = (int16_t)cand[j];
-    D.ll[j] = lnf_d(p) + (MP::noise ? gauss(rng) : 0.f) * sig;
+    D.ll[j] = lnf_d(p) + gauss(rng) * sig;
   }
   const int nr = C - n;
   D.llrest = nr > 0 ? lnf_d(rest_all / (float)nr) : -30.f;
@@ -105,7 +105,7 @@ DEV float p_det_at(float npx, int prev) {   // prev: 1 지난 keyframe 검출, �
 // 가구 j 의 판 고정 조각 수(1..3): 수평 긴 변 L ≥ frag_min 이면 p_frag2 로 2 조각 이상, L ≥ 2·frag_min 이면 그중 p_frag3 로 3 조각
 DEV int furn_parts(const MapCore& m, const bsc::SBox& B, int j) {
   const float L = 2.f * maxf(B.hx, B.hy);
-  if (!MP::noise || L < MP::pe_frag_min) return 1;
+  if (L < MP::pe_frag_min) return 1;
   uint64_t h = splitmix64_c(((uint64_t)(uint32_t)m.ep << 20) ^ (uint64_t)j ^ 0x46524147ull);
   const float u = rand01(h);
   if (!(u < MP::pe_p_frag2)) return 1;
@@ -181,7 +181,7 @@ DEV float pe_geom(const MapCore& m, const Scratch& sh, const BCtx& bx, int c, De
     return (float)sh.pe_fcnt[f] * px_ray * MP::pe_furn_px;
   }
   const int gi = c - N_PRIM - NFCAND;
-  if (!MP::noise || gi >= MP::n_ghost) return 0.f;
+  if (gi >= MP::n_ghost) return 0.f;
   const Ghost& G = m.ghost[gi];
   return point(G.pos[0], G.pos[1], G.pos[2], G.sz, -1 - gi);
 }
@@ -218,7 +218,7 @@ int pe_candidate(MapCore& m, Scratch& sh, const BCtx& bx, int c, bool write, int
   } else {   // 놓침: 화소 로지스틱 + 앞 상태(prim: 검출·놓침 비트, 가구: 놓침 비트)
     const bool was_miss = furn ? ((m.pe_fmiss[(j >> 5) & 15] >> (j & 31)) & 1u) : ((m.pe_miss >> j) & 1u);
     const bool was_hit = !furn && ((m.pe_hit >> j) & 1u);
-    const bool miss = MP::noise && !(u_first < p_det_at(npx, was_hit ? 1 : was_miss ? -1 : 0));
+    const bool miss = !(u_first < p_det_at(npx, was_hit ? 1 : was_miss ? -1 : 0));
     if (!write) {
       if (furn) { if (miss) or_bits(&sh.pe_fset[(j >> 5) & 15], 1u << (j & 31)); else or_bits(&sh.pe_fclr[(j >> 5) & 15], 1u << (j & 31)); }
       else or_bits(miss ? &sh.pe_pmiss : &sh.pe_phit, 1u << j);
@@ -240,7 +240,7 @@ int pe_candidate(MapCore& m, Scratch& sh, const BCtx& bx, int c, bool write, int
         kp = 1;
       }
       uint64_t hp = splitmix64_c(((uint64_t)(uint32_t)m.ep << 20) ^ (uint64_t)j ^ 0x5048414eull);
-      ph = (MP::noise && rand01(hp) < MP::pe_phantom && u_ph < MP::pe_phantom_det) ? 1 : 0;
+      ph = (rand01(hp) < MP::pe_phantom && u_ph < MP::pe_phantom_det) ? 1 : 0;
     }
     np = popc32(pmask) + ph;
   }
@@ -290,14 +290,14 @@ int pe_candidate(MapCore& m, Scratch& sh, const BCtx& bx, int c, bool write, int
     D.kappa = view_kappa(dnpx, D.zmed);
     const float dz = D.pos[2] - o2;
     D.camd = sqrtf((D.pos[0] - cxw) * (D.pos[0] - cxw) + (D.pos[1] - cyw) * (D.pos[1] - cyw) + dz * dz);
-    D.jit = MP::noise ? gauss(rng) * MP::pe_cos_jit : 0.f;
+    D.jit = gauss(rng) * MP::pe_cos_jit;
     const int tn = src_name_x(m, bx, dsrc);
     int16_t sim3[3];
     for (int k2 = 0; k2 < 3; ++k2) sim3[k2] = (int16_t)src_sim_x(m, bx, dsrc, k2);
     int nm = tn;
     // 체계적 혼동: 물체(판·출처)마다 정해진 쪽으로 늘 틀림(p_conf — 같은 물체의 이름 실수는 시점과 무관하게 비슷, 가정)
     const uint64_t h = pe_hash(((uint64_t)(uint32_t)m.ep << 16) ^ (uint64_t)(dsrc + 0x8000), 0x4e414d45ull);
-    if (MP::noise && (float)(h >> 40) * (1.0f / 16777216.0f) < MP::p_conf) {
+    if ((float)(h >> 40) * (1.0f / 16777216.0f) < MP::p_conf) {
       const int alt = sim3[(int)((h >> 8) % 3ull)];
       nm = alt >= 0 ? alt : tn;
     }
@@ -368,7 +368,7 @@ DEV void percept_stat(MapCore& m, Scratch& sh, const EnvView& e, const BCtx& bx,
   }
   sync();
   // E) 덜 나뉜 마스크: 맞닿은(상자 틈 < pe_under_gap) 참 물체 검출 쌍을 확률 pe_p_under 로(쌍 열쇠 난수) — 판정은 쌍마다 나눠, 합치기는 차례로
-  if (MP::noise) {
+  {
     const int nd = sh.nd, np = nd * (nd - 1) / 2;
     for (int k = tid; k < np && k < 32 * 16; k += nt) {
       int a = 0, left = nd - 1, kk = k;
@@ -386,7 +386,7 @@ DEV void percept_stat(MapCore& m, Scratch& sh, const EnvView& e, const BCtx& bx,
     }
   }
   sync();
-  if (tid == 0 && MP::noise) {
+  if (tid == 0) {
     const int nd0 = sh.nd;
     uint32_t gone = 0u, used = 0u;
     for (int k = 0, a = 0; a < nd0; ++a)

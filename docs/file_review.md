@@ -45,7 +45,7 @@
 - [ ] `src/scene_graph/scenemap/include/scenemap/limo_omx_fk_table.hpp` (60)
 - [x] `src/scene_graph/scenemap/include/scenemap/mapper2d.hpp` (82)
 - [x] `src/scene_graph/scenemap/include/scenemap/objmap.hpp` (334) — **기본값이 R1 값이던 것(손 2·grasp_r 0.25·grip 0.09 …)을 LIMO 로**, 어긋난 주석 2곳
-- [ ] `src/scene_graph/scenemap/include/scenemap/objprob.hpp` (231)
+- [x] `src/scene_graph/scenemap/include/scenemap/objprob.hpp` (231) — ApContactIdx·μ 캐시
 - [ ] `src/scene_graph/scenemap/include/scenemap/objprob_math.h` (158)
 - [ ] `src/scene_graph/scenemap/include/scenemap/png.hpp` (13)
 - [ ] `src/scene_graph/scenemap/include/scenemap/rooms.hpp` (157)
@@ -61,9 +61,9 @@
 - [ ] `src/scene_graph/scenemap/src/fk.cpp` (142)
 - [ ] `src/scene_graph/scenemap/src/grid.cpp` (221)
 - [ ] `src/scene_graph/scenemap/src/inspect.cpp` (139)
-- [ ] `src/scene_graph/scenemap/src/mapper2d.cpp` (96)
+- [x] `src/scene_graph/scenemap/src/mapper2d.cpp` (96) — 정책 0 갈래·겹치던 5 cm 조건
 - [x] `src/scene_graph/scenemap/src/objmap.cpp` (1481) — **기록만 하던 이름 표(votes)**, 옛 잡기 규칙 갈래(grasp_check=0)·self_mask 끄기, 늘 ap 라 안 타던 평균 갈래, 안 쓰는 maskBit
-- [ ] `src/scene_graph/scenemap/src/objprob.cpp` (469)
+- [x] `src/scene_graph/scenemap/src/objprob.cpp` (469) — 안 쓰는 apNormalize, **최적화**: 접촉 범위·FP16 표·μ 캐시
 - [ ] `src/scene_graph/scenemap/src/png.cpp` (67)
 - [ ] `src/scene_graph/scenemap/src/rooms.cpp` (868)
 - [ ] `src/scene_graph/scenemap/src/scan.cpp` (332)
@@ -79,8 +79,8 @@
 - [ ] `src/scene_graph/scenemap/tests/test_limo_fk.cpp` (122)
 - [x] `src/scene_graph/scenemap/tests/test_limo_held.cpp` (263) — 옛 규칙 대조 부분 제거
 - [ ] `src/scene_graph/scenemap/tests/test_objmem.cpp` (804)
-- [ ] `src/scene_graph/scenemap/tests/test_objprob.cpp` (166)
-- [ ] `src/scene_graph/scenemap/tests/test_posemap.cpp` (316)
+- [x] `src/scene_graph/scenemap/tests/test_objprob.cpp` (166)
+- [x] `src/scene_graph/scenemap/tests/test_posemap.cpp` (316) — 정책 0 대조·안 쓰는 변수
 - [ ] `src/scene_graph/scenemap/tests/test_relations.cpp` (92)
 - [ ] `src/scene_graph/scenemap/tests/test_rooms.cpp` (493)
 - [ ] `src/scene_graph/scenemap/tests/test_scene_json.cpp` (105)
@@ -90,7 +90,7 @@
 - [ ] `src/scene_graph/scenemap/tools/png_io.hpp` (95)
 - [ ] `src/scene_graph/scenemap/tools/rooms_pgm.cpp` (137)
 - [ ] `src/scene_graph/scenemap/tools/sgrec.hpp` (92)
-- [ ] `src/scene_graph/scenemap/tools/sm_bench.cpp` (171)
+- [x] `src/scene_graph/scenemap/tools/sm_bench.cpp` (171) — --policy
 - [ ] `src/scene_graph/scenemap/tools/stream_sim.cpp` (97)
 
 ## `src/scene_graph/slam_carto` (12 파일, 2027 줄)
@@ -445,10 +445,10 @@
 - [ ] `training/RL/map/include/map.h` (3061)
 - [ ] `training/RL/map/include/map_api.h` (137)
 - [ ] `training/RL/map/include/map_tok.h` (846)
-- [ ] `training/RL/map/include/mem_tok.h` (131)
+- [x] `training/RL/map/include/mem_tok.h` (131) — 잡음 스위치
 - [ ] `training/RL/map/include/objprob_gpu.h` (447)
 - [ ] `training/RL/map/include/omx_workspace.h` (99)
-- [ ] `training/RL/map/include/percept.h` (425)
+- [x] `training/RL/map/include/percept.h` (425) — 잡음 스위치
 - [ ] `training/RL/map/include/percept_params.h` (52)
 - [ ] `training/RL/map/include/sm_tok.h` (285)
 - [ ] `training/RL/map/include/topview.h` (114)
@@ -464,7 +464,7 @@
 - [ ] `training/RL/map/tools/nav_tradeoff.cu` (89)
 - [ ] `training/RL/map/tools/objprob_parity.cpp` (190)
 - [ ] `training/RL/map/tools/pnp_teach.cu` (222)
-- [ ] `training/RL/map/tools/sm_tok_test.cpp` (282)
+- [x] `training/RL/map/tools/sm_tok_test.cpp` (282) — **원래 실패**: 벽이 표본 간격보다 얇음
 
 ## `training/RL/map_calib` (5 파일, 532 줄)
 - [ ] `training/RL/map_calib/percept/fit_percept.py` (150)
@@ -474,11 +474,10 @@
 - [ ] `training/RL/map_calib/tools/carto_drift_header.py` (71)
 
 ## `training/RL/map_cmp` (5 파일, 1418 줄)
-- [ ] `training/RL/map_cmp/CMakeLists.txt` (49)
-- [ ] `training/RL/map_cmp/README.md` (221)
-- [ ] `training/RL/map_cmp/tools/map_cmp.cpp` (723)
-- [ ] `training/RL/map_cmp/tools/pick_cmp.cu` (375)
-- [ ] `training/RL/map_cmp/tools/slot_adapter.h` (50)
+- [x] `training/RL/map_cmp/CMakeLists.txt` (49) — map_cmp(objprob 전 비교) 제거, pick_cmp 만
+- [x] `training/RL/map_cmp/README.md` (221) — pick_cmp·og_cmp 만
+- [x] `training/RL/map_cmp/tools/pick_cmp.cu` (375)
+- [x] `training/RL/map_cmp/tools/slot_adapter.h` (50) — 옛 배치 갈래
 
 ## `training/RL/env` (26 파일, 9695 줄)
 - [ ] `training/RL/env/CMakeLists.txt` (54)

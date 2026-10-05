@@ -33,11 +33,6 @@
 #ifndef P_GHOST_V
 #define P_GHOST_V 0.03f
 #endif
-// 잡음 끄기(map_cmp 의 진짜 scenemap 비교용, -DMAP_NOISE_V=0): 오도메트리 치우침·걸음 잡음, 놓침, 틀린 이름, 유령, 깊이·옆·크기 잡음을
-// 모두 끈다. 기본 1 = 지금 모형 그대로(비트 같음)
-#ifndef MAP_NOISE_V
-#define MAP_NOISE_V 1
-#endif
 
 
 namespace gmap {
@@ -68,7 +63,7 @@ constexpr int GX0 = -GW / 2;            // 창 첫 칸의 전역 칸 번호(칸 
 constexpr int NCELL = GW * GW;
 constexpr int NWORD = NCELL / 32;
 constexpr int NT = 64;                  // 블록 스레드 수
-constexpr int NCOL = 64, NROW = 8;      // 거친 깊이 광선: 가로 64 (계획서 5.1 예) × 세로 8 (가정). 128 열은 map_cmp 격자 일치율이 같아(0.982 대 0.983) 64 로 둠
+constexpr int NCOL = 64, NROW = 8;      // 거친 깊이 광선: 가로 64 (계획서 5.1 예) × 세로 8 (가정). 128 열은 격자 일치율이 같아(0.982 대 0.983, 예전 비교) 64 로 둠
 constexpr int NROWC = NROW + 1;         // + 빈칸 줄 하나: 깊이 범위 안 가장 먼 바닥 점(scan.cpp 빈 광선 끝) — MP::scan_step 참고
 constexpr int M_SCN = 8;                // 장면 상자(가구 5 + 작은 물건 3) — G1 빈 방에 지도용으로 더함
 constexpr int N_PRIM = M_SCN + 1;       // + 컵(과제 물체, 0 번)
@@ -172,7 +167,6 @@ struct MP {
   // ---- (가정) ----
   static constexpr int img_w = 640, img_h = 400;                 // 깊이 영상 640×400 (Dabai 데이터시트), 정사각 화소(가정: 세로 FOV 45.6°, 사양 45.3°)
   static constexpr float wall_h = 2.5f;                          // 벽 높이(가정)
-  static constexpr bool noise = MAP_NOISE_V != 0;                // 잡음 켬(기본). 0 이면 위 잡음·실수가 모두 꺼짐(map_cmp 비교용)
   static constexpr float cup_h = 2.f * env::K::tgt_z;            // 컵 높이 0.10 m (가정: tgt_z 를 중심 높이로 봄)
   // ---- 벽 상태 56 (walls.hpp, scenemap) ----
   // 점유 = export8 값 ≥ kOccMin 65. grid.cpp 표: lround(100·σ(L/256)) ≥ 65 ⇔ L ≥ 153 (map_realcheck 가 진짜 OccGrid 로 확인)
@@ -1404,15 +1398,15 @@ DEV int phase_begin(MapCore& m, const EnvView& e, int force_kf, Slot* ob, const 
     const float dxb = c0 * dxw + s0 * dyw, dyb = -s0 * dxw + c0 * dyw;
     const float dth = wrap_pi(e.yaw - m.pyaw);
     const float dist = sqrtf(dxb * dxb + dyb * dyb);
-    const float n1 = MP::noise ? gauss(m.rng) : 0.f, n2 = MP::noise ? gauss(m.rng) : 0.f, n3 = MP::noise ? gauss(m.rng) : 0.f;
+    const float n1 = gauss(m.rng), n2 = gauss(m.rng), n3 = gauss(m.rng);
     const float ar = absf(dth);
-    const float u = MP::noise ? fmaxf(dist / CartoDrift::step_d, ar / CartoDrift::step_r) : 0.f;   // 움직임 양(keyframe 평균 걸음 단위)
+    const float u = fmaxf(dist / CartoDrift::step_d, ar / CartoDrift::step_r);   // 움직임 양(keyframe 평균 걸음 단위)
     const float sl = sqrtf(CartoDrift::long_c0 * u + CartoDrift::long_cd * dist + CartoDrift::long_cr * ar);
     const float sa = sqrtf(CartoDrift::lat_c0 * u + CartoDrift::lat_cd * dist + CartoDrift::lat_cr * ar);
     const float sy = sqrtf(CartoDrift::yaw_c0 * u + CartoDrift::yaw_cd * dist + CartoDrift::yaw_cr * ar);
-    const float nxb = MP::noise ? dxb + n1 * sl + CartoDrift::bias_long * u : dxb;
-    const float nyb = MP::noise ? dyb + n2 * sa + CartoDrift::bias_lat * u : dyb;
-    const float nth = MP::noise ? dth + n3 * sy + CartoDrift::bias_yaw * u : dth;
+    const float nxb = dxb + n1 * sl + CartoDrift::bias_long * u;
+    const float nyb = dyb + n2 * sa + CartoDrift::bias_lat * u;
+    const float nth = dth + n3 * sy + CartoDrift::bias_yaw * u;
     float se, ce;
     sincosf_d(m.eyaw, &se, &ce);
     m.ex = m.ex + (ce * nxb - se * nyb);
@@ -1711,7 +1705,6 @@ DEV void phase_cast(const MapCore& m, Scratch& sh, const EnvView& e, int tid, in
         int id = hid[r];
         if (id < 0 || id >= HID_PRIM || !(tr[r] >= MP::zmin && tr[r] <= MP::zmax)) continue;
         if (bx.sd->bkind[id] & (bsc::BK_WALL | bsc::BK_WINDOW)) {   // 벽·창: 맞은 점의 1 m 토막이 이 판의 유령 자리면 그 열쇠로(아니면 안 셈)
-          if (!MP::noise) continue;
           const bsc::SBox& b = bx.sd->box[id];
           const float hxw = o[0] + bx.wx + tr[r] * d0 - b.cx, hyw = o[1] + bx.wy + tr[r] * d1 - b.cy;
           const bool lx = b.hx >= b.hy;
