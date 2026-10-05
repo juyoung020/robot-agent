@@ -87,7 +87,7 @@
 - `sgrt_map`: 탐색·안전 정지용 격자·스캔·옮길 수 있는 물체 사본.
 - 부르는 곳: `glue/sgrt_glue.py`(OmniGibson), `training/viewer/tools/og2sg`, `tools/sgrt_replay`·`sgrt_frames`, 에이전트 `search_objects`(sgrt_scenemap).
 - 최적화 여지: `objprobName` 이 같은 스텝 안에서 SigLIP 2 결과를 기다림(검출 keyframe 당 약 4–5 ms) — 다음 영상 검출과 겹치면 지연을 줄일 수 있음(미측정). 낱말 최댓값은 CPU 768 × 낱말 수 내적 — 검출 20 × 낱말 ~150 이면 작음.
-- 안 쓰는 것: 없음(옛 ClipMem·API 6 개·옛 이름 규칙 갈래는 지움).
+- 안 쓰는 것: 없음(C ABI 함수마다 부르는 곳 확인함).
 
 **`src/objprob_front.hpp`** — 낱말 표 `kVocab`(글 → 지도 이름)·`kVocabAp`(구조물 배경 낱말), 라벨 크기·상위어 `kApLabels`, `engineStem`·`readParamsFile`, `buildTextTable`(라벨 표에서 글 임베딩 찾기), `enable`. realbag_run 과 같이 씀 — 이름 규칙을 바꾸면 둘이 같이 바뀜.
 
@@ -109,7 +109,7 @@
 - `sm_snap_reachable`: 격자 8방향 A*(점유 ≥ 65 % 를 0.30 m 부풀림).
 - 저장(`sm_save_dsg_ex`): 스냅숏 → objprob 메타·벡터 파일(`apSaveMeta`·`apWriteFiles`) → `saveScene`(dsg_save.cpp). 스트림 요약(`sm_stream_view`)은 바뀐 게 없으면 안 만듦.
 - 최적화 여지: 창 틈 잇기가 벽 선분 쌍 O(n²)(벽 수십 개라 작음). `sm_snap_reachable` 이 부를 때마다 W×H dist 배열을 새로 잡음 — 자주 부르면 재사용 가능. 스냅숏마다 물체 구름(shared)·이름 문자열 복사.
-- 안 쓰는 것: `robotHands`·`robotBody` 의 robot 인자(하나뿐), `SM_POSE` 값 0 은 없앰. `sm_last_views`(best view 바뀜 신호)는 지금 부르는 곳 없음 — 지울지 확인 필요.
+- 안 쓰는 것: `robotHands`·`robotBody` 의 robot 인자(로봇이 하나라 늘 같음). C ABI 함수는 모두 부르는 곳 있음(scenemap.h 선언마다 저장소 전체 검색).
 
 **`include/scenemap.h`** — 위 C ABI 선언·설명. 로봇은 LIMO + OMX-F 하나(`SM_ROBOT_LIMO_OMX`, proprio 12).
 
