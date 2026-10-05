@@ -74,7 +74,7 @@ DEV void pe_labels(Det& D, uint64_t& rng, int nlab, const int16_t sim[3], int na
   D.llrest = nr > 0 ? lnf_d(rest_all / (float)nr) : -30.f;
 }
 
-// keyframe 카메라 방향·회전 빠르기(움직임 근거). 자세 고침은 Cartographer 흉내(map.h phase_begin, 스텝마다) — slam2d 의 깊이 열 맞추기 되돌림(kf_corr·min_hits)은 없앰(GPU_MAP_PORT 0.3)
+// keyframe 카메라 방향·회전 빠르기(움직임 근거). 자세 고침은 Cartographer 흉내(map.h phase_begin, 스텝마다)
 DEV void slam_kf_correct(MapCore& m, Scratch& sh, const EnvView& e, int nt) {
   (void)e; (void)nt;
   float es, ec;

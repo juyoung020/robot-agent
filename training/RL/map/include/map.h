@@ -19,8 +19,8 @@
 // objprob 계산 하나(scenemap 과 같은 헤더 — 같은 것 로지스틱·이름 사후·상위어·κ·칼만·이름 분포 겹침). 저장소 안 상대 경로(빌드마다 include 경로를 안 더하게)
 #include "../../../../src/scene_graph/scenemap/include/scenemap/objprob_math.h"
 // 잡음·맞춤 값의 기본(MP 가 씀). 기본은 LIMO 탐색 기록 보정(../map_calib/limo, calib_limo.json) + 이 모형에 다시 맞춘 값(README "LIMO 보정").
-// 자세 오차는 Cartographer 흉내(drift_params.h, GPU_MAP_PORT 0.3). 옛 slam2d 맞춤 값(odo_t 0.015·kf_corr_xy 등, map_drift kind 5)은 ../map_calib/README.md 기록.
-// map_drift 로 다시 맞출 때만 -D 로 바꾼다. R1 값(예전 기본)은 ../map_calib/README.md 에 기록으로 남김
+// 자세 오차는 Cartographer 흉내(drift_params.h ← ../map_calib/tools/carto_drift_header.py, GPU_MAP_PORT 0.3).
+// map_drift 로 다시 맞출 때만 -D 로 바꾼다.
 #ifndef P_CONF_V
 #define P_CONF_V 0.08f
 #endif

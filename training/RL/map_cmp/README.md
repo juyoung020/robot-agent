@@ -1,6 +1,6 @@
 # 근사판 대 진짜 scenemap (계획서 GPU_TRAINING.md 5.2)
 
-GPU 지도 근사판(`../map`)과 진짜 scenemap(behavior-2026 서브모듈 `src/scene_graph/scenemap`, LIMO + OMX, CPU)에 **같은 입력**을 넣고 keyframe 마다 지도를 비교한다.
+GPU 지도 근사판(`../map`)과 진짜 scenemap(`src/scene_graph/scenemap`, LIMO + OMX, CPU)에 **같은 입력**을 넣고 keyframe 마다 지도를 비교한다.
 처음에는 규칙만 비교하려고 **잡음을 양쪽 다 끈다**. 근사판은 `-DMAP_NOISE_V=0` 으로 따로 빌드한다(`map.h` 의 스위치, 커밋 af9730c. 기본값 1 은 비트가 그대로이고 `map_verify 2048 600` 해시 `ce67f18f6556df76`, `--force-kf` 해시 `6c34f99830ac169e` 가 전과 같다). 진짜 쪽 입력에는 잡음을 넣지 않는다.
 파이썬은 쓰지 않는다. C++ 하나(`tools/map_cmp.cpp`)가 G1 환경(GPU), 근사판(GPU), 렌더(CPU), scenemap C ABI(CPU)를 모두 부른다.
 
@@ -28,7 +28,7 @@ build/map_cmp/map_cmp 50 --policy 1         # 진짜 쪽 넣기 정책 1(사건 
 build/map_cmp/map_cmp 50 --seed 7           # 다른 장면·궤적
 build/map_cmp/map_cmp 10 --trace 3          # 판 3 의 keyframe 마다 검출·확정 물체 목록
 ```
-scenemap 소스는 서브모듈에서 읽기만 하고 빌드 폴더 안에 빌드한다(`SCENEMAP_DIR`). `RL_DIR` 로 env·map 소스 폴더를 바꿀 수 있다. 다른 작업이 `map/` 를 고치는 중이면 커밋된 판을 `git archive HEAD training/RL/env training/RL/map | tar -x -C <dir>` 로 꺼내 `-DRL_DIR=<dir>/training/RL` 로 빌드한다. 아래 결과는 이렇게 빌드한 커밋 af9730c 의 `map/`로 냈고, 작업 트리 빌드와 출력이 바이트까지 같았다. N = 50 한 번에 3.0 s 걸리고(RTX 5070 Ti, CPU 32 스레드), 최대 메모리는 0.66 GB 다.
+scenemap 소스(`src/scene_graph/scenemap`)를 그대로 쓰고 빌드 폴더 안에 빌드한다(`SCENEMAP_DIR`). `RL_DIR` 로 env·map 소스 폴더를 바꿀 수 있다. 다른 작업이 `map/` 를 고치는 중이면 커밋된 판을 `git archive HEAD training/RL/env training/RL/map | tar -x -C <dir>` 로 꺼내 `-DRL_DIR=<dir>/training/RL` 로 빌드한다. 아래 결과는 이렇게 빌드한 커밋 af9730c 의 `map/`로 냈고, 작업 트리 빌드와 출력이 바이트까지 같았다. N = 50 한 번에 3.0 s 걸리고(RTX 5070 Ti, CPU 32 스레드), 최대 메모리는 0.66 GB 다.
 
 ## 결과 — scenemap 바뀜 규칙·잡기 확인을 옮긴 뒤 (2026-10-04, 서브모듈 d58c978 소스 = 3ed710f 바뀜 규칙 + 84b373c SLAM + 잡기 확인, map 커밋 "scenemap 바뀜 규칙 옮김")
 진짜 쪽은 새 objmap(이름 표·나타남·잇기·보임 근거 사라짐·움직임 따라가기·IoU 병합·바닥 조각·LIMO 잡기 확인·팔 가림), 근사판은 같은 규칙을 옮긴 `../map`(그 README "scenemap 바뀜 규칙…"). 잡음 끔, 기준·방법은 아래 그대로.
