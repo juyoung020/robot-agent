@@ -17,3 +17,4 @@
 | 2026-10-06 | `src/scene_graph/scenemap/tools/map_timeline.cpp`·`dom_bench.cpp`·`dom_seq.hpp`(벤치마크 어댑터 실행기 부분), `src/scene_graph/runtime/tools/dom_bench_det.cpp` | R1 61 proprio·R1 몸 매개변수(스캔 높이 띠 0.10–1.80 m)로 dynamic-object-mapping-benchmark 사람 손 카메라 시퀀스를 넣던 도구. 로봇이 LIMO 하나라 쓸 곳 없음. PNG·CSV 읽기 부분은 `scenemap/tools/png_io.hpp`(realbag_run 이 씀)로 남김 |
 
 아직 옮기지 않은 것(쓰는 곳이 남음 — 바꿀 것이 생기면 옮김): 상태 있는 대본 교사(`training/RL/env/include/teacher.h` — 잡기 가능 표·서는 자리 찾기·`pnp_teach` 기본 교사가 같은 함수를 씀), B6 제자리 돌기 탐사(`teacher_sl.h SLD_EXPLORE` — 프런티어 탐사 교사가 생기면 바꿈), student-lite·flow 머리(설정 `mlp_w`·`head` 로 아직 고름), 따로 된 RL 관측 코드(관측 하나로 합치면).
+| `src/scene_graph/tools/realbag/objprob_params/FastSAM-s-416-obj*.json` | 버린 FastSAM-s 재학습 엔진의 objprob 매개변수(엔진도 보관) | 10-06 |

@@ -7,9 +7,8 @@ set -euo pipefail
 N=$1; ENG=$2; MODE=${3:-plain}
 DATA=${FASTSAM_DATA:-$RA_DATASETS/fastsam_obj}
 BIN=${REALBAG_BIN:-$RA_BUILD/realbag}
-OLD=ap''rime
-PD=$RA_DATASETS/objprob; [ -d "$PD" ] || PD=$RA_DATASETS/$OLD
-FLAG=--objprob; grep -aq -- "--objprob" "$BIN/realbag_run" || FLAG=--$OLD
+PD=$RA_DATASETS/objprob
+FLAG=--objprob
 X=(); [ "$MODE" = objprob ] && X=($FLAG --label-prior "$PD/fit1/label_prior.json")
 for s in ol_office1-1 ol_office1-5; do
   R=$DATA/realcheck/${N}_${MODE}_$s
