@@ -384,6 +384,8 @@ DEV bool reset_pnp_start(Core& c, BState& b, PState& p, const bsc::SceneSet& ss,
   float x = 0.f, y = 0.f, yaw = 0.f;
   if (kind != bsc::EK_B6) {   // 잡는 자세 칸에서 물체를 보고(± 0.3 rad 흔듦), 안 되면 정면, 그래도 안 되면 무작위
     x = E.st[0]; y = E.st[1];
+    // PF_FINDSTART(B4): 잡는 자세 칸 대신 찾을 수 있는 자세(findable.h fpose — 물체가 시야·깊이 범위 안, 카메라 거리 0.5–1.2 m 먼저). 같은 난수 수
+    if (kind == bsc::EK_B4 && (cu.phys & bsc::PF_FINDSTART) && ss.has_find && (E.feas & bsc::FE_FIND)) { x = E.fpose[0]; y = E.fpose[1]; }
     const float face = atan2f_d(E.gy - y, E.gx - x);
     yaw = wrap_pi(face + rand_range(c.rng, -0.3f, 0.3f));
     ok = body_free_beh(ss, E, x, y, yaw);

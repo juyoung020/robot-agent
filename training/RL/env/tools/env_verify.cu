@@ -2,7 +2,7 @@
 //   env_verify [N=2048] [steps=400] [--negative] [--stage 0|1|2|3] [--arm | --arm-zero]   (기본 A1; 2 = A2 가구; 3 = BEHAVIOR 집 B1–B3)
 //   잡기 물리(E6): [--pnp p4,p5,p6 (B4 집기·B5 놓기·B6 가져오기 비율, B3 몫에서)] [--fail p_slip,p_occ] [--teacher (홀수 판 = 대본 교사, GPU 교사 행동 == CPU 교사 행동도 비교)]
 //     [--negative-grasp (GPU 만 폭·무게 검사 끔 — 반드시 실패, --arm 으로 무작위 팔이 넓은·무거운 것도 쥐게)] [--negative-armcoll (GPU 만 팔 막기 끔)] [--phys BITS (GPU·CPU 같이 끄기 PF_*)]
-//     [--feas (잡기 가능 표 env pnp_feasibility + PF_FEAS 고르기 — 교사가 표의 서는 자리를 씀)] [--negative-teacher (GPU 교사만 계획 결과를 조금 비틂 — 반드시 실패)]
+//     [--find (--feas + 찾을 수 있음 표 env pnp_findability + PF_FIND·PF_FINDSTART)] [--feas (잡기 가능 표 env pnp_feasibility + PF_FEAS 고르기 — 교사가 표의 서는 자리를 씀)] [--negative-teacher (GPU 교사만 계획 결과를 조금 비틂 — 반드시 실패)]
 //     --teacher 이면 교사 버퍼(TBuf 계획·웨이포인트·팔 계획, 목록·작업 메모리 빼고)도 매 스텝 GPU == CPU 비트 비교
 //   BEHAVIOR(--stage 3): [--scenes DIR(기본 ~/ra_b1k)] [--mix p1,p2 (B1·B2 비율, 나머지 B3; 기본 0.34,0.33)] [--strict] [--split 0|1|2] [--only 장면,...]
 //     --follow: 홀수 판은 대본 정책(참 장면 다익스트라를 거꾸로 따라가고 끝에서 멈춤·목표를 봄) — 성공 길(B1 방·점, B3 잡는 점 작업 공간)까지 비트 동일을 보려고
@@ -43,7 +43,7 @@ static const char* field_name(int k) {
 int main(int argc, char** argv) {
   int N = 2048, T = 400, stage = 1;
   int sltol = 0;
-  bool gcand = false, negative = false, arm = false, arm_zero = false, follow = false, teach = false, feas = false, neg_teach = false, tsl = false, sl_fresh = false;
+  bool gcand = false, negative = false, arm = false, arm_zero = false, follow = false, teach = false, feas = false, findf = false, neg_teach = false, tsl = false, sl_fresh = false;
   int pos = 0, nbug = 1;
   bsc::BuildOpt bo;
   bsc::BCurr cu = bsc::kBCurrDefault;
@@ -60,6 +60,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--sl-fresh")) { teach = true; tsl = true; sl_fresh = true; }   // CPU 는 스텝마다 캐시를 비우고 물음 → 라벨이 상태만의 함수인지(GPU 는 캐시 그대로)
     else if (!std::strcmp(argv[a], "--negative-teacher-sl")) { negative = true; neg_teach = true; teach = true; tsl = true; nbug = 0; }
     else if (!std::strcmp(argv[a], "--feas")) feas = true;
+    else if (!std::strcmp(argv[a], "--find")) { feas = true; findf = true; }   // + 찾을 수 있음 표(findable.h) + PF_FIND·PF_FINDSTART
     else if (!std::strcmp(argv[a], "--gcand")) gcand = true;
     else if (!std::strcmp(argv[a], "--sltol")) sltol |= 1;   // 상태 없는 교사 배울 수 있는 단계 문턱(teacher_sl.h sl_tol)
     else if (!std::strcmp(argv[a], "--slknown")) sltol |= 2;   // 상태 없는 교사 특권은 지도에 확정된 집을 물체만(B4·B5 도 탐사)
@@ -87,6 +88,7 @@ int main(int argc, char** argv) {
     std::string err;
     if (!bsc::build_scenes(bo, sb, &err) || !bsc::upload(sb, &err)) { std::printf("scene build failed: %s\n", err.c_str()); return 1; }
     if (feas) { pnp_feasibility(sb); cu.phys |= bsc::PF_FEAS; if (gcand) pnp_stance_cands(sb); if (sltol) set_sl_tol(sb, sltol); }
+    if (findf) { pnp_findability(sb); cu.phys |= bsc::PF_FIND | bsc::PF_FINDSTART; }
     std::printf("BEHAVIOR scenes: %d, entries %d, device %.1f MB; mix B1 %.2f B2 %.2f B3 %.2f strict %d split %d; point goals p_point %.2f p_goto %.2f (instr blocks %d)\n",
                 sb.host.nsc, sb.host.nent, sb.dev_bytes / 1e6, cu.p1, cu.p2, 1.f - cu.p1 - cu.p2, cu.strict, cu.split, cu.p_point, cu.p_goto, sb.host.iblocks);
   }

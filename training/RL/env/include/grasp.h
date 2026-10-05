@@ -193,7 +193,7 @@ DEV bool ik_grasp(const float tgt[3], float phi, float roll, int elbow, float q[
 
 // ---- 잡기 가능(정적 규칙) — 고르기 표(env pnp_feasibility)·교사·확인 도구가 모두 이것을 씀(한 곳) ----
 // 까닭 번호(Entry::feas 의 까닭 칸, 교사 포기 까닭 I_T_* 와 같은 표)
-enum FeasReason { FR_OK = 0, FR_WIDE = 1, FR_HEAVY = 2, FR_THIN = 3, FR_NOSTANCE = 4, FR_NOPLACE = 5, FR_NOPATH = 6, FR_ARM = 7, FR_DROPS = 8, FR_STUCK = 9, FR_MISS = 10, FR_PRETO = 11 };   // MISS: 닫아도 안 잡힘, PRETO: 잡기 전 자세에 못 감
+enum FeasReason { FR_OK = 0, FR_WIDE = 1, FR_HEAVY = 2, FR_THIN = 3, FR_NOSTANCE = 4, FR_NOPLACE = 5, FR_NOPATH = 6, FR_ARM = 7, FR_DROPS = 8, FR_STUCK = 9, FR_MISS = 10, FR_PRETO = 11, FR_NOTFIND = 12 };   // MISS: 닫아도 안 잡힘, PRETO: 잡기 전 자세에 못 감, NOTFIND: 찾을 수 없음(findable.h — FE_FIND·FE_FINDP 비트가 없음, 까닭 칸에는 안 씀)
 // 얇은 물체 하한: 위에서 잡기(다가가는 축 = 아래)에서 손끝 공이 받침 위 2 mm(교사 규칙)일 때 손가락 면(a 축 [−pad_back, pad_front])이 물체와
 // min_overlap 겹치는 높이 = (tip_front − tip_in + r_tip + 0.002) − pad_front + min_overlap ≈ 9.5 mm. 옆 잡기는 손바닥 공(r_link)이 받침에 걸려 더 큼
 constexpr float kMinGraspH = (KG::tip_front - KG::tip_in + KG::r_tip + 0.002f) - KG::pad_front + KG::min_overlap;

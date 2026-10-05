@@ -10,6 +10,7 @@
 #include "bscene_host.h"
 #include "env_api.h"
 #include "env_soa.h"
+#include "findable.h"
 
 #define CK(x) do { cudaError_t e = (x); if (e != cudaSuccess) { std::fprintf(stderr, "CUDA error %s at %s:%d\n", cudaGetErrorString(e), __FILE__, __LINE__); std::abort(); } } while (0)
 
@@ -389,6 +390,59 @@ void DeviceEnv::download(std::vector<float>& f, std::vector<int>& iv, std::vecto
   CK(cudaMemcpy(rng.data(), rng_, sizeof(uint64_t) * rng.size(), cudaMemcpyDeviceToHost));
 }
 
+// ---- 찾을 수 있음(findable.h): 짝 하나 = 블록 하나(128 스레드가 창 칸을 나눠 봄), 집을 물체·놓을 곳 따로 가장 좋은 자세 ----
+struct FindRes { int pick, place; float pose[4], frac; };
+__global__ void __launch_bounds__(128) find_k(const bsc::SceneSet* ss, const int* idx, int n, FindRes* out) {
+  __shared__ float sb[128];
+  __shared__ int sk[128];
+  __shared__ int sp[128];
+  const int e = blockIdx.x, tid = threadIdx.x;
+  if (e >= n) return;
+  const bsc::Entry& E = ss->ent[idx[e]];
+  float plo[3], phi[3];
+  const bool pick_ok = find_pick_box(E, plo, phi);
+  float best = -1.f, bf = 0.f;
+  int bk = -1;
+  int anyp = 0;
+  // 놓을 곳: 바닥이면 늘 찾음. 면·용기 = 놓을 자리 상자, 그 가구 상자는 가림에서 뺌
+  const bool dfloor = E.dkind == bsc::DK_FLOOR || !(E.dhi[0] > E.dlo[0]);
+  const int dsb = E.nprim > 1 ? E.prim[1].sbox : -1;
+  for (int k = tid; k < bsc::WIN * bsc::WIN; k += blockDim.x) {
+    float pose[3], fr, dist;
+    if (pick_ok) {
+      const float sc = find_cell(*ss, E, k, plo, phi, -1, 0, pose, &fr, &dist);
+      if (sc > best) { best = sc; bk = k; bf = fr; }
+    }
+    if (!dfloor && !anyp) {
+      const float sc2 = find_cell(*ss, E, k, E.dlo, E.dhi, dsb, 0, pose, &fr, &dist);
+      anyp = sc2 > -0.5f && fr > 0.f;
+    }
+  }
+  sb[tid] = best; sk[tid] = bk; sp[tid] = anyp;
+  __syncthreads();
+  for (int h = 64; h > 0; h >>= 1) {
+    if (tid < h) {
+      const bool take = sb[tid + h] > sb[tid] || (sb[tid + h] == sb[tid] && sk[tid + h] >= 0 && (sk[tid] < 0 || sk[tid + h] < sk[tid]));
+      if (take) { sb[tid] = sb[tid + h]; sk[tid] = sk[tid + h]; }
+      sp[tid] = sp[tid] | sp[tid + h];
+    }
+    __syncthreads();
+  }
+  if (tid == 0) {
+    FindRes r;
+    r.pick = sk[0] >= 0 && sb[0] > -0.5f;
+    r.place = dfloor ? 1 : sp[0];
+    r.frac = 0.f;
+    r.pose[0] = r.pose[1] = r.pose[2] = r.pose[3] = 0.f;
+    if (r.pick) {
+      float pose[3], fr, dist;
+      find_cell(*ss, E, sk[0], plo, phi, -1, 0, pose, &fr, &dist);
+      r.pose[0] = pose[0]; r.pose[1] = pose[1]; r.pose[2] = pose[2]; r.pose[3] = dist; r.frac = fr;
+    }
+    out[e] = r;
+  }
+}
+
 double pnp_feasibility(bsc::SceneBuild& b, bool quiet) {
   const auto t0 = std::chrono::steady_clock::now();
   std::vector<int> idx;
@@ -449,6 +503,55 @@ double pnp_feasibility(bsc::SceneBuild& b, bool quiet) {
     int ng = 0, n5 = 0, n6 = 0;
     for (int k = 0; k < n; ++k) { ng += out[k].feas & 1; n5 += (out[k].feas >> 1) & 1; n6 += (out[k].feas >> 2) & 1; }
     std::fprintf(stderr, "pnp_feasibility: %d pick-and-place entries, B4 graspable %d, B5 placeable %d, B6 (grasp + place) %d — %.1f s\n", n, ng, n5, n6, secs);
+  }
+  return secs;
+}
+
+double pnp_findability(bsc::SceneBuild& b, bool quiet) {
+  const auto t0 = std::chrono::steady_clock::now();
+  if (!b.host.has_feas) { std::fprintf(stderr, "pnp_findability: run pnp_feasibility first\n"); std::abort(); }
+  std::vector<int> idx;
+  for (size_t k = 0; k < b.ent.size(); ++k) if (b.ent[k].list == bsc::L_OBJ) idx.push_back((int)k);
+  const int n = (int)idx.size();
+  int* d_idx = nullptr;
+  FindRes* d_out = nullptr;
+  CK(cudaMalloc(&d_idx, sizeof(int) * (n > 0 ? n : 1)));
+  CK(cudaMalloc(&d_out, sizeof(FindRes) * (n > 0 ? n : 1)));
+  if (n) CK(cudaMemcpy(d_idx, idx.data(), sizeof(int) * n, cudaMemcpyHostToDevice));
+  if (n) find_k<<<n, 128>>>(b.dev, d_idx, n, d_out);
+  CK(cudaGetLastError());
+  std::vector<FindRes> out(n);
+  if (n) CK(cudaMemcpy(out.data(), d_out, sizeof(FindRes) * n, cudaMemcpyDeviceToHost));
+  cudaFree(d_idx); cudaFree(d_out);
+  for (int k = 0; k < n; ++k) {
+    bsc::Entry& e = b.ent[idx[k]];
+    e.feas = (e.feas & ~(bsc::FE_FIND | bsc::FE_FINDP)) | (out[k].pick ? bsc::FE_FIND : 0) | (out[k].place ? bsc::FE_FINDP : 0);
+    for (int a = 0; a < 4; ++a) e.fpose[a] = out[k].pose[a];
+  }
+  b.host.has_find = 1;
+  bsc::SceneSet D;
+  CK(cudaMemcpy(&D, b.dev, sizeof D, cudaMemcpyDeviceToHost));
+  CK(cudaMemcpy(const_cast<bsc::Entry*>(D.ent), b.ent.data(), sizeof(bsc::Entry) * b.ent.size(), cudaMemcpyHostToDevice));
+  D.has_find = 1;
+  CK(cudaMemcpy(b.dev, &D, sizeof D, cudaMemcpyHostToDevice));
+  const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  if (!quiet) {
+    // 집마다: 단계 가능 짝(B4 잡기 / B5 놓기 / B6) 중 찾을 수 없어 빠지는 짝
+    std::fprintf(stderr, "pnp_findability: %d pick-and-place entries — %.1f s\n", n, secs);
+    for (int sc = 0; sc < b.host.nsc; ++sc) {
+      long t4 = 0, k4 = 0, t5 = 0, k5 = 0, t6 = 0, k6 = 0, np = 0, fp = 0;
+      for (int k = 0; k < n; ++k) {
+        const bsc::Entry& e = b.ent[idx[k]];
+        if (e.scene != sc) continue;
+        const int f = e.feas;
+        ++np; fp += (f & bsc::FE_FIND) != 0;
+        if (f & bsc::FE_GRASP) { ++t4; k4 += (f & bsc::FE_FIND) != 0; }
+        if (f & bsc::FE_PLACE5) { ++t5; k5 += (f & bsc::FE_FINDP) != 0; }
+        if (f & bsc::FE_PLACE6) { ++t6; k6 += (f & (bsc::FE_FIND | bsc::FE_FINDP)) == (bsc::FE_FIND | bsc::FE_FINDP); }
+      }
+      if (!np) continue;
+      std::fprintf(stderr, "  %-26s pairs %5ld pick findable %5ld | B4 %4ld -> %4ld  B5 %4ld -> %4ld  B6 %4ld -> %4ld\n", b.sc[sc].name.c_str(), np, fp, t4, k4, t5, k5, t6, k6);
+    }
   }
   return secs;
 }

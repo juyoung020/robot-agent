@@ -1,6 +1,6 @@
 // 대본 특권 교사(E6, env teacher.h)의 성공률 — 물리 + 역기구학 + 계획의 상한 확인(CURRICULUM_BEHAVIOR2026 E6). GPU 만(환경 + 지도 + 교사 커널, 판마다 같은 그래프 길).
 //   pnp_teach [N=2048] [steps=900] [--kind 4|5|6 (기본 셋 다 1/3 씩)] [--strict] [--curr p0,p1 (처음 지도, 기본 1,0 = 다 앎)] [--fail p_slip,p_occ] [--split s] [--seed S]
-//             [--all (PF_FEAS 끔 — 잡기 가능 아닌 짝도)]
+//             [--all (PF_FEAS 끔 — 잡기 가능 아닌 짝도)] [--find (찾을 수 없는 목표 빼기, PF_FIND)] [--findstart (B4 시작 = 찾을 수 있는 자세, PF_FINDSTART)]
 // 기본은 잡기 가능 표(env pnp_feasibility)를 만들고 PF_FEAS 로 그 단계가 될 수 있는 짝만 뽑는다. 끝에 집 × 단계, 폭 반, 받침(바닥/면/용기), 포기 까닭(FeasReason).
 // 판이 끝날 때마다(교사가 모든 판을 움직임) 단계 × 물체 좁은 가로 폭 반(< 2 · 2–4 · 4–6 · ≥ 6 cm) × 받침 높이(바닥 < 0.1 m / 면)별 성공·충돌·시간초과,
 // 교사가 서는 자리를 못 찾고 포기한 판(I_T_TRY > max), 잡기·미끄러짐 수, 판 하나 평균 길이, 잰 ms/스텝(환경+지도+교사, 환경만).
@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
   int N = 2048, T = 900, kind = 0, pos = 0;
   uint64_t seed = 20261005;
   bool all_eps = false, sl = false, agree = false, gcand = false;
-  int sltol = 0;
+  int sltol = 0, find = 0;
   bsc::BCurr cu = bsc::kBCurrDefault;
   gmap::MapCurr mc = gmap::kCurrEmpty;
   mc.p0 = 1.f; mc.p1 = 0.f;
@@ -36,6 +36,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--sltol")) sltol |= 1;   // 상태 없는 교사 배울 수 있는 단계 문턱(teacher_sl.h sl_tol)
     else if (!std::strcmp(argv[a], "--slknown")) sltol |= 2;   // 상태 없는 교사 특권은 지도에 확정된 집을 물체만(B4·B5 도 탐사)
     else if (!std::strcmp(argv[a], "--agree")) agree = true;   // 상태 있는 교사가 몰고, 같은 상태에서 상태 없는 교사 라벨을 견줌
+    else if (!std::strcmp(argv[a], "--find")) find |= 1;        // 찾을 수 없는 물체는 목표로 안 고름(env findable.h, PF_FIND)
+    else if (!std::strcmp(argv[a], "--findstart")) find |= 2;   // B4 시작 = 찾을 수 있는 자세 fpose(PF_FINDSTART)
     else if (pos == 0) { N = std::atoi(argv[a]); ++pos; }
     else if (pos == 1) { T = std::atoi(argv[a]); ++pos; }
   }
@@ -49,6 +51,9 @@ int main(int argc, char** argv) {
   const double feas_s = env::pnp_feasibility(sb);
   if (gcand) env::pnp_stance_cands(sb);
   if (sltol) env::set_sl_tol(sb, sltol);
+  if (find) env::pnp_findability(sb);
+  if (find & 1) cu.phys |= bsc::PF_FIND;
+  if (find & 2) cu.phys |= bsc::PF_FINDSTART;
   if (!all_eps) cu.phys |= bsc::PF_FEAS;
   DeviceEnv env(N, kStageBeh, seed, true, sb.dev, cu);
   gmap::DeviceMap map(N, seed * 7919ull + 3ull, sb.dev);
@@ -172,7 +177,7 @@ int main(int argc, char** argv) {
   }
   std::printf("  all: %ld eps success %.3f; grasp events %ld, slips/drops %ld, mean episode length %.1f steps\n", all[0], all[0] ? (double)all[1] / all[0] : 0.0, grasps, slips,
               all[0] ? (double)steps_sum / all[0] : 0.0);
-  const char* rn[12] = {"none(timeout etc.)", "wide", "heavy", "thin", "no stance", "no place", "no path", "arm plan at stance", "drops", "stuck", "closed without grasp", "pre-grasp timeout"};
+  const char* rn[13] = {"none(timeout etc.)", "wide", "heavy", "thin", "no stance", "no place", "no path", "arm plan at stance", "drops", "stuck", "closed without grasp", "pre-grasp timeout", "not findable"};
   for (int k = bsc::EK_B4; k < bsc::N_EK; ++k) {
     long tot = 0;
     for (int f = 0; f < 16; ++f) tot += why[k][f];

@@ -94,8 +94,11 @@ struct Entry {            // 판 하나의 시작 조건(호스트가 미리 만
   float gst[4];           // B6 잡기 서는 자리(어디서 와도: P 에서 제자리 돌기 되는 자리 먼저) — FE_PLACE6 의 앞 조건
   float pst5[4], pst6[4]; // 놓기 서는 자리: B5 시작 쥠(시작 칸에서 바로 가는 자리 먼저) / B6(gst 에서 계획한 쥠으로)
   float grel[4];          // gst 계획 쥠의 손 축 기준 자리(a, n, b) + ryaw — B6 에서 실제 쥠이 이것과 같으면 pst6 를 씀
+  // ---- 찾을 수 있음(findable.h, 2026-10-06 — env pnp_findability 가 채움, 0 = 표 없음) ----
+  float fpose[4];         // 집을 물체를 찾을 수 있는 자세 중 2 단계 시작으로 고른 것(창 x, y, yaw, 카메라–물체 수평 거리) — FE_FIND 일 때만 뜻 있음
 };
-enum FeasBit { FE_GRASP = 1, FE_PLACE5 = 2, FE_PLACE6 = 4 };   // B4 / B5 / B6(잡기 gst + 놓기 pst6)
+// FE_FIND·FE_FINDP: 찾을 수 있음(findable.h) — 집을 물체 / 놓을 곳. pnp_findability 가 pnp_feasibility 뒤에 더함(feasibility 를 다시 돌리면 지워짐)
+enum FeasBit { FE_GRASP = 1, FE_PLACE5 = 2, FE_PLACE6 = 4, FE_FIND = 8, FE_FINDP = 16 };   // B4 / B5 / B6(잡기 gst + 놓기 pst6)
 // 집기·놓기 판 고르기 표(호스트가 만듦): 인스턴스 → 집을 물체 → 짝(Entry). 각 단계에서 엄격 판을 앞에 둠
 struct PnpPick { int ent_off, n, n_in; };
 struct PnpInst { int pick_off, npick, npick_in, scene, split; };
@@ -121,6 +124,7 @@ struct SceneSet {         // 장치 메모리에 하나(커널은 포인터로 �
   const int16_t* hyper;   // [nname]
   int nname;
   int has_feas;           // 1 = Entry::feas 표를 채움(env pnp_feasibility) — 0 이면 PF_FEAS 고르기는 예전처럼(표 없음)
+  int has_find;           // 1 = Entry::feas 의 FE_FIND·FE_FINDP·fpose 를 채움(env pnp_findability) — PF_FIND·PF_FINDSTART 는 이것이 있어야 함
   const uint64_t* tocc;   // 교사 정적 점유 표(env pnp_feasibility, 2026-10-06): 물체 짝마다 [좁은·넓은 판][WIN 행][낱말 2] = 칸 성분·과제 물체·정적 상자(물체·막는 물체 빼고).
                           // nullptr 이면 교사가 계획 때마다 칠함(같은 비트)
   const int* toccix;      // [nent] → tocc 안 짝 번호(물체 짝만, 나머지 −1)
@@ -153,7 +157,9 @@ struct BCurr {
 constexpr BCurr kBCurrDefault = {0.34f, 0.33f, 0xffu, 0, 0.f, 0, 0, 0, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0};
 // 물리 끄기 비트(BCurr::phys, 음성 대조·실험): 무게 미끄러짐 끔, 폭 검사 끔(손가락 사이 아무 폭이나 잡힘), 팔 충돌 막기 끔
 // PF_FEAS(고르기, 물리 아님): B4–B6 판을 잡기 가능 표(Entry::feas, SceneSet::has_feas)가 그 단계로 된다고 한 짝에서만 뽑음 — 0 이면 예전 난수 흐름
-enum PhysFlag { PF_NO_SLIP = 1, PF_NO_WIDTH = 2, PF_NO_ARMCOLL = 4, PF_FEAS = 8 };
+// PF_FIND(고르기): 찾을 수 없는 물체(findable.h)는 목표로 안 고름 — B4 = 집을 물체, B5 = 놓을 곳, B6 = 둘 다(FE_FIND·FE_FINDP). PF_FEAS 와 같은 거절 표집
+// PF_FINDSTART(시작): B4 를 잡는 자세 칸 대신 찾을 수 있는 자세 fpose 에서 시작(물체가 시야 안·깊이 범위 안 — 2 단계 "앞에서 집기"). 둘 다 0 이면 예전 난수 흐름
+enum PhysFlag { PF_NO_SLIP = 1, PF_NO_WIDTH = 2, PF_NO_ARMCOLL = 4, PF_FEAS = 8, PF_FIND = 16, PF_FINDSTART = 32 };
 // 판의 목표 꼴(env I_B_GMODE 비트, 지도 BMapEnv::gmode)
 enum GoalMode { GM_PLACE_PT = 1,   // 놓을 칸(목표 칸 1)이 점(F_B_GPX..Z)
                 GM_GOTO = 2 };     // 점으로 가기: 집을 칸 없음, 지금 가는 목표 = 놓을 점(B1·B3 변형)

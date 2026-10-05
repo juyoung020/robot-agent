@@ -275,8 +275,11 @@ DEV void reset_beh(Core& c, BState& b, PState& p, const bsc::SceneSet& ss, const
   if (e < 0) { e = 0; kind = ss.ent[0].list == bsc::L_ROOM ? bsc::EK_B1 : bsc::EK_B3; }   // 설정이 아무것도 못 고름(호스트가 미리 막음) — 첫 판
   // 잡기 가능 판만(PF_FEAS, 잡기 물리 판, 표가 있을 때): 그 단계로 될 수 있다고 표가 말하는 짝이 나올 때까지 같은 고르기를 다시(거절 표집 — 조건부 분포는
   // 원래 고르기 비율 그대로). 비트가 꺼져 있으면 난수를 더 뽑지 않음(예전 흐름)
-  if (is_pnp_kind(kind) && (cu.phys & bsc::PF_FEAS) && ss.has_feas) {
-    const int need = kind == bsc::EK_B4 ? bsc::FE_GRASP : kind == bsc::EK_B5 ? bsc::FE_PLACE5 : bsc::FE_PLACE6;
+  // PF_FIND(찾을 수 있음, findable.h): 같은 거절 표집에 목표 물체 비트를 더함(B4 집을 것, B5 놓을 곳, B6 둘 다)
+  const bool fe_on = (cu.phys & bsc::PF_FEAS) && ss.has_feas, fi_on = (cu.phys & bsc::PF_FIND) && ss.has_find;
+  if (is_pnp_kind(kind) && (fe_on || fi_on)) {
+    const int need = (fe_on ? (kind == bsc::EK_B4 ? bsc::FE_GRASP : kind == bsc::EK_B5 ? bsc::FE_PLACE5 : bsc::FE_PLACE6) : 0) |
+                     (fi_on ? (kind == bsc::EK_B4 ? bsc::FE_FIND : kind == bsc::EK_B5 ? bsc::FE_FINDP : bsc::FE_FIND | bsc::FE_FINDP) : 0);
     for (int t = 0; t < KP::feas_tries && (ss.ent[e].feas & need) != need; ++t) {
       const int e2 = pick_pnp(ss, cu, c.rng);
       if (e2 >= 0) e = e2;

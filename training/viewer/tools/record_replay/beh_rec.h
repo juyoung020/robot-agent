@@ -48,7 +48,7 @@ inline std::string in_layout_json() {
 
 static const char* kSlModeName[] = {"none", "fail", "nav", "approach0", "rotate", "arm_ready", "drive", "fine", "wait", "arm_grasp", "close", "reopen",
                                     "lift", "fold", "back", "arm_place", "open", "retreat", "done", "explore", "fail_arm", "backup"};
-static const char* kFeasReason[] = {"ok", "too wide", "too heavy", "too thin", "no stance", "no place", "no path", "arm", "drops", "stuck", "miss", "pre-grasp"};
+static const char* kFeasReason[] = {"ok", "too wide", "too heavy", "too thin", "no stance", "no place", "no path", "arm", "drops", "stuck", "miss", "pre-grasp", "not findable"};
 
 inline std::string jarr(const float* v, int n) {
   std::string s = "[";
@@ -189,7 +189,7 @@ struct BehRec {
     const bsc::PnpFilter& F = B->filt;
     const float w = std::min(E.odim[0], E.odim[1]), mass = env::mass_of(E.mass);
     const int sf = env::obj_static_feas(E.odim, E.mass);
-    auto rsn = [](int r) { return std::string(r >= 0 && r < 12 ? kFeasReason[r] : "?"); };
+    auto rsn = [](int r) { return std::string(r >= 0 && r < 13 ? kFeasReason[r] : "?"); };
     const int fe = E.feas;
     const float dtop = E.ppt_ok ? E.ppt[2] : E.dhi[2] > E.dlo[2] ? E.dhi[2] : 0.f;   // 놓을 면 높이(점 → 그 z, 상자 → 윗면, 바닥 0)
     std::string cands = "[";
@@ -216,7 +216,8 @@ struct BehRec {
                             .raw("max_w", "[" + jnum(F.max_w[0]) + "," + jnum(F.max_w[1]) + "]").raw("max_mass", "[" + jnum(F.max_mass[0]) + "," + jnum(F.max_mass[1]) + "]")
                             .b("src_ok", E.src_top <= F.pick_z[0] + 1e-3f).b("dst_ok", dtop <= F.place_top[0] + 1e-3f).done())
         .raw("feas", Obj().num("bits", fe & 0xff).b("B4", fe & bsc::FE_GRASP).b("B5", fe & bsc::FE_PLACE5).b("B6", fe & bsc::FE_PLACE6).str("grasp_why", rsn((fe >> 8) & 0xff))
-                         .str("place5_why", rsn((fe >> 16) & 0xff)).str("place6_why", rsn((fe >> 24) & 0xff)).num("fset", E.fset).done())
+                         .str("place5_why", rsn((fe >> 16) & 0xff)).str("place6_why", rsn((fe >> 24) & 0xff)).num("fset", E.fset)
+                         .b("findable", fe & bsc::FE_FIND).b("findable_place", fe & bsc::FE_FINDP).b("find_table", B->host.has_find).raw("find_pose", jarr(E.fpose, 4)).done())
         .raw("stance", Obj().raw("grasp_cell", jarr(E.st, 2)).raw("gst4", jarr(E.gst4, 4)).raw("gst", jarr(E.gst, 4)).raw("pst5", jarr(E.pst5, 4)).raw("pst6", jarr(E.pst6, 4))
                            .raw("dst_cell", jarr(E.dst_st, 2)).raw("cands", cands).num("n_cands", ncand).done())
         .raw("place_pt", E.ppt_ok ? jarr(E.ppt, 3) : std::string("null")).raw("place_box", "[" + jarr(E.dlo, 3) + "," + jarr(E.dhi, 3) + "]").done();
