@@ -1,4 +1,4 @@
-# 평가기(--robot-config)용 LIMO+OMX 설정. R1 Pro 설정(eval/r1pro.yaml)을 본떠 우리 로봇으로 줄였다(시험 전).
+# 평가기(--robot-config)용 LIMO+OMX 설정(시험 전). 베이스 명령은 vx, wz 만 쓴다(옆 속도 칸은 늘 0).
 model: limo_omx
 name: robot_limo
 eval:
