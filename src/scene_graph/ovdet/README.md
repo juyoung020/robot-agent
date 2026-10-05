@@ -1,4 +1,4 @@
-# ovdet — open-vocabulary object detector (YOLOE, TensorRT FP16, C API)
+# ovdet — object detector (ObjectSAM segmentation, TensorRT FP16, C API)
 
 `ovdet` is the detector of the scenemap perception stack (`docs/scenemap_설계.md`).
 
@@ -13,7 +13,7 @@
 - **In:** one camera image and a prompt, the task's BDDL object names.
 - **Out:** a list of objects. Each object has a prompt index, a score, a box and a mask.
 
-The network is a YOLOE text-prompt segmentation head. It runs in TensorRT (FP16). Everything around the network is hand-written CUDA/C++:
+The network is a YOLO-seg head (default ObjectSAM, YOLO26n student). It runs in TensorRT (FP16). Everything around the network is hand-written CUDA/C++:
 
 - letterbox
 - class selection under the prompt

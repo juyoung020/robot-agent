@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-/* 검출기(YOLOE, src/scene_graph/ovdet) 출력 — 4.2 절 약속. ovdet.h 와 똑같은 정의라 둘 다 include 해도 된다. */
+/* 검출기(ObjectSAM 분할, src/scene_graph/ovdet) 출력 — 4.2 절 약속. ovdet.h 와 똑같은 정의라 둘 다 include 해도 된다. */
 #ifndef SM_DETECTIONS_DEFINED
 #define SM_DETECTIONS_DEFINED
 typedef struct {
@@ -42,7 +42,7 @@ typedef struct {
 typedef struct sm_ctx sm_ctx;
 typedef struct sm_snapshot_t sm_snapshot_t;
 
-/* proprio: 매 스텝 한 벡터. 형식은 로봇(sm_set_robot)마다 — R1 Pro(기본) 61 f32(평가기 proprio), LIMO + OMX-F 12 f32(아래 SM_LIMO_*) */
+/* proprio: 매 스텝 한 벡터. 형식은 로봇(sm_set_robot)마다 — LIMO + OMX-F(기본) 12 f32(아래 SM_LIMO_*), R1 Pro(옛 기록 전용) 61 f32(평가기 proprio) */
 typedef struct { double stamp; const float* proprio; int n_proprio; } sm_proprio;
 typedef struct {
   double stamp; int cam; int w, h;       /* cam — R1: 0 머리, 1 왼손목, 2 오른손목. LIMO: 0 몸통 앞 깊이 카메라(Orbbec Dabai), 1 손목(깊이 없음).
@@ -75,8 +75,8 @@ typedef struct {
 } sm_status;
 
 /* 만들기·판
- * config_json(NULL = 기본값 = R1 Pro, 옛 동작 그대로). 아는 키(작은 읽기, 나머지는 무시):
- *   "robot": "r1pro" | "limo_omx"     — 로봇(sm_set_robot 과 같음). 모르는 이름이면 NULL 을 돌려줌
+ * config_json(NULL = 기본값 = LIMO + OMX-F). 아는 키(작은 읽기, 나머지는 무시):
+ *   "robot": "limo_omx" | "r1pro"     — 로봇(없으면 limo_omx; r1pro 는 옛 기록·시험 전용)(sm_set_robot 과 같음). 모르는 이름이면 NULL 을 돌려줌
  *   "odom":  "pose" | "twist"          — LIMO 적분 원천(기본 pose: 오도메트리 자세 차, twist: proprio 의 vx, vy, wz)
  *   "grip_closed": 숫자                 — 그리퍼 닫힘 문턱(R1 손가락 합 m, 기본 0.09 / LIMO omx_gripper_joint_1 rad, 기본 0.6)
  * 예: sm_create("{\"robot\": \"limo_omx\"}") */
@@ -86,7 +86,7 @@ int     sm_set_labels(sm_ctx*, const char* const* names, int n);   /* 프롬프�
 int     sm_reset(sm_ctx*);                                    /* 새 판: 지도·물체 비우고 원점 */
 /* 입력 */
 int     sm_push_proprio(sm_ctx*, const sm_proprio*);
-int     sm_push_image(sm_ctx*, const sm_image*, const sm_detections* dets /* NULL: scenemap 이 검출기(YOLOE)를 부름 */);
+int     sm_push_image(sm_ctx*, const sm_image*, const sm_detections* dets /* NULL: scenemap 이 검출기를 부름 */);
 int     sm_mark_handled(sm_ctx*, uint32_t id);
 /* 질의(스냅숏) */
 int     sm_snapshot(sm_ctx*, sm_snapshot_t** out);
@@ -121,9 +121,9 @@ double  sm_snap_reachable(const sm_snapshot_t*, const double from[2], const doub
 #endif /* SM_API_H */
 
 /* ---- 로봇 고르기(추가 ABI, 10-04) ----
- * SM_ROBOT_R1PRO(기본): proprio 61(평가기 형식 — base_qvel 0:3, 팔 끝 17:20·42:45, 손가락 24·25·49·50, 몸통 53:57 …),
+ * SM_ROBOT_R1PRO(옛 기록·시험 전용, 기본 아님): proprio 61(평가기 형식 — base_qvel 0:3, 팔 끝 17:20·42:45, 손가락 24·25·49·50, 몸통 53:57 …),
  *   순기구학 r1pro_fk_table.hpp, 카메라 0 머리 1 왼손목 2 오른손목, 손 둘.
- * SM_ROBOT_LIMO_OMX: LIMO(차동 베이스) + OMX-F(5 축 + 그리퍼). 순기구학은 ~/ra_ws/map_vla.urdf 에서 생성한 limo_omx_fk_table.hpp.
+ * SM_ROBOT_LIMO_OMX(기본): LIMO(차동 베이스) + OMX-F(5 축 + 그리퍼). 순기구학은 robot-agent src/robot/map_vla_description xacro(tools/build_urdf.sh)에서 생성한 limo_omx_fk_table.hpp.
  *   '베이스' 프레임 = base_footprint(바닥 z = 0, x 앞, y 왼쪽). 카메라 0 = 몸통 카메라 렌즈 광학(depth_camera_lens_optical_frame = depth_camera_link +x 0.010 m), 1 = wrist_cam_optical_frame.
  *   손 하나: 팔 끝 = omx_end_effector_link, 잡기 규칙은 omx_gripper_joint_1 < grip_closed.
  *   몸 크기 매개변수도 바뀐다(스캔 self_r 0.22, 높이 띠 0.05–0.50 m, 손 반경 0.10, 잡기 반경 0.12 … — README LIMO 절).

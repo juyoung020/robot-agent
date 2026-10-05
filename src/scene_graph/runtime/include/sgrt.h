@@ -1,7 +1,7 @@
 /* sgrt — scene graph runtime: 평가기(또는 로봇) 프로세스 안에서 ① 물체 기억을 실시간으로 굴리는 C ABI 하나.
  *
  *   매 스텝   sgrt_step(proprio)                      → scenemap 자세 적분, 든 물체 따라가기
- *   keyframe  sgrt_step(proprio + 머리 RGB + 깊이)    → ovdet(YOLOE, TensorRT) 검출 → scenemap objmap 갱신
+ *   keyframe  sgrt_step(proprio + 머리 RGB + 깊이)    → ovdet(ObjectSAM 분할 엔진, TensorRT) 검출 + SigLIP 2 + objprob → scenemap objmap 갱신
  *   주기 저장 시뮬 시각 save_s 마다 sm_save_dsg       → out_dir/scene.json(Spark-DSG) · view.json · map.pgm
  *
  * keyframe 인지는 sgrt_want_image() 가 알려 준다(호출자는 그 스텝에만 영상 포인터를 넘기면 된다 — 매 스텝 복사 없음).
@@ -20,7 +20,7 @@ extern "C" {
 typedef struct sgrt sgrt;
 
 typedef struct {
-  const char* engine;       /* YOLOE TensorRT plan (ovdet) */
+  const char* engine;       /* 분할 엔진 TensorRT plan (ovdet) — 기본 ObjectSAM yolo26n-seg-obj-416.plan */
   const char* names;        /* <engine>.names.txt */
   const char* out_dir;      /* 저장 디렉터리 */
   int32_t kf_every;         /* 몇 스텝마다 keyframe (6) */
@@ -32,7 +32,7 @@ void   sgrt_default_config(sgrt_config* c);
 sgrt*  sgrt_create(const sgrt_config* c, char* err, size_t err_len);
 void   sgrt_destroy(sgrt*);
 /* 새 판: 지도·물체 비우고, 프롬프트 표(이 판에서 찾을 물체 이름) 지정.
- * 엔진: sgrt_config.engine 이 YOLOE(큰 열린 어휘, 프롬프트로 켜고 끔) 또는 닫힌 어휘 YOLO11/YOLO26-seg(COCO-80) plan.
+ * 엔진: sgrt_config.engine = ObjectSAM(이름 없는 분할, 어휘 'object' 하나 — 이름은 SigLIP 2 + objprob) 이 기본. 닫힌 어휘 YOLO-seg(COCO-80)는 옛 규칙 비교용.
  * 환경 변수 SGRT_PROMPT = task | all | auto(기본). auto 는 엔진 어휘가 200 이하(닫힌 어휘)면 all — 엔진 이름 전부를 표로
  * 쓰고(과제 이름 중 어휘 밖 것은 err 에 적음), 아니면 task(prompt 그대로). prompt 가 NULL·0 개면 늘 all.
  * 이름 종류(구조물·고정·옮길 수 있음)는 scenemap 기본 표: COCO 의 dining table·couch·bed·refrigerator·oven·sink·tv·toilet·
@@ -117,14 +117,14 @@ sm_ctx* sgrt_scenemap(sgrt*);
 int    sgrt_set_pose_mode(sgrt*, int32_t mode);
 
 /* ---- 로봇 고르기(추가 ABI, 10-04) ----
- * 기본은 R1 Pro(proprio 61, 머리 zed_link 깊이 — 옛 동작 그대로). sgrt_create 때 환경 변수로 고른다:
- *   SGRT_ROBOT=r1pro | limo_omx            → sm_create("{\"robot\": \"<값>\"}")
+ * 기본은 LIMO + OMX-F(proprio 12). R1 Pro(proprio 61, 머리 zed_link 깊이)는 옛 기록 재생 전용. sgrt_create 때 환경 변수로 고른다:
+ *   SGRT_ROBOT=limo_omx | r1pro            → sm_create("{\"robot\": \"<값>\"}")
  *   SGRT_SM_CONFIG=<json>                  → sm_create(<json>) 그대로(robot·odom·grip_closed, scenemap.h sm_create). SGRT_ROBOT 보다 먼저
- *   둘 다 없으면 sm_create(NULL). 모르는 로봇·틀린 json 이면 sgrt_create 가 NULL(err 에 까닭).
+ *   둘 다 없으면 sm_create(NULL) = LIMO + OMX-F. 모르는 로봇·틀린 json 이면 sgrt_create 가 NULL(err 에 까닭).
  * LIMO + OMX-F(limo_omx): sgrt_step 의 proprio = 12 f32(scenemap.h SM_LIMO_*: odom x, y, yaw, vx, vy, wz, omx_joint1..5,
  *   gripper), 영상 = 몸통 앞 깊이 카메라(cam 0 = depth_camera_lens_optical_frame, 렌즈 광학 프레임)와 그 내부 파라미터.
  * sgrt_set_robot: 만든 뒤 바꾸기(sm_set_robot — 지도·물체를 비움, labels·자세 모드는 그대로). sgrt_begin 앞에서 부를 것. 0 성공.
- * sgrt_get_robot: 0 = SM_ROBOT_R1PRO, 1 = SM_ROBOT_LIMO_OMX. sgrt_proprio_dim: 지금 로봇의 최소 n_proprio(61 / 12). */
+ * sgrt_get_robot: 0 = SM_ROBOT_R1PRO, 1 = SM_ROBOT_LIMO_OMX. sgrt_proprio_dim: 지금 로봇의 최소 n_proprio(12 / R1 61). */
 int    sgrt_set_robot(sgrt*, int32_t robot);
 int    sgrt_get_robot(const sgrt*);
 int    sgrt_proprio_dim(const sgrt*);

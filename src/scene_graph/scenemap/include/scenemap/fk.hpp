@@ -3,7 +3,7 @@
 // 로봇 둘(scenemap.h SM_ROBOT_*):
 //   R1 Pro(기본)  — 표 include/scenemap/r1pro_fk_table.hpp(tools/gen_fk_table.py ← src/sim/integ/fk/r1pro_cam_fk.json).
 //                   src/agent/planner/src/fk.rs 와 같은 계산. proprio 61.
-//   LIMO + OMX-F — 표 include/scenemap/limo_omx_fk_table.hpp(tools/gen_limo_fk_table.cpp ← ~/ra_ws/map_vla.urdf).
+//   LIMO + OMX-F — 표 include/scenemap/limo_omx_fk_table.hpp(tools/gen_limo_fk_table.cpp ← map_vla.urdf(robot-agent src/robot/tools/build_urdf.sh 가 저장소 xacro 에서 펼침)).
 //                   베이스 프레임 = base_footprint(바닥). proprio 12(scenemap.h SM_LIMO_*).
 #pragma once
 

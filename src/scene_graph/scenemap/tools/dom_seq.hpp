@@ -252,7 +252,7 @@ class Runner {
   // labels: 프롬프트 표(검출 cls 번호). static_names: 고정 종류 표를 바꿀 때(빈 것 = scenemap 기본 표)
   Runner(const Seq& s, const std::string& out_dir, const std::vector<std::string>& labels, const std::vector<std::string>* static_names)
       : seq_(s) {
-    c_ = sm_create(nullptr);   // R1 매개변수(스캔 높이 띠 0.10–1.80 m — 사람 키 카메라에 맞음)
+    c_ = sm_create("{\"robot\": \"r1pro\"}");   // R1 매개변수(스캔 높이 띠 0.10–1.80 m — 사람 키 카메라에 맞음)
     sm_set_pose_mode(c_, SM_POSE_GT);
     std::vector<const char*> lab;
     for (auto& x : labels) lab.push_back(x.c_str());

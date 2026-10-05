@@ -86,7 +86,7 @@ int main(int argc, char** argv) {
                             {"tip", "omx_end_effector_link", "팔 끝 — 관절 원점 + 이 점이 팔 뼈대(몸 가리기)"}};
   std::ostringstream o;
   o << "// 자동 생성: tools/gen_limo_fk_table.cpp ← map_vla.urdf(LIMO + OMX-F). 손으로 고치지 말 것.\n"
-    << "// 다시 만들기: gen_limo_fk_table ~/ra_ws/map_vla.urdf include/scenemap/limo_omx_fk_table.hpp\n"
+    << "// 다시 만들기: gen_limo_fk_table map_vla.urdf(robot-agent src/robot/tools/build_urdf.sh 가 저장소 xacro 에서 펼침) include/scenemap/limo_omx_fk_table.hpp\n"
     << "// 사슬 시작 = base_footprint(바닥, scenemap 의 '베이스' 프레임). q = LIMO proprio 번호(scenemap.h SM_LIMO_*), -1 = 고정.\n"
     << "#pragma once\n\nnamespace scenemap::limo {\n\n"
     << "struct JointDef { int kind; double xyz[3], rpy[3], axis[3]; int q; const char* name; };\n"

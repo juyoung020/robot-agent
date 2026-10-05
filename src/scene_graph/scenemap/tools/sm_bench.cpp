@@ -5,7 +5,7 @@
 //
 // 재생은 sgrt_step 과 같은 순서: 스텝마다 (외부 자세) → proprio, keyframe 이면 영상(stamp = 직전 스텝, --lag 1) + 검출.
 // --snap-every N: N 스텝마다 sm_take_dirty + sm_snapshot(탐색 쪽 sgrt_map 흉내). --save-every S: 시뮬 S 초마다 sm_save_dsg.
-// --robot / --sm-config: 기록한 로봇(sgrt 의 SGRT_ROBOT / SGRT_SM_CONFIG 와 같게). 없으면 sm_create(NULL) = R1.
+// --robot / --sm-config: 기록한 로봇(sgrt 의 SGRT_ROBOT / SGRT_SM_CONFIG 와 같게). 없으면 sm_create(NULL) = LIMO.
 // --loops K: 같은 기록을 K 번(사이에 sm_reset, 시간은 합침 — 막대그래프 표본 늘리기).
 // 끝에 단계 표(n, 평균, p50, p99, 최대 µs)와 자세 진단(외부 자세가 있으면: 첫 keyframe 에서 맞춘 뒤 떠밀림)을 찍는다.
 #include <chrono>
@@ -30,7 +30,7 @@ int main(int argc, char** argv) {
                          "[--save-every S] [--save DIR] [--traj out.csv] [--labels names.txt] [--frames N] [--loops K] [--robot r1pro|limo_omx] [--sm-config JSON]\n");
     return 2;
   }
-  std::string pose = "slam", save_dir, traj, labels_path, sm_cfg;   // sm_cfg 비면 sm_create(NULL) = R1
+  std::string pose = "slam", save_dir, traj, labels_path, sm_cfg;   // sm_cfg 비면 sm_create(NULL) = LIMO
   double gt_shift = 0;   // 외부 자세 stamp 를 이만큼 스텝 뒤로(= 그 자세가 늦게 그려진다고 봄)
   int lag = 1, policy = 1, snap_every = 6, frames = 0, loops = 1;
   double save_every = 0;

@@ -55,19 +55,19 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 - 관측에 머리 RGB-D 가 없으면 한 번 경고한다(`RGBDFullResWrapper` 를 쓸 것).
 - 쓰는 곳: `src/sim/move_robot/run_eval_move.py`, `src/sim/explore/run_explore.py`.
 
-## 로봇 고르기(R1 Pro · LIMO + OMX-F)
+## 로봇 고르기(LIMO + OMX-F 가 기본, R1 Pro 는 옛 기록 전용)
 
-기본은 R1 Pro(옛 동작 그대로 — `sm_create(NULL)`). `sgrt_create` 때 환경 변수로 고른다.
+기본은 LIMO + OMX-F(10-06 부터, `sm_create(NULL)`). R1 Pro 는 옛 R1 기록 재생·시험에만 `SGRT_ROBOT=r1pro` 로 명시. `sgrt_create` 때 환경 변수로 고른다.
 
 | 방법 | 뜻 |
 |---|---|
-| `SGRT_ROBOT=r1pro \| limo_omx` | `sm_create("{\"robot\": \"<값>\"}")` |
+| `SGRT_ROBOT=limo_omx \| r1pro` | `sm_create("{\"robot\": \"<값>\"}")` |
 | `SGRT_SM_CONFIG='<json>'` | `sm_create` 의 config_json 그대로(`robot`·`odom`·`grip_closed`, `../scenemap/README.md` LIMO 절). `SGRT_ROBOT` 보다 먼저 |
 | `sgrt_set_robot(s, 1)` | 만든 뒤 바꾸기(지도·물체 비움). `sgrt_begin` 앞에서. `sgrt_get_robot`·`sgrt_proprio_dim` 으로 확인 |
 
 모르는 로봇·틀린 json 이면 `sgrt_create` 가 NULL(err 에 까닭). LIMO 면 `sgrt_step` 의 proprio 는 12 f32(`SM_LIMO_*`), 영상은 몸통 앞 깊이 카메라(scenemap cam 0 = `depth_camera_lens_optical_frame`, 렌즈)와 그 내부 파라미터다. `sgrt_step` 은 영상 하나만 받으므로 손목 카메라(cam 1, 깊이 없음)는 넘기지 않는다(지도에도 안 씀).
 
-**글루(`SceneMemory`)** 가 로봇을 정하는 순서: 인자 `robot_model=` → `SGRT_ROBOT` → 시뮬 로봇의 `robot.model`(`limo_omx`) → 첫 스텝 관측에 `:eyes:Camera:0` 이 있으면 LIMO 로 바꿈(`sgrt_set_robot`). R1 이면 아무것도 안 바꾼다.
+**글루(`SceneMemory`)** 가 로봇을 정하는 순서: 인자 `robot_model=` → `SGRT_ROBOT` → 시뮬 로봇의 `robot.model`(`limo_omx`) → 첫 스텝 관측에 `:eyes:Camera:0` 이 있으면 LIMO 로 바꿈(`sgrt_set_robot`). 아무것도 안 정해지면 limo_omx(라이브러리 기본).
 
 | | R1 Pro | LIMO + OMX-F (OmniGibson `limo_omx`, robot-agent `src/robot/og/limo_omx_eval.yaml`) |
 |---|---|---|
@@ -95,7 +95,7 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 | 정답 기록 끔 | `SGRT_GT_LOG=<out>/gt_poses.csv` 기본(+ `.objects.json` 정답 물체), `<out>/poses.csv`(keyframe 마다 정답 world·map 틀 자세 ↔ slam 자세), `<out>/pose_diag.json`(sgrt_get_pose_diag, 약 1 초마다 — 평가기가 close 전에 끝나므로) |
 | 몸통(libmove_robot `nav.rs` Footprint, R1 원 0.37 m · 계획 부풀림 0.40) | **LIMO 사각형 0.36 × 0.22 m**(시뮬 충돌 모양: 몸통 0.322, 바퀴 폭 0.217, 홈 자세 팔이 뒤로 0.18 m 까지 → 대칭), 부풀림 = 외접원 0.211 + 0.03 = 0.241 m. `MOVE_ROBOT_FOOTPRINT=limo_omx`(run_explore.sh 가 LIMO 일 때 기본으로 넣음, `rect:LxW`·`circle:R` 도 됨). 없으면 R1 그대로 |
 
-그 밖: `MOVE_ROBOT_LIB` 기본 = `$ROBOT_AGENT/src/agent/tools/move_robot/target/release/libmove_robot.so`, 정답 바닥 지도는 `src/sim/explore/gt` 가 없으면 `~/behavior-2026/src/sim/explore/gt`(서브모듈 안에서는 둘 다 같은 경로). libsgrt 는 `sgrt_set_robot` 이 있는 빌드여야 함(없으면 멈춤). R1(`SGRT_ROBOT` 없음·r1pro)은 바뀐 것 없음.
+그 밖: `MOVE_ROBOT_LIB` 기본 = `$ROBOT_AGENT/src/agent/tools/move_robot/target/release/libmove_robot.so`, 정답 바닥 지도는 `src/sim/explore/gt` 가 없으면 `~/behavior-2026/src/sim/explore/gt`(서브모듈 안에서는 둘 다 같은 경로). libsgrt 는 `sgrt_set_robot` 이 있는 빌드여야 함(없으면 멈춤). `SGRT_ROBOT` 없음 = limo_omx(10-06 부터; 옛 R1 기본값은 없어짐, `r1pro` 는 옛 기록 재생에만).
 
 **LIMO 탐색 결과**(10-04, turning_on_radio 인스턴스 0 = house_double_floor_lower, headless, frontier, `SGRT_POSE=slam`, robot-agent 391c04b 자산 — `LIMO_NEAR_CLIP` 우회 안 씀(이미 0.05), 엔진 기본 yoloe-11l): `no_frontier` 로 끝, go_to 5 번, 시뮬 58.4 s(벽 62 s). 경로 정답 13.1 m(move_robot `path_m` 11.0 — base_qvel 적분, 약 16 % 짧음), 빈칸 53.3 m², 닿을 수 있는 정답 바닥의 88.7 %. slam ↔ 정답 keyframe 291 개 rms 3.1 cm / 0.26°, 최대 5.3 cm / 0.66°, 끝 4.1 cm / 0.49°. 막힘·멈춤·접촉 0, 최소 여유 0.10 m. 지도: 빈칸의 90 % 가 정답 바닥, 점유 칸의 96 % 가 정답 비바닥 ±10 cm 안. 물체 16 개 모두 정답 물체 AABB 10 cm 안, 범주로 보면 13 개 맞음(radio·sofa·shelf·coffee/breakfast table·조명), 3 개 틀림(lamp→stairs, picture frame→hall_tree, radio receiver→downlight). 같은 조건 R1 확인 판: 16.6 m·56.5 m²·90.3 %·67 s.
 
@@ -109,7 +109,7 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 
 | 이름 | 기본값 | 뜻 |
 |---|---|---|
-| `SGRT_ROBOT` | 없음(R1) | 로봇: `r1pro` · `limo_omx`(위 "로봇 고르기"). 글루도 읽는다 |
+| `SGRT_ROBOT` | 없음(limo_omx) | 로봇: `limo_omx` · `r1pro`(옛 기록 전용)(위 "로봇 고르기"). 글루도 읽는다 |
 | `SGRT_SM_CONFIG` | 없음 | scenemap `sm_create` config_json 그대로(예: `{"robot": "limo_omx", "odom": "twist"}`). 있으면 `SGRT_ROBOT` 무시 |
 | `SGRT_POSE` | `slam` | 자세 원천. `slam`(적분 + 스캔 맞추기) · `odom`(적분만) · `gt`(외부 정답 베이스 자세, map = 시뮬 world — 진단·시각화용, 대회 제출 금지). 그 밖의 값은 `slam`. 시뮬은 실제 로봇과 같게 `slam` 으로 재고, `gt` 는 확인용으로만 |
 | `SGRT_MAP_POLICY` | `1` | 격자 넣기 정책. 1 = 사건 기반(서 있어도 바뀐 장애물을 넣고 지움), 0 = 옛 움직임 거르기 |

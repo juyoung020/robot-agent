@@ -107,8 +107,11 @@ const sm_object* findCup(sm_snapshot_t* s, int* n) {
 
 int main() {
   CHECK(sm_create("{\"robot\": \"spot\"}") == nullptr, "unknown robot name rejected");
-  sm_ctx* r1 = sm_create(nullptr);
-  CHECK(sm_get_robot(r1) == SM_ROBOT_R1PRO, "default robot is R1 Pro");
+  sm_ctx* dflt = sm_create(nullptr);
+  CHECK(dflt && sm_get_robot(dflt) == SM_ROBOT_LIMO_OMX, "default robot is LIMO + OMX-F");
+  sm_destroy(dflt);
+  sm_ctx* r1 = sm_create("{\"robot\": \"r1pro\"}");   // R1 Pro: explicit, old recordings only
+  CHECK(r1 && sm_get_robot(r1) == SM_ROBOT_R1PRO, "r1pro stays selectable (old recordings only)");
   sm_ctx* c = sm_create("{\"robot\": \"limo_omx\"}");
   CHECK(c && sm_get_robot(c) == SM_ROBOT_LIMO_OMX, "config robot limo_omx");
   if (!c) return 1;

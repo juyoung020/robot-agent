@@ -168,7 +168,7 @@ int main(int argc, char** argv) {
     return true;
   };
 
-  sm_ctx* c = sm_create(nullptr);
+  sm_ctx* c = sm_create("{\"robot\": \"r1pro\"}");
   {
     // 프롬프트 표 = 정답 범주 이름(검출 cls 가 이 번호)
     std::vector<const char*> lab;

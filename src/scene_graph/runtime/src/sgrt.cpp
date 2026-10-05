@@ -376,13 +376,13 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
     delete s;
     return nullptr;
   }
-  // 로봇 고르기: SGRT_SM_CONFIG(sm_create config_json 그대로) > SGRT_ROBOT(r1pro | limo_omx) > 없음(R1, sm_create(NULL) — 옛 동작 그대로)
+  // 로봇 고르기: SGRT_SM_CONFIG(sm_create config_json 그대로) > SGRT_ROBOT(limo_omx | r1pro) > 없음(LIMO + OMX-F, sm_create(NULL))
   std::string smj;
   if (const char* sj = std::getenv("SGRT_SM_CONFIG"); sj && *sj) smj = sj;
   else if (const char* rb = std::getenv("SGRT_ROBOT"); rb && *rb) smj = std::string("{\"robot\": \"") + rb + "\"}";
   s->sm = sm_create(smj.empty() ? nullptr : smj.c_str());
   if (!s->sm) {
-    put(err, err_len, ("sgrt_create: sm_create rejected config " + smj + " (SGRT_ROBOT = r1pro | limo_omx)").c_str());
+    put(err, err_len, ("sgrt_create: sm_create rejected config " + smj + " (SGRT_ROBOT = limo_omx | r1pro)").c_str());
     ovd_destroy(s->det);
     delete s;
     return nullptr;
@@ -393,8 +393,8 @@ sgrt* sgrt_create(const sgrt_config* c, char* err, size_t err_len) {
     delete s;
     return nullptr;
   }
-  if (sm_get_robot(s->sm) != SM_ROBOT_R1PRO)
-    std::fprintf(stderr, "[sgrt] robot %d (0 r1pro, 1 limo_omx), proprio >= %d, config %s\n", sm_get_robot(s->sm),
+  if (sm_get_robot(s->sm) != SM_ROBOT_LIMO_OMX)
+    std::fprintf(stderr, "[sgrt] robot %d (0 r1pro = 옛 기록 전용, 1 limo_omx), proprio >= %d, config %s\n", sm_get_robot(s->sm),
                  sm_proprio_dim(sm_get_robot(s->sm)), smj.c_str());
   if (const char* pm = std::getenv("SGRT_POSE")) {
     const std::string m = pm;
@@ -492,7 +492,7 @@ void sgrt_destroy(sgrt* s) {
 int sgrt_begin(sgrt* s, const char* const* prompt, int32_t n, char* err, size_t err_len) {
   if (!s) return -1;
   // 프롬프트 방식: SGRT_PROMPT=task(과제 이름만) | all(엔진 어휘 전부) | auto(기본: 어휘가 kClosedVocabMax 이하인 닫힌 어휘
-  // 엔진 — COCO-80 YOLO-seg — 이면 all, YOLOE 큰 어휘면 task)
+  // 엔진 — COCO-80 YOLO-seg, 옛 규칙 비교용 — 이면 all, 큰 어휘면 task. 기본 ObjectSAM + objprob 는 이름 표를 SigLIP 2 가 가짐)
   if (s->op.on) {   // objprob: 이름은 SigLIP 2 낱말 표(과제 이름 더함), 검출 엔진은 'object' 하나
     sm_reset(s->sm);
     s->clip.reset();

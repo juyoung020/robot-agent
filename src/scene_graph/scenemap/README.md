@@ -345,7 +345,7 @@ VLA 가 "덜 살펴본 가구로 가서 자세히 볼지"를 고르게 하는 �
 
 ## LIMO + OMX-F
 
-R1 Pro 가 기본이고(옛 동작 그대로 — 아래 회귀 확인), 로봇을 고르면 proprio 형식·순기구학·몸 크기 매개변수가 바뀐다.
+LIMO + OMX-F 가 기본이다(10-06 부터 `sm_create(NULL)` = LIMO; R1 Pro 는 `"robot": "r1pro"` 로 명시하는 옛 기록·시험 전용). 로봇을 고르면 proprio 형식·순기구학·몸 크기 매개변수가 바뀐다.
 
 ```c
 sm_ctx* c = sm_create("{\"robot\": \"limo_omx\"}");   // 또는 sm_create(NULL) 뒤 sm_set_robot(c, SM_ROBOT_LIMO_OMX)
@@ -371,11 +371,12 @@ sm_ctx* c = sm_create("{\"robot\": \"limo_omx\"}");   // 또는 sm_create(NULL) 
 - 스트림(sgview `joints`): LIMO 는 뷰어 `robot.json` 의 `joint_order` 순서(omx_joint1..5, gripper_1, gripper_2 = −gripper_1, (바퀴 넷))로 바꿔 보낸다. R1 은 받은 벡터 그대로.
 - 지도 자세: R1 과 같이 첫 proprio 의 베이스가 map 원점.
 
-**순기구학** — `tools/gen_limo_fk_table.cpp` 가 `~/ra_ws/map_vla.urdf` 의 `<joint>` 에서 base_footprint → 목표 링크 사슬을 찾아 원 숫자(origin xyz·rpy, axis)를 표로 쓴다. 계산은 R1 과 같은 `walk`(fk.cpp).
+**순기구학** — `tools/gen_limo_fk_table.cpp` 가 `map_vla.urdf(robot-agent src/robot/tools/build_urdf.sh 가 저장소 xacro 에서 펼침)` 의 `<joint>` 에서 base_footprint → 목표 링크 사슬을 찾아 원 숫자(origin xyz·rpy, axis)를 표로 쓴다. 계산은 R1 과 같은 `walk`(fk.cpp).
 
 ```bash
-~/scenemap_build/gen_limo_fk_table ~/ra_ws/map_vla.urdf src/scene_graph/scenemap/include/scenemap/limo_omx_fk_table.hpp
-python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py ~/ra_ws/map_vla.urdf   # 시험 기준값(numpy 필요, URDF 가 바뀌면 같이)
+$ROBOT_AGENT/src/robot/tools/build_urdf.sh /tmp/map_vla.urdf   # 저장소 xacro → URDF(ra_ws 없음)
+~/scenemap_build/gen_limo_fk_table /tmp/map_vla.urdf src/scene_graph/scenemap/include/scenemap/limo_omx_fk_table.hpp
+python src/scene_graph/scenemap/tests/gen_limo_fk_ref.py /tmp/map_vla.urdf   # 시험 기준값(numpy 필요, URDF 가 바뀌면 같이)
 ```
 
 | 프레임 | 링크 | 뜻 |

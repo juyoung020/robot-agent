@@ -26,7 +26,6 @@ namespace objprob_front {
 constexpr const char* kDefaultEngine = "yolo26n-seg-obj-416.plan";
 
 // 검출 낱말: 글 → 지도 이름. 구조물(wall·floor …, person)은 scenemap 기본 표대로 노드가 안 된다. fastsam 은 SigLIP 2 라벨 표에 있는 글만,
-// yoloe 는 엔진 어휘(272 개, BEHAVIOR 이름)에 있는 글만 쓴다(없는 것은 시작 때 알림).
 struct Word { const char* text; const char* label; };
 inline const Word kVocab[] = {
     // 구조물·사람(노드 안 됨)

@@ -1,4 +1,4 @@
-// ovdet: open-vocabulary detector (TensorRT YOLOE segmentation head + hand-written CUDA around it). API: include/ovdet.h.
+// ovdet: open-vocabulary detector (TensorRT YOLO-seg head, default ObjectSAM + hand-written CUDA around it). API: include/ovdet.h.
 #include "ovdet.h"
 
 #include <NvInfer.h>

@@ -7,7 +7,7 @@ scenemap 의 표(gen_limo_fk_table.cpp, 정규식 파서 + fk.cpp walk)와 다�
     (fk.cpp 는 3×3 + 이동, 닫힌 꼴 rpy 행렬·Rodrigues 식).
   - 관절 이름 → proprio 번호는 scenemap.h SM_LIMO_* 를 손으로 옮긴 것.
 
-  python gen_limo_fk_ref.py [~/ra_ws/map_vla.urdf]   (numpy 필요; 로봇 밖 오프라인 도구)
+  python gen_limo_fk_ref.py [map_vla.urdf]   (없으면 $ROBOT_AGENT/src/robot/tools/build_urdf.sh 로 저장소 xacro 에서 만듦)   (numpy 필요; 로봇 밖 오프라인 도구)
 """
 import io
 import math
@@ -18,7 +18,13 @@ import xml.etree.ElementTree as ET
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-URDF = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser('~/ra_ws/map_vla.urdf')
+def _default_urdf():
+    import subprocess
+    ra = os.environ.get('ROBOT_AGENT') or os.path.expanduser('~/robot-agent')
+    return subprocess.check_output([os.path.join(ra, 'src', 'robot', 'tools', 'build_urdf.sh'), '/tmp/map_vla_fkref.urdf'], text=True).strip()
+
+
+URDF = sys.argv[1] if len(sys.argv) > 1 else _default_urdf()
 OUT = os.path.join(HERE, 'limo_fk_ref.hpp')
 QIDX = {'omx_joint1': 6, 'omx_joint2': 7, 'omx_joint3': 8, 'omx_joint4': 9, 'omx_joint5': 10, 'omx_gripper_joint_1': 11}
 # 실제 관절 범위(src/robot/real_limits.json)

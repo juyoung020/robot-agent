@@ -1,7 +1,7 @@
-/* ovdet — open-vocabulary object detector (masks + names) as a C library.
+/* ovdet — object detector (masks + names) as a C library.
  *
  * One image and a prompt (the task's BDDL object names) in, a list of objects out: per object the prompt index, a
- * score, a box and a mask. The segmentation network (YOLOE, text-prompt head) runs in TensorRT (FP16); everything
+ * score, a box and a mask. The segmentation network (default ObjectSAM = YOLO26n-seg student, one class "object"; YOLO-seg heads in general) runs in TensorRT (FP16); everything
  * around it — letterbox, class selection, NMS, mask assembly — is hand-written CUDA. No Python, no ROS; the evaluator
  * process calls it directly.
  *
@@ -10,12 +10,11 @@
  * offset back to the input image. Nothing is copied to the caller; the arrays live in the handle and stay valid until
  * the next ovd_detect / ovd_set_prompt / ovd_destroy on that handle.
  *
- * Engine: images 1 x 3 x H x W, output0 1 x (4 + nc + 32) x A, output1 1 x 32 x h x w (archive/src/scene_graph/ovdet/tools/export_yoloe.py,
- * tools/build_engines.py; ObjectSAM: robot-agent training/fastsam/build_engine.py, one name "object"). It is built once with a whole vocabulary (every task's BDDL objects + scene structures,
- * <engine>.names.txt); the prompt switches classes on and off. YOLOE's class scores are independent per class, so this
- * equals an engine built with only the prompt's names.
+ * Engine: images 1 x 3 x H x W, output0 1 x (4 + nc + 32) x A, output1 1 x 32 x h x w (tools/build_engines.py; ObjectSAM: robot-agent training/fastsam/build_engine.py, one name "object", <engine>.names.txt).
+ * A closed-vocabulary engine (COCO-80, old-rule comparison only) can switch classes on and off with the prompt; class scores are
+ * independent per class, so this equals an engine built with only the prompt's names.
  *
- * Licence: YOLOE (Ultralytics / THU-MIG) is AGPL-3.0, and so are the weights in the engine; see README.md.
+ * Licence: see README.md (Ultralytics-derived weights are AGPL-3.0).
  *
  * Thread safety: one handle per thread. Calls are synchronous on the handle's own CUDA stream.
  */

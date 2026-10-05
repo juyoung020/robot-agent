@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
   if (!e || std::fread(ref.data(), 8, ref.size(), e) != ref.size()) { std::fprintf(stderr, "est.bin\n"); return 1; }
   std::fclose(e);
 
-  sm_ctx* c = sm_create(nullptr);
+  sm_ctx* c = sm_create("{\"robot\": \"r1pro\"}");
   std::vector<uint16_t> mm(size_t(w) * h);
   std::vector<float> dm(mm.size());
   float T[12];

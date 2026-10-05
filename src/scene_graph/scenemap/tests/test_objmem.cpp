@@ -127,7 +127,7 @@ struct Rig {
   std::vector<float> q = proprio();
   Frame f;
   explicit Rig(const std::vector<const char*>& labels) {
-    c = sm_create(nullptr);
+    c = sm_create("{\"robot\": \"r1pro\"}");
     sm_set_labels(c, labels.data(), int(labels.size()));
   }
   ~Rig() { sm_destroy(c); }

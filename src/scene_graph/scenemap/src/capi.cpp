@@ -471,7 +471,8 @@ bool cfgNumber(const std::string& j, const char* key, double* out) {
 
 sm_ctx* sm_create(const char* config_json) {
   sm_ctx* c = new sm_ctx(SlamParams{});
-  if (!config_json || !*config_json) return c;   // 기본: R1 Pro(옛 동작 그대로)
+  sm_set_robot(c, SM_ROBOT_LIMO_OMX);            // 기본: LIMO + OMX-F(우리 로봇). R1 Pro 는 config "robot": "r1pro" 로 명시한 옛 기록·시험용
+  if (!config_json || !*config_json) return c;
   const std::string j(config_json);
   std::string r;
   if (cfgString(j, "robot", &r)) {

@@ -84,7 +84,7 @@ static void render(const double pose[3], const std::vector<Box>& boxes, std::vec
 }
 
 struct Run {
-  sm_ctx* c = sm_create(nullptr);
+  sm_ctx* c = sm_create("{\"robot\": \"r1pro\"}");
   std::vector<float> q = proprio(), depth;
   int step = 0;
   ~Run() { sm_destroy(c); }

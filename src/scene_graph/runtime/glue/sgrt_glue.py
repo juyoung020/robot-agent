@@ -21,10 +21,10 @@ used for the drift diagnostic. GT is for sim debugging/visualisation only -- the
 submission time. SGRT_GT_LOG=<csv> also logs per-keyframe GT base/head-camera poses; on close the GT object poses are
 written next to it (<csv>.objects.json) for scoring object positions.
 
-Robot (libsgrt robot selection, sgrt.h): R1 Pro (default, 61-dim evaluator proprio, head camera zed_link) or our LIMO + OMX-F
-(OmniGibson model "limo_omx", robot config robot-agent src/robot/og/limo_omx_eval.yaml). Chosen by, in order: the
+Robot (libsgrt robot selection, sgrt.h): our LIMO + OMX-F (default; OmniGibson model "limo_omx", robot config robot-agent src/robot/og/limo_omx_eval.yaml). Chosen by, in order: the
 SceneMemory(robot_model=...) argument, env SGRT_ROBOT (also read by libsgrt itself), the simulator robot's model name
 (robot.model == "limo_omx"), and on the first step an observation that carries the LIMO body camera (":eyes:Camera:0").
+Nothing set -> limo_omx. R1 Pro ("r1pro", 61-dim evaluator proprio, head camera zed_link) is kept only for replaying old R1 recordings.
 For LIMO the glue packs scenemap's 12-dim LIMO proprio (scenemap.h SM_LIMO_*) from the evaluator proprio
 (base_qvel, arm_0_qpos, gripper_0_qpos): 0-2 wheel-odometry pose = base_qvel integrated at 30 Hz (no GT), 3-5 base_qvel
 (vx, vy, wz in the base frame), 6-10 omx_joint1..5, 11 omx_gripper_joint_1. The map image is the body camera
@@ -128,7 +128,7 @@ class SceneMemory:
     def __init__(self, task: str, out_dir: str, kf_every: int = 6, save_s: float = 1.0, robot: str = "robot", robot_model: str = None):
         self.L = ctypes.CDLL(LIB)
         L = self.L
-        # robot selection (module docstring). R1 (nothing set, R1 or no sim robot) leaves the library default untouched.
+        # robot selection (module docstring). Nothing set -> limo_omx (the library default too).
         self.has_robot = hasattr(L, "sgrt_get_robot")
         if self.has_robot:
             L.sgrt_get_robot.argtypes = [ctypes.c_void_p]
@@ -136,7 +136,7 @@ class SceneMemory:
         want = (robot_model or "").lower()
         if not want and not (os.environ.get("SGRT_ROBOT") or os.environ.get("SGRT_SM_CONFIG")):
             r0 = _find_robot()
-            want = _robot_model(r0) if r0 is not None and _robot_model(r0) in ROBOTS else ""
+            want = _robot_model(r0) if r0 is not None and _robot_model(r0) in ROBOTS else "limo_omx"
         if want and want not in ROBOTS:
             raise ValueError(f"[sgrt] unknown robot_model {want!r} (one of {sorted(ROBOTS)})")
         L.sgrt_create.restype = ctypes.c_void_p
@@ -162,7 +162,7 @@ class SceneMemory:
         self.h = L.sgrt_create(ctypes.byref(cfg), err, 512)
         if not self.h:
             raise RuntimeError(f"sgrt_create: {err.value.decode()}")
-        if want and ROBOTS[want] != 0:
+        if want:
             if not self.has_robot:
                 raise RuntimeError(f"[sgrt] {LIB} has no robot selection (sgrt_set_robot) — rebuild libsgrt for {want}")
             if L.sgrt_get_robot(self.h) != ROBOTS[want]:

@@ -1,5 +1,5 @@
 // 자동 생성: tools/gen_limo_fk_table.cpp ← map_vla.urdf(LIMO + OMX-F). 손으로 고치지 말 것.
-// 다시 만들기: gen_limo_fk_table ~/ra_ws/map_vla.urdf include/scenemap/limo_omx_fk_table.hpp
+// 다시 만들기: gen_limo_fk_table map_vla.urdf(robot-agent src/robot/tools/build_urdf.sh 가 저장소 xacro 에서 펼침) include/scenemap/limo_omx_fk_table.hpp
 // 사슬 시작 = base_footprint(바닥, scenemap 의 '베이스' 프레임). q = LIMO proprio 번호(scenemap.h SM_LIMO_*), -1 = 고정.
 #pragma once
 
