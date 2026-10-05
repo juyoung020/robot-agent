@@ -9,7 +9,7 @@
 #endif
 #include "omx_workspace_grasp.h"   // 팔이 닿는지: URDF 로 미리 계산한 OMX 잡는 점 작업 공간(tools/omx_ws --grasp, env 헤더)
 #include "vla_vocab.h"       // 이름 표 행·상위어·이름 확신도(training/data/vla_v1 에서 생성)
-#include "topview.h"         // 위에서 본 지도 그림 — 하나의 정의(교사 격자 MapTok::tv, 학생 RGB)
+#include "topview.h"         // 격자(MapTok::tv) — 하나의 정의
 #include "mem_tok.h"         // 기억 줄 한 함수(mem_row) — 실제 로봇 sm_tok.h 와 같은 식
 
 namespace gmap {
@@ -407,97 +407,22 @@ DEV float sel_key(const MapCore& m, const Slot& S, const BCtx* bxp) {
   const float dx = S.pos[0] - m.ex, dy = S.pos[1] - m.ey;
   return sqrtf(dx * dx + dy * dy);
 }
-// 한 스레드판(그림 상태 tv_topstate — 학생 그림을 그릴 때만): 고른 칸 번호 oid[0..n), 나머지 −1
-DEV int obj_select_serial(const MapCore& m, const Slot* ob, const BCtx* bxp, int16_t* oid, float* okey, int cap) {
-  int n = 0;
-  for (int w = 0; w < NOBJW; ++w)
-    for (uint32_t bits = m.objv[w]; bits; bits &= bits - 1u) {
-      const int g = 32 * w + ctz32(bits);
-      const Slot& S = ob[g];
-      if (!S.confirmed) continue;
-      const float k = sel_key(m, S, bxp);
-      int p = n < cap ? n : cap;   // 넣을 자리(삽입 정렬, 같은 열쇠는 앞 칸 번호 먼저 — 칸 번호 차례로 오므로 뒤에 둠)
-      while (p > 0 && okey[p - 1] > k) --p;
-      if (p >= cap) continue;
-      for (int j = (n < cap ? n : cap - 1); j > p; --j) { okey[j] = okey[j - 1]; oid[j] = oid[j - 1]; }
-      okey[p] = k; oid[p] = (int16_t)g;
-      if (n < cap) ++n;
-    }
-  for (int j = n; j < cap; ++j) oid[j] = -1;
-  return n;
-}
-// 목표 물체 칸 고르기(make_tokens 1)·1b) 와 같은 규칙, 한 스레드판 — 위에서 본 지도 그림이 씀): g0 = prim 0 짝(사라지지 않은 것 중 가장 가까움, 없으면 사라진 것),
-// g1 = prim 1 짝(BEHAVIOR goal 비트 1). lost0/lost1 = 사라진 칸을 고름. 없으면 −1
-DEV void tv_goal_slots(const MapCore& m, const Slot* ob, const int16_t* oid, const BCtx* bxp, int& g0, int& g1) {   // oid: 고른 칸(KSLOT, −1 빈 칸) — g0·g1 은 그 자리
-  const bool beh = bxp != nullptr && bxp->on;
-  const Prim& P = m.prim[0];
-  const float tcx = 0.5f * (P.lo[0] + P.hi[0]), tcy = 0.5f * (P.lo[1] + P.hi[1]);
-  float pext[3];
-  for (int a = 0; a < 3; ++a) pext[a] = P.hi[a] - P.lo[a];
-  const float thr = maxf(MP::da_min, MP::da_k * max3(pext));
-  int t0 = -1, l0 = -1, t1 = -1, l1 = -1;
-  float k0 = 0.f, kl0 = 0.f, k1 = 0.f, kl1 = 0.f;
-  for (int b = 0; b < KSLOT; ++b) {
-    if (oid[b] < 0) continue;
-    const Slot& S = ob[oid[b]];
-    const float tx = S.pos[0] - tcx, ty = S.pos[1] - tcy, d2 = tx * tx + ty * ty;
-    if ((!beh || (bxp->bm->goal & 1)) && S.src == 0 && d2 < thr * thr) {
-      if (S.state != S_GONE) { if (t0 < 0 || d2 < k0) { t0 = b; k0 = d2; } }
-      else if (l0 < 0 || d2 < kl0) { l0 = b; kl0 = d2; }
-    }
-  }
-  if (beh && (bxp->bm->goal & 2)) {
-    const Prim& P1 = m.prim[1];
-    float e1[3];
-    for (int a = 0; a < 3; ++a) e1[a] = P1.hi[a] - P1.lo[a];
-    const float th1 = maxf(MP::da_min, MP::da_k * max3(e1));
-    for (int b = 0; b < KSLOT; ++b) {
-      if (oid[b] < 0) continue;
-      const Slot& S = ob[oid[b]];
-      const float ux = S.pos[0] - 0.5f * (P1.lo[0] + P1.hi[0]), uy = S.pos[1] - 0.5f * (P1.lo[1] + P1.hi[1]), u2 = ux * ux + uy * uy;
-      if (!(S.src == 1 && u2 < th1 * th1)) continue;
-      if (S.state != S_GONE) { if (b != t0 && (t1 < 0 || u2 < k1)) { t1 = b; k1 = u2; } }
-      else if (b != l0 && (l1 < 0 || u2 < kl1)) { l1 = b; kl1 = u2; }
-    }
-  }
-  g0 = t0 >= 0 ? t0 : l0;
-  g1 = t1 >= 0 ? t1 : l1;
-}
-// 위에서 본 지도 입력(topview.h TvIn): 믿는 자세, 확정 물체 상자(사라진 것 빼고 — 사라진 목표는 마지막 자리로 넣음), 목표 색, 놓을 점.
-// teacher = true: 교사 격자용(목표 색·점 없음 — 목표는 목표 칸 값으로). hide_obj = 학생 목표 감추기(물체 목표 색만 장애물로, 점은 그대로)
-DEV void tv_input(const MapCore& m, const Slot* ob, const int16_t* oid, const BCtx* bxp, bool teacher, bool hide_obj, TvIn& in) {
-  const bool beh = bxp != nullptr && bxp->on;
+// 격자 입력(topview.h TvIn): 믿는 자세, 고른 칸(oid)의 확정 물체 상자 — 사라진 것은 뺀다
+DEV void tv_input(const MapCore& m, const Slot* ob, const int16_t* oid, TvIn& in) {
   float s, c;
   sincosf_d(m.eyaw, &s, &c);
   in.px = m.ex; in.py = m.ey; in.c = c; in.s = s;
-  int g0 = -1, g1 = -1;
-  if (!teacher) tv_goal_slots(m, ob, oid, bxp, g0, g1);
-  const int k0 = (beh && bxp->bm->kind == bsc::EK_B1) ? (int)TV_PLACE : (int)TV_PICK;   // prim 0 = B1 이면 가는 곳(놓을 곳 칸)
   int n = 0;
   for (int b = 0; b < KSLOT && n < TV_MAXBOX; ++b) {
     if (oid[b] < 0) continue;
     const Slot& S = ob[oid[b]];
-    const bool goal = b == g0 || b == g1;
-    if (S.state == S_GONE && !goal) continue;
+    if (S.state == S_GONE) continue;
     TvBox& B = in.box[n++];
     for (int a = 0; a < 2; ++a) { B.lo[a] = S.pos[a] - 0.5f * S.ext[a]; B.hi[a] = S.pos[a] + 0.5f * S.ext[a]; }
-    B.kind = (!goal || hide_obj) ? (int)TV_OBST : (b == g0 ? k0 : (int)TV_PLACE);
+    B.kind = (int)TV_OBST;
   }
   in.nbox = n;
   for (int k = n; k < TV_MAXBOX; ++k) { in.box[k].lo[0] = in.box[k].lo[1] = in.box[k].hi[0] = in.box[k].hi[1] = 0.f; in.box[k].kind = 0; }   // 빈 자리 0(바이트 비교)
-  in.has_pt = 0; in.gx = 0.f; in.gy = 0.f;
-  if (!teacher && beh && (bxp->bm->gmode & bsc::GM_PLACE_PT)) { in.has_pt = 1; in.gx = bxp->bm->gp[0]; in.gy = bxp->bm->gp[1]; }
-}
-
-// 학생 그림 상태 한 판(레인 nl 개가 비트를 나눠 옮김, 레인 0 이 입력)
-DEV void tv_topstate(const MapCore& m, const Slot* ob, const BCtx* bxp, const uint32_t* occ, const uint32_t* seen, TopState& t, int lane, int nl) {
-  for (int k = lane; k < NWORD; k += nl) { t.occ[k] = occ[k]; t.seen[k] = seen[k]; }
-  if (lane == 0) {
-    int16_t oid[KSLOT];
-    float okey[KSLOT];
-    obj_select_serial(m, ob, bxp, oid, okey, KSLOT);
-    tv_input(m, ob, oid, bxp, false, false, t.in);
-  }
 }
 
 // 목표 칸 하나(GoalVal 16 값 FP16): kind 0 = 없음, 1 = 물체, 2 = 점. 위치 P(지도 좌표)는 known 일 때만. (px, py, c, s) = 믿는 자세, eef_b = base_link 손끝
@@ -822,7 +747,7 @@ DEV void make_tokens_n(const MapCore& m, const Slot* ob, const uint32_t* occ, co
       if (B.goal & 2) obj_entry(GE_PLACE, tgt2, gone2);
       if (B.gmode & bsc::GM_PLACE_PT) goal_fill(o.goal[GE_PLACE], 2, true, false, B.gp, px, py, gc, gs, m.eef_b);
     }
-    tv_input(m, ob, ts.oid, bxp, true, false, ts.tv);   // 교사 격자 입력(점·목표 색 없음)
+    tv_input(m, ob, ts.oid, ts.tv);   // 격자 입력
     if (tbug == 12) ts.tv.s = -ts.tv.s;     // 음성 대조: 그림을 거꾸로 돌림
   }
   sync();

@@ -53,15 +53,6 @@ void CpuMap::step(const env::Soa& s, int force_kf, const MapCurr& cu) {
   }
 }
 
-void tv_topstate_cpu(const MapHost& h, const bsc::SceneSet* ss, int i, TopState& out) {
-  BMapEnv* bm = (ss && !h.bm.empty()) ? const_cast<BMapEnv*>(&h.bm[i]) : nullptr;
-  const BCtx bx = bctx(ss, bm);
-  tv_topstate(h.core[i], h.objs.data() + (size_t)i * NOBJ, &bx, h.occ.data() + (size_t)i * NWORD, h.seen.data() + (size_t)i * NWORD, out, 0, 1);
-}
-void tv_render_cpu(const TopState& t, bool hide, uint8_t* rgb) {
-  for (int v = 0; v < TV_PX; ++v)
-    for (int u = 0; u < TV_PX; ++u) tv_pixel(t, u, v, hide, rgb + ((size_t)v * TV_PX + u) * 3);
-}
 
 float h2f(uint16_t h) {
   const uint32_t sign = (uint32_t)(h & 0x8000u) << 16, e = (h >> 10) & 0x1fu, m = h & 0x3ffu;
