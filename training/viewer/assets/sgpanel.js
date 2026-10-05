@@ -12,7 +12,7 @@ const hashCol = s => { let h = 0; for (const c of String(s)) h = (h * 31 + c.cha
 
 export class SgPanel {
   constructor({ api, host, getSel, onTime }) {
-    this.api = api; this.host = host; this.onTime = onTime; this.trHead = null; this.ov = null; this.ovOn = { cond: true, env: false, feas: false };
+    this.api = api; this.host = host; this.onTime = onTime; this.trHead = null; this.ov = null; this.ovOn = { cond: false, env: false, feas: false };
     this.sess = (() => { try { const k = sessionStorage.getItem("tv_sgsess"); if (k) return k; } catch (e) {} const k = Math.random().toString(36).slice(2, 12); try { sessionStorage.setItem("tv_sgsess", k); } catch (e) {} return k; })();
     document.cookie = `sgsess=${this.sess}; path=/; SameSite=Lax`;
     this.state = null; this.info = null; this.timer = null; this.win = null; this.ul = null; this.gt = null;
@@ -57,7 +57,7 @@ export class SgPanel {
       if (this.state.playing) await this.ctl("");
       // 끝까지 갔고 사람이 멈춘 게 아니면 처음부터 다시(서버는 끝에서 playing=1 을 받으면 0 초로 되감음)
       const st = this.state;
-      if (st && !st.playing && !this.userPaused && st.t >= st.duration - 1e-3) await this.ctl("playing=1");
+      if (st && !st.playing && !this.userPaused && this.loop !== false && st.t >= st.duration - 1e-3) await this.ctl("playing=1");
     }, 200);
   }
   update() {
@@ -85,7 +85,7 @@ export class SgPanel {
       let el = host.querySelector(`.pip[data-k="${k}"]`);
       if (!list.length || !this.pipOn(k)) { if (el) el.remove(); continue; }
       if (!el) {
-        el = document.createElement("div"); el.className = "pip"; el.dataset.k = k;
+        el = document.createElement("div"); el.className = "pip"; el.dataset.k = k; el.title = "click to enlarge"; el.onclick = () => el.classList.toggle("big");
         el.innerHTML = `<div class="pt">${title} <span class="pts"></span></div><img>`;
         host.appendChild(el);
       }
@@ -129,7 +129,8 @@ export class SgPanel {
   }
   scene() { return this.win.eval("scene"); }
   // 시점(카메라 자리·바라보는 점·줌)과 sgview 패널의 켜고 끔·고르기 — 판을 바꿔도 같은 실행이면 이어 감
-  frameKey(run, info) { return run + "|" + (info && info.kind) + "|" + JSON.stringify((info && info.window_origin) || null); }
+  // OG 판(kind sg)은 지도 틀 = 첫 자세가 원점이라 판이 달라도 "처음 자리 기준" 시점이 이어 감. .trp 판은 창 좌표라 같은 창끼리만
+  frameKey(run, info) { return run + "|" + (info && info.kind) + "|" + (info && info.kind === "sg" ? "" : JSON.stringify((info && info.window_origin) || null)); }
   saveView(nextRun) {
     const w = this.win;
     if (!w) { if (this.saved && this.saved.run !== nextRun) this.saved = null; return; }
@@ -199,7 +200,7 @@ export class SgPanel {
     }
     this.mesh = G; this.meshInfo = H;
     if (this.ul) { this.ul.add(G); for (const m of this.ulBoxes || []) m.visible = this.meshOn === false; }
-    else this.scene().add(this.mfw(G));
+    else { const w = this.mfw(G); w.visible = this.ulOn === true; this.scene().add(w); }
     G.visible = this.meshOn !== false;
     this.invalidate();
   }
@@ -248,7 +249,7 @@ export class SgPanel {
     const g = await (await fetch(`/api/sg/policymap?sess=${this.sess}&t=${k}`)).json();
     if (g.why) return;
     const T = this.win.THREE, px = Uint8Array.from(atob(g.b64), c => c.charCodeAt(0)), rgba = new this.win.Uint8Array(g.w * g.h * 4);
-    for (let i = 0; i < g.w * g.h; i++) { const v = px[i]; if (v === 205) continue; const occ = 255 - v; rgba[4 * i] = 235; rgba[4 * i + 1] = 104; rgba[4 * i + 2] = 52; rgba[4 * i + 3] = 40 + occ * 0.7; }
+    for (let i = 0; i < g.w * g.h; i++) { const v = px[i]; if (v === 205) continue; const occ = 255 - v; rgba[4 * i] = 235; rgba[4 * i + 1] = 104; rgba[4 * i + 2] = 52; rgba[4 * i + 3] = 26 + occ * 0.42; }
     if (!this.pm) {
       const mfw = this.info.map_from_world || [1, 0, 0, 0];
       this.pm = new T.Group(); this.pm.rotation.z = Math.atan2(mfw[1], mfw[0]); this.pm.position.set(mfw[2], mfw[3], 0);
@@ -260,7 +261,7 @@ export class SgPanel {
     mesh.position.set(g.ox + g.w * g.res / 2, g.oy + g.h * g.res / 2, 0.03); mesh.renderOrder = 4;
     this.pm.add(mesh); this.pm.visible = !!this.pmOn; this.invalidate();
   }
-  setUnderlay(on) { this.ulOn = on; if (this.ul) { this.ul.visible = on; this.invalidate(); } }
+  setUnderlay(on) { this.ulOn = on; if (this.ul) { this.ul.visible = on; this.invalidate(); } else if (this.mesh && this.mesh.userData.wrap) { this.mesh.userData.wrap.visible = on; this.invalidate(); } }
   buildUnderlay() {
     const U = this.info.underlay, T = this.win.THREE;
     if (!U) return;
@@ -326,7 +327,7 @@ export class SgPanel {
       m.userData.tip = `task object: ${o.name}`; G.add(m); this.hoverables.push(m);
       G.add(label(o.cat || o.name, o.c[0], o.c[1], o.c[2] + 0.6, 0.3, "rgba(255,220,240,0.9)"));
     }
-    this.ul = G; G.visible = this.ulOn !== false;
+    this.ul = G; G.visible = this.ulOn === true;
     this.scene().add(G); this.invalidate();
     // 마우스 올림 → 종류(부모 화면의 풍선)
     const cv = this.win.eval("renderer.domElement"), cam = () => this.win.eval("camera"), tip = document.getElementById("tip");

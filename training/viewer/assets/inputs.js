@@ -30,7 +30,7 @@ export class InputsPanel {
     this.recs = (tr.extra.inputs || []).slice().sort((a, b) => a.frame - b.frame);
     this.names = I.names || {};
     this.cond = condHtml(H.scene || {}, I);
-    if (!this.lay || !this.recs.length) { this.host.innerHTML = `<div class="muted small">This episode has no recorded policy inputs (recorded before the inputs record — re-record the checkpoint).</div>` + this.cond; return tr; }
+    if (!this.lay || !this.recs.length) { this.host.innerHTML = `<div class="muted small">This episode has no recorded policy inputs (recorded before the inputs record — re-record the checkpoint).</div><details class="card in_cond" open><summary>Task conditions</summary>${this.cond}</details>`; return tr; }
     this.last = -1;
     this.show(0);
     return tr;
@@ -43,9 +43,39 @@ export class InputsPanel {
     this.last = k;
     const keepOpen = {}; this.host.querySelectorAll("details[data-k]").forEach(d => keepOpen[d.dataset.k] = d.open);
     const sc = this.host.scrollTop;
-    this.host.innerHTML = this.render(this.recs[k]) + this.cond;
+    this.host.innerHTML = this.render(this.recs[k]);
     this.host.querySelectorAll("details[data-k]").forEach(d => { if (d.dataset.k in keepOpen) d.open = keepOpen[d.dataset.k]; });
     this.host.scrollTop = sc;
+    const more = this.host.querySelector("[data-more]"); if (more) more.onclick = () => { this.showAll = !this.showAll; this.last = -1; this.show(f); };
+  }
+  // 시간 막대용: 교사 단계(priv[5]) 묶음 구간 + 사건(목표 처음 봄·잡힘·놓음·충돌·성공)
+  timeline() {
+    if (!this.recs || !this.recs.length || !this.lay || !this.tr) return null;
+    const L = this.lay, dt = this.tr.head.dt || 0.1, tr = this.tr;
+    const G = m => ["nav", "explore", "none", "backup"].includes(SL_MODE[m]) ? "nav" : ["approach0", "rotate", "arm_ready", "drive", "fine", "wait"].includes(SL_MODE[m]) ? "approach"
+      : ["arm_grasp", "close", "reopen"].includes(SL_MODE[m]) ? "grasp" : ["lift", "fold", "back"].includes(SL_MODE[m]) ? "carry" : ["arm_place", "open", "retreat"].includes(SL_MODE[m]) ? "place"
+      : SL_MODE[m] === "done" ? "done" : "fail";
+    const phases = [], events = [];
+    let held = false, wasHeld = false;
+    for (const rec of this.recs) {
+      const dv = new DataView(rec.bytes.buffer, rec.bytes.byteOffset, rec.bytes.byteLength), t = rec.frame * dt;
+      const pv = i => dv.getFloat32(L.priv + 4 * i, true), g = G(pv(5) | 0);
+      const last = phases[phases.length - 1];
+      if (last && last.g === g) last.t1 = t + dt; else phases.push({ g, t0: t, t1: t + dt });
+      held = (pv(4) | 0) === 2;
+      if (held && !wasHeld) events.push({ t, name: "grasp" });
+      if (!held && wasHeld) events.push({ t, name: "release" });
+      wasHeld = held || wasHeld && false;
+    }
+    const nf = tr.nf;
+    let seen = false, col = false, ok = false;
+    for (let f = 0; f < nf; f++) {
+      if (!seen && tr.ci.goal_known != null && tr.v(f, "goal_known") > 0.5) { seen = true; events.push({ t: f * dt, name: "target seen" }); }
+      const ev = tr.ci.ev != null ? tr.v(f, "ev") : 0;
+      if (!col && (ev & 1)) { col = true; events.push({ t: f * dt, name: "collision" }); }
+      if (!ok && (ev & 8)) { ok = true; events.push({ t: f * dt, name: "success" }); }
+    }
+    return { phases, events };
   }
   render(rec) {
     const L = this.lay, b = rec.bytes, dv = new DataView(b.buffer, b.byteOffset, b.byteLength), H = this.tr.head, I = H.inputs || {};
@@ -56,61 +86,63 @@ export class InputsPanel {
     const obs = Array.from({ length: 80 }, (_, i) => f32(L.obs + 4 * i));
     const W = H.scene && H.scene.world || {};
     const nm = r => r < 0 ? "" : this.names[r] ?? `row ${r}`;
-    const actor = I.actor || "?";
-    let h = `<div class="in_head"><b>Policy input</b> · frame ${rec.frame} · actor <b>${esc(actor)}</b>${actor === "student" ? " (MLP student, goal slot hidden: " + (I.student_goal_hidden ? "yes" : "no") + ")" : " (scripted privileged teacher)"}</div>`;
-    // 과제·목표
+    const actor = I.actor || "?", deg = r => nf(r * 57.2958, 0) + "°";
+    const card = (k, title, sub, body, open = true) => `<details class="card" ${open ? "open" : ""} data-k="${k}"><summary>${title}${sub ? ` <span class="muted">${sub}</span>` : ""}</summary>${body}</details>`;
+    let h = `<div class="in_head"><b>Policy input</b> · step ${rec.frame} · <span class="pill2 ${actor}">${actor === "student" ? "student" : "teacher (scripted)"}</span></div>`;
+    // 1 Goal
     const instr = u16(L.tok + TOK.instr1);
     const goal = e => th(L.tok + TOK.goal + 32 * e, 16);
-    const gRow = (lab, g) => `<tr><td>${lab}</td><td>${g[0] > 0.5 ? (g[1] > 0.5 ? "object" : g[2] > 0.5 ? "point" : "yes") : "—"}</td><td>${g[3] > 0.5 ? "known" : "—"}${g[4] > 0.5 ? " lost" : ""}</td><td class="mono">${nf(g[5], 2)}, ${nf(g[6], 2)}, ${nf(g[7], 2)}</td><td class="mono">${nf(g[8], 2)}</td><td class="mono">${nf(Math.atan2(g[9], g[10]) * 57.3, 0)}°</td><td class="mono">${nf(g[11], 2)}, ${nf(g[12], 2)}, ${nf(g[13], 2)}</td></tr>`;
-    h += `<details open data-k="goal"><summary>Task · goal slots <span class="muted">(VLA_INPUT 2.1, m, base_link)</span></summary>
-      <div class="small">instruction: <b>${esc(I.instr_text || W.instr_text || (instr ? "row " + (instr - 1) : "—"))}</b></div>
-      <div class="small">pick: <b>${esc(W.pick ? W.pick.name || W.pick.cat : "?")}</b> → place: <b>${esc(W.place ? W.place.name || W.place.cat : "?")}</b> · stage B${u16(L.tok + TOK.bkind) || (W.kind ?? "?")}</div>
-      <table class="in_t"><tr><th></th><th>given</th><th>pos</th><th>x, y, z</th><th>dist</th><th>bearing</th><th>from fingertip</th></tr>${gRow("PICK", goal(0))}${gRow("PLACE", goal(1))}</table></details>`;
-    // 몸 상태
-    h += `<details data-k="body"><summary>Body state <span class="muted">(env obs 80 — proprio 12 = q + qd)</span></summary><table class="in_t">` +
-      OBS_GROUPS.map(([n, a, z]) => `<tr><td>${esc(n)}</td><td class="mono">${obs.slice(a, z).map(x => nf(x, 2)).join(" ")}</td></tr>`).join("") + `</table></details>`;
-    // 지도 물체 칸
-    const ns = i16(L.tok + TOK.n_slot);
-    let rows = "";
+    const gRow = (lab, g) => g[0] > 0.5 ? `<tr><td><b>${lab}</b></td><td>${g[1] > 0.5 ? "object" : g[2] > 0.5 ? "point" : "yes"}${g[3] > 0.5 ? "" : " (unknown)"}${g[4] > 0.5 ? " · lost" : ""}</td><td class="mono">${nf(g[8], 2)} m</td><td class="mono">${nf(Math.atan2(g[9], g[10]) * 57.3, 0)}°</td></tr>` : `<tr><td><b>${lab}</b></td><td colspan="3" class="muted">not given</td></tr>`;
+    h += card("goal", "Goal", "(slots, m · base_link)", `<div class="in_instr">${esc(I.instr_text || W.instr_text || (instr ? "row " + (instr - 1) : "—"))}</div>
+      <div class="small">pick <b>${esc(W.pick ? W.pick.name || W.pick.cat : "?")}</b> → place <b>${esc(W.place ? W.place.name || W.place.cat : "?")}</b> · stage B${u16(L.tok + TOK.bkind) || (W.kind ?? "?")}</div>
+      <table class="in_t"><tr><th></th><th>given</th><th>distance</th><th>bearing</th></tr>${gRow("PICK", goal(0))}${gRow("PLACE", goal(1))}</table>`);
+    // 2 Body
+    const q = obs.slice(0, 6);
+    h += card("body", "Body", "(arm q, gripper, base)", `<table class="in_t"><tr><td>arm q1–q5 (rad)</td><td class="mono">${q.slice(0, 5).map(x => nf(x, 2)).join("  ")}</td></tr>
+      <tr><td>gripper</td><td class="mono">${nf(q[5], 2)}</td></tr><tr><td>base v (m/s) · w (rad/s)</td><td class="mono">${nf(obs[42], 2)} · ${nf(obs[44], 2)}</td></tr>
+      <tr><td>fingertip x y z (m)</td><td class="mono">${obs.slice(27, 30).map(x => nf(x, 2)).join("  ")}</td></tr></table>
+      <details class="raw"><summary class="muted">all 80 obs values</summary><table class="in_t">` + OBS_GROUPS.map(([n, a, z]) => `<tr><td>${esc(n)}</td><td class="mono">${obs.slice(a, z).map(x => nf(x, 2)).join(" ")}</td></tr>`).join("") + `</table></details>`);
+    // 3 Map slots: target first, then by distance; top N, "show all"
+    const ns = i16(L.tok + TOK.n_slot), rows = [];
     for (let s = 0; s < 16; s++) {
       const id = i16(L.tok + TOK.name_id + 2 * s); if (id < 0) continue;
-      const v = th(L.tok + TOK.slot + 66 * s, 33), app = i16(L.tok + TOK.app_id + 2 * s);
-      const st = [20, 21, 22, 23].reduce((a, k, i) => v[k] > 0.5 ? STATE4[i] : a, "?");
-      const tgt = v[30] > 0.5;
-      rows += `<tr class="${tgt ? "in_tgt" : ""}"><td>${s}</td><td><b>${esc(nm(id))}</b><div class="muted">${esc(APP[app] ?? app)}</div></td><td class="mono">${nf(v[0], 2)}, ${nf(v[1], 2)}, ${nf(v[2], 2)}</td><td class="mono">${nf(v[6], 2)}</td><td class="mono">${nf(v[7] * 57.3, 0)}°</td><td class="mono">${nf(v[8], 2)}×${nf(v[9], 2)}×${nf(v[10], 2)}</td><td>${v[13] > 0.5 ? "✓" : ""}</td><td>${st}</td><td>${v[27] > 0.5 ? "now" : "mem"}</td><td class="mono">${nf(v[28], 2)}</td><td class="mono">${nf(v[24], 1)}</td><td class="mono">${nf(v[31], 2)}/${nf(v[32], 2)}</td><td>${tgt ? "◎" : ""}</td></tr>`;
+      const v = th(L.tok + TOK.slot + 66 * s, 33);
+      rows.push({ s, name: nm(id), x: v[0], y: v[1], dist: v[6], st: [20, 21, 22, 23].reduce((a, k, i) => v[k] > 0.5 ? STATE4[i] : a, "?"), tgt: v[30] > 0.5, reach: v[12] });
     }
-    h += `<details open data-k="slots"><summary>Map object slots <span class="muted">(${ns} filled, map token, m · base_link)</span></summary>
-      <table class="in_t"><tr><th>#</th><th>name / look</th><th>x, y, z</th><th>dist</th><th>bear</th><th>size</th><th>reach</th><th>state</th><th>src</th><th>unc</th><th>age s</th><th>conf</th><th>tgt</th></tr>${rows || '<tr><td colspan="13" class="muted">no slots</td></tr>'}</table></details>`;
-    // 벽·방·안 본 곳·경유 지점
+    rows.sort((a, b) => (b.tgt - a.tgt) || (a.dist - b.dist));
+    const TOPN = 6, all = this.showAll, vis = all ? rows : rows.slice(0, TOPN);
+    h += card("slots", "Map slots", `(${ns} of 16 filled · m)`, `<table class="in_t"><tr><th>name</th><th>x, y</th><th>dist</th><th>state</th></tr>` +
+      (vis.map(r => `<tr class="${r.tgt ? "in_tgt" : ""}"><td>${r.tgt ? "◎ " : ""}<b>${esc(r.name)}</b></td><td class="mono">${nf(r.x, 2)}, ${nf(r.y, 2)}</td><td class="mono">${nf(r.dist, 2)}</td><td>${r.st}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">no objects in the map token</td></tr>') + `</table>` +
+      (rows.length > TOPN ? `<button class="in_more" data-more="1">${all ? "show top " + TOPN : "show all " + rows.length}</button>` : ""));
+    // 4 Sectors: compass of unseen-area sectors (8 × 45°, 0 = ahead, counter-clockwise) + wall rays 16
     const wall = th(L.tok + TOK.wall, 56), room = th(L.tok + TOK.room, 10), comp = th(L.tok + TOK.comp, 4), front = th(L.tok + TOK.front, 8), way = th(L.tok + TOK.way, 4);
     const rt = room.slice(0, 6).reduce((a, x, i) => x > room[a] ? i : a, 0);
-    h += `<details data-k="env"><summary>Walls · room · unseen sectors · waypoint <span class="muted">(VLA_INPUT 4)</span></summary><table class="in_t">
-      <tr><td>wall rays 16 (m)</td><td class="mono">${wall.slice(0, 16).map(x => nf(x, 1)).join(" ")}</td></tr>
-      <tr><td>near wall segments 8×5</td><td class="mono">${wall.slice(16).map(x => nf(x, 1)).join(" ")}</td></tr>
-      <tr><td>room</td><td>${ROOMT[rt]} (${nf(room[rt], 2)}) · door ${room[9] > 0.5 ? `x ${nf(room[6], 2)} y ${nf(room[7], 2)} d ${nf(room[8], 2)}` : "—"}</td></tr>
-      <tr><td>unseen-area sectors 8 (45°, /4 m)</td><td class="mono">${front.map(x => nf(x, 2)).join(" ")}</td></tr>
-      <tr><td>completeness 4</td><td class="mono">${comp.map(x => nf(x, 2)).join(" ")}</td></tr>
-      <tr><td>next waypoint</td><td class="mono">${way[3] > 0.5 ? `x ${nf(way[0], 2)} y ${nf(way[1], 2)} path ${nf(way[2], 2)} m` : "—"}</td></tr></table></details>`;
-    // 행동 대 교사 라벨
+    const wedge = (i, v, R, r0, col) => { const a0 = (-90 - (i + 0.5) * 45) * Math.PI / 180, a1 = (-90 - (i - 0.5) * 45) * Math.PI / 180, p = (a, r) => `${(60 + r * Math.cos(a)).toFixed(1)},${(60 + r * Math.sin(a)).toFixed(1)}`;
+      return `<path d="M${p(a0, r0)} L${p(a0, R)} A${R},${R} 0 0 1 ${p(a1, R)} L${p(a1, r0)} A${r0},${r0} 0 0 0 ${p(a0, r0)}Z" fill="${col}" fill-opacity="${(0.12 + 0.88 * Math.max(0, Math.min(1, v))).toFixed(2)}" stroke="var(--line)" stroke-width="0.5"><title>${(i * 45)}° ${nf(v, 2)}</title></path>`; };
+    const rays = wall.slice(0, 16), rw = (i, v) => { const a = (-90 - i * 22.5) * Math.PI / 180, r = 14 + 14 * Math.min(1, v / 4); return `<line x1="${60 + 14 * Math.cos(a)}" y1="${60 + 14 * Math.sin(a)}" x2="${60 + r * Math.cos(a)}" y2="${60 + r * Math.sin(a)}" stroke="var(--ink2)" stroke-width="1.5"><title>${nf(v, 2)} m</title></line>`; };
+    h += card("env", "Sectors", "(unseen area · walls)", `<div class="in_comp"><svg viewBox="0 0 120 120" width="120" height="120">${front.map((v, i) => wedge(i, v, 58, 32, "#eda100")).join("")}${rays.map((v, i) => rw(i, v)).join("")}
+      <polygon points="60,50 55,64 65,64" fill="var(--accent)"><title>robot front</title></polygon><text x="60" y="8" text-anchor="middle" font-size="8" fill="var(--muted)">front</text></svg>
+      <div class="small"><div>orange = unseen-area strength per 45° sector</div><div>grey spokes = wall distance (16 rays, 0–4 m)</div><div>room <b>${ROOMT[rt]}</b> ${nf(room[rt], 2)}${room[9] > 0.5 ? ` · door ${nf(room[8], 1)} m` : ""}</div>
+      <div>map complete <span class="mono">${comp.map(x => nf(x, 2)).join(" ")}</span></div><div>waypoint ${way[3] > 0.5 ? `${nf(way[2], 1)} m ahead` : "—"}</div></div></div>`);
+    // 5 Action vs teacher label
     const a = act("act"), lb = act("label"), ex = act("exec");
     const gap = a.reduce((s, x, i) => s + (isFinite(lb[i]) ? (x - lb[i]) ** 2 : 0), 0);
     const bar = (x, col) => { const w = Math.min(50, Math.abs(x) * 50); return `<span class="in_bar" style="${x >= 0 ? "left:50%" : "left:" + (50 - w) + "%"};width:${w}%;background:${col}"></span>`; };
-    h += `<details open data-k="act"><summary>Action vs teacher label <span class="muted">(DAgger gap Σ(μ−label)² = ${nf(gap, 3)})</span></summary><table class="in_t">
-      <tr><th></th><th>${actor === "student" ? "student μ" : "teacher"}</th><th>teacher label</th><th>executed</th><th style="width:40%">μ (blue) vs label (grey)</th></tr>` +
-      ACT.map((n, i) => `<tr><td>${n}</td><td class="mono">${nf(a[i], 2)}</td><td class="mono">${nf(lb[i], 2)}</td><td class="mono">${nf(ex[i], 2)}</td><td><div class="in_bars">${bar(lb[i], "#9a9a9a")}${bar(a[i], "#2a78d6")}</div></td></tr>`).join("") + `</table></details>`;
-    // 특권
+    const lab5 = { vx: "forward v", wz: "turn w", q1: "joint 1", q2: "joint 2", q3: "joint 3", q4: "joint 4", q5: "joint 5", grip: "gripper" };
+    h += card("act", "Action vs teacher", `<span class="${gap > 0.5 ? "in_no" : ""}">gap Σ(μ−label)² = ${nf(gap, 3)}</span>`, `<table class="in_t in_act"><tr><th></th><th>${actor === "student" ? "μ" : "teacher"}</th><th>label</th><th style="width:44%"><span style="color:#2a78d6">■</span> action <span style="color:#9a9a9a">■</span> teacher label</th></tr>` +
+      ACT.map((n, i) => { const big = isFinite(lb[i]) && Math.abs(a[i] - lb[i]) > 0.25; return `<tr class="${big ? "in_gap" : ""}"><td>${lab5[n]}</td><td class="mono">${nf(a[i], 2)}</td><td class="mono">${nf(lb[i], 2)}</td><td><div class="in_bars">${bar(lb[i], "#9a9a9a")}${bar(a[i], "#2a78d6")}</div></td></tr>`; }).join("") + `</table><div class="small muted">row tinted red = |μ − label| &gt; 0.25 (the DAgger loss pulls these together)</div>`);
+    // 6 Privileged + task conditions (collapsed): student can't see
     const mode = priv[5] | 0;
-    h += `<details ${actor === "teacher" ? "open" : ""} data-k="priv"><summary>Privileged state <span class="muted">(teacher/env only — not in the student input)</span></summary><table class="in_t">
+    h += `<details class="card in_cond" data-k="priv"><summary>Privileged &amp; task conditions <span class="muted">— student can't see</span></summary><table class="in_t">
       <tr><td>object (window)</td><td class="mono">${nf(priv[0], 2)}, ${nf(priv[1], 2)}, ${nf(priv[2], 2)} yaw ${nf(priv[3] * 57.3, 0)}° · ${["none", "rest", "held"][priv[4] | 0] ?? priv[4]}</td></tr>
       <tr><td>teacher phase</td><td><b>${esc(SL_MODE[mode] ?? String(mode))}</b></td></tr>
       <tr><td>planned stance</td><td class="mono">${priv[10] > 0.5 ? `${nf(priv[6], 2)}, ${nf(priv[7], 2)} yaw ${nf(priv[8] * 57.3, 0)}° back ${nf(priv[9], 2)}${priv[11] > 0.5 ? "" : " (no plan)"}` : "—"}</td></tr>
       <tr><td>place point</td><td class="mono">${nf(priv[12], 2)}, ${nf(priv[13], 2)}, ${nf(priv[14], 2)} (goal mode ${priv[15] | 0})</td></tr>
-      <tr><td>held offset a n b</td><td class="mono">${nf(priv[17], 3)} ${nf(priv[18], 3)} ${nf(priv[19], 3)} · drops ${priv[20] | 0}</td></tr></table></details>`;
-    // X0
-    const x0 = Array.from({ length: L.n_x0 }, (_, i) => bf16(u16(L.x0 + 2 * i)));
-    h += `<details data-k="x0"><summary>X0 network input <span class="muted">(normalized, cols 128–303 + 432–463)</span></summary><div class="mono small in_x0">` +
-      [["G1 obs 80", 0, 80], ["wall 56", 80, 136], ["room 10", 136, 146], ["completeness 4", 146, 150], ["bias", 150, 151], ["unseen rays 8", 151, 159], ["waypoint 4", 159, 163], ["skill 3", 163, 166], ["(0)", 166, 176], ["goal 2×16", 176, 208]]
-        .map(([n, a0, z]) => `<div><b>${n}</b> ${x0.slice(a0, z).map(x => nf(x, 2)).join(" ")}</div>`).join("") + `</div></details>`;
+      <tr><td>held offset a n b</td><td class="mono">${nf(priv[17], 3)} ${nf(priv[18], 3)} ${nf(priv[19], 3)} · drops ${priv[20] | 0}</td></tr></table>${this.cond}
+      <details class="raw"><summary class="muted">network input X0 (normalized)</summary>${(() => { const x0 = Array.from({ length: L.n_x0 }, (_, i) => bf16(u16(L.x0 + 2 * i)));
+        return `<div class="mono small in_x0">` + [["G1 obs 80", 0, 80], ["wall 56", 80, 136], ["room 10", 136, 146], ["completeness 4", 146, 150], ["bias", 150, 151], ["unseen rays 8", 151, 159], ["waypoint 4", 159, 163], ["skill 3", 163, 166], ["(0)", 166, 176], ["goal 2×16", 176, 208]]
+          .map(([n, a0, z]) => `<div><b>${n}</b> ${x0.slice(a0, z).map(x => nf(x, 2)).join(" ")}</div>`).join("") + `</div>`; })()}</details>
+      <details class="raw"><summary class="muted">wall segments · executed action</summary><div class="mono small">near wall segments 8×5: ${wall.slice(16).map(x => nf(x, 1)).join(" ")}<br>executed: ${ex.map(x => nf(x, 2)).join(" ")}</div></details></details>`;
     return h;
   }
 }
@@ -121,7 +153,7 @@ function condHtml(SC, I) {
   const ok = b => b ? '<span class="in_ok">✓</span>' : '<span class="in_no">✗</span>';
   const g = P.grasp || {}, m = P.mass || {}, s = P.surface || {}, fe = P.feas || {}, st = P.stance || {};
   const ch = I.chosen_stance || [];
-  return `<details open data-k="cond" class="in_cond"><summary>Task conditions <span class="muted">(privileged / env — the student does not see these)</span></summary><table class="in_t">
+  return `<div class="small muted" style="margin-top:6px">Task conditions</div><table class="in_t">
     <tr><td>gripper aperture</td><td>${ok(g.width_ok)} object width <b>${nf(g.obj_width, 3)} m</b> ≤ max ${nf(g.aperture_max, 2)} m (depth ${nf(g.obj_depth, 3)})</td></tr>
     <tr><td>object height</td><td>${ok(g.height_ok)} ${nf(g.obj_height, 3)} m ≥ ${nf(g.min_height, 4)} m</td></tr>
     <tr><td>mass vs payload</td><td>${ok(m.ok)} <b>${nf(m.kg, 3)} kg</b>${m.known ? "" : " (unknown → assumed)"} ≤ ${nf(m.payload_max, 2)} kg (grip side ${m.grip_side}, top ${m.grip_top}; arm ${m.arm_near} kg at r ≤ ${m.arm_r_near} m → ${m.arm_far} kg at ${m.arm_r_far} m)</td></tr>
@@ -130,7 +162,7 @@ function condHtml(SC, I) {
     <tr><td>static grasp model</td><td>${esc(P.static)}</td></tr>
     <tr><td>feasibility table</td><td>B4 ${ok(fe.B4)} ${esc(fe.grasp_why || "")} · B5 ${ok(fe.B5)} ${esc(fe.place5_why || "")} · B6 ${ok(fe.B6)} ${esc(fe.place6_why || "")}</td></tr>
     <tr><td>stance candidates</td><td>${st.n_cands ?? 0} (pnp_stance_cands) · table stance gst4 ${(st.gst4 || []).slice(0, 2).map(x => nf(x, 2)).join(", ")}${ch.length && isFinite(ch[0]) ? ` · <b>teacher chose</b> ${nf(ch[0], 2)}, ${nf(ch[1], 2)} yaw ${nf(ch[2] * 57.3, 0)}°` : ""}</td></tr>
-  </table></details>`;
+  </table>`;
 }
 
 // 3D 덧그림(sgview iframe 의 THREE 또는 3D classic 의 THREE): 집을 물체·놓을 곳 표시, 서는 자리 후보(LIMO 발자국 + 화살표, 교사가 고른 것 굵게),

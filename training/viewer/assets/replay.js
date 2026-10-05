@@ -66,11 +66,13 @@ export class Replay {
     this.$ = $;
     this.mode = "sg";
     // 예전 3D 그리기("3D classic")는 디버그로만(?debug=1): sgview 화면이 기본·전부이고, 3D classic 은 판마다 보상 띠와 .trp 안 카메라 JPEG 를 보는 데만 남김
-    if (/[?&]debug=1/.test(location.search)) $("rp_mode").hidden = false;
+    if (/[?&]debug=1/.test(location.search)) $("rp_mode").hidden = false;   // (3D classic 로 바꾸면 camsel 이 setSg(false)에서 보임)
     this.inputs = new InputsPanel($("rp_in"));
     this.sg = new SgPanel({ api, host: $("rp_sg"), onTime: t => this.inputs.show(this.inputs.frameAt(t)) });
     $("rp_mesh").onchange = e => this.sg.setMesh(e.target.checked);
-    $("rp_inon").onchange = e => { $("rp_in").hidden = !e.target.checked; this.resize(); };
+    $("rp_full").onclick = () => { const v = $("tab_replay"); if (document.fullscreenElement) document.exitFullscreen(); else v.requestFullscreen && v.requestFullscreen(); };
+    $("rp_inon").onchange = e => { $("rp_in").hidden = !e.target.checked; $("rp_inbtn").classList.toggle("on", e.target.checked); this.resize(); };
+    this.initUI();
     for (const [id, k] of [["rp_envbox", "env"], ["rp_cond", "cond"], ["rp_feas", "feas"]]) $(id).onchange = e => { this.sg.setOv(k, e.target.checked); if (this.ov && this.ov[k]) { this.ov[k].visible = e.target.checked; this.dirty = true; } };
     $("rp_mode").onchange = e => { this.mode = e.target.value; const f = this.file; if (f) this.open(f); };
     $("rp_ul").onchange = e => this.sg.setUnderlay(e.target.checked);
@@ -92,10 +94,59 @@ export class Replay {
       if (!this.visible || e.target.tagName === "INPUT" && e.target.type !== "range" || e.target.tagName === "SELECT") return;
       if (e.key >= "1" && e.key <= "4") { $("rp_camsel").value = e.key; this.setCam(+e.key); }
       else if (e.key === " ") { e.preventDefault(); $("rp_play").onclick(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); this.stepEpisode(-1); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); this.stepEpisode(1); }
+      else if (e.key === "Escape" && document.getElementById("tab_replay").classList.contains("focus")) $("rp_focus").onclick();
       else if (e.key === "ArrowLeft") { e.preventDefault(); $("rp_prev").onclick(); }
       else if (e.key === "ArrowRight") { e.preventDefault(); $("rp_next").onclick(); }
     });
     addEventListener("resize", () => this.resize());
+  }
+
+
+  // ---------------------------------------------------------------- 화면 틀(위 줄 · 메뉴 · 목록 · 시간 막대 표식)
+  initUI() {
+    const $ = this.$, root = $("tab_replay");
+    const wide = innerWidth >= 1500;
+    root.classList.toggle("nolist", !wide);
+    $("rp_inon").checked = innerWidth >= 1700; $("rp_in").hidden = !$("rp_inon").checked; $("rp_inbtn").classList.toggle("on", $("rp_inon").checked);
+    $("rp_listbtn").onclick = () => { root.classList.toggle("nolist"); this.resize(); };
+    $("rp_inbtn").onclick = () => { $("rp_inon").checked = !$("rp_inon").checked; $("rp_inon").onchange({ target: $("rp_inon") }); };
+    $("rp_runbtn").onclick = () => { document.body.classList.toggle("rp_pickers"); setTimeout(() => this.resize(), 0); };
+    $("rp_eprev").onclick = () => this.stepEpisode(-1);
+    $("rp_enext").onclick = () => this.stepEpisode(1);
+    const menu = $("rp_layers");
+    $("rp_layerbtn").onclick = e => { e.stopPropagation(); menu.hidden = !menu.hidden; };
+    addEventListener("click", e => { if (!menu.hidden && !menu.contains(e.target)) menu.hidden = true; });
+    $("rp_focus").onclick = () => { root.classList.toggle("focus"); document.body.classList.toggle("rp_focus", root.classList.contains("focus")); $("rp_focus").classList.toggle("on", root.classList.contains("focus")); setTimeout(() => this.resize(), 0); };
+    $("rp_hudsw").onchange = e => $("rp_view").classList.toggle("showhud", e.target.checked);
+    $("rp_loop").onchange = e => { this.sg.loop = e.target.checked; };
+    this.sg.loop = true;
+    new ResizeObserver(() => this.resize()).observe($("rp_view"));
+    const hdr = document.getElementById("top");
+    const setH = () => root.style.setProperty("--hdr", hdr.getBoundingClientRect().height + "px");
+    new ResizeObserver(setH).observe(hdr); setH();
+  }
+  // 목록의 다음·이전 판(↑↓)
+  stepEpisode(d) {
+    const items = [...this.$("rp_list").querySelectorAll(".item")];
+    if (!items.length) return;
+    let i = items.findIndex(e => e.dataset.f === this.file);
+    i = i < 0 ? (d > 0 ? 0 : items.length - 1) : Math.max(0, Math.min(items.length - 1, i + d));
+    items[i].click(); items[i].scrollIntoView({ block: "nearest" });
+  }
+  // 시간 막대 아래 단계 띠 · 사건 표식(눌러 이동): 정책 입력 기록의 교사 단계·잡힘 상태 + 프레임의 충돌·성공 비트 + 목표 처음 봄
+  buildTimeline(dur) {
+    const ph = this.$("rp_phases"), mk = this.$("rp_marks"), lg = this.$("rp_phlegend");
+    ph.innerHTML = mk.innerHTML = lg.innerHTML = "";
+    const tl = this.inputs.timeline();
+    if (!tl || !dur) return;
+    const GC = { nav: "#8a8984", approach: "#3987e5", grasp: "#eb6834", carry: "#1baf7a", place: "#9085e9", done: "#0ca30c", fail: "#d03b3b" };
+    ph.innerHTML = tl.phases.map(p => `<i style="left:${100 * p.t0 / dur}%;width:${Math.max(0.5, 100 * (p.t1 - p.t0) / dur)}%;background:${GC[p.g]}" title="${p.g} ${p.t0.toFixed(1)}–${p.t1.toFixed(1)} s (teacher phase)"></i>`).join("");
+    lg.innerHTML = Object.keys(GC).filter(k => tl.phases.some(p => p.g === k)).map(k => `<span><i style="background:${GC[k]}"></i>${k}</span>`).join("") + '<span class="muted">▲ events — click to jump</span>';
+    const EC = { "target seen": "#3987e5", grasp: "#eb6834", release: "#9085e9", collision: "#d03b3b", success: "#0ca30c" };
+    mk.innerHTML = tl.events.map(e => `<b data-t="${e.t}" style="left:${100 * Math.min(1, e.t / dur)}%;border-bottom-color:${EC[e.name] || "#888"}" title="${e.name} @ ${e.t.toFixed(1)} s"></b>`).join("");
+    mk.querySelectorAll("b").forEach(b => b.onclick = ev => { ev.stopPropagation(); this.sg.seek(+b.dataset.t); });
   }
 
   // ---------------------------------------------------------------- 장면 (처음 볼 때 한 번)
@@ -218,11 +269,13 @@ export class Replay {
     if (ci != null) { const tol = Math.max(50, Math.abs(ci) * 0.05); rows = rows.filter(r => r.meta && Math.abs(r.meta.iter - ci) <= tol); }
     else if (this.$("rp_near").checked) this.$("rp_note").textContent = "cursor is at latest — near-step filter off";
     this.$("rp_list").innerHTML = rows.map(r => {
-      const m = r.meta || {};
-      const src = m.pipeline === "og_real" || /_og\.sg$/.test(r.file) ? '<span class="srcb real" title="OmniGibson 렌더 → ObjectSAM + SigLIP 2 + scenemap objprob">REAL pipeline</span>'
-        : r.file.endsWith(".trp") && m.home === "B" ? '<span class="srcb" title="GT 장면(메시·상자·이름) + GPU 환경 정책 지도 — 인지 없음">GT / policy map</span>' : "";
-      return `<div class="item${this.file === r.file ? " on" : ""}" data-f="${esc(r.file)}"><div class="r1"><span>${src}<b>${esc(m.skill || "?")}</b> <span class="oc ${esc(m.outcome || "")}">${esc(m.outcome || (m.success ? "success" : "?"))}${this.meta && this.meta.synthetic ? " (synthetic)" : ""}</span>${r.pin ? " 📌" : ""}</span><span class="mono muted">ep ${m.ep ?? "?"}</span></div>
-        <div class="muted small">${esc(m.home || "")} · ${esc(m.stage || "")} · map ${fmt(m.completion0 ?? m.map_completeness, 1)} · ${fmt(m.t)} s · return ${fmt(m.ret)}${m.iter != null ? " · iter " + fmt(m.iter) : ""}${m.driver ? " · " + esc(m.driver) : ""}${m.ckpt ? ` · <b>${esc(m.ckpt)}</b>` : ""}</div></div>`;
+      const m = r.meta || {}, real = m.pipeline === "og_real" || /_og\.sg$/.test(r.file), gt = !real && r.file.endsWith(".trp") && m.home === "B";
+      const oc = m.outcome || (m.success ? "success" : "?"), drv = m.driver === "teacher" || /teacher/.test(m.ckpt || "") ? "T" : m.driver ? "S" : "";
+      const ck = m.ckpt ? m.ckpt.replace(/^it0*(\d+)_?/, (x, n) => (+n >= 1000 ? Math.round(+n / 1000) + "k" : n) + " ").replace("-teacher", "") : "";
+      return `<div class="item${this.file === r.file ? " on" : ""}" data-f="${esc(r.file)}" title="${esc(r.file)}${this.meta && this.meta.synthetic ? " (synthetic)" : ""}">
+        <span class="src ${real ? "real" : gt ? "gt" : ""}" title="${real ? "REAL pipeline: OmniGibson render → ObjectSAM + SigLIP 2 + scenemap objprob" : gt ? "GT scene + GPU env policy map — no perception" : ""}">${real ? "R" : gt ? "G" : ""}</span>
+        <span class="mono">${m.ep ?? "?"}${r.pin ? " 📌" : ""}</span><span class="ell">${esc(ck)}${m.home ? ` <span class="muted">${esc(m.home)}${m.stage ? "·" + esc(m.stage) : ""}</span>` : ""}</span><span class="muted">${drv}</span>
+        <span class="oc ${esc(oc)}">${esc(oc)}</span><span class="mono muted">${m.t != null ? (+m.t).toFixed(1) : "?"}s</span></div>`;
     }).join("") || '<div class="muted small">no episode matches the filters</div>';
     this.$("rp_list").querySelectorAll(".item").forEach(el => el.onclick = () => this.open(el.dataset.f));
   }
@@ -240,7 +293,7 @@ export class Replay {
     this.inputs.clear(); this.$("rp_badge").hidden = true; this.ov = null;
     this.$("rp_time").max = 0; this.$("rp_tlabel").textContent = ""; this.$("rp_play").textContent = "▶";
     const cv = this.$("rp_strip"); cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
-    this.$("rp_legend").innerHTML = "";
+    this.$("rp_legend").innerHTML = ""; this.$("rp_phases").innerHTML = this.$("rp_marks").innerHTML = this.$("rp_phlegend").innerHTML = "";
     this.dirty = true;
   }
   setSg(on) {
@@ -250,13 +303,23 @@ export class Replay {
     if (this.renderer) this.renderer.domElement.style.display = on ? "none" : "";
     for (const id of ["rp_strip", "rp_legend"]) this.$(id).style.display = on ? "none" : "";
     // 3D classic 전용 조작은 sgview 화면에서 숨김(sgview 자체 패널에 시점·궤적 켜고 끔이 있음)
-    for (const id of ["rp_camsel", "rp_ee", "rp_slam"]) { const el = this.$(id); (el.closest("label") || el).style.display = on ? "none" : ""; }
+    this.$("rp_camsel").hidden = on; this.$("rp_ee").closest(".mg").style.display = on ? "none" : "";
+    this.$("rp_phlegend").style.display = on ? "" : "none"; this.$("rp_phases").parentNode.style.display = on ? "" : "none";
     for (const id of ["rp_ul", "rp_pmap", "rp_mesh", "rp_cam_body", "rp_cam_wrist"]) { const el = this.$(id); el.closest("label").style.display = on ? "" : "none"; }
     if (!on) this.sg.close();
   }
   async open(file) {
     const id = this.run, st = this.$("rp_stream").value || "main";
     this.clearEpisode(); this.file = file; this.renderList();
+    this.setTitle(file);
+    // 판 종류가 바뀔 때만 기본값(사람이 바꾼 건 같은 종류 안에서 유지): 덧그림은 모두 꺼 둠
+    const kind = file.endsWith("_og.sg") ? "real" : "gt";
+    if (this.lastKind !== kind) {
+      this.lastKind = kind;
+      // 기본 = 단독 sgview 와 똑같은 화면. 우리 덧그림(GT 바탕·정책 지도·서는 자리)은 켜야만 나온다
+      this.$("rp_pmap").checked = false; this.sg.setPolicyMap(false);
+      this.$("rp_ul").checked = false; this.sg.setUnderlay(false);
+    }
     // sgview 화면(장면 그래프 뷰어 그대로) — .sg(OmniGibson) 는 늘, .trp 는 고른 방식대로
     if (this.mode === "sg" || file.endsWith(".sg")) {
       this.setSg(true);
@@ -290,31 +353,40 @@ export class Replay {
     const tr = this.inputs.load(await r.arrayBuffer());
     if (id !== this.run || this.file !== file || !tr) return;
     this.sg.setTrp(tr.head);
+    this.buildTimeline(this.sg.state ? this.sg.state.duration : 0);
     // REAL 판: 정책이 본 지도(G2)를 처음부터 겹쳐 — 실제 인지와 정책 입력의 차이를 바로 보게
-    if (file.endsWith("_og.sg") && !this.$("rp_pmap").checked) { this.$("rp_pmap").checked = true; this.sg.setPolicyMap(true); }
     this.setBadge(tr.head, this.sg.info);
+  }
+  setTitle(file) {
+    const r = this.rows.find(x => x.file === file), m = (r && r.meta) || {};
+    const oc = m.outcome || (m.success ? "success" : ""), ob = this.$("rp_obadge");
+    this.$("rp_title").textContent = `${(m.ckpt || "").replace(/^it0*(\d+)_?/, (x, n) => (+n >= 1000 ? Math.round(+n / 1000) + "k " : n + " ")).replace("-teacher", " T")}${m.ep != null ? " · ep " + m.ep : ""}${m.driver ? " · " + m.driver : ""}${m.t != null ? " · " + (+m.t).toFixed(1) + " s" : ""}`;
+    ob.hidden = !oc; ob.textContent = oc; ob.className = "obadge " + oc;
+    this.$("rp_pipe").textContent = ""; this.$("rp_sbadge").hidden = true;
   }
   setBadge(head, info) {
     const b = this.$("rp_badge"), m = (info && info.meta) || (head && head.meta) || {};
-    let txt = "", real = false;
-    if (m.pipeline === "og_real") { txt = "REAL pipeline: point clouds, names, camera = OmniGibson render (LIMO eyes RGB-D) → ObjectSAM + SigLIP 2 + scenemap objprob · house mesh / stance overlays = GT"; real = true; }
-    else if (m.pipeline === "raycast_approx") txt = "APPROXIMATE: ray-cast scene meshes + perfect detection (OmniGibson replay pending)";
-    else if (head && head.scene && head.scene.world) txt = "NOT our perception — house mesh / boxes / names = GT scene, object#N boxes = GPU env policy map (GT-derived); real-pipeline OmniGibson replay: see REAL episodes";
-    b.hidden = !txt; b.textContent = txt; b.classList.toggle("real", real);
-    if (real && info) this.pipelineBadge(b, info.pipeline);
+    let txt = "", real = false, short = "";
+    if (m.pipeline === "og_real") { txt = "REAL pipeline: point clouds, names, camera = OmniGibson render (LIMO eyes RGB-D) → ObjectSAM + SigLIP 2 + scenemap objprob · house mesh / stance overlays = GT"; short = "REAL pipeline"; real = true; }
+    else if (m.pipeline === "raycast_approx") { txt = "APPROXIMATE: ray-cast scene meshes + perfect detection (OmniGibson replay pending)"; short = "approx"; }
+    else if (head && head.scene && head.scene.world) { txt = "NOT our perception — house mesh / boxes / names = GT scene, object#N boxes = GPU env policy map (GT-derived); real-pipeline OmniGibson replay: see REAL episodes"; short = "GT · policy map"; }
+    b.hidden = true; b.textContent = txt;
+    const sb = this.$("rp_sbadge"); sb.hidden = !short; sb.textContent = short; sb.title = txt; sb.classList.toggle("real", real);
+    if (real && info) this.pipelineBadge(this.$("rp_pipe"), info.pipeline);
   }
   // 이 판을 만든 인지 소스(meta.pipeline: scene_graph 트리 해시·엔진·objprob 매개변수)를 지금 소스와 견줘 "stale pipeline" 표시 + 한 번에 다시 돌리기(og_queue 맨 앞)
   async pipelineBadge(b, pl) {
     let now = {}; try { now = await (await fetch("/api/sg/pipeline")).json(); } catch (e) {}
     const trees = (pl && pl.trees) || {}, nt = now.trees || {};
     const diff = !pl || Object.keys(nt).some(k => trees[k] !== nt[k]);
-    const desc = pl ? `pipeline ${String(pl.git || "?").slice(0, 7)} · ${pl.engine || "?"} · ${pl.objprob_params || "no params"} ${pl.objprob_params_sha || ""}` : "pipeline unknown (older episode)";
-    this.$("rp_hud").dataset.pipe = desc;
-    const sp = document.createElement("span"); sp.textContent = " · " + desc; sp.style.fontWeight = "400"; b.appendChild(sp);
+    const desc = pl ? `${String(pl.git || "?").slice(0, 7)} · ${pl.engine || "?"} · ${pl.objprob_params || "no params"} ${pl.objprob_params_sha || ""}` : "pipeline unknown (older episode)";
+    this.$("rp_hud").dataset.pipe = "pipeline " + desc;
+    b.innerHTML = ""; b.title = "pipeline: " + desc;
+    const sp = document.createElement("span"); sp.className = "mono muted"; sp.textContent = pl ? "pipe " + String(pl.git || "?").slice(0, 7) : "pipe ?"; b.appendChild(sp);
     if (diff) {
-      const a = document.createElement("button"); a.textContent = "stale pipeline — re-run"; a.style.cssText = "margin-left:8px;background:#ffd6d6;border:1px solid #d33;border-radius:10px;font-size:12px;cursor:pointer";
+      const a = document.createElement("button"); a.textContent = "stale — re-run"; a.className = "stale";
       a.title = "scene_graph source changed since this episode was made (or it has no pipeline record). Queues a re-run through og_queue (front of the queue); the old episode is kept as *.sg.prev until the new one is ready.";
-      a.onclick = async () => { const r = await (await fetch(`/api/sg/rerun?run=${encodeURIComponent(this.run)}&stream=${encodeURIComponent(this.$("rp_stream").value || "main")}&id=${encodeURIComponent(this.file)}`)).json(); a.textContent = r.ok ? "queued (see og_queue)" : (r.error || "failed"); a.disabled = true; };
+      a.onclick = async () => { const r = await (await fetch(`/api/sg/rerun?run=${encodeURIComponent(this.run)}&stream=${encodeURIComponent(this.$("rp_stream").value || "main")}&id=${encodeURIComponent(this.file)}`)).json(); a.textContent = r.ok ? "queued (og_queue)" : (r.error || "failed"); a.disabled = true; };
       b.appendChild(a);
     }
   }

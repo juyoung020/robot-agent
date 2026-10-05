@@ -542,7 +542,7 @@ function setTab(t) {
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
   document.querySelectorAll(".tab").forEach(s => s.classList.toggle("on", s.id === "tab_" + t));
   const h = new URLSearchParams(location.hash.slice(1)); h.set("tab", t); history.replaceState(null, "", "#" + h.toString());
-  replay.show(t === "replay");
+  replay.show(t === "replay"); document.body.classList.toggle("rp", t === "replay");
   if (t === "train") { S.plots.forEach(p => p.sig = ""); render(); }
   if (t === "compare") { buildCompareList(); drawCompare(); }
 }

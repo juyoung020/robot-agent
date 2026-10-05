@@ -69,47 +69,73 @@
 
 <!-- ============================== 재생 ============================== -->
 <section id="tab_replay" class="tab">
-  <div class="replay">
+  <div class="replay" id="rp_root">
     <aside id="rp_side">
-      <div class="muted small">Run <b id="rp_run" class="mono"></b></div>
-      <div class="bar wrap">
-        <label title="줄기">Split <select id="rp_stream"></select></label>
-        <label title="스킬">Skill <select id="rp_skill"><option value="">all</option></select></label>
-        <label title="결과">Outcome <select id="rp_outcome"><option value="">all</option></select></label>
-        <label title="집(장면)">Home <select id="rp_home"><option value="">all</option></select></label>
-        <label title="커서 이터 근처"><input type="checkbox" id="rp_near"> near cursor step</label>
+      <div class="rp_filters">
+        <label title="stream">Split <select id="rp_stream"></select></label>
+        <label title="skill">Skill <select id="rp_skill"><option value="">all</option></select></label>
+        <label title="outcome">Outcome <select id="rp_outcome"><option value="">all</option></select></label>
+        <label title="home (scene)">Home <select id="rp_home"><option value="">all</option></select></label>
+        <label title="only episodes near the cursor step of the Training tab"><input type="checkbox" id="rp_near"> near cursor step</label>
       </div>
-      <div class="bar wrap" id="rp_ckbar" hidden>
-        <label title="체크포인트(학습 진행) — 학습 중 자동으로 남은 재생 판">Checkpoint <select id="rp_ckpt"><option value="">all</option></select></label>
-        <input id="rp_ckslide" type="range" min="0" max="0" value="0" title="학습 진행: 체크포인트를 차례로" style="width:120px">
+      <div class="rp_filters" id="rp_ckbar" hidden>
+        <label title="checkpoint (training progress) — replays recorded automatically during training">Checkpoint <select id="rp_ckpt"><option value="">all</option></select></label>
+        <input id="rp_ckslide" type="range" min="0" max="0" value="0" title="training progress: step through the checkpoints" style="width:110px">
       </div>
       <div id="rp_note" class="muted small"></div>
-      <div id="rp_list" class="list"></div>
+      <div class="rp_lhead"><span></span><span>ep</span><span>checkpoint</span><span title="driver: S student / T teacher">d</span><span>outcome</span><span>len</span></div>
+      <div id="rp_list" class="list rp_table"></div>
     </aside>
     <div id="rp_main">
-      <div class="rp_row"><div id="rp_view"><div id="rp_sg" class="sghost" hidden></div><div id="rp_hud" class="hud mono"></div><div id="rp_cams" class="cams"></div><div id="rp_badge" class="rp_badge" hidden></div><div id="rp_empty" class="empty">Pick an episode from the list</div></div>
-        <aside id="rp_in" class="rp_in" title="정책이 이 스텝에 받은 입력(재생 시각에 맞춤)"></aside></div>
-      <div class="bar">
-        <select id="rp_mode" title="debug: 예전 3D 그리기(판마다 보상 띠·.trp 안 카메라 JPEG 를 보는 곳 — sgview 화면에는 없음)" hidden><option value="sg" selected>sgview</option><option value="3d">3D classic (debug)</option></select>
-        <button id="rp_play">▶</button>
-        <button id="rp_prev" title="previous frame (←)">◀︎|</button>
-        <button id="rp_next" title="next frame (→)">|▶︎</button>
-        <input id="rp_time" type="range" min="0" max="0" value="0" class="grow">
-        <span id="rp_tlabel" class="mono"></span>
-        <select id="rp_speed"><option>0.25</option><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select>
-        <select id="rp_camsel" title="camera (keys 1–4)"><option value="1">1 top-down</option><option value="2">2 follow</option><option value="3">3 wrist</option><option value="4" selected>4 free orbit</option></select>
-        <label><input type="checkbox" id="rp_ee" checked> end-effector path</label>
-        <label><input type="checkbox" id="rp_slam" checked> SLAM pose path</label>
-        <label title="LIMO 몸통 카메라 RGB(지도를 만드는 입력, RecallVLA 입력 1) — 화면 왼쪽 아래, 모서리를 끌어 크기 조절"><input type="checkbox" id="rp_cam_body" checked> LIMO RGB</label>
-        <label title="OMX-F 손목 카메라 RGB(RecallVLA 입력 2) — 화면 왼쪽 아래, 모서리를 끌어 크기 조절"><input type="checkbox" id="rp_cam_wrist" checked> wrist RGB</label>
-        <label title="BEHAVIOR 집 배치(방 바닥·벽·가구·놓을 곳·집을 것) 바탕 층"><input type="checkbox" id="rp_ul" checked> house layout</label>
-        <label title="정책이 본 지도(GPU 근사판 G2) — sgview 의 진짜 scenemap 지도 위에 반투명 주황으로 겹침"><input type="checkbox" id="rp_pmap"> policy map</label>
-        <label title="정책 입력 패널(오른쪽): 목표 칸·몸 상태·지도 물체 칸·방향 구역·행동 대 교사 라벨·특권 상태·과제 조건"><input type="checkbox" id="rp_inon" checked> inputs</label>
-        <label title="BEHAVIOR 집 진짜 메시(OmniGibson visual 메시를 줄인 것) — 끄면 상자"><input type="checkbox" id="rp_mesh" checked> house mesh</label>
-        <label title="GPU 환경이 쓰는 상자 근사(벽·가구·창) — 진짜 가구(점구름·메시)와 견주기"><input type="checkbox" id="rp_envbox"> env boxes</label>
-        <label title="집기·놓기 조건: 서는 자리 후보(파랑)·표 자리(보라)·교사가 고른 자리(빨강), 팔 닿는 띠(0.30·0.38 m 고리), 집을 물체·놓을 곳"><input type="checkbox" id="rp_cond" checked> stances &amp; reach</label>
-        <label title="창 안 집을 후보를 잡기 모형으로 색칠: 초록 = 잡힘, 빨강 = 안 됨(까닭)"><input type="checkbox" id="rp_feas"> graspable tint</label>
+      <div id="rp_top">
+        <button id="rp_listbtn" title="show / hide the episode list">☰</button>
+        <button id="rp_runbtn" title="pick another run (shows the run chips)">Run ▾</button>
+        <b id="rp_run" class="mono"></b>
+        <button id="rp_eprev" title="previous episode (↑)">▲</button>
+        <button id="rp_enext" title="next episode (↓)">▼</button>
+        <span id="rp_title" class="rp_title"></span>
+        <span id="rp_obadge" class="obadge" hidden></span>
+        <span id="rp_sbadge" class="sbadge" hidden></span>
+        <span id="rp_pipe" class="rp_pipe"></span>
+        <span class="grow"></span>
+        <button id="rp_inbtn" title="policy inputs panel: goal, body, map slots, sectors, action vs teacher">Inputs</button>
+        <span class="dd"><button id="rp_layerbtn" title="layers and panels">Layers ▾</button>
+          <div id="rp_layers" class="menu" hidden>
+            <div class="mg"><div class="mh">GT (debug)</div>
+              <label title="BEHAVIOR house layout (room floors, walls, furniture, places, picks) as a base layer"><input type="checkbox" id="rp_ul"> house layout</label>
+              <label title="real BEHAVIOR house mesh (reduced OmniGibson visual mesh); off = boxes"><input type="checkbox" id="rp_mesh" checked> house mesh</label>
+              <label title="boxes the GPU env uses (walls, furniture, windows) — compare with the real furniture"><input type="checkbox" id="rp_envbox"> env boxes</label></div>
+            <div class="mg"><div class="mh">Policy</div>
+              <label title="the map the policy saw (GPU approximation) over sgview's real scenemap map, translucent orange — the parity check"><input type="checkbox" id="rp_pmap"> policy map</label>
+              <label title="stance candidates (blue), table stance (purple), teacher's choice (red), arm reach rings (0.30 / 0.38 m), pick object and place target"><input type="checkbox" id="rp_cond"> stances &amp; reach</label>
+              <label title="candidates in the window tinted by the grasp model: green = graspable, red = not (with reason)"><input type="checkbox" id="rp_feas"> graspable tint</label></div>
+            <div class="mg"><div class="mh">Paths (3D classic)</div>
+              <label><input type="checkbox" id="rp_ee" checked> end-effector path</label>
+              <label><input type="checkbox" id="rp_slam" checked> SLAM pose path</label></div>
+            <div class="mg"><div class="mh">Panels</div>
+              <label><input type="checkbox" id="rp_inon"> inputs</label>
+              <label title="LIMO body camera RGB (RecallVLA input 1)"><input type="checkbox" id="rp_cam_body" checked> LIMO RGB</label>
+              <label title="OMX-F wrist camera RGB (RecallVLA input 2)"><input type="checkbox" id="rp_cam_wrist" checked> wrist RGB</label>
+              <label title="text overlay: episode, time, GT/SLAM path legend, pipeline"><input type="checkbox" id="rp_hudsw"> info text</label></div>
+          </div></span>
+        <button id="rp_focus" title="focus mode: only the scene and the time bar (Esc to leave)">Focus</button>
+        <button id="rp_full" title="browser full screen">⛶</button>
       </div>
+      <div class="rp_row"><div id="rp_view"><div id="rp_sg" class="sghost" hidden></div><div id="rp_hud" class="hud mono"></div>
+        <div id="rp_left"><div id="rp_cams" class="cams"></div><aside id="rp_in" class="rp_in" title="policy inputs at this step (synced to the playback time)"></aside></div>
+        <div id="rp_badge" class="rp_badge" hidden></div><div id="rp_empty" class="empty">Pick an episode from the list</div></div></div>
+      <div id="rp_bar" class="bar">
+        <select id="rp_mode" title="debug: old 3D drawing (reward strip and camera JPEGs inside the .trp)" hidden><option value="sg" selected>sgview</option><option value="3d">3D classic (debug)</option></select>
+        <select id="rp_camsel" title="camera (keys 1–4, 3D classic only)" hidden><option value="1">1 top-down</option><option value="2">2 follow</option><option value="3">3 wrist</option><option value="4" selected>4 free orbit</option></select>
+        <button id="rp_play" title="play / pause (space)">▶</button>
+        <button id="rp_prev" title="back 0.5 s (←)">◀︎|</button>
+        <button id="rp_next" title="forward 0.5 s (→)">|▶︎</button>
+        <div class="tl"><div id="rp_phases" class="phases"></div><input id="rp_time" type="range" min="0" max="0" value="0" class="grow"><div id="rp_marks" class="marks"></div></div>
+        <span id="rp_tlabel" class="mono"></span>
+        <select id="rp_speed" title="speed"><option>0.25</option><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select>×
+        <label title="repeat from the start when it ends"><input type="checkbox" id="rp_loop" checked> loop</label>
+      </div>
+      <div id="rp_phlegend" class="legend small"></div>
       <canvas id="rp_strip" height="110"></canvas>
       <div id="rp_legend" class="legend small"></div>
     </div>
