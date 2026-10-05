@@ -474,3 +474,7 @@ X0 464(목표 칸 2 × 16, VLA_INPUT 2.1), 토큰마다 학생의 GOAL 묶음 16
 ## E6 — 대본 특권 교사 라벨(`teacher_script`, 2026-10-05)
 - `BcConfig` 끝에 `b_p4, b_p5, b_p6, b_p_slip, b_p_occ, teacher_script`(실행기 `beh.pnp`·`beh.fail`·`teacher_script`). `teacher_script` 1 이면 롤아웃 그래프 안에서 환경의 대본 교사 커널(`env/include/teacher.h`)이 B4–B6 판의 교사 라벨(교사가 움직일 때 행동도)을 덮어쓴다(`script_label_k`, 다른 판은 체크포인트 교사). 교사 체크포인트 없이 써도 됨(`"teacher": ""`).
 - `config/bc_pnp_lite.json`(B4 0.6·B5 0.4, 지도 C0, student-lite MSE, 짧은 연결 시험): 그래프 잡힘, 교사 평가 0.153 성공(B4·B5 섞음), 기록 6 롤아웃 39 만 표본, BC 40 × 50 스텝 손실 0.242 → 0.015, DAgger 2 번 — 학생 성공 0(짧은 판이라 학습 효과는 아직 안 잼). 57 s.
+
+## 잡기 가능 짝 + 다시 쓴 대본 교사 (2026-10-05)
+- `BcConfig` 끝에 `b_feas`(실행기 `beh.feas`): 1 이면 B4–B6 판을 잡기 가능 짝에서만(`PF_FEAS`). `teacher_script` 이면 시작 때 잡기 가능 표(`env::pnp_feasibility`)를 늘 만듦(교사가 표의 서는 자리를 씀). `config/bc_pnp_lite.json` 에 `"feas": 1`.
+- 짧은 확인(B4 만, student-lite MSE, N 1,024, 지도 C0): 교사 평가 0.946, 기록 12 롤아웃 60 만 표본, BC 300 × 50 손실 1.04 → 0.048 → 학생 성공 **0.026**(충돌 0.27); BC 1,000 × 50 → 0.003–0.011; DAgger 2 번 → 0(대본 교사는 단계 기억이 있어 학생이 간 자리 라벨이 어긋남). 2.2 분.

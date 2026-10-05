@@ -152,3 +152,23 @@ python3 src/robot/og/e7/e0_cases.py > cases.csv && ~/ra_envbuild/grasp_e7 cases.
 API(뒤로 맞음): `bsc::BCurr` 끝에 `p4, p5, p6, p_slip, p_occ, phys`(0 이면 예전 난수 흐름 = 같은 판), `EntKind` `EK_B4..EK_B6`(`N_EK` 7), `Entry` 끝에 `mass, st[2], src_top, dst_st[2], oyaw, odim[3]`, SoA 끝에 `F_O_*`·`F_OC_*`·`F_T_*`·`I_O_*`·`I_B_SKIP`·`I_T_*`, `DeviceEnv::teacher(act)`·`CpuEnv::teacher`. BEHAVIOR 스텝은 커널 둘(`step_kernel_beh` = 예전 판, `step_kernel_pnp` = 잡기 판 — `I_B_SKIP` 로 판마다 한 번).
 
 잰 값(5.5절): 예전 설정 끝 수·비트 그대로(A1 8,907/3,420/1,543, A2 `--arm` 21/22,170/586, stage 3 `--follow --point 0.5,0.5` 바꾸기 전 빌드와 같음). 새 판 비트 동일(위 첫 줄, 교사 행동 0 다름), 음성 대조 14,462,536·3,726,624 다름. 처리량 N 4,096: B1–B3 0.38–0.39 ms/스텝(그대로), B4 1.72, 섞음 1.74, 교사 커널 13.5 ms/스텝.
+
+## E6 — 대본 교사 다시 씀 + 잡기 가능 표 (2026-10-05)
+설계·잰 값 [CURRICULUM_BEHAVIOR2026](../../../docs/map_vla/CURRICULUM_BEHAVIOR2026.md) 5.6. 예전 판(상자 방·B1–B3)은 바이트 그대로.
+
+| 파일 | 바뀐 것 |
+|---|---|
+| `include/teacher.h` | 교사 = `teacher_pre`(판마다, 사건·계획 요청) → `teacher_plan`(요청한 판만, 판 하나 = 워프 하나 `WCtx` — 후보·자세·BFS 행을 레인이 나눔, CPU 는 레인 하나로 같은 결과) → `teacher_act`(판마다, 저장한 계획 따르기). 서는 자리 찾기(바로 가는 자리 + 원호, 등급 0/1/2, 스텝마다 비싼 후보 `KT::plan_budget` 192 개까지 이어서), 잡기·놓기 계획(웨이포인트), 특권 점유 BFS 길, 지역 계획, 다시 하기, B6 탐사. 교사 기억 = 환경 상태 `I_T_*`·`F_T_*` + 교사 버퍼 `TBuf`(`NTF`·`NTI` 칸, 목록, 작업 메모리 워프마다 `T_SCR` 42 KB). `feas_entry` = 잡기 가능 표 한 짝 |
+| `include/grasp.h` | `FeasReason`, `kMinGraspH`(위에서 잡기 손끝 여유로 나온 얇음 하한 9.5 mm), `obj_static_feas`(폭·무게·높이) |
+| `include/env_pnp.h` | 잡기 물리 판 고침: `rest_obj`(받침 윗면에 앉혀 시작), 닫힘 조건 ④ 벌림 = 제어 스텝 시작 틈(`gap_step`), `b5_start_yaw`(B5 시작 팔·든 물체 안 닿는 yaw) |
+| `include/env_beh.h` | `PF_FEAS` 이면 B4–B6 짝을 그 단계 비트가 있을 때까지 다시 고름(`KP::feas_tries` 64) |
+| `include/bscene.h` | `Entry` 끝에 `feas, gst4[4], gst[4], pst5[4], pst6[4], grel[4]`, `SceneSet::has_feas`, `PF_FEAS` 8, `FeasBit` |
+| `src/env_kernel.cu` | `pnp_feasibility(SceneBuild&)`(장치 짝마다 워프, 호스트·장치 표에 씀), 교사 커널 셋(`DeviceEnv::teacher_pre/plan/act`, `tbuf()`), `ENV_PROF` 면 계획 요청 비트마다 시간 |
+
+```
+~/ra_envbuild/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --teacher --feas --fail 0.005,0.3 --point 0.3,0   # 교사 행동·버퍼 GPU == CPU
+~/ra_envbuild/env_verify 512 300 --stage 3 --mix 0.1,0.1 --pnp 0.25,0.25,0.25 --feas --negative-teacher                     # 실패해야 정상
+~/ra_envbuild/pnp_check 10000 [--negative feas]     # 잡기 가능 표: 집마다 짝 수, 까닭, CPU == 장치, PF_FEAS 고르기
+~/ra_envbuild/env_bench 200 3 4096 --pnp 0.34,0.33,0.33 --mix 0,0 --teacher --feas   # 교사 커널 셋 따로(env_bench_prof 면 계획 종류별)
+```
+잰 값: 비트 동일(교사 버퍼까지, 2,279 계획), 음성 대조 33,418 다름, `pnp_check` 표 CPU == 장치 0 다름·PF_FEAS 판 비트 없는 짝 0. N 4,096: 잡기 판 환경 스텝 1.10–1.24 ms, 교사 앞 + 행동 0.61(B4)·4.76(B5)·0.84(B6) ms, 계획 커널 12–19 ms(계획하는 판이 있는 스텝).
