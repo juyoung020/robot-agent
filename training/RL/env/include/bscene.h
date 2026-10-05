@@ -87,7 +87,15 @@ struct Entry {            // 판 하나의 시작 조건(호스트가 미리 만
   float src_top;          // 집을 물체의 처음 받침 윗면 z(RASC PLACES top, 바닥이면 0 근처, 모르면 물체 바닥 z)
   float dst_st[2];        // 놓을 곳에 닿는 칸 가운데(창 좌표; 바닥이면 고른 자리 가운데) — 대본 교사·확인용
   float oyaw, odim[3];    // 집을 물체의 회전 상자: yaw(세계), 크기(yaw 축 가로·세로, 높이) — 바닥 자국을 가장 작게 덮는 직사각형(물체 축 투영). ext 는 그 AABB
+  // ---- 잡기 가능 표(대본 교사 개선, 2026-10-05 — env pnp_feasibility 가 장치에서 채움, build_scenes 만 하면 0 = 표 없음) ----
+  // 잡기 모형(grasp.h)·교사 계획(teacher.h)과 같은 코드로 잰 값: 이 짝이 B4/B5/B6 로 될 수 있는가 + 그때 찾은 서는 자리(교사가 판 시작에 바로 씀)
+  int32_t feas;           // FeasBit 비트 | 잡기 쪽 까닭(env FeasReason) << 8 | B5 놓기 까닭 << 16 | B6 놓기 까닭 << 24
+  float gst4[4];          // B4 잡기 서는 자리(창 x, y, yaw, 앞 물러난 거리 dpre — 음수 = 앞쪽 P): 잡는 자세 칸(B4 시작)에서 바로 가는 자리 먼저 — FE_GRASP
+  float gst[4];           // B6 잡기 서는 자리(어디서 와도: P 에서 제자리 돌기 되는 자리 먼저) — FE_PLACE6 의 앞 조건
+  float pst5[4], pst6[4]; // 놓기 서는 자리: B5 시작 쥠(시작 칸에서 바로 가는 자리 먼저) / B6(gst 에서 계획한 쥠으로)
+  float grel[4];          // gst 계획 쥠의 손 축 기준 자리(a, n, b) + ryaw — B6 에서 실제 쥠이 이것과 같으면 pst6 를 씀
 };
+enum FeasBit { FE_GRASP = 1, FE_PLACE5 = 2, FE_PLACE6 = 4 };   // B4 / B5 / B6(잡기 gst + 놓기 pst6)
 // 집기·놓기 판 고르기 표(호스트가 만듦): 인스턴스 → 집을 물체 → 짝(Entry). 각 단계에서 엄격 판을 앞에 둠
 struct PnpPick { int ent_off, n, n_in; };
 struct PnpInst { int pick_off, npick, npick_in, scene, split; };
@@ -112,6 +120,7 @@ struct SceneSet {         // 장치 메모리에 하나(커널은 포인터로 �
   const int16_t* sim3;    // [nname][3]
   const int16_t* hyper;   // [nname]
   int nname;
+  int has_feas;           // 1 = Entry::feas 표를 채움(env pnp_feasibility) — 0 이면 PF_FEAS 고르기는 예전처럼(표 없음)
 };
 
 // 커리큘럼(장치 값, 판 리셋 때 읽음 — 바꿔도 다시 컴파일·그래프 다시 잡기 없음)
@@ -134,7 +143,8 @@ struct BCurr {
 };
 constexpr BCurr kBCurrDefault = {0.34f, 0.33f, 0xffu, 0, 0.f, 0, 0, 0, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0};
 // 물리 끄기 비트(BCurr::phys, 음성 대조·실험): 무게 미끄러짐 끔, 폭 검사 끔(손가락 사이 아무 폭이나 잡힘), 팔 충돌 막기 끔
-enum PhysFlag { PF_NO_SLIP = 1, PF_NO_WIDTH = 2, PF_NO_ARMCOLL = 4 };
+// PF_FEAS(고르기, 물리 아님): B4–B6 판을 잡기 가능 표(Entry::feas, SceneSet::has_feas)가 그 단계로 된다고 한 짝에서만 뽑음 — 0 이면 예전 난수 흐름
+enum PhysFlag { PF_NO_SLIP = 1, PF_NO_WIDTH = 2, PF_NO_ARMCOLL = 4, PF_FEAS = 8 };
 // 판의 목표 꼴(env I_B_GMODE 비트, 지도 BMapEnv::gmode)
 enum GoalMode { GM_PLACE_PT = 1,   // 놓을 칸(목표 칸 1)이 점(F_B_GPX..Z)
                 GM_GOTO = 2 };     // 점으로 가기: 집을 칸 없음, 지금 가는 목표 = 놓을 점(B1·B3 변형)

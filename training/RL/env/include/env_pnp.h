@@ -12,6 +12,10 @@
 //     닿으면 그 서브스텝을 되돌림(막힘: 팔·베이스 자세, 속도 0) + 닿음 표시(보상 벌점). 몸통 충돌은 예전처럼 판 끝.
 #pragma once
 #include "grasp.h"
+#if defined(PNP_DBG) && !defined(__CUDA_ARCH__)
+#include <cstdio>
+extern int g_pnp_dbg, g_pnp_cur;
+#endif
 
 namespace env {
 
@@ -320,20 +324,61 @@ DEV bool at_goal(const bsc::SceneSet& ss, const BState& b, const bsc::Entry& E, 
 }
 
 // ---- 시작(판 리셋, 단계 B4·B5·B6) ----
+// 집을 물체 처음 자리: 인스턴스 상자 가운데·회전 상자 yaw, 받침에 파고든 만큼(인스턴스 자세는 2 cm 넘게 파고들기도 함 — support_z 가 3 cm 까지 봐줌) 받침 윗면으로
+// 올려 앉힘(2026-10-05: 예전엔 파고든 채 시작해 든 물체 충돌(위아래 1 cm 봐줌)에 걸려 들어 올릴 수 없었음). 잡기 가능 표(teacher.h feas_start)도 이것
+DEV void rest_obj(const bsc::SceneSet& ss, const BState& b, const bsc::Entry& E, PState& p) {
+  for (int a = 0; a < 3; ++a) p.o[a] = 0.5f * (E.prim[0].lo[a] + E.prim[0].hi[a]);
+  set_yaw(p, E.oyaw);
+  p.st = OS_REST;
+  const float zb = p.o[2] - 0.5f * E.odim[2];
+  const float s = support_z(ss, b, E, p, p.o[0], p.o[1], zb, E.odim);
+  if (s > zb) p.o[2] = s + 0.5f * E.odim[2];
+  p.z0 = p.o[2] - 0.5f * E.odim[2];
+}
 // 나르는 자세: 잡는 점 base_link (0.20, 0, 0.33)(세계 0.48 m, 차대 앞 가장자리 4 cm 앞), 도구 수평, roll 0, 팔꿈치 아래 — 팔을 접어 가구에 덜 걸리게.
 // (행동 범위 안에서 3 mm 로 풀리는 몇 안 되는 높은 자리 중 하나: q ≈ (0, 0.51, −1.75, 1.25, 0)). B4·B6 처음 팔 자세도 이것
 DEV bool carry_q(float q[5]) {
   const float t[3] = {0.20f, 0.f, 0.33f};
   return ik_grasp(t, 0.f, 0.f, 1, q) || ik_grasp(t, 0.f, 0.f, 0, q);
 }
+// B5 든 채 시작: 지금 베이스·팔(나르는 자세)에서 물체 가운데 = 잡는 점, yaw = 로봇 yaw + joint1 + ryaw
+DEV void b5_hold(const Core& c, PState& p) {
+  set_yaw(p, c.yaw + c.q[0] + p.ryaw);
+  float qd[N_Q];
+  for (int k = 0; k < N_Q; ++k) qd[k] = 0.f;
+  Fk f;
+  fk(c.q, qd, f);
+  float sn, cs;
+  sincosf_d(c.yaw, &sn, &cs);
+  Hand h;
+  hand_world(f, c.x, c.y, sn, cs, h);
+  for (int a = 0; a < 3; ++a) p.o[a] = h.p[a];
+}
+// 팔·든 물체가 시작부터 닿으면(가구 옆) 어떤 움직임도 되돌려져 못 움직이므로(2026-10-05 고침), 몸통·팔·든 물체가 안 닿는 yaw 를 지금 yaw 에서
+// ±0.3 rad 씩 넓혀 찾음(난수 안 씀). 없으면 처음 yaw 그대로. 잡기 가능 표(teacher.h feas_entry)도 이것
+DEV void b5_start_yaw(Core& c, const BState& b, const bsc::SceneSet& ss, const bsc::Entry& E, PState& p) {
+  ArmCand ac;
+  arm_gather(ss.sc[b.scene], E, b.wx, b.wy, c.x, c.y, ac);
+  const float yaw0 = c.yaw;
+  for (int k = 0; k < 21; ++k) {
+    c.yaw = wrap_pi(yaw0 + ((k & 1) ? 0.3f : -0.3f) * (float)((k + 1) >> 1));
+    b5_hold(c, p);
+    float qd[N_Q];
+    for (int j = 0; j < N_Q; ++j) qd[j] = 0.f;
+    Fk f;
+    fk(c.q, qd, f);
+    float sn, cs;
+    sincosf_d(c.yaw, &sn, &cs);
+    if (body_free_beh(ss, E, c.x, c.y, c.yaw) && !arm_collides(c, b, ss, E, p, E.odim, f, ac, sn, cs)) return;
+  }
+  c.yaw = yaw0;
+  b5_hold(c, p);
+}
 // 시작 자리·팔·물체 상태(reset_beh 가 단계·짝을 고른 뒤). 반환 = 잡는 자세에서 시작했나
 DEV bool reset_pnp_start(Core& c, BState& b, PState& p, const bsc::SceneSet& ss, const bsc::BCurr& cu, const bsc::Entry& E, int kind) {
   clear_p(p);
   const float* e = E.odim;
-  for (int a = 0; a < 3; ++a) p.o[a] = 0.5f * (E.prim[0].lo[a] + E.prim[0].hi[a]);
-  set_yaw(p, E.oyaw);
-  p.st = OS_REST;
-  p.z0 = E.prim[0].lo[2];
+  rest_obj(ss, b, E, p);
   p.ph = -1.f; p.pl = -1.f;
   bool ok = false;
   float x = 0.f, y = 0.f, yaw = 0.f;
@@ -364,20 +409,12 @@ DEV bool reset_pnp_start(Core& c, BState& b, PState& p, const bsc::SceneSet& ss,
     p.w = minf(minf(e[0], e[1]), KG::max_w);
     // 좁은 가로 축을 닫는 축(나르는 자세 roll 0: 팔 방향 + 90°)에 맞춤
     p.ryaw = e[0] <= e[1] ? 1.5707963f : 0.f;
-    set_yaw(p, c.yaw + c.q[0] + p.ryaw);
     c.q[5] = grip_angle_of(p.w);
-    float qd[N_Q];
-    for (int k = 0; k < N_Q; ++k) qd[k] = 0.f;
-    Fk f;
-    fk(c.q, qd, f);
-    float sn, cs;
-    sincosf_d(c.yaw, &sn, &cs);
-    Hand h;
-    hand_world(f, c.x, c.y, sn, cs, h);
-    for (int a = 0; a < 3; ++a) p.o[a] = h.p[a];
     p.st = OS_HELD;
     p.fl = OF_PICKED;   // z0 는 집은 자리 바닥 그대로(위) — 든 채 시작해도 "들림" 이라 무게·미끄러짐 검사가 걸림
+    b5_start_yaw(c, b, ss, E, p);
   }
+
   // 실패 판: 놓을 자리(점·면 점)에 막는 물체
   if (cu.p_occ > 0.f && kind != bsc::EK_B4) {
     const float u = rand01(c.rng);
@@ -462,6 +499,9 @@ DEV bool substeps_pnp(Core& c, BState& b, PState& p, const bsc::SceneSet& ss, co
   const float dt = K::dt;
   const float* e = E.odim;
   const float mass = mass_of(E.mass);
+  // 잡기 조건 ④(벌림 ≥ 폭 + 2·어긋남)의 벌림 = 이 제어 스텝 시작 때 틈(2026-10-05 고침: 예전엔 바로 앞 서브스텝 틈이라, 닫히는 손가락이 한쪽부터 닿아
+  // 물체를 가운데로 미는 동안(어긋남 > 서브스텝 하나에 줄어드는 틈 ~1 mm) 조건이 깨져 늘 못 잡았음). 손가락이 물체 위에 얹힌 경우는 그대로 거름
+  const float gap_step = grip_gap_of(c.q[5]);
   for (int s = 0; s < K::sub; ++s) {
     const float x0 = c.x, y0 = c.y, yaw0 = c.yaw, wl0 = c.wl, wr0 = c.wr;
     float q0[N_Q], o0[3];
@@ -514,7 +554,10 @@ DEV bool substeps_pnp(Core& c, BState& b, PState& p, const bsc::SceneSet& ss, co
     // 잡기: 닫히는 중 손가락이 물체 폭에 닿음
     if (p.st == OS_REST && c.q[5] < q0[5]) {
       float dn;
-      const float w = grasp_width(h, p.o, e, p.oc_, p.os_, grip_gap_of(q0[5]), dn);
+      const float w = grasp_width(h, p.o, e, p.oc_, p.os_, maxf(grip_gap_of(q0[5]), gap_step), dn);
+#if defined(PNP_DBG) && !defined(__CUDA_ARCH__)
+      if (g_pnp_dbg == g_pnp_cur) std::printf("    close: gap %.4f -> %.4f w %.4f dn %.4f\n", grip_gap_of(q0[5]), grip_gap_of(c.q[5]), w, dn);
+#endif
       if (w > 0.f && grip_gap_of(c.q[5]) < w) {
         c.q[5] = maxf(c.q[5], grip_angle_of(w));
         c.qd[5] = (c.q[5] - q0[5]) / dt;

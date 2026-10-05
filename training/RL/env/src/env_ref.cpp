@@ -8,6 +8,12 @@ CpuEnv::CpuEnv(int N_, int stage_, uint64_t seed, bool arm_free_, const bsc::Sce
   iv.assign((size_t)NUM_I * N, 0);
   rng.assign(N, 0);
   Soa s{f.data(), iv.data(), rng.data(), N};
+  if (ss) {
+    tf.assign((size_t)NTF * N, 0.f);
+    tiv.assign((size_t)NTI * N, 0);
+    tlist.assign((size_t)N + 1, 0);
+    tscr.assign((size_t)T_SCR, 0);
+  }
   for (int i = 0; i < N; ++i) {
     if (stage >= kStageBeh) init_env_beh(s, i, seed, *ss, curr);
     else if (stage >= 2) init_env<true>(s, i, seed, stage);
@@ -31,7 +37,13 @@ void CpuEnv::teacher(std::vector<float>& act) {
   act.assign((size_t)N_ACT * N, 0.f);
   if (!ss) return;
   Soa s{f.data(), iv.data(), rng.data(), N};
-  for (int i = 0; i < N; ++i) teacher_step(s, i, *ss, nav, act.data());
+  const TBuf tb = tbuf();
+  for (int i = 0; i < N; ++i) {
+    if (teacher_pre(s, tb, i, *ss, nav)) { teacher_plan(s, tb, i, *ss, tscr.data(), wseq()); ++n_plan; }
+    teacher_act(s, tb, i, *ss, act.data());
+  }
 }
+
+void pnp_feasibility_cpu(const bsc::SceneSet& host, int ent, FeasOut& o) { feas_entry(host, ent, o, wseq()); }
 
 }  // namespace env

@@ -7,6 +7,8 @@
 #include "env_soa.h"
 #include "teacher.h"
 
+namespace bsc { struct SceneBuild; }
+
 namespace env {
 
 // stage: 0/1/2 = 상자 방 A0/A1/A2(= 커리큘럼 B0, 예전 그대로), kStageBeh(3) = BEHAVIOR 집 장면(B1–B3, env_beh.h) — 장치 SceneSet 이 있어야 함
@@ -43,9 +45,15 @@ class DeviceEnv {
   // 지도 → 환경 되먹임(정책이 아는 지도의 거리장·목표 확정). 기본 없음 = 직선 거리, B2 는 보임만. gmap::DeviceMap::nav_fb() 를 넣는다
   void set_nav(const bsc::NavFb& fb) { nav_ = fb; }
   const bsc::SceneSet* scenes() const { return ss_; }
-  // 대본 특권 교사(teacher.h, E6): 모든 판의 교사 행동 act[k*N+i](장치)를 씀 — 잡기 물리 판(B4–B6) 아니면 0. 지도 되먹임(set_nav)이 있으면 거리장으로 다가감.
-  // 교사 기억은 환경 상태(I_T_*)에. 비동기, 호스트 동기 없음(그래프에 넣을 수 있음)
+  // 대본 특권 교사(teacher.h, E6): 모든 판의 교사 행동 act[k*N+i](장치)를 씀 — 잡기 물리 판(B4–B6) 아니면 0. 지도 되먹임(set_nav)이 있으면
+  // B6 는 목표가 지도에 확정된 뒤에만 물체로(그 전엔 탐사). 커널 셋: 앞(판마다) → 계획(요청한 판만, 장치 목록) → 행동(판마다).
+  // 교사 기억은 환경 상태(I_T_*) + 교사 버퍼(tbuf, 생성자가 장면 묶음이 있으면 잡음). 비동기, 호스트 동기 없음(그래프에 넣을 수 있음)
   void teacher(float* act) const;
+  const TBuf& tbuf() const { return tb_; }
+  // 재기용(env_bench): 교사 커널 셋을 따로 띄움(teacher() 와 같은 일)
+  void teacher_pre(const bsc::NavFb& fb) const;
+  void teacher_plan() const;
+  void teacher_act(float* act) const;
 
   // ---- 장치 단계·씨앗(다시 만들기 없이) ----
   // set_dynamic(무리 비트 = stage_family 의 합): 그 뒤 step 은 단계를 장치 값에서 읽고 무리마다 커널을 띄운다(맞지 않는 무리는 바로 끝남 — 결과 같음).
@@ -76,6 +84,7 @@ class DeviceEnv {
   int ctl_slot_ = 0;
   bool dyn_ = false;
   uint32_t fam_ = 0;
+  TBuf tb_{nullptr, nullptr, nullptr, nullptr, 0, 0};
 };
 
 // CPU 참조판: 같은 step_env 를 순서대로 돌린다(비교의 정답)
@@ -90,7 +99,18 @@ struct CpuEnv {
   std::vector<uint64_t> rng;
   CpuEnv(int N_, int stage_, uint64_t seed, bool arm_free_ = false, const bsc::SceneSet* ss_host = nullptr, const bsc::BCurr& cu0 = bsc::kBCurrDefault);
   void step(const std::vector<float>& act, std::vector<float>& obs, std::vector<float>& rew, std::vector<int>& done);
-  void teacher(std::vector<float>& act);   // DeviceEnv::teacher 와 같은 것(CPU)
+  void teacher(std::vector<float>& act);   // DeviceEnv::teacher 와 같은 것(CPU, 판마다 앞 → 계획 → 행동)
+  std::vector<float> tf;                    // 교사 버퍼(TBuf, 계획 작업 메모리는 하나)
+  std::vector<int> tiv, tlist;
+  std::vector<uint8_t> tscr;
+  long n_plan = 0;                          // 교사 계획 수(잰 값)
+  TBuf tbuf() { return TBuf{tf.data(), tiv.data(), tscr.data(), tlist.data(), N, 1}; }
 };
+
+// 잡기 가능 표(Entry::feas·gst·pst5·pst6·grel, SceneSet::has_feas)를 장치에서 계산해 호스트·장치 표에 씀(teacher.h feas_entry — 잡기 모형·교사 계획과 같은 코드).
+// upload 뒤에 한 번. 반환 = 잰 초. PF_FEAS 고르기·교사가 판 시작에 서는 자리를 바로 쓰는 데 필요
+double pnp_feasibility(bsc::SceneBuild& b, bool quiet = false);
+// CPU 로 짝 하나(확인용 — 장치 값과 비트 비교)
+void pnp_feasibility_cpu(const bsc::SceneSet& host, int ent, FeasOut& o);
 
 }  // namespace env

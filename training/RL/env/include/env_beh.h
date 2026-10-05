@@ -121,7 +121,9 @@ DEV int pick_pnp(const bsc::SceneSet& ss, const bsc::BCurr& cu, uint64_t& rng) {
 struct KP {
   static constexpr float win_margin = 0.8f, spawn_min_d = 1.0f;   // (가정)
   static constexpr int spawn_tries = 64;
+  static constexpr int feas_tries = 64;   // PF_FEAS 다시 고르기 상한(잡기 가능 짝 ~0.5 → 다 실패할 확률 ~1e-19; 다 실패하면 마지막 짝)
 };
+DEV bool is_pnp_kind(int kind) { return kind >= bsc::EK_B4; }
 DEV int pnp_cell(const bsc::SceneDev& d, const bsc::Entry& E, float x, float y) {   // 창 좌표 → 장면 칸 번호(밖 −1)
   const int c0 = (int)floorf((E.wx - bsc::WIN_HALF - d.ox) * bsc::INV_CELL + 0.5f), r0 = (int)floorf((E.wy - bsc::WIN_HALF - d.oy) * bsc::INV_CELL + 0.5f);
   const int c = c0 + (int)floorf(x * bsc::INV_CELL) + bsc::WIN / 2, r = r0 + (int)floorf(y * bsc::INV_CELL) + bsc::WIN / 2;
@@ -271,6 +273,15 @@ DEV void reset_beh(Core& c, BState& b, PState& p, const bsc::SceneSet& ss, const
     e = kind == bsc::EK_B1 ? pick_entry(ss, cu, bsc::L_ROOM, c.rng) : pick_pnp(ss, cu, c.rng);
   }
   if (e < 0) { e = 0; kind = ss.ent[0].list == bsc::L_ROOM ? bsc::EK_B1 : bsc::EK_B3; }   // 설정이 아무것도 못 고름(호스트가 미리 막음) — 첫 판
+  // 잡기 가능 판만(PF_FEAS, 잡기 물리 판, 표가 있을 때): 그 단계로 될 수 있다고 표가 말하는 짝이 나올 때까지 같은 고르기를 다시(거절 표집 — 조건부 분포는
+  // 원래 고르기 비율 그대로). 비트가 꺼져 있으면 난수를 더 뽑지 않음(예전 흐름)
+  if (is_pnp_kind(kind) && (cu.phys & bsc::PF_FEAS) && ss.has_feas) {
+    const int need = kind == bsc::EK_B4 ? bsc::FE_GRASP : kind == bsc::EK_B5 ? bsc::FE_PLACE5 : bsc::FE_PLACE6;
+    for (int t = 0; t < KP::feas_tries && (ss.ent[e].feas & need) != need; ++t) {
+      const int e2 = pick_pnp(ss, cu, c.rng);
+      if (e2 >= 0) e = e2;
+    }
+  }
   const bsc::Entry& E = ss.ent[e];
   // 점으로 가기(B1·B3 변형, 목표 점): p_goto > 0 일 때만 난수를 하나 더 뽑는다(0 이면 예전과 같은 난수 흐름 = 같은 판)
   bool go = false;
@@ -474,6 +485,9 @@ template <int SEL = 0>
 DEV void step_env_beh(const Soa& s, int i, const float* act, float* obs, float* rew, int* done, bool arm_free, int bug, const bsc::SceneSet& ss,
                       const bsc::BCurr* cu, const bsc::NavFb& fb) {
   if (SEL == 2 && s.iv[I_B_SKIP * s.N + i]) { s.iv[I_B_SKIP * s.N + i] = 0; return; }
+#if defined(PNP_DBG) && !defined(__CUDA_ARCH__)
+  g_pnp_cur = i;
+#endif
   Core c;
   load<false>(s, i, c);
   BState b;
