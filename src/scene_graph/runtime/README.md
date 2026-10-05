@@ -80,7 +80,7 @@ mem.close()                             # 이름 보고·진단 출력, 마지�
 
 시뮬 확인: `src/sim/limo/run_limo_map.sh [task] [steps]` — 평가기를 LIMO 로 띄우고(robot-agent `eval_with_limo.py`) 제자리 한 바퀴 + 앞이 비면 직진·막히면 왼쪽으로 꺾기, 끝에 지도 ↔ 정답 바닥 지도(`src/sim/explore/gt/`)·자세 오차·몸통 카메라 외부 파라미터 ↔ scenemap 순기구학을 `summary.json`·`overlay.png` 로. 탐색은 아래 "LIMO 탐색".
 
-**LIMO 시뮬 확인 — Cartographer**(10-06, turning_on_radio 인스턴스 0, `run_limo_map.sh … 2400`, `SGRT_POSE=carto`, 시뮬 X2L 라이다): 정답 경로 12.4 m·회전 1008°, 자세 ↔ 정답 keyframe 400 개 rms 2.9 cm / 0.31°, 최대 5.6 cm / 0.89°. 지도 53 m², 점유의 97.5 % 가 정답 비바닥 ±10 cm 안, 빈칸의 90 % 가 정답 바닥, 정답 벽 경계의 94.7 % 점유. 같은 기록 slam2d 대 Cartographer 비교는 `../slam_carto/README.md`. 아래 10-04 판들은 옛 slam2d 로 잰 것.
+**LIMO 시뮬 확인 — Cartographer**(10-06, turning_on_radio 인스턴스 0, `run_limo_map.sh … 2400`, `SGRT_POSE=carto`, 시뮬 X2L 라이다): 정답 경로 12.4 m·회전 1008°, 자세 ↔ 정답 keyframe 400 개 rms 2.9 cm / 0.31°, 최대 5.6 cm / 0.89°. 지도 53 m², 점유의 97.5 % 가 정답 비바닥 ±10 cm 안, 빈칸의 90 % 가 정답 바닥, 정답 벽 경계의 94.7 % 점유. frontier 탐색(`run_explore.sh frontier turning_on_radio`, 130 s, 28.6 m): rms 2.1 cm / 0.28°, 최대 5.4 cm / 1.18°, 빈칸 58.6 m², 막힘·접촉 0. 같은 기록 slam2d 대 Cartographer 비교는 `../slam_carto/README.md`. 아래 10-04 판들은 옛 slam2d 로 잰 것.
 
 **LIMO 시뮬 확인**(10-04, turning_on_radio 인스턴스 0, headless, `SGRT_POSE=slam`, 엔진 yolo26s-seg, 1200 스텝 = 40 s): 정답 경로 5.0 m·회전 662°, slam ↔ 정답 자세 keyframe 200 개 rms 1.3 cm / 0.21°, 최대 2.7 cm / 0.37°. 지도 50 m² 알려짐, 점유 칸의 95 %(±5 cm)가 정답 바닥 밖(벽·가구), 빈칸의 90 % 가 정답 바닥, 아는 영역 안 정답 바닥 경계(벽)의 95 % 가 ±10 cm 안에서 점유. 물체 19 개. 몸통 카메라 외부 파라미터: 시뮬 센서 ↔ scenemap 순기구학 cam 0 위치 차 2e-7 m, 회전 0.02°. 내부 파라미터 720×720 fx = fy = 306, cx = cy = 360. 기록(`SGRT_RECORD`)을 `sm_bench --robot limo_omx` 로 재생하면 실시간과 같은 자세·물체 수.
 
