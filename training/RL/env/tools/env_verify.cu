@@ -2,6 +2,8 @@
 //   env_verify [N=2048] [steps=400] [--negative] [--stage 0|1|2|3] [--arm | --arm-zero]   (기본 A1; 2 = A2 가구; 3 = BEHAVIOR 집 B1–B3)
 //   잡기 물리(E6): [--pnp p4,p5,p6 (B4 집기·B5 놓기·B6 가져오기 비율, B3 몫에서)] [--fail p_slip,p_occ] [--teacher (홀수 판 = 대본 교사, GPU 교사 행동 == CPU 교사 행동도 비교)]
 //     [--negative-grasp (GPU 만 폭·무게 검사 끔 — 반드시 실패, --arm 으로 무작위 팔이 넓은·무거운 것도 쥐게)] [--negative-armcoll (GPU 만 팔 막기 끔)] [--phys BITS (GPU·CPU 같이 끄기 PF_*)]
+//     [--feas (잡기 가능 표 env pnp_feasibility + PF_FEAS 고르기 — 교사가 표의 서는 자리를 씀)] [--negative-teacher (GPU 교사만 계획 결과를 조금 비틂 — 반드시 실패)]
+//     --teacher 이면 교사 버퍼(TBuf 계획·웨이포인트·팔 계획, 목록·작업 메모리 빼고)도 매 스텝 GPU == CPU 비트 비교
 //   BEHAVIOR(--stage 3): [--scenes DIR(기본 ~/ra_b1k)] [--mix p1,p2 (B1·B2 비율, 나머지 B3; 기본 0.34,0.33)] [--strict] [--split 0|1|2] [--only 장면,...]
 //     --follow: 홀수 판은 대본 정책(참 장면 다익스트라를 거꾸로 따라가고 끝에서 멈춤·목표를 봄) — 성공 길(B1 방·점, B3 잡는 점 작업 공간)까지 비트 동일을 보려고
 //     --negative-scene: GPU 만 B1 목표 방을 지움(bug 2) — 반드시 실패. 지도 되먹임 없이 돌린다(거리 = 직선, B2 = 보임만) — 지도와 함께는 map_verify
@@ -39,7 +41,7 @@ static const char* field_name(int k) {
 
 int main(int argc, char** argv) {
   int N = 2048, T = 400, stage = 1;
-  bool negative = false, arm = false, arm_zero = false, follow = false, teach = false;
+  bool negative = false, arm = false, arm_zero = false, follow = false, teach = false, feas = false, neg_teach = false;
   int pos = 0, nbug = 1;
   bsc::BuildOpt bo;
   bsc::BCurr cu = bsc::kBCurrDefault;
@@ -52,6 +54,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[a], "--fail") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &cu.p_slip, &cu.p_occ);
     else if (!std::strcmp(argv[a], "--phys") && a + 1 < argc) cu.phys = std::atoi(argv[++a]);
     else if (!std::strcmp(argv[a], "--teacher")) teach = true;
+    else if (!std::strcmp(argv[a], "--feas")) feas = true;
+    else if (!std::strcmp(argv[a], "--negative-teacher")) { negative = true; neg_teach = true; teach = true; nbug = 0; }
     else if (!std::strcmp(argv[a], "--scenes") && a + 1 < argc) bo.dir = argv[++a];
     else if (!std::strcmp(argv[a], "--mix") && a + 1 < argc) std::sscanf(argv[++a], "%f,%f", &cu.p1, &cu.p2);
     else if (!std::strcmp(argv[a], "--strict")) cu.strict = 1;
@@ -74,6 +78,7 @@ int main(int argc, char** argv) {
   if (stage >= kStageBeh) {
     std::string err;
     if (!bsc::build_scenes(bo, sb, &err) || !bsc::upload(sb, &err)) { std::printf("scene build failed: %s\n", err.c_str()); return 1; }
+    if (feas) { pnp_feasibility(sb); cu.phys |= bsc::PF_FEAS; }
     std::printf("BEHAVIOR scenes: %d, entries %d, device %.1f MB; mix B1 %.2f B2 %.2f B3 %.2f strict %d split %d; point goals p_point %.2f p_goto %.2f (instr blocks %d)\n",
                 sb.host.nsc, sb.host.nent, sb.dev_bytes / 1e6, cu.p1, cu.p2, 1.f - cu.p1 - cu.p2, cu.strict, cu.split, cu.p_point, cu.p_goto, sb.host.iblocks);
   }
@@ -82,7 +87,7 @@ int main(int argc, char** argv) {
   long kind_end[2][bsc::N_EK][4] = {};   // [짝수 판 비례 제어 / 홀수 판(--follow 면 대본, --teacher 면 교사)][단계][끝]
   long gm_end[4][bsc::N_EK][4] = {};     // [목표 꼴 GoalMode 비트 0..3][단계][끝] (모든 판)
   long cls_end[bsc::N_EK][4][2] = {};    // 교사 판: [단계][물체 좁은 가로 폭 반: < 2 cm, 2–4, 4–6, ≥ 6][끝난 수, 성공]
-  long grasps = 0, drops = 0, contacts = 0, teach_mis = 0;
+  long grasps = 0, drops = 0, contacts = 0, teach_mis = 0, teach_buf_mis = 0, teach_plans = 0, teach_plans0 = 0;
   std::vector<float> tact_c, tact_g((size_t)N_ACT * N);
   float* d_tact = nullptr;
   if (teach) cudaMalloc(&d_tact, sizeof(float) * N_ACT * N);
@@ -148,10 +153,28 @@ int main(int argc, char** argv) {
     }
     if (!arm) for (int k = 2; k < N_ACT; ++k) for (int i = 0; i < N; ++i) act[(size_t)k * N + i] = 0.f;   // 팔 묶음·0 고정 판: 팔 행동 0(묶인 판은 어차피 안 씀)
     if (teach && stage >= kStageBeh) {   // 교사: GPU·CPU 가 각자 계산(기억도 각자 상태에), 행동 비트 비교 후 홀수 판에 씀
+      if (neg_teach && t == T / 2) {   // 음성 대조: GPU 교사 기억의 웨이포인트 하나를 1 mm 옮김(계획 결과가 다르면 행동·상태가 갈라져야)
+        const TBuf tb = gpu.tbuf();
+        std::vector<float> w((size_t)NTF * N);
+        cudaMemcpy(w.data(), tb.f, sizeof(float) * w.size(), cudaMemcpyDeviceToHost);
+        for (int i = 1; i < N; i += 2) w[(size_t)TF_WP0 * N + i] += 0.001f;
+        cudaMemcpy(tb.f, w.data(), sizeof(float) * w.size(), cudaMemcpyHostToDevice);
+      }
       gpu.teacher(d_tact);
       cpu.teacher(tact_c);
       cudaMemcpy(tact_g.data(), d_tact, sizeof(float) * tact_g.size(), cudaMemcpyDeviceToHost);
       for (size_t k = 0; k < tact_c.size(); ++k) if (std::memcmp(&tact_c[k], &tact_g[k], 4)) ++teach_mis;
+      {   // 교사 버퍼(계획) 비트 비교
+        const TBuf tb = gpu.tbuf();
+        std::vector<float> tfg((size_t)NTF * N);
+        std::vector<int> tig((size_t)NTI * N);
+        cudaMemcpy(tfg.data(), tb.f, sizeof(float) * tfg.size(), cudaMemcpyDeviceToHost);
+        cudaMemcpy(tig.data(), tb.iv, sizeof(int) * tig.size(), cudaMemcpyDeviceToHost);
+        for (size_t k = 0; k < tfg.size(); ++k) if (std::memcmp(&tfg[k], &cpu.tf[k], 4)) ++teach_buf_mis;
+        for (size_t k = 0; k < tig.size(); ++k) if (tig[k] != cpu.tiv[k]) ++teach_buf_mis;
+        teach_plans += cpu.n_plan - teach_plans0;
+        teach_plans0 = cpu.n_plan;
+      }
       for (int i = 1; i < N; i += 2)
         if (cpu.iv[(size_t)I_B_KIND * N + i] >= bsc::EK_B4) for (int k = 0; k < N_ACT; ++k) act[(size_t)k * N + i] = tact_c[(size_t)k * N + i];
     }
@@ -209,14 +232,14 @@ int main(int argc, char** argv) {
   if (stage >= kStageBeh && (cu.p4 + cu.p5 + cu.p6) > 0.f) {
     std::printf("  grasp physics: grasp events %ld, slips/drops %ld, arm-contact steps %ld\n", grasps, drops, contacts);
     if (teach) {
-      std::printf("  teacher action GPU vs CPU: %ld differing values\n", teach_mis);
+      std::printf("  teacher action GPU vs CPU: %ld differing values; teacher plan buffers: %ld differing values; %ld env-plans\n", teach_mis, teach_buf_mis, teach_plans);
       const char* cn[4] = {"w<2cm", "2-4cm", "4-6cm", ">=6cm"};
       for (int k = bsc::EK_B4; k < bsc::N_EK; ++k)
         for (int q = 0; q < 4; ++q)
           if (cls_end[k][q][0]) std::printf("  teacher B%d %s: %ld / %ld success (%.3f)\n", k, cn[q], cls_end[k][q][1], cls_end[k][q][0], (double)cls_end[k][q][1] / cls_end[k][q][0]);
     }
   }
-  mismatches += teach_mis;
+  mismatches += teach_mis + teach_buf_mis;
   if (negative) {
     std::printf("negative control: %ld mismatches (must be > 0)\n", mismatches);
     return mismatches > 0 ? 0 : 1;

@@ -3,6 +3,8 @@
 //   pnp_check [N=10000] [--strict] [--dir RASC] [--negative NAME]
 //   --emit-e7 FILE: 뽑은 판의 집을 물체(이름이 다른 것 ≤ 16)를 E7 OmniGibson 잡기 경우 JSON 으로(src/robot/og/e0/sim_grasp.py 묶음 e7 — E7_CASES)
 //   NAME = free_area | in_closed | artic | spawn_reach | spawn_free | dst_reach | stance — 그 거르개만 끄고 뽑는다. 그러면 위반이 나와야 한다(종료 코드 0)
+//          feas — 잡기 가능 표 CPU 대조를 한 칸 옆 짝과 함(달라야 정상)
+// 끝에 잡기 가능 표(env pnp_feasibility): 집마다 B4/B5/B6 이 될 수 있는 짝 수·물체 수, 까닭, CPU == 장치(표본 200), PF_FEAS 고르기 확인
 // 다시 재는 것(판마다): 집을 물체 — 제외 플래그(벽·바닥·문·창·계단·카펫·로봇·입자·와일드카드)·고정·관절체·상자 있음, 가로 최소 폭 ≤ max_w,
 //   종류 평균 질량 ≤ max_mass(없으면 통과), 바닥 높이 ≤ pick_z, 바닥이 topdown_z 위면 옆 잡기: 출발 받침이 면이고 가장자리까지 ≤ edge_dist(엄격),
 //   닫힌 곳 안 아님(RASC PK_IN_CLOSED). 놓을 곳 — 면: 윗면 min_top–place_top·작은 변 ≥ min_side, 용기: 윗면 ≤ place_top + inside_margin,
@@ -14,7 +16,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <queue>
+#include <tuple>
 #include <string>
 #include <vector>
 
@@ -41,7 +45,7 @@ int main(int argc, char** argv) {
   }
   const int nf = neg == "free_area" ? NF_FREE_AREA : neg == "in_closed" ? NF_IN_CLOSED : neg == "artic" ? NF_ARTIC : neg == "spawn_reach" ? NF_SPAWN_REACH
                : neg == "spawn_free" ? NF_SPAWN_FREE : neg == "dst_reach" ? NF_DST_REACH : neg == "stance" ? NF_STANCE : 0;
-  if (!neg.empty() && !nf) { std::printf("unknown --negative %s\n", neg.c_str()); return 2; }
+  if (!neg.empty() && !nf && neg != "feas") { std::printf("unknown --negative %s\n", neg.c_str()); return 2; }
   opt.nofilter = nf & ~(NF_SPAWN_REACH | NF_SPAWN_FREE);   // 표 만들기 거르개
   SceneBuild b;
   std::string err;
@@ -255,44 +259,85 @@ int main(int argc, char** argv) {
     pt_bad += !(ok && near);
   }
   std::printf("  place points (all pick-and-place entries): ontop %ld, inside %ld (must be 0), floor %ld; violations %ld\n", n_pt[0], n_pt[1], n_pt[2], pt_bad);
-  long tot = pt_bad;
+  long tot = pt_bad, tot_feas_bad = 0;
   std::printf("  sampled B3 episodes %ld; per scene:", n_ep);
   for (int s2 = 0; s2 < b.host.nsc; ++s2) std::printf(" %s %ld", b.sc[s2].name.c_str(), by_scene[s2]);
   std::printf("\n  place kind: floor %ld, inside %ld, ontop %ld; with an instruction row %ld; spawn fell back to the table %ld\n", n_floor, n_inside, n_ep - n_floor - n_inside,
               n_instr, fallback);
   for (int v = 0; v < NV; ++v) { std::printf("  %-26s %ld\n", vname[v], viol[v]); tot += viol[v]; }
-  {   // E6 잡기 물리 모형으로 본 잡을 수 있음(정보 — 거르개 위반이 아님): 회전 상자 좁은 폭 ≤ KG::max_w, 무게 ≤ 그리퍼·팔 한도,
-      // 대본 교사가 서는 자리 + 잡기 계획(역기구학·폭·충돌·무게)을 찾음(앞 n_plan 판, 판의 처음 자리에서 — 물체만 움직이는 상자로)
-    long nw = 0, nm = 0, nmn = 0, nplan = 0, nplan_ok = 0, min_w_agree = 0;
-    const int n_plan = std::min(N, 1000);
+  {   // E6 잡기 물리 모형으로 본 잡을 수 있음(정보 — 거르개 위반이 아님): 회전 상자 좁은 폭 ≤ KG::max_w, 무게 ≤ 그리퍼·팔 한도
+    long nw = 0, nm = 0, nmn = 0, min_w_agree = 0;
     for (int i = 0; i < N; ++i) {
       const Entry& e = b.ent[cpu.iv[(size_t)env::I_B_ENT * N + i]];
       const float w = std::min(e.odim[0], e.odim[1]), m = env::mass_of(e.mass);
       nw += w <= env::KG::max_w + 1e-6f;
       nm += m <= env::KG::grip_mass_max;
       nmn += m <= env::KG::arm_mass_near;
-      const rasc::Scene& R = rs[e.scene];
-      min_w_agree += std::fabs(R.picks[e.pick_rec].min_w - w) <= 0.005f;
-      if (i < n_plan) {
-        env::Soa sv{cpu.f.data(), cpu.iv.data(), cpu.rng.data(), N};
-        env::Core c;
-        env::load<false>(sv, i, c);
-        env::BState bs;
-        env::load_b(sv, i, bs);
-        env::PState ps;
-        env::clear_p(ps);
-        for (int a2 = 0; a2 < 3; ++a2) ps.o[a2] = 0.5f * (e.prim[0].lo[a2] + e.prim[0].hi[a2]);
-        env::set_yaw(ps, e.oyaw);
-        ps.st = env::OS_REST;
-        float sx, sy, syaw;
-        const float tc[3] = {0.f, 0.f, 0.f};
-        ++nplan;
-        nplan_ok += env::find_stance(c, bs, b.host, e, ps, false, tc, sx, sy, syaw);
-      }
+      min_w_agree += std::fabs(rs[e.scene].picks[e.pick_rec].min_w - w) <= 0.005f;
     }
     std::printf("  E6 grasp model (information, not a filter violation): narrow width of the yaw box <= %.2f m: %ld / %ld (RASC min_w within 5 mm of it: %ld); "
-                "mass <= grip limit %.2f kg: %ld, <= near-arm payload %.2f kg: %ld; scripted-teacher stance + grasp plan exists (first %ld): %ld (%.3f)\n",
-                env::KG::max_w, nw, (long)N, min_w_agree, env::KG::grip_mass_max, nm, env::KG::arm_mass_near, nmn, nplan, nplan_ok, nplan ? (double)nplan_ok / nplan : 0.0);
+                "mass <= grip limit %.2f kg: %ld, <= near-arm payload %.2f kg: %ld\n",
+                env::KG::max_w, nw, (long)N, min_w_agree, env::KG::grip_mass_max, nm, env::KG::arm_mass_near, nmn);
+  }
+  {   // 잡기 가능 표(env pnp_feasibility, 장치) — 집마다 줄어든 짝·물체, 까닭, CPU == GPU(표본), PF_FEAS 고르기가 가능한 짝만 뽑는가
+    const double secs = env::pnp_feasibility(b, true);
+    const char* rn[8] = {"ok", "wide", "heavy", "thin", "no stance", "no place", "?", "?"};
+    std::printf("  feasibility table (teacher.h feas_entry on the device, %.1f s): per scene entries B4 / B5 / B6 of all (unique pick objects graspable of all)\n", secs);
+    long tot[4] = {0, 0, 0, 0}, why[3][8] = {};
+    for (int sc = 0; sc < b.host.nsc; ++sc) {
+      long n = 0, n4 = 0, n5 = 0, n6 = 0;
+      std::map<std::tuple<int, int>, int> picks;
+      for (int ei = 0; ei < b.host.nent; ++ei) {
+        const Entry& e = b.ent[ei];
+        if (e.list != L_OBJ || e.scene != sc) continue;
+        ++n; n4 += e.feas & 1; n5 += (e.feas >> 1) & 1; n6 += (e.feas >> 2) & 1;
+        int& pk = picks[std::make_tuple(e.inst, e.pick_rec)];
+        pk |= 2 | (e.feas & 1);
+        for (int k = 0; k < 3; ++k) { const int r = (e.feas >> (8 + 8 * k)) & 255; ++why[k][r < 8 ? r : 7]; }
+      }
+      long np = 0, npg = 0;
+      for (auto& kv : picks) { ++np; npg += kv.second & 1; }
+      std::printf("    %-26s %6ld / %6ld / %6ld of %6ld   (%5ld of %5ld)\n", b.sc[sc].name.c_str(), n4, n5, n6, n, npg, np);
+      tot[0] += n; tot[1] += n4; tot[2] += n5; tot[3] += n6;
+    }
+    std::printf("    %-26s %6ld / %6ld / %6ld of %6ld\n", "all", tot[1], tot[2], tot[3], tot[0]);
+    for (int k = 0; k < 3; ++k) {
+      std::printf("    reasons %s:", k == 0 ? "B4 grasp" : k == 1 ? "B5 place" : "B6");
+      for (int r = 0; r < 8; ++r) if (why[k][r]) std::printf(" %s %ld", rn[r], why[k][r]);
+      std::printf("\n");
+    }
+    // CPU 참조(같은 함수)와 장치 표 비트 비교: 표본 n_cmp 짝(고르게). 음성 대조 --negative feas: 한 칸 옆 짝과 비교(달라야 함)
+    const int n_cmp = 200;
+    long cmp = 0, diff = 0;
+    std::vector<int> objs;
+    for (int ei = 0; ei < b.host.nent; ++ei) if (b.ent[ei].list == L_OBJ) objs.push_back(ei);
+    for (int k = 0; k < n_cmp && !objs.empty(); ++k) {
+      const int ei = objs[(size_t)k * objs.size() / n_cmp];
+      env::FeasOut o;
+      env::pnp_feasibility_cpu(b.host, neg == "feas" ? objs[((size_t)k * objs.size() / n_cmp + 1) % objs.size()] : ei, o);
+      const Entry& e = b.ent[ei];
+      ++cmp;
+      bool d = o.feas != e.feas;
+      for (int a2 = 0; a2 < 4; ++a2)
+        d = d || std::memcmp(&o.gst4[a2], &e.gst4[a2], 4) || std::memcmp(&o.gst[a2], &e.gst[a2], 4) || std::memcmp(&o.pst5[a2], &e.pst5[a2], 4) ||
+            std::memcmp(&o.pst6[a2], &e.pst6[a2], 4) || std::memcmp(&o.grel[a2], &e.grel[a2], 4);
+      diff += d;
+    }
+    std::printf("    CPU reference vs device table (%ld sampled entries): %ld differ%s\n", cmp, diff, neg == "feas" ? " (negative control: compared with the neighbouring entry, must be > 0)" : "");
+    if (neg == "feas") { std::printf(diff > 0 ? "negative control OK\n" : "negative control FAILED\n"); return diff > 0 ? 0 : 1; }
+    tot_feas_bad = diff;
+    // PF_FEAS 로 뽑은 B4/B5/B6 판이 그 단계 비트를 가짐
+    BCurr c2 = kBCurrDefault;
+    c2.p1 = 0.f; c2.p2 = 0.f; c2.p4 = 1.f / 3.f; c2.p5 = 1.f / 3.f; c2.p6 = 1.f / 3.f; c2.split = 2; c2.phys = PF_FEAS;
+    env::CpuEnv fe(4096, env::kStageBeh, 99, true, &b.host, c2);
+    long nk[3] = {0, 0, 0}, bad = 0;
+    for (int i = 0; i < 4096; ++i) {
+      const int kind = fe.iv[(size_t)env::I_B_KIND * 4096 + i], ei = fe.iv[(size_t)env::I_B_ENT * 4096 + i];
+      const int need = kind == EK_B4 ? FE_GRASP : kind == EK_B5 ? FE_PLACE5 : FE_PLACE6;
+      if (kind >= EK_B4) { ++nk[kind - EK_B4]; bad += (b.ent[ei].feas & need) != need; }
+    }
+    std::printf("    PF_FEAS sampling: 4096 resets (B4 %ld, B5 %ld, B6 %ld) — entries without the stage's feasibility bit: %ld (must be 0)\n", nk[0], nk[1], nk[2], bad);
+    tot_feas_bad += bad;
   }
   if (!emit.empty()) {   // E7 경우: 좁은 변을 닫는 축(세계 x)으로, 위에서 잡기·옆 수평 잡기 둘
     FILE* fo = std::fopen(emit.c_str(), "w");
@@ -320,6 +365,7 @@ int main(int argc, char** argv) {
     std::printf("negative control (%s disabled): %ld violations (must be > 0)\n", neg.c_str(), tot);
     return tot > 0 ? 0 : 1;
   }
+  tot += tot_feas_bad;
   std::printf(tot ? "FAIL: %ld violations\n" : "OK: every sampled episode passes the filter (%ld violations)\n", tot);
   return tot ? 1 : 0;
 }
