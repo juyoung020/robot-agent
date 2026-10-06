@@ -220,6 +220,7 @@ struct BehRec {
                          .b("findable", fe & bsc::FE_FIND).b("findable_place", fe & bsc::FE_FINDP).b("find_table", B->host.has_find).raw("find_pose", jarr(E.fpose, 4)).done())
         .raw("stance", Obj().raw("grasp_cell", jarr(E.st, 2)).raw("gst4", jarr(E.gst4, 4)).raw("gst", jarr(E.gst, 4)).raw("pst5", jarr(E.pst5, 4)).raw("pst6", jarr(E.pst6, 4))
                            .raw("dst_cell", jarr(E.dst_st, 2)).raw("cands", cands).num("n_cands", ncand).done())
+        .raw("goal_pt", jarr(&E.gx, 3))   // 정책 목표 자리(B1 = 바닥 점 — "go here" 기둥), 창 좌표
         .raw("place_pt", E.ppt_ok ? jarr(E.ppt, 3) : std::string("null")).raw("place_box", "[" + jarr(E.dlo, 3) + "," + jarr(E.dhi, 3) + "]").done();
   }
 

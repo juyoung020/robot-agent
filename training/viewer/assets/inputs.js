@@ -189,8 +189,9 @@ export function buildOverlays(T, SC, I, off, label) {
       if (label) out.goal.add(label(text, x + ox, y + oy, z0 + 1.4, 0.3, "rgba(255,255,255,0.92)"));
     };
     const it = ((SC.world && SC.world.instr_text) || "").toLowerCase();
-    if (it.startsWith("go here")) {   // 지점으로 가기: 목표 = 지도 위 점(기록에서는 놓을 점, 없으면 목표 상자 가운데)
-      const g = P.place_pt || (tgt && tgt.c);
+    const b1 = (SC.world || {}).kind === 1 && P.goal_pt;   // B1 지점 가기: 목표 = 바닥 점(goal_pt) — 지시문 문장과 상관없이
+    if (b1 || it.startsWith("go here")) {   // 지점으로 가기: 목표 = 지도 위 점(B1 은 goal_pt, B3 는 놓을 점, 없으면 목표 상자 가운데)
+      const g = b1 || P.place_pt || (tgt && tgt.c);
       if (g) pole(g[0], g[1], 0, 0x0ca30c, "목표 지점");
     } else if (tgt) pole(tgt.c[0], tgt.c[1], Math.max(0, tgt.c[2] - tgt.h[2]), 0xe34948, `목표 물체: ${tgt.name}`);
   }
