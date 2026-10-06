@@ -139,7 +139,7 @@
 |---|---|---|---|
 | 1 지도 쌓기 | `config/c1_cover.json`(환경 판 GM_COVER — 2026-10-06 추가) | 30 분: 판 보상 −10.7 → 약 2, 60 % 덮기 성공 1–3 % | `docs/assets/curriculum_1_cover.gif`(성공 판) |
 | 2 지점 가기 | `config/c2_goto_point.json` | 20 분, 성공률 0.75 | `docs/assets/curriculum_2_goto.gif` |
-| 3 물체 찾기 | `config/c3_find.json` | 20 분 + 이어서 30 분(`runs/ppo/c3_find_more`): 성공률 0.055 → 0.105 — 아직 낮음 | `docs/assets/curriculum_3_find.gif`(펜 찾기 성공 판) |
+| 3 물체 찾기 | `config/c3_find.json` | 성공 = 지도 확정 + 보임 + 물체 앞 0.8 m 안에서 마주보고 1 s 멈춤(10-06 사용자). 이어서 40 분(`runs/ppo/c3_find_stop`): 0.08–0.12 에서 오르지 않음 | `docs/assets/curriculum_3_find.gif`(펜 앞에서 멈춘 성공 판) |
 | 4 잡기 | `config/c4_pick.json`(PPO), `config/c4_pick_bc.json`(BC) | PPO 는 아직 0(아래). 지금 GIF 는 **BC 학생**(대본 특권 교사 시연, MLP 폭 1024, BC 2000, 빈 지도): 학습 집 성공 0.10, 평가 집 0 | `docs/assets/curriculum_4_pick.gif`(house_double_floor_lower, BC 학생 성공 판 — RL 교사 아님) |
 | 5 찾아서 잡기 | — | 3·4 뒤 | — |
 
