@@ -123,6 +123,28 @@ __global__ void teach_store_k(const float* tcol, const int* kind, int t, int N, 
   tw[(size_t)t * N + i] = on ? 1.f : 0.f;
 }
 
+// 대본 교사가 모는 판(잡기 판, 판 번호 해시 < p·(1 − 바퀴/decay)): 행동 = 교사 행동, logp 는 정책 기준으로 다시(PPO 비율이 맞게)
+__global__ void teach_drive_k(const float* tact, const float* tw, const float* mean, const float* logstd, const TrainState* ts, const int* ep, float p0, int decay,
+                              uint64_t seed, int t, int N, float* act_env, float* act_buf, float* logp_buf) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= N || tw[(size_t)t * N + i] < 0.5f) return;
+  const float p = p0 * fmaxf(0.f, 1.f - (float)ts->iter / (float)(decay > 0 ? decay : 1));
+  const uint64_t h = hash4(seed, (uint64_t)ep[i], (uint64_t)i, 0x54445256ull);
+  if ((float)((h >> 40) & 0xffffffull) * (1.f / 16777216.f) >= p) return;
+  const uint32_t am = ts->act_mask;
+  float logp = 0.f;
+  for (int k = 0; k < N_ACT; ++k) {
+    const float a = ((am >> k) & 1u) ? tact[((size_t)t * N + i) * N_ACT + k] : 0.f;
+    if ((am >> k) & 1u) {
+      const float ls = logstd[k], z = (a - mean[(size_t)i * N_ACT + k]) * expf(-ls);
+      logp = logp + (-0.5f * z * z - ls - 0.5f * kLog2Pi);
+    }
+    act_env[(size_t)k * N + i] = a;
+    act_buf[((size_t)t * N + i) * N_ACT + k] = a;
+  }
+  logp_buf[(size_t)t * N + i] = logp;
+}
+
 // ---- 행동 표본(장치 난수) · logp · 가치 ----
 __global__ void sample_k(const float* mean, const float* val, const float* logstd, const TrainState* ts, uint64_t seed, int t, int N,
                          float* act_env, float* act_buf, float* logp_buf, float* val_buf) {
@@ -448,7 +470,8 @@ Trainer::Trainer(const PpoConfig& c) : cfg(c) {
   obs_rows = alloc<float>((size_t)(T + 1) * N_OBS_G1 * N);
   act_env = alloc<float>((size_t)N_ACT * N);
   act_buf = alloc<float>((size_t)T * N * N_ACT);
-  if (cfg.bc_coef > 0.f && cfg.stage >= 3) {   // 대본 교사 모방(장면 판)
+  if ((cfg.bc_coef > 0.f || cfg.teach_drive > 0.f) && cfg.stage >= 3) {   // 대본 교사 모방(장면 판)
+    std::fprintf(stderr, "ppo: scripted-teacher imitation on pick episodes: bc_coef %.3f, teach_drive %.2f, decay %d iters\n", cfg.bc_coef, cfg.teach_drive, cfg.bc_decay);
     tcol = alloc<float>((size_t)N_ACT * N);
     tact_buf = alloc<float>((size_t)T * N * N_ACT);
     tw_buf = alloc<float>((size_t)T * N);
@@ -824,9 +847,12 @@ void Trainer::rollout_step(int t) {
   forward(N);
   if (t == T) { value_k<<<sb, 128>>>(val, N, val_buf + (size_t)T * N); return; }
   sample_k<<<sb, 128>>>(mean, val, P + lay.logstd, ts, cfg.seed, t, N, act_env, act_buf, logp_buf, val_buf);
-  if (tact_buf) {   // 대본 교사 행동(이 스텝 상태에서) — 모방 손실의 라벨
+  if (tact_buf) {   // 대본 교사 행동(이 스텝 상태에서) — 모방 손실의 라벨, (teach_drive) 일부 잡기 판은 교사가 몲
     env->teacher(tcol);
     teach_store_k<<<sb, 128>>>(tcol, env->soa().iv + (size_t)env::I_B_KIND * N, t, N, tact_buf, tw_buf);
+    if (cfg.teach_drive > 0.f)
+      teach_drive_k<<<sb, 128>>>(tact_buf, tw_buf, mean, P + lay.logstd, ts, env->soa().iv + (size_t)env::I_EP * N, cfg.teach_drive, cfg.bc_decay, cfg.seed, t, N,
+                                 act_env, act_buf, logp_buf);
   }
   env->step(act_env, obs_buf + (size_t)(t + 1) * N_OBS_G1 * N, rew_buf + (size_t)t * N, done_buf + (size_t)t * N);
   obs_rows_k<<<(N + 31) / 32, 256>>>(obs_buf + (size_t)(t + 1) * N_OBS_G1 * N, N, obs_rows + (size_t)(t + 1) * N_OBS_G1 * N);

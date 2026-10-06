@@ -73,6 +73,8 @@ typedef struct PpoConfig {
      0 = 끔(예전과 비트 같음) */
   float bc_coef;
   int32_t bc_decay;
+  float teach_drive;      /* 잡기 판 중 이 비율(판 단위)은 대본 교사가 몬다(logp 는 정책 기준으로 다시 셈) — 성공 경험을 PPO 에. bc_decay 로 같이 줄임. 0 = 끔 */
+  int32_t pad_td;
 } PpoConfig;
 
 typedef struct PpoLog {

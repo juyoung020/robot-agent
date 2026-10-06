@@ -157,7 +157,7 @@ int main(int argc, char** argv) {
   R.tag = tag;
   R.sg = !no_sg;
   { size_t p = tag.find_first_of("0123456789"); if (p != std::string::npos) R.ckpt_iter = std::atof(tag.c_str() + p); }
-  if (keep_fail > 0) R.max_success = std::max(1, episodes - keep_fail);   // 성공 K−F 개 + 실패 F 개(있으면) — 실패가 없으면 성공으로 채움
+  if (keep_fail > 0) { R.max_success = std::max(1, episodes - keep_fail); R.max_fail = keep_fail; }   // 성공 K−F 개 + 실패 F 개(있으면) — 실패가 없으면 성공으로 채움
   R.home_prefix = "A" + std::to_string(c.stage) + "_room";
   std::vector<float> fs;
   std::vector<int> iv;

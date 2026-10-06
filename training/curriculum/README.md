@@ -139,11 +139,14 @@
 |---|---|---|---|
 | 1 지도 쌓기 | `config/c1_cover.json`(환경 판 GM_COVER — 2026-10-06 추가) | 30 분: 판 보상 −10.7 → 약 2, 60 % 덮기 성공 1–3 % | `docs/assets/curriculum_1_cover.gif`(성공 판) |
 | 2 지점 가기 | `config/c2_goto_point.json` | 20 분, 성공률 0.75 | `docs/assets/curriculum_2_goto.gif` |
-| 3 물체 찾기 | `config/c3_find.json` | 20 분, 성공률 낮음(약 0.08) — 다시 맞출 것 | `docs/assets/curriculum_3_find.gif`(펜 찾기 성공 판) |
-| 4 잡기 | `config/c4_pick.json` | 처음부터 PPO 60 분: 성공 0 → **대본 교사 모방 보조 손실**(PPO `bc_coef`·`bc_decay`, DAPG 꼴)로 다시 학습 중 | — |
+| 3 물체 찾기 | `config/c3_find.json` | 20 분 + 이어서 30 분(`runs/ppo/c3_find_more`): 성공률 0.055 → 0.105 — 아직 낮음 | `docs/assets/curriculum_3_find.gif`(펜 찾기 성공 판) |
+| 4 잡기 | `config/c4_pick.json`(PPO), `config/c4_pick_bc.json`(BC) | PPO 는 아직 0(아래). 지금 GIF 는 **BC 학생**(대본 특권 교사 시연, MLP 폭 1024, BC 2000, 빈 지도): 학습 집 성공 0.10, 평가 집 0 | `docs/assets/curriculum_4_pick.gif`(house_double_floor_lower, BC 학생 성공 판 — RL 교사 아님) |
 | 5 찾아서 잡기 | — | 3·4 뒤 | — |
 
 ### 잡기 학습 — 대본 교사 모방 보조 손실 (2026-10-06)
 - 처음부터 PPO 로는 잡기(B4)를 못 배운다(60 분·13 억 스텝, 성공 0 — 들어 올리기 전까지 보상이 드묾).
 - PPO 손실에 λ·(정책 평균 − 대본 교사 행동)² 를 더한다. 대본 교사 = 환경의 특권 교사(`env->teacher`, 문서상 잡기 성공률 약 0.95), 잡기 판(B4–B6)에서만. λ = `bc_coef`·max(0, 1 − 바퀴/`bc_decay`) — 처음엔 교사를 따라 하며 성공 경험을 얻고, 나중엔 PPO 만 남는다.
 - 구현: `training/RL/ppo`(롤아웃마다 교사 행동을 [T][N][8] 버퍼에, 모으기·손실 커널에 더함), `bc_coef` 0 이면 예전과 비트 같음(ppo_verify 5/5).
+- 결과(잰 값): 보조 손실만(σ 0.6 · σ e^−2) → 정책 혼자 성공 0. **교사가 모는 판**(`teach_drive` 0.5 — 잡기 판 절반은 대본 교사 행동으로 환경을 움직이고 logp 는 정책 기준으로 다시 셈, `bc_decay` 로 줄임)을 더하면 학습 중 성공 0.13–0.20 이지만 거의 교사 판 몫이고, 체크포인트를 정책 혼자 돌리면 32 판 중 0 → 그만둠.
+- BC(`training/BC`, `bc_run`, 상태 없는 대본 교사 `teacher_script` 2 → 학생): student-lite(38 만 변수)·DAgger 3–6 번 → 0. 큰 학생(MLP 폭 1024, 222 만 변수, BC 2000 × 50, 학습률 1e-3 cos → 1e-5) → 학습 집 0.10, 평가 집 0. 진단(`BC_SLDIAG`): 교사가 몰 땐 학생 어긋남이 작으나(이동 중 팔 칸 < 0.01) 학생이 몰면 이동 단계에서 팔을 움직여(팔 칸 (학생 − 교사)² 0.3–1.7) 가구에 닿음 — 몇 스텝 만에 충돌하는 판이 많음.
+- 다음: BC 학생을 PPO 시작점으로(같은 망 모양이 필요 — 교사 기억 인코더 D 와 같이), 또는 행동 덩어리(청크) 학생.

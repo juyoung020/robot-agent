@@ -111,6 +111,8 @@ struct PpoConfig {
     pad_es: i32,
     bc_coef: f32,    // 대본 교사 모방 보조 손실 λ0(잡기 판)
     bc_decay: i32,   // λ 를 0 까지 줄이는 바퀴 수
+    teach_drive: f32,   // 잡기 판 중 대본 교사가 모는 비율(판 단위, bc_decay 로 줄임)
+    pad_td: i32,
 }
 
 #[repr(C)]
@@ -354,6 +356,8 @@ fn make_config(v: &Value) -> PpoConfig {
         pad_es: 0,
         bc_coef: gf(v, "bc_coef", 0.0) as f32,
         bc_decay: gi(v, "bc_decay", 1000) as i32,
+        teach_drive: gf(v, "teach_drive", 0.0) as f32,
+        pad_td: 0,
     }
 }
 

@@ -1,0 +1,57 @@
+{
+  "comment": "커리큘럼 4단계 잡기 학생(BC): 상태 없는 대본 특권 교사(teacher_script 2) 시연 → 큰 학생 MLP 폭 1024, BC 2000 × 50, 학습률 1e-3 cos → 1e-5 (CURRICULUM_BEHAVIOR2026 5.6.2 에서 C0 학생 0.22 — student-lite·DAgger 는 0). 빈 지도 C2, house_single_floor. 처음부터 PPO 는 잡기 0.",
+  "teacher": "",
+  "teacher_script": 2,
+  "n_env": 1024,
+  "horizon": 64,
+  "stage": 3,
+  "use_map": 2,
+  "teacher_use_map": 2,
+  "student_goal": 0,
+  "act_mask": 255,
+  "mb": 8192,
+  "upd_steps": 50,
+  "dw_chunk": 1024,
+  "store_render": 0,
+  "cap": 1400000,
+  "seed": 1,
+  "data_seed": 1000,
+  "lr": 0.001,
+  "max_grad_norm": 1.0,
+  "map_p0": 0.0,
+  "map_p1": 0.0,
+  "map_kmin": 3,
+  "map_kmax": 6,
+  "map_reveal_r": 1.5,
+  "beh": {
+    "on": 1,
+    "mix": [
+      0.0,
+      0.0
+    ],
+    "pnp": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "nav_k": 10,
+    "feas": 1,
+    "scenes": [
+      "house_single_floor"
+    ]
+  },
+  "goal_drop": 0.0,
+  "record_rollouts": 12,
+  "bc_updates": 2000,
+  "dagger": false,
+  "dagger_iters": 0,
+  "dagger_rollouts": 4,
+  "dagger_updates": 500,
+  "eval_iters": 8,
+  "eval_drop": 1,
+  "eval_seed": 777,
+  "eval_teacher": true,
+  "mlp_w": 1024,
+  "lr_sched": "cos",
+  "lr_min": 1e-05
+}

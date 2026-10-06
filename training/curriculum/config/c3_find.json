@@ -94,7 +94,7 @@
   },
   "ckpt_every": 200,
   "print_every": 10,
-  "budget_minutes": 20,
+  "budget_minutes": 30,
   "out": "runs/ppo_pnp",
   "goal_from_map": 1,
   "bound_coef": 0.5,

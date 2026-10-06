@@ -54,7 +54,7 @@ struct G1Rec {
   Out out;
   std::string driver, source_json, skill = "approach", home_prefix = "G1", tag;   // tag: 체크포인트 이름(it000200 / final) — 파일 이름·판 줄에
   double ckpt_iter = NAN;
-  int max_success = 1 << 30;
+  int max_success = 1 << 30, max_fail = 1 << 30;   // --keep-fail F: 성공 K−F 개·실패 F 개까지만(넘는 판은 버림)
   // BEHAVIOR 판(stage 3, 2026-10-06): 장면 JSON 을 부르는 쪽이 만듦(env i → 창 좌표 정적 상자·집을 물체). 있으면 끝 프레임을 호스트에서 다시 돌리지 않음
   // (env.h step_core 는 상자 방 식) — 스텝 전 마지막 프레임에 끝 표시만. sgview 판(진짜 scenemap)도 안 만듦(장면 광선 추적이 상자 방 식)
   std::function<std::string(int)> scene_fn;
@@ -265,6 +265,7 @@ struct G1Rec {
 
   void finish(int i, Ep& e, const env::Core& cc, int d, const env::StepOut& so, const gmap::MapCore& m) {
     if (d == env::kSuccess && n_success >= max_success) { trp_free(e.w); e.w = nullptr; ++dropped_success; return; }
+    if (d != env::kSuccess && n_coll + n_tout >= max_fail) { trp_free(e.w); e.w = nullptr; return; }
     // 장면·처음 지도 단계는 판 끝의 지도 상태에서(판의 첫 프레임에는 지도가 아직 리셋되기 전일 수 있다 — 각 판 첫 판)
     e.init_stage = m.init_stage;
     e.init_conf = m.init_conf;
