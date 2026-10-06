@@ -214,7 +214,8 @@ export class SgPanel {
     const T = this.win.THREE, off = (this.info && this.info.window_origin) || [0, 0];
     this.ov = buildOverlays(T, this.trHead.scene, this.trHead.inputs || {}, off, (t, x, y, z, h, bg) => this.mkLabel(t, x, y, z, h, bg));
     for (const k of ["cond", "env", "feas"]) { this.ov[k].visible = !!this.ovOn[k]; this.scene().add(this.mfw(this.ov[k])); }
-    this.scene().add(this.mfw(this.ov.goal));   // 목표 표시는 늘 켬(과제 지시)
+    const skill = this.info && this.info.meta && this.info.meta.skill;
+    if (skill !== "cover") this.scene().add(this.mfw(this.ov.goal));   // 목표 표시는 늘 켬(과제 지시) — 지도 쌓기 판은 목표가 없음
     if (this.hoverables) this.hoverables.push(...this.ov.hover);
     this.invalidate();
   }

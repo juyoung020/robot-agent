@@ -42,9 +42,15 @@
 
 <br><br>
 
+<img src="docs/assets/curriculum_1_cover.gif" width="760" alt="커리큘럼 1 — 지도 최대한 많이 쌓기">
+
+<sub>학습 뷰어의 리플레이 탭 — 커리큘럼 1단계 <b>지도 최대한 많이 쌓기</b>. RL 교사가 받는 목표는 없고, 보상 = 새로 덮은 방 칸(60 초 안 방 칸 60 % 덮으면 성공 — 이 판 성공). 교사(house_single_floor, 빈 지도에서 자라는 지도, 30 분 학습)의 판을 OmniGibson 에서 다시 돌려 실제 인지(ObjectSAM + SigLIP 2 + scenemap, 점구름)로 본 모습. 왼쪽 위 = 몸통 카메라·손목 카메라, 1배속</sub>
+
+<br><br>
+
 <img src="docs/assets/curriculum_2_goto.gif" width="760" alt="커리큘럼 2 — 목표 지점으로 가기">
 
-<sub>학습 뷰어의 리플레이 탭 — 커리큘럼 2단계 <b>목표 지점 주면 가기</b>. RL 교사가 받는 목표 = 지도 위 한 점(초록 기둥 "목표 지점", 앱에서 사용자가 누르는 바닥 지점), 그 점 0.3 m 안에 서면 성공(이 판 7.6 m, 18 초). 교사(house_single_floor, 빈 지도에서 자라는 지도, 20 분 학습·성공률 75 %)의 판을 OmniGibson 에서 다시 돌려 실제 인지(ObjectSAM + SigLIP 2 + scenemap, 점구름)로 본 모습. 왼쪽 위 = 몸통 카메라·손목 카메라, 1배속</sub>
+<sub>커리큘럼 2단계 <b>목표 지점 주면 가기</b>. RL 교사가 받는 목표 = 지도 위 한 점(초록 기둥 "목표 지점", 앱에서 사용자가 누르는 바닥 지점), 그 점 0.3 m 안에 서면 성공(이 판 7.6 m, 18 초). 교사(house_single_floor, 빈 지도에서 자라는 지도, 20 분 학습·성공률 75 %)의 판을 OmniGibson 에서 다시 돌려 실제 인지(ObjectSAM + SigLIP 2 + scenemap, 점구름)로 본 모습. 왼쪽 위 = 몸통 카메라·손목 카메라, 1배속</sub>
 
 <br><br>
 

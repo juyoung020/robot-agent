@@ -1,5 +1,5 @@
 {
-  "comment": "커리큘럼 4단계 시연: 물체 잡기(B4 — 잡는 자세에서 집어 들기). 처음부터 PPO 로는 성공 0(60 분) → 대본 교사 모방 보조 손실(DAPG 꼴) λ0 = 1, 2000 바퀴에 걸쳐 0 으로. house_single_floor, 빈 지도 C2. training/curriculum/README.md",
+  "comment": "커리큘럼 4단계 시연: 물체 잡기(B4 — 잡는 자세에서 집어 들기). 처음부터 PPO 로는 성공 0(60 분) → 대본 교사 모방 보조 손실(DAPG 꼴) λ0 = 1, 2000 바퀴에 걸쳐 0 으로. house_single_floor, 빈 지도 C2. training/curriculum/README.md 탐색 잡음을 작게(init_logstd −2, σ ≈ 0.14 — 대본 교사 혼자 B4 성공 55 % 인데 σ 0.6 잡음이면 잡기가 깨짐). 잡기 판 절반은 대본 교사가 몲(teach_drive 0.5, 3000 바퀴에 걸쳐 0 으로) — 성공 경험을 PPO 에.",
   "n_env": 4096,
   "horizon": 64,
   "epochs": 5,
@@ -26,7 +26,7 @@
   "adam_b1": 0.9,
   "adam_b2": 0.999,
   "adam_eps": 1e-08,
-  "init_logstd": -0.5,
+  "init_logstd": -2.0,
   "reward_scale": 1.0,
   "act_dims": 8,
   "shaping": {
@@ -103,5 +103,6 @@
   "map_reveal_r": 1.5,
   "act_mask": 255,
   "bc_coef": 1.0,
-  "bc_decay": 2000
+  "bc_decay": 3000,
+  "teach_drive": 0.5
 }
