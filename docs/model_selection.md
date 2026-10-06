@@ -103,7 +103,7 @@
 
 ### 작은 계획·행동 (VLA) — RecallVLA
 
-- **입력**: RGB 3 장(리모 카메라, 손목 카메라, 위에서 본 지도 그림 — 같은 SigLIP 2), 몸 상태, 목표 칸 2(물체 또는 지도 지점), 물체 기억 전체(≤ 256 → 기억 요약 32 + 정밀 칸 8, "기억에 없음" 포함), 방 항목, 방향 구역 8, 지시 문장. 깊이는 그림으로 넣지 않는다. 정의 [VLA_INPUT](map_vla/VLA_INPUT.md).
+- **입력**: RGB 2 장(리모 카메라, 손목 카메라 — 같은 SigLIP 2. 위에서 본 지도 그림은 10-06 에 뺌), 격자 16 × 16 토큰, 몸 상태, 목표 칸 2(물체 또는 지도 지점), 물체 기억 전체(≤ 256 → 기억 요약 32 + 정밀 칸 8, "기억에 없음" 포함), 방 항목, 방향 구역 8, 지시 문장. 깊이는 그림으로 넣지 않는다. 정의 [VLA_INPUT](map_vla/VLA_INPUT.md).
 - **신경망**: Qwen3.5-0.8B 전체 학습 + SigLIP 2 학습, 행동 전문가(flow matching, 행동 묶음), 다음 단계 문장. 약 0.98 B. 사양 [MAPVLA_SPEC](map_vla/MAPVLA_SPEC.md), 코드 `training/vla`.
 - **학습**: 강화학습·대본 교사 → BC·DAgger → RecallVLA. 원칙: 정답 지도로 학습하지 않는다(빈 지도에서 자라는 지도), 교사도 학생과 같은 입력(특권은 critic 만), 명령에는 탐색으로 찾을 수 있는 물체만. 커리큘럼 [CURRICULUM_BEHAVIOR2026](map_vla/CURRICULUM_BEHAVIOR2026.md) 5.7.
 
@@ -113,7 +113,7 @@ RecallVLA 는 π0.5(Physical Intelligence) 와 같은 틀(비전 탑 + 언어 �
 
 | 부분 | π0.5 | RecallVLA | 우리가 한 것 |
 |---|---|---|---|
-| 비전 | SigLIP So400m(PaliGemma 안) | SigLIP 2 B/32-256, 카메라 2 대 + 위에서 본 지도 그림 → 그림당 토큰 64 | 탑을 C++/CUDA 로 직접 구현(PyTorch 대비 코사인 0.9996), 위에서 본 지도 그림 입력 |
+| 비전 | SigLIP So400m(PaliGemma 안) | SigLIP 2 B/32-256, 카메라 2 대 → 그림당 토큰 64(지도 그림은 10-06 에 뺌) | 탑을 C++/CUDA 로 직접 구현(PyTorch 대비 코사인 0.9996), 위에서 본 지도 그림 입력 |
 | 언어 몸통 | Gemma 2B(PaliGemma) | Qwen3.5-0.8B(DeltaNet 18 + 풀 어텐션 6), 전체 학습 | DeltaNet·게이트 어텐션 앞·뒤 계산을 C++/CUDA 로 직접 구현(`training/vla`) |
 | 물체 기억 | 없음 | **기억 인코더**: 물체 인코더 φ → 기억 요약 인코더(잠재 32) → 기억 토큰 32 + 정밀 칸 8 + 벽·방 항목 | 전부 우리 설계(scenemap 물체 기억을 토큰으로) |
 | 몸 상태·목표 | 몸 상태 토큰 | 팔·몸통·목표 토큰 3(목표 = 물체 또는 지도 지점) | 우리 설계 |
@@ -151,7 +151,7 @@ RecallVLA 는 π0.5(Physical Intelligence) 와 같은 틀(비전 탑 + 언어 �
 | iOS / Android | Swift·SwiftUI / Kotlin·Compose | 네이티브 |
 | 앱 ↔ 리모 | WebSocket (미정) | 진행 상황 실시간 |
 | 학교 밖 접속 | VPN 등 (미정) | 학교 네트워크 규칙 확인 |
-| 위에서 본 지도 | VLA 의 셋째 그림과 같은 정의 | 물체를 누르면 id, 바닥을 누르면 지점 목표 |
+| 위에서 본 지도 | `topview.h` 정의(VLA 입력에서는 10-06 에 뺌, 앱 화면에만) | 물체를 누르면 id, 바닥을 누르면 지점 목표 |
 
 ---
 
