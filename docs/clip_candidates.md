@@ -300,7 +300,8 @@ memory/
 **출처 정리 — 빌려 쓴 것 / 만든 것**
 - 빌려 씀: SigLIP 2 B/32 그림·글 인코더(Google 공개 가중치, 학습 안 함), WordNet 3.1(NLTK `wordnet31`, 영어 어휘 DB — 임베딩 아님), LVIS·Open Images·COCO·BEHAVIOR-1K 이름, Wikidata 한국어, NLLB 번역.
 - 만듦: 라벨 표 30,533 줄(`training/embed/build_labels.py` — 고른 목록 4,091 줄 `main` + WordNet artifact·food·plant·animal·natural_object·plant_part 아래 명사 `tail`, 소문자·괄호 지움·4 낱말 이하, synset, 한국어), 글 벡터 표(`encode_labels.py`, 문장 틀 4 개 평균), 찾기 색인(`labels.cpp`), 여러 시점 합치기·표 밖 질의 확률(`objindex.cpp`), ObjectSAM(YOLO26n-seg 에서 FastSAM 가짜 정답 + GT 로 미세조정, `third_party/ObjectSAM`).
-- 학습했지만 실행 경로에 없음: 증류 머리 128-d(`text128_sb32_pe_300k.f16`, PE-Core L/14 선생), 한국어 질의 BERT 23M(training/embed README).
+- 증류 머리 128-d(`text128_sb32_pe_300k.f16`, `runs/sb32_pe_300k/head.pt` 의 투영 P, PE-Core L/14 선생): scenemap 이름 붙이기(768-d)에는 안 쓰지만, **RL 교사·RecallVLA 물체 칸의 이름 뜻 128·생김새 128 이 이 공간**(STATE_SPEC 4.2, `training/embed/vla_tables.py` → `name128.f16`).
+- 학습했지만 쓰지 않음: 한국어 질의 BERT 23M(training/embed README).
 
 ## 4. Nano 속도 추정
 
