@@ -272,6 +272,36 @@ memory/
 - 다시 만드는 조건: 라벨 표 `sha` 가 바뀌었거나, 물체의 `emb_sha` 가 바뀌었을 때(best view 갱신)만 그 물체를 다시 뽑는다.
 - 쓰기는 다른 파일처럼 임시 이름 → rename(원자적), 저장 주기에 맞춰 비동기로.
 
+### 3.6 FAISS·HNSW 와 비교 (2026-10-06 정리, 직접 대조 측정은 아직 안 함)
+
+**이름이 붙는 방식(표준 용어)**: open-vocabulary zero-shot classification. SigLIP 2 는 대조 학습(contrastive)한 그림-글 모델이라 그림 인코더와 글 인코더가 같은 임베딩 공간을 쓴다. 라벨 30,533 개를 글 인코더로 미리 벡터화한 표(`models/labels/objects-v1/text_siglip2_b32.f16`)와 물체 그림 벡터의 코사인 유사도 → 최댓값(argmax)의 줄 이름. 생성(generation)이 아니라 검색(retrieval) — 표에 없는 이름은 답이 될 수 없다(표 밖 질의는 글 인코더로 바로 벡터화해 비교, `clip/src/objindex.cpp`).
+
+**우리 찾기(`clip/src/labels.cpp`) 위치**: 새 알고리즘이 아니라 FAISS 의 IVF + 압축 + 다시 매기기(`IndexIVF` + `IndexRefine`) 계열을 의존성 없는 C++ 로 작게 다시 짠 것. HNSW(Hierarchical Navigable Small World, Malkov & Yashunin 2016)는 여러 층 이웃 그래프를 위에서 아래로 탐욕 탐색하는 그래프 기반 근사 최근접 탐색(ANN)이라 방식이 다르다.
+
+| | 우리 | FAISS | HNSW (hnswlib, FAISS `IndexHNSWFlat`) |
+|---|---|---|---|
+| 방식 | PCA 128-d → k-means 256 묶음(IVF) → 가까운 묶음 8 개만 128-d FP16 점수 → 상위 32 를 768-d 로 다시 매김 | IVF·PQ·HNSW·전수 등 색인 묶음 라이브러리 | 이웃 16–32 개 그래프, 여러 층, O(log N) 비교 |
+| 속도(30.5k 줄, 1 물체) | **25 µs**(PC 1 스레드, 8.4절), 전부 훑기 1.0 ms | 같은 IVF 설정이면 비슷(추정). GPU 판은 대량 질의에 강함 | 이 크기에선 수십 µs(추정) |
+| 정확도 | 이름 정답률 = 전수와 같음(0.19–0.20, 3.3절). 정확 1 위 일치 0.65–0.82(대부분 동의어 줄끼리 바뀜) | 설정 따라 | 보통 recall 0.95–0.99 |
+| 메모리 | 128-d FP16 + 768-d FP16 원본 | 색인 따라 | 이웃 목록 때문에 큼 |
+| 기기 | 의존성 없음, AVX2·NEON 직접 → Jetson Nano(A57) 됨 | 큰 라이브러리, ARM 빌드 번거로움 | 헤더 라이브러리, ARM 됨 |
+| 하나씩 더하기 | 다시 만듦(0.8 s, 캐시) | 색인 따라 | 쉬움 |
+
+**우리 방식을 고른 까닭**
+- 라벨 3 만 개는 전부 훑어도 1 ms — 큰 라이브러리를 넣을 이유가 없음.
+- 로봇 쪽 CPU(Nano)에서 돌아야 함 → 작은 코드.
+- modality gap: 그림 벡터로 글 벡터를 찾는다. PCA 를 글이 아니라 **그림 표본**(LVIS crop 9,753 개)으로 만들어 1 위 일치 0.34 → 0.65(8.4절). 기성 라이브러리를 그대로 쓰면 이 투영은 직접 해야 함.
+
+**FAISS·HNSW 를 다시 볼 때**
+- 라벨이 30 만 개를 넘을 때(training/embed README 결론).
+- 물체 기억(질의 → 물체, 3.4절)이 수십만 개 이상 — 지금은 255 개 이하라 전부 비교 < 50 µs. 기억을 계속 하나씩 더해야 하면 HNSW 유리.
+- 할 것(필요해지면): `~/clip_venv` 에 `faiss-cpu`·`hnswlib`, 같은 표·평가셋으로 µs/물체·이름 정답률 대조 → 이 표의 "(추정)" 칸을 잰 값으로.
+
+**출처 정리 — 빌려 쓴 것 / 만든 것**
+- 빌려 씀: SigLIP 2 B/32 그림·글 인코더(Google 공개 가중치, 학습 안 함), WordNet 3.1(NLTK `wordnet31`, 영어 어휘 DB — 임베딩 아님), LVIS·Open Images·COCO·BEHAVIOR-1K 이름, Wikidata 한국어, NLLB 번역.
+- 만듦: 라벨 표 30,533 줄(`training/embed/build_labels.py` — 고른 목록 4,091 줄 `main` + WordNet artifact·food·plant·animal·natural_object·plant_part 아래 명사 `tail`, 소문자·괄호 지움·4 낱말 이하, synset, 한국어), 글 벡터 표(`encode_labels.py`, 문장 틀 4 개 평균), 찾기 색인(`labels.cpp`), 여러 시점 합치기·표 밖 질의 확률(`objindex.cpp`), ObjectSAM(YOLO26n-seg 에서 FastSAM 가짜 정답 + GT 로 미세조정, `third_party/ObjectSAM`).
+- 학습했지만 실행 경로에 없음: 증류 머리 128-d(`text128_sb32_pe_300k.f16`, PE-Core L/14 선생), 한국어 질의 BERT 23M(training/embed README).
+
 ## 4. Nano 속도 추정
 
 **가정 (모두 추정)**
