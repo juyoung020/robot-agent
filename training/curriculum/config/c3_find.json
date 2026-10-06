@@ -1,5 +1,5 @@
 {
-  "comment": "커리큘럼 3단계 시연: 물체 찾기(B2 — 빈 지도에서 목표 물체 종류를 지도에 확정하고 카메라에 넣기), house_single_floor 하나, 빈 지도 C2. README.md",
+  "comment": "커리큘럼 3단계 시연: 물체 찾기(B2 — 빈 지도에서 목표 물체 종류를 지도에 확정하고 카메라에 넣기), house_single_floor 하나, 빈 지도 C2. README.md 10-06 성공 조건 바꿈(사용자): 지도에 확정 + 보임 + 물체 앞 0.8 m 안에서 마주보고 1 s 멈춤(env_beh.h KB::b2_reach).",
   "n_env": 4096,
   "horizon": 64,
   "epochs": 5,
@@ -94,7 +94,7 @@
   },
   "ckpt_every": 200,
   "print_every": 10,
-  "budget_minutes": 30,
+  "budget_minutes": 40,
   "out": "runs/ppo_pnp",
   "goal_from_map": 1,
   "bound_coef": 0.5,

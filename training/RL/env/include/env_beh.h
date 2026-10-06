@@ -31,7 +31,7 @@ struct KB {
   static constexpr int cov_steps = 600, cov_succ = 600;
   static constexpr float r_cov = 0.02f;
   static constexpr float b1_tz = 0.05f;        // B1 목표 점 높이(보임 판정용, 가정)
-  static constexpr int b2_ticks = 3;           // B2: 보임 + 확정 0.3 s (가정)
+  static constexpr float b2_reach = 0.8f;      // B2 찾기 성공(2026-10-06 사용자: 물체 앞에서 멈춰야 성공): 카메라 → 목표 바닥 자국 ≤ 0.8 m(G1 succ_dmax 와 같음)
   static constexpr float seed_b1 = 0.15f;      // 거리장 씨앗 반경(지도 쪽과 같은 값): B1 점 둘레
   static constexpr float seed_obj = 0.45f;     // B2·B3 물체 둘레(팔 닿는 원, 가정: 옆 0.27 m + 몸통 반 폭 0.11 m 남짓)
   static constexpr float slack_b1 = 10.f, slack_b2 = 30.f, slack_b3 = 10.f;   // 시간 예산 = 참 최단 경로 / 0.3 m/s + 여유 s (가정: B2 는 찾느라 더)
@@ -474,8 +474,7 @@ DEV void step_core_beh(Core& c, BState& b, const bsc::SceneSet& ss, const uint8_
     const float gdx = c.tx - c.x, gdy = c.ty - c.y;
     ok = still && gdx * gdx + gdy * gdy <= KB::b1_r * KB::b1_r && bsc::room_at(ss.sc[b.scene], c.x + b.wx, c.y + b.wy) == b.room;
   } else if (b.kind == bsc::EK_B2) {
-    ok = visible && conf != 0;
-    need = KB::b2_ticks;
+    ok = visible && conf != 0 && still && aim <= K::succ_aim && surf <= KB::b2_reach;   // 지도에 확정 + 보임 + 0.8 m 안에서 마주보고 멈춤 1 s
   } else {
     const float ctr[3] = {c.tx, c.ty, b.tz};
     ok = still && aim <= K::succ_aim && grasp_reach_box(ctr, b.ex, c.x, c.y, cs, sn);
