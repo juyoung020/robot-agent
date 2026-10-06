@@ -1,6 +1,6 @@
 #!/bin/bash
 # 탐사 한 판 + 실시간 뷰어를 한 번에 — 경로·라이브러리·뷰어 폴더를 스크립트가 맞춘다(사람이 틀릴 자리를 없앰).
-#   tools/run_explore_live.sh [policy=frontier] [task=turning_on_radio] [tag=live] [--port 8080] [--pose carto|odom|gt]
+#   tools/run_explore_live.sh [policy=frontier] [task=turning_on_radio] [tag=live] [--port 8080] [--bind 127.0.0.1] [--pose carto|odom|gt]
 # 검출 기본 = ObjectSAM(YOLO26n 학생) + SigLIP 2 + objprob(src/sim/explore/run_explore.sh·sgrt_glue.py), 살펴본 정도 켬. 원래 FastSAM-s 는 SGRT_ENGINE=…/FastSAM-s-416.plan
 # 하는 일: ① libsgrt·sgview·에이전트 런타임(run-skill) 증분 빌드(tools/build_all.sh, -j4)
 #          ③ 시뮬 판을 저장소 뿌리에서 실행(src/sim/explore/run_explore.sh → data/outputs/explore_*, 자세 기본 Cartographer, 지도는 매 갱신 전송)
@@ -11,6 +11,7 @@ POL=frontier; TASK=turning_on_radio; TAG=live; VPORT=8080; POSE=carto; pos=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --port) VPORT=$2; shift ;;
+    --bind) VBIND=$2; shift ;;
     --pose) POSE=$2; shift ;;
     *) pos+=("$1") ;;
   esac; shift
@@ -46,7 +47,7 @@ done
 MEM=$ROOT/$RUN/memory; mkdir -p "$MEM"
 for pid in $(ps -eo pid,args | awk -v p="--port $VPORT" '/bin\/sgview/ && index($0,p) && !/awk/ {print $1}'); do kill "$pid"; done
 sleep 1
-setsid nohup "$ROOT/tools/run_sgview.sh" "$MEM" --live --port "$VPORT" > "/tmp/run_sgview_$VPORT.log" 2>&1 &
+setsid nohup "$ROOT/tools/run_sgview.sh" "$MEM" --live --port "$VPORT" --bind "${VBIND:-127.0.0.1}" > "/tmp/run_sgview_$VPORT.log" 2>&1 &
 echo "[live] 뷰어 http://localhost:$VPORT  (메모리 $MEM)"
 if [ "${TRAINVIEW_OG:-0}" = 1 ]; then
   OG=${OG2SG:-$RA_BUILD/bin/og2sg}
