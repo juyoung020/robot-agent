@@ -11,6 +11,7 @@
 | [clip_candidates.md](clip_candidates.md) | CLIP 류 임베딩 모델 후보·측정 (분할 마스크 → 이름·임베딩, 측정 때 분할은 FastSAM-s — 지금은 ObjectSAM) |
 | [terms.md](terms.md) | 용어 정리: stuff·things, 확률론적 물체 수준 매핑, DA·과분할 병합·라벨 융합, PCA 와 랜색(RANSAC) — 우리 코드 위치와 함께 |
 | [known_bugs.md](known_bugs.md) | 알려진 버그(코드) |
+| [da_ideas.md](da_ideas.md) | 물체 지도 DA(같은 것 판정) 개선 아이디어 — 중복·잘못 합침 줄이기(구현 전) |
 | [map_vla/](map_vla/README.md) | Map_Vla(리모 + 매니퓰레이터 VLA) 조사·설계 문서 — 지금 상태·남은 일은 [map_vla/TODO_TRACKER.md](map_vla/TODO_TRACKER.md) |
 | [assets/](assets/) | README 아이콘·뷰어·시뮬·로봇 그림 |
 
